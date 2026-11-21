@@ -759,7 +759,8 @@ struct ChannelConversationActions: Sendable {
 }
 
 struct PeerPingReply: Equatable, Sendable {
-    let roundTripMilliseconds: UInt64
+    /// `nil` when the core could not time the reply.
+    let roundTripMilliseconds: UInt64?
     /// Radio links the reply crossed, counting the final one into this
     /// phone's radio: a direct reply is one hop. `nil` when the reply came
     /// source-routed without a trace route—hops it took went unrecorded.
@@ -1033,6 +1034,9 @@ struct PeerRepeaterNeighbor: Hashable, Sendable {
     let regionCodes: [Data]
     /// When the router answered. The ages above are relative to this.
     let reportedAt: Date
+    /// The node the core matched this neighbor to, by address; `nil` when
+    /// it names none of this phone's peers.
+    var peerAddress: String? = nil
 
     /// The hint drawn as an avatar. A two-byte hint has no third octet to
     /// color by and draws gray, which is the honest rendering of a node
@@ -1065,10 +1069,11 @@ struct PeerRepeaterNeighbor: Hashable, Sendable {
     }
 
     /// The one node this neighbor most plausibly is, among those this phone
-    /// knows. A three-byte hint matches on the node's whole hint; a two-byte
-    /// one is the same guess a route hop makes, and reads as one.
+    /// knows, as the core matched it. A two-byte hint is the same guess a
+    /// route hop makes, and reads as one.
     func resolve(among peers: [PeerSummary]) -> PeerSummary? {
-        RouterHintNaming.match(MeshRouterHint(bytes: hint, text: hintText), among: peers)
+        guard let peerAddress else { return nil }
+        return peers.first { $0.identity.canonicalAddress == peerAddress }
     }
 
     /// What to call the neighbor: the known node's name, else the name the
@@ -1199,47 +1204,6 @@ struct PeerActions {
     /// No app services wired up—used by previews and by any sheet built
     /// before the mesh session exists.
     @MainActor static let unavailable = PeerActions()
-}
-
-/// What the phone keeps about a path it holds for one node, beyond the route
-/// itself.
-struct ManualPathRecord: Equatable, Sendable {
-    let holdUntil: Date
-    /// Where the phone stood when the path was saved, when it knew.
-    let savedLatitude: Double?
-    let savedLongitude: Double?
-    let savedAccuracy: Double?
-    /// The offer to switch to a learned path was declined.
-    let promptSettled: Bool
-
-    /// How far the phone must move from where the path was saved before one
-    /// flooded delivery is enough to offer the learned path.
-    static let movedMeters: Double = 200
-    /// Fixes vaguer than this say nothing about a move of `movedMeters`.
-    static let usableAccuracyMeters: Double = 100
-
-    /// Whether the phone at `latitude`/`longitude` has moved away from where
-    /// the path was saved. Never, when either fix is missing or too vague.
-    func hasMoved(latitude: Double, longitude: Double, accuracy: Double) -> Bool {
-        guard let savedLatitude, let savedLongitude,
-              let savedAccuracy, savedAccuracy >= 0,
-              savedAccuracy <= Self.usableAccuracyMeters,
-              accuracy >= 0, accuracy <= Self.usableAccuracyMeters
-        else { return false }
-        return LocationPresentation.distanceMeters(
-            fromLatitude: savedLatitude,
-            longitude: savedLongitude,
-            toLatitude: latitude,
-            longitude: longitude
-        ) >= Self.movedMeters
-    }
-
-    /// Whether to offer the learned path, given the route as the phone's
-    /// routing reports it and whether the phone has moved.
-    func shouldOfferLearnedPath(route: PeerRoute, moved: Bool) -> Bool {
-        guard !promptSettled, route.isHeld, route.candidate != nil else { return false }
-        return route.fallbackAcks >= 2 || (moved && route.fallbackAcks >= 1)
-    }
 }
 
 enum PeerPingResult: Equatable, Sendable {

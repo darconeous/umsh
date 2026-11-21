@@ -94,79 +94,22 @@ struct PersistenceSmokeTest {
         let deleted = try await store.deletePeer(ownerIdentityID: "alice", publicAddress: "peer-transient")
         precondition(deleted)
 
-        // The companion radio row is protected from delete and demote.
-        try await store.upsertUlcpDevicePeer(
-            ownerIdentityID: "alice",
-            publicAddress: "radio-peer",
-            advertisedName: "Tracker",
-            radioIdentifier: "AAAA"
-        )
-        let radioDeleted = try await store.deletePeer(ownerIdentityID: "alice", publicAddress: "radio-peer")
-        precondition(!radioDeleted)
-        try await store.demotePeerToTransient(ownerIdentityID: "alice", publicAddress: "radio-peer")
-        nodes = try await store.listNodes(ownerIdentityID: "alice")
-        precondition(node(nodes, "radio-peer").isSaved)
-
-        // Retention keeps the newest-heard transients up to the cap; rows with
-        // a conversation are never evicted. clearTransientPeers drops the rest.
-        for index in 0..<5 {
-            let address = "flood-\(index)"
+        // clearTransientPeers drops the transients nothing depends on; a row
+        // with a conversation stays.
+        for index in 0..<3 {
             try await store.upsertPeer(
                 ownerIdentityID: "alice",
-                publicAddress: address,
+                publicAddress: "flood-\(index)",
                 alias: nil
-            )
-            try await store.touchLastHeard(
-                ownerIdentityID: "alice",
-                publicAddress: address,
-                at: Date(timeIntervalSince1970: 1_000 + Double(index))
             )
         }
         _ = try await store.ensureDirectConversation(ownerIdentityID: "alice", peerAddress: "flood-0")
-        try await store.enforceTransientRetention(ownerIdentityID: "alice", cap: 2)
-        nodes = try await store.listNodes(ownerIdentityID: "alice")
-        let survivingTransients = nodes.filter { $0.publicAddress.hasPrefix("flood-") }
-        // flood-0 survives via its conversation; flood-4 and flood-3 are the
-        // two newest-heard evictable rows.
-        precondition(
-            Set(survivingTransients.map(\.publicAddress)) == ["flood-0", "flood-3", "flood-4"]
-        )
         try await store.clearTransientPeers(ownerIdentityID: "alice")
         nodes = try await store.listNodes(ownerIdentityID: "alice")
         precondition(
             Set(nodes.filter { $0.publicAddress.hasPrefix("flood-") }.map(\.publicAddress))
                 == ["flood-0"]
         )
-
-        // Device-identity reconcile: the device's read-back is authority.
-        // Known keys gain the flag, unknown keys gain a transient row, and
-        // keys absent from the list lose the flag (rows survive).
-        try await store.reconcileDeviceIdentityPeers(
-            ownerIdentityID: "alice",
-            addresses: ["flood-0", "device-only-peer"]
-        )
-        nodes = try await store.listNodes(ownerIdentityID: "alice")
-        precondition(node(nodes, "flood-0").onDeviceIdentity)
-        let deviceOnly = node(nodes, "device-only-peer")
-        precondition(deviceOnly.onDeviceIdentity && !deviceOnly.isSaved)
-        try await store.reconcileDeviceIdentityPeers(ownerIdentityID: "alice", addresses: [])
-        nodes = try await store.listNodes(ownerIdentityID: "alice")
-        precondition(nodes.allSatisfy { !$0.onDeviceIdentity })
-        precondition(nodes.contains { $0.publicAddress == "device-only-peer" })
-        // The single-flag cache setter round-trips too.
-        try await store.setPeerOnDeviceIdentity(
-            ownerIdentityID: "alice",
-            publicAddress: "flood-0",
-            isOnDeviceIdentity: true
-        )
-        nodes = try await store.listNodes(ownerIdentityID: "alice")
-        precondition(node(nodes, "flood-0").onDeviceIdentity)
-        try await store.setPeerOnDeviceIdentity(
-            ownerIdentityID: "alice",
-            publicAddress: "flood-0",
-            isOnDeviceIdentity: false
-        )
-        try await store.deletePeer(ownerIdentityID: "alice", publicAddress: "device-only-peer")
 
         // A file older than the baseline is refused and left as it was:
         // the Swift migrations that would have upgraded it are gone.
@@ -182,47 +125,16 @@ struct PersistenceSmokeTest {
         let historicalAfter = try Data(contentsOf: historicalURL)
         precondition(historicalAfter == historicalBytes)
 
-        try await checkClaimedRadios(store)
         try await checkRemainingCalls(store, path: databaseURL.path)
         try await checkReopenAndErase(store, path: databaseURL.path)
 
-        print("SQLite tier, delete/demote, retention, refusal, claimed-radio, round-trip, and reopen checks passed")
+        print("SQLite tier, delete/demote, transient clearing, refusal, round-trip, and reopen checks passed")
 
         // Seeding tens of thousands of rows takes long enough that the ordinary
         // smoke run should not pay for it.
         if ProcessInfo.processInfo.environment["UMSH_CHAT_BENCH"] == "1" {
             try await runChatScaleBenchmark()
         }
-    }
-
-    /// A radio left holding the identity is remembered until it is cleared
-    /// or its record lapses, and an attach refreshes it.
-    private static func checkClaimedRadios(_ store: SQLiteApplicationStore) async throws {
-        let start = Date(timeIntervalSince1970: 1_800_000_000)
-        try await store.recordClaimedRadio(
-            ownerIdentityID: "alice", deviceAddress: "radio-a", name: "Ridge", now: start
-        )
-        try await store.recordClaimedRadio(
-            ownerIdentityID: "alice", deviceAddress: "radio-b", name: nil,
-            now: start.addingTimeInterval(60)
-        )
-        var radios = try await store.claimedRadios(ownerIdentityID: "alice", now: start)
-        precondition(radios.map(\.deviceAddress) == ["radio-b", "radio-a"])
-        precondition(radios[1].name == "Ridge" && radios[0].name == nil)
-
-        // Attaching again moves the lapse out.
-        let later = start.addingTimeInterval(StoredClaimedRadio.lapse - 1)
-        try await store.recordClaimedRadio(
-            ownerIdentityID: "alice", deviceAddress: "radio-a", name: "Ridge", now: later
-        )
-        radios = try await store.claimedRadios(
-            ownerIdentityID: "alice", now: start.addingTimeInterval(StoredClaimedRadio.lapse + 60)
-        )
-        precondition(radios.map(\.deviceAddress) == ["radio-a"])
-
-        try await store.clearClaimedRadio(ownerIdentityID: "alice", deviceAddress: "radio-a")
-        radios = try await store.claimedRadios(ownerIdentityID: "alice", now: later)
-        precondition(radios.isEmpty)
     }
 
     /// The calls the checks above leave out, each written with a different
@@ -253,18 +165,10 @@ struct PersistenceSmokeTest {
             ).messages
         }
         // Identity.
-        try await store.upsertIdentity(id: owner, publicAddress: "dana-public", createdAt: at(1))
-        try await store.upsertIdentity(id: owner, publicAddress: "dana-public", createdAt: at(2))
+        try await store.insertIdentity(id: owner, publicAddress: "dana-public", createdAt: at(1))
         let known = try await store.knowsIdentity(id: owner, publicAddress: "dana-public")
         let unknown = try await store.knowsIdentity(id: "nobody", publicAddress: "nobody-public")
         precondition(known && !unknown)
-        var localName = try await store.localAdvertisedName(ownerIdentityID: owner)
-        precondition(localName == nil)
-        try await store.updateLocalAdvertisedName(ownerIdentityID: owner, name: "Dana")
-        localName = try await store.localAdvertisedName(ownerIdentityID: owner)
-        precondition(localName == "Dana")
-        let otherName = try await store.localAdvertisedName(ownerIdentityID: "alice")
-        precondition(otherName == nil, "a name belongs to one identity")
 
         // Peers.
         try await store.upsertPeer(
@@ -287,12 +191,6 @@ struct PersistenceSmokeTest {
         var friend = try await peer("friend")
         precondition(relay.alias == "Ridge relay" && relay.notifyWhenHeard)
         precondition(friend.alias == "Friend" && !friend.notifyWhenHeard)
-        // A fraction of a millisecond is cut off, not rounded.
-        let wasWatched = try await store.touchLastHeard(
-            ownerIdentityID: owner, publicAddress: "relay", at: at(20.0009)
-        )
-        relay = try await peer("relay")
-        precondition(wasWatched && !relay.notifyWhenHeard && relay.lastHeardAt == at(20))
 
         // Channels.
         let named = StoredChannel(
@@ -399,19 +297,12 @@ struct PersistenceSmokeTest {
         precondition(!messages.contains { $0.isGapPlaceholder })
         precondition(messages.contains { $0.isUnavailable })
 
-        // A stream's checkpoint, and what a resend of a message puts back
-        // on the air.
+        // What a resend of a message puts back on the air.
         try execute(path, """
-            INSERT INTO chat_stream_checkpoint
-                (owner_identity_id, conversation_address, next_id, epoch, updated_at_ms)
-                VALUES ('dana', 'friend', 5, 2, 1);
             INSERT INTO chat_outbound_archive
                 (owner_identity_id, conversation_address, message_id, fragment_index, payload)
                 VALUES ('dana', 'friend', 4, 0, x'010203'), ('dana', 'friend', 4, 1, x'0405');
             """)
-        var checkpoints = try await store.chatCheckpoints(ownerIdentityID: owner)
-        precondition(checkpoints.map(\.conversationAddress) == ["friend"])
-        precondition(checkpoints[0].nextId == 5 && checkpoints[0].epoch == 2)
         let frames = try await store.chatResendFrames(
             ownerIdentityID: owner, conversationAddress: "friend", sessionID: "720", handle: 1, wireID: 4
         )
@@ -424,10 +315,6 @@ struct PersistenceSmokeTest {
                 handle: 2, body: "Never released", outbound: true, createdAtMs: ms(74),
                 deliveryState: .undelivered
             ),
-            MobileStagedChatMessageRecord(
-                handle: 3, body: "Left pending", outbound: true, createdAtMs: ms(75),
-                deliveryState: .pending
-            ),
         ])
         try await store.removeFailedMessage(ownerIdentityID: owner, sessionID: "720", handle: 2)
         try await store.removeFailedMessage(ownerIdentityID: owner, sessionID: "700", handle: 1)
@@ -435,101 +322,13 @@ struct PersistenceSmokeTest {
         precondition(!messages.contains { $0.body == "Never released" })
         precondition(messages.contains { $0.body == "Hello" }, "only a failed message can be removed")
 
-        // What a previous process left pending never went out.
-        try await store.settleInterruptedDeliveries(ownerIdentityID: owner)
-        messages = try await transcript("friend")
-        precondition(messages.first { $0.body == "Left pending" }?.deliveryState == .undelivered)
-
-        // Device management cache.
-        let card = StoredManagementCard(
-            capabilities: Data([1, 2]), deviceVersion: "1.0", deviceModel: "T1000",
-            deviceName: "Ridge", fetchedAt: at(40)
-        )
-        try await store.saveManagementCard(ownerIdentityID: owner, publicAddress: "relay", card: card)
-        try await store.saveCachedProperties(
-            ownerIdentityID: owner, publicAddress: "relay", values: [1: Data([1]), 70: Data([7, 0])], at: at(41)
-        )
-        var readCard = try await store.managementCard(ownerIdentityID: owner, publicAddress: "relay")
-        let noCard = try await store.managementCard(ownerIdentityID: owner, publicAddress: "friend")
-        precondition(readCard == card && noCard == nil)
-        var properties = try await store.cachedProperties(
-            ownerIdentityID: owner, publicAddress: "relay", propertyIDs: [1, 70, 5]
-        )
-        precondition(properties == [
-            1: StoredCachedProperty(value: Data([1]), fetchedAt: at(41)),
-            70: StoredCachedProperty(value: Data([7, 0]), fetchedAt: at(41)),
-        ])
-        properties = try await store.cachedProperties(
-            ownerIdentityID: owner, publicAddress: "relay", propertyIDs: [70]
-        )
-        precondition(Array(properties.keys) == [70], "only what was asked for")
-        // Different firmware may hold different properties.
-        try await store.saveManagementCard(ownerIdentityID: owner, publicAddress: "relay", card: StoredManagementCard(
+        // The management card's stamp goes to the nearest millisecond on its
+        // way into the core. Rows already stored were written so.
+        let card = MobileStoredManagementCardRecord(StoredManagementCard(
             capabilities: Data([1, 2]), deviceVersion: "1.1", deviceModel: "T1000",
             deviceName: "Ridge", fetchedAt: at(42.0006)
         ))
-        properties = try await store.cachedProperties(
-            ownerIdentityID: owner, publicAddress: "relay", propertyIDs: [1, 70]
-        )
-        precondition(properties.isEmpty)
-        // This cache's stamps go to the nearest millisecond; a message's
-        // (below) drop the fraction. Rows already stored were written so.
-        readCard = try await store.managementCard(ownerIdentityID: owner, publicAddress: "relay")
-        let fetchedAtMilliseconds = readCard.map { ($0.fetchedAt.timeIntervalSince1970 * 1_000).rounded() }
-        precondition(fetchedAtMilliseconds == 1_780_000_042_001)
-        try await store.forgetManagementCache(ownerIdentityID: owner, publicAddress: "relay")
-        readCard = try await store.managementCard(ownerIdentityID: owner, publicAddress: "relay")
-        precondition(readCard == nil)
-
-        // Repeater listings.
-        let full = StoredPeerRepeaterEntry(
-            hint: Data([1, 2]), name: "North", rssiDBm: -90, snrQuarterDB: -12,
-            lastHeardMinutes: 65_535, latitude: 45.125, longitude: -122.25, locationPrecision: 3,
-            regionCodes: [Data([0x55, 0x53]), Data([1, 2])], reportedAt: at(50)
-        )
-        let bare = StoredPeerRepeaterEntry(
-            hint: Data([3, 4, 5]), name: nil, rssiDBm: nil, snrQuarterDB: nil,
-            lastHeardMinutes: nil, latitude: nil, longitude: nil, locationPrecision: nil,
-            regionCodes: [], reportedAt: at(50)
-        )
-        try await store.savePeerRepeaterPage(
-            ownerIdentityID: owner, publicAddress: "relay", entries: [full, bare], total: 5,
-            nextCursor: Data([9]), replacing: true, at: at(51)
-        )
-        var listing = try await store.peerRepeaterListing(ownerIdentityID: owner, publicAddress: "relay")
-        precondition(listing?.total == 5 && listing?.nextCursor == Data([9]) && listing?.asOf == at(51))
-        precondition(listing?.entries.count == 2)
-        precondition(listing?.entries.contains(full) == true && listing?.entries.contains(bare) == true)
-        let third = StoredPeerRepeaterEntry(
-            hint: Data([7, 8]), name: "South", rssiDBm: -70, snrQuarterDB: 20,
-            lastHeardMinutes: 0, latitude: nil, longitude: nil, locationPrecision: nil,
-            regionCodes: [], reportedAt: at(52)
-        )
-        try await store.savePeerRepeaterPage(
-            ownerIdentityID: owner, publicAddress: "relay", entries: [third], total: nil,
-            nextCursor: nil, replacing: false, at: at(53)
-        )
-        listing = try await store.peerRepeaterListing(ownerIdentityID: owner, publicAddress: "relay")
-        precondition(listing?.entries.count == 3 && listing?.nextCursor == nil && listing?.asOf == at(53))
-        let reports = try await store.allPeerRepeaterEntries(ownerIdentityID: owner)
-        precondition(reports.count == 3 && reports.allSatisfy { $0.reporterNodeID == relay.id })
-        precondition(reports.contains { $0.entry == third })
-        let noListing = try await store.peerRepeaterListing(ownerIdentityID: owner, publicAddress: "friend")
-        precondition(noListing == nil)
-
-        // Everything at once.
-        let records = try await store.applicationRecords(ownerIdentityID: owner)
-        precondition(Set(records.peers.map(\.publicAddress)) == ["relay", "friend"])
-        precondition(Set(records.channels.map(\.id)) == [named.id, secret.id])
-        precondition(records.conversations.map(\.id) == [direct])
-        precondition(Set(records.channelConversations.map(\.id)) == [general, hidden])
-        precondition(records.reports.count == 3)
-        let conversationsOnly = try await store.applicationRecords(
-            ownerIdentityID: owner, conversationsOnly: true
-        )
-        precondition(conversationsOnly.conversations.map(\.id) == [direct])
-        precondition(Set(conversationsOnly.channels.map(\.id)) == [named.id, secret.id])
-        precondition(conversationsOnly.peers.isEmpty && conversationsOnly.reports.isEmpty)
+        precondition(card.fetchedAtMs == 1_780_000_042_001)
 
         // Staged transcripts.
         try stage("friend", session: "staging-smoke", [
@@ -563,13 +362,11 @@ struct PersistenceSmokeTest {
         let after = try await store.chatMessageCount(ownerIdentityID: owner, conversationAddress: "general-address")
         precondition(after == before + 25)
 
-        // Clearing keeps the conversation and its checkpoint; deleting takes
-        // the conversation.
+        // Clearing keeps the conversation; deleting takes it.
         try await store.clearConversationMessages(ownerIdentityID: owner, conversationAddress: "friend")
         messages = try await transcript("friend")
-        checkpoints = try await store.chatCheckpoints(ownerIdentityID: owner)
         directs = try await store.listDirectConversations(ownerIdentityID: owner)
-        precondition(messages.isEmpty && checkpoints.count == 1 && directs.map(\.id) == [direct])
+        precondition(messages.isEmpty && directs.map(\.id) == [direct])
         let clearedFrames = try await store.chatResendFrames(
             ownerIdentityID: owner, conversationAddress: "friend", sessionID: "720", handle: 1, wireID: 4
         )
@@ -594,13 +391,18 @@ struct PersistenceSmokeTest {
     ) async throws {
         let reopened = try SQLiteApplicationStore(path: path)
         for owner in ["alice", "dana"] {
-            let written = try await store.applicationRecords(ownerIdentityID: owner)
-            let read = try await reopened.applicationRecords(ownerIdentityID: owner)
-            precondition(!written.peers.isEmpty)
-            precondition(read.peers == written.peers && read.channels == written.channels)
-            precondition(read.conversations == written.conversations)
-            precondition(read.channelConversations == written.channelConversations)
-            precondition(read.reports == written.reports)
+            let writtenPeers = try await store.listNodes(ownerIdentityID: owner)
+            let readPeers = try await reopened.listNodes(ownerIdentityID: owner)
+            precondition(!writtenPeers.isEmpty && readPeers == writtenPeers)
+            let writtenChannels = try await store.channels(ownerIdentityID: owner)
+            let readChannels = try await reopened.channels(ownerIdentityID: owner)
+            precondition(readChannels == writtenChannels)
+            let writtenDirects = try await store.listDirectConversations(ownerIdentityID: owner)
+            let readDirects = try await reopened.listDirectConversations(ownerIdentityID: owner)
+            precondition(readDirects == writtenDirects)
+            let writtenGroups = try await store.listChannelConversations(ownerIdentityID: owner)
+            let readGroups = try await reopened.listChannelConversations(ownerIdentityID: owner)
+            precondition(readGroups == writtenGroups)
         }
         let page = try await store.chatMessagePage(
             ownerIdentityID: "dana", conversationAddress: "general-address", newest: 100
@@ -613,10 +415,11 @@ struct PersistenceSmokeTest {
         let version = try await reopened.schemaVersion()
         try await reopened.eraseAllContent()
         let erasedVersion = try await store.schemaVersion()
-        let erased = try await store.applicationRecords(ownerIdentityID: "alice")
+        let erasedPeers = try await store.listNodes(ownerIdentityID: "alice")
+        let erasedConversations = try await store.listDirectConversations(ownerIdentityID: "alice")
         let erasedIdentity = try await store.knowsIdentity(id: "alice", publicAddress: "alice-public")
         precondition(erasedVersion == version)
-        precondition(erased.peers.isEmpty && erased.conversations.isEmpty && !erasedIdentity)
+        precondition(erasedPeers.isEmpty && erasedConversations.isEmpty && !erasedIdentity)
     }
 
     private static func node(_ nodes: [StoredNode], _ address: String) -> StoredNode {

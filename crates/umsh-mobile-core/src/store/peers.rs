@@ -226,7 +226,6 @@ impl MobileAppStore {
         public_address: String,
         peer: MobilePeerUpsertRecord,
     ) -> Result<(), MobileStoreError> {
-        let _counted = self.wrote_content();
         upsert_peer(
             &self.connection(),
             &owner_identity_id,
@@ -273,7 +272,6 @@ impl MobileAppStore {
         public_address: String,
         alias: Option<String>,
     ) -> Result<(), MobileStoreError> {
-        let _counted = self.wrote_content();
         self.connection().execute(
             "UPDATE node SET alias = ?
             WHERE owner_identity_id = ? AND public_address = ?",
@@ -288,7 +286,6 @@ impl MobileAppStore {
         public_address: String,
         is_favorite: bool,
     ) -> Result<(), MobileStoreError> {
-        let _counted = self.wrote_content();
         // Favoriting implies saving: the star lives in the main list, so a
         // favorite hidden in the transient tier would be unreachable.
         self.connection().execute(
@@ -307,7 +304,6 @@ impl MobileAppStore {
         owner_identity_id: String,
         public_address: String,
     ) -> Result<(), MobileStoreError> {
-        let _counted = self.wrote_content();
         self.connection().execute(
             "UPDATE node SET is_saved = 1
             WHERE owner_identity_id = ? AND public_address = ?",
@@ -326,7 +322,6 @@ impl MobileAppStore {
         owner_identity_id: String,
         public_address: String,
     ) -> Result<(), MobileStoreError> {
-        let _counted = self.wrote_content();
         self.connection().execute(
             "UPDATE node SET is_saved = 0, is_favorite = 0, alias = NULL
             WHERE owner_identity_id = ? AND public_address = ?
@@ -346,7 +341,6 @@ impl MobileAppStore {
         owner_identity_id: String,
         public_address: String,
     ) -> Result<bool, MobileStoreError> {
-        let _counted = self.wrote_content();
         let changes = self.connection().execute(
             "DELETE FROM node
             WHERE owner_identity_id = ?1 AND public_address = ?2
@@ -363,7 +357,6 @@ impl MobileAppStore {
     /// the companion radio, rows on the device identity, rows with a
     /// conversation, and rows carrying a pending watch all stay.
     pub fn clear_transient_peers(&self, owner_identity_id: String) -> Result<(), MobileStoreError> {
-        let _counted = self.wrote_content();
         self.connection().execute(
             "DELETE FROM node
             WHERE owner_identity_id = ?1 AND is_saved = 0 AND on_dev_identity = 0
@@ -434,7 +427,6 @@ impl MobileAppStore {
         public_address: String,
         is_on_device_identity: bool,
     ) -> Result<(), MobileStoreError> {
-        let _counted = self.wrote_content();
         let connection = self.connection();
         if is_on_device_identity {
             mark_on_device_identity(&connection, &owner_identity_id, &public_address)?;

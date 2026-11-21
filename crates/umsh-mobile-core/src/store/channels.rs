@@ -311,7 +311,6 @@ impl MobileAppStore {
         id: &str,
         joined_device: bool,
     ) -> Result<(), MobileStoreError> {
-        let _counted = self.wrote_content();
         let id = channel_id(id)?;
         self.connection().execute(
             "UPDATE channel SET joined_device = ? WHERE id = ?",

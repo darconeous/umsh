@@ -772,8 +772,10 @@ public protocol MobileAppCoreProtocol: AnyObject, Sendable {
      * Bring `identity` up: the host key to the radio, the mesh session,
      * the store's repairs, channels and chat, held paths, and the
      * settings; then the radio's traffic. Resolves once running, or once
-     * failed. The session takes the secret out of `identity`, so a failed
-     * start needs a fresh unlock.
+     * failed. Running is reported with the channels, the conversations
+     * and every transcript changed, for what the start wrote. The session
+     * takes the secret out of `identity`, so a failed start needs a fresh
+     * unlock.
      */
     func start(identity: MobileIdentity) async throws
 
@@ -843,7 +845,8 @@ public protocol MobileAppCoreProtocol: AnyObject, Sendable {
 
     /**
      * Keep the name this phone advertises, trimmed; empty clears it. The
-     * session answers with it from then on.
+     * session answers with it from then on. Kept while idle or failed,
+     * when an owner is set, for the next start to push.
      */
     func setAdvertisedName(name: String) async throws
 
@@ -1266,8 +1269,10 @@ open func setPolicy(policy: MobileAppPolicyRecord)async throws   {
      * Bring `identity` up: the host key to the radio, the mesh session,
      * the store's repairs, channels and chat, held paths, and the
      * settings; then the radio's traffic. Resolves once running, or once
-     * failed. The session takes the secret out of `identity`, so a failed
-     * start needs a fresh unlock.
+     * failed. Running is reported with the channels, the conversations
+     * and every transcript changed, for what the start wrote. The session
+     * takes the secret out of `identity`, so a failed start needs a fresh
+     * unlock.
      */
 open func start(identity: MobileIdentity)async throws   {
     return
@@ -1499,7 +1504,8 @@ open func retryClaimedRadioRevocation()async throws   {
 
     /**
      * Keep the name this phone advertises, trimmed; empty clears it. The
-     * session answers with it from then on.
+     * session answers with it from then on. Kept while idle or failed,
+     * when an owner is set, for the next start to push.
      */
 open func setAdvertisedName(name: String)async throws   {
     return
@@ -37367,7 +37373,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_set_policy() != 38232) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_start() != 49886) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_start() != 44232) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_status() != 14234) {
@@ -37403,7 +37409,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_retry_claimed_radio_revocation() != 17580) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_set_advertised_name() != 23431) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_set_advertised_name() != 1740) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_set_meet_wanted() != 51493) {

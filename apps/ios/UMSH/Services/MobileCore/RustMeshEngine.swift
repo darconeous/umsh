@@ -2,18 +2,8 @@ import Foundation
 import UMSHMobileCore
 
 actor RustMeshEngine: MeshEngine {
+    /// The identity last unlocked, until the app core takes it to start.
     private var localIdentity: MobileIdentity?
-    private var mobileMeshSession: MobileMeshSession?
-    func renderNodeHint(_ bytes: Data) throws -> MeshNodeHint {
-        do {
-            let record = try UMSHMobileCore.renderNodeHint(bytes: bytes)
-            return MeshNodeHint(bytes: record.bytes, text: record.text)
-        } catch MobileError.InvalidNodeHintLength {
-            throw MeshEngineError.invalidNodeHint
-        } catch {
-            throw MeshEngineError.coreFailure
-        }
-    }
 
     func renderRouterHint(_ bytes: Data) throws -> MeshRouterHint {
         do {
@@ -59,56 +49,11 @@ actor RustMeshEngine: MeshEngine {
         }
     }
 
-    func inspectNodeURI(_ uri: String) throws -> MeshNodeURIPreview {
-        do {
-            return Self.preview(from: try UMSHMobileCore.inspectNodeUri(uri: uri))
-        } catch let error as MobileError {
-            throw Self.inputError(error)
-        } catch {
-            throw MeshEngineError.coreFailure
-        }
-    }
-
     func inspectPeerIdentity(_ input: String) throws -> MeshNodeURIPreview {
         do {
             return Self.preview(from: try UMSHMobileCore.inspectPeerIdentity(input: input))
         } catch let error as MobileError {
             throw Self.inputError(error)
-        } catch {
-            throw MeshEngineError.coreFailure
-        }
-    }
-
-    func decodeNodeIdentity(address: String, payload: Data) throws -> MeshNodeIdentity {
-        do {
-            let record = try UMSHMobileCore.decodeNodeIdentity(address: address, payload: payload)
-            return Self.identity(from: record)
-        } catch MobileError.InvalidIdentityData {
-            throw MeshEngineError.invalidIdentityData
-        } catch let error as MobileError {
-            throw Self.inputError(error)
-        } catch {
-            throw MeshEngineError.coreFailure
-        }
-    }
-
-    func inspectChannelURI(_ uri: String) throws -> MeshChannelPreview {
-        do {
-            return Self.channelPreview(from: try UMSHMobileCore.inspectChannelUri(uri: uri))
-        } catch let error as MobileError {
-            throw Self.inputError(error, invalidURI: .invalidChannelURI)
-        } catch {
-            throw MeshEngineError.coreFailure
-        }
-    }
-
-    func inspectChannelName(_ name: String) throws -> MeshChannelPreview {
-        do {
-            return Self.channelPreview(from: try UMSHMobileCore.inspectChannelName(name: name))
-        } catch MobileError.ChannelNameNotAscii {
-            throw MeshEngineError.channelNameNotASCII
-        } catch MobileError.ChannelNameTooLong {
-            throw MeshEngineError.channelNameTooLong
         } catch {
             throw MeshEngineError.coreFailure
         }
@@ -125,14 +70,6 @@ actor RustMeshEngine: MeshEngine {
     func deriveChannelID(key: Data) throws -> Data {
         do {
             return try UMSHMobileCore.deriveChannelId(key: key)
-        } catch {
-            throw MeshEngineError.coreFailure
-        }
-    }
-
-    func channelIdentifier(key: Data) throws -> Data {
-        do {
-            return try UMSHMobileCore.channelIdentifier(key: key)
         } catch {
             throw MeshEngineError.coreFailure
         }
@@ -212,7 +149,7 @@ actor RustMeshEngine: MeshEngine {
         }
     }
 
-    private static func channelPreview(from record: ChannelPreviewRecord) -> MeshChannelPreview {
+    static func channelPreview(from record: ChannelPreviewRecord) -> MeshChannelPreview {
         MeshChannelPreview(
             kind: {
                 switch record.kind {
@@ -242,7 +179,7 @@ actor RustMeshEngine: MeshEngine {
         )
     }
 
-    private static func identity(from record: NodeIdentityRecord) -> MeshNodeIdentity {
+    static func identity(from record: NodeIdentityRecord) -> MeshNodeIdentity {
         MeshNodeIdentity(
             roleCode: record.roleCode,
             capabilityBits: MeshNodeCapabilities(rawValue: record.capabilityBits),
@@ -268,7 +205,6 @@ actor RustMeshEngine: MeshEngine {
             let identity = try MobileIdentity.unlock(secretKey: secretKey)
             let record = identity.publicIdentity()
             localIdentity = identity
-            mobileMeshSession = nil
             return MeshPublicIdentity(
                 canonicalAddress: record.canonicalAddress,
                 hint: MeshNodeHint(bytes: record.hint.bytes, text: record.hint.text)
@@ -282,31 +218,12 @@ actor RustMeshEngine: MeshEngine {
 
     func lockIdentity() {
         localIdentity = nil
-        // The session is built on the identity, so it goes with it; the
-        // next `meshSession` call answers nil until something unlocks
-        // again, which is what makes the counter files safe to delete.
-        mobileMeshSession = nil
     }
 
-    func meshSession(fileManager: FileManager = .default) async throws -> MobileMeshSession? {
-        guard let localIdentity else { return nil }
-        if let mobileMeshSession { return mobileMeshSession }
-        guard let applicationSupport = fileManager.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        ).first else {
-            throw MeshEngineError.coreFailure
-        }
-        let root = applicationSupport
-            .appendingPathComponent("UMSH", isDirectory: true)
-            .appendingPathComponent("CounterReservations", isDirectory: true)
-        do {
-            let store = try MobileCounterStore(rootDirectory: root.path)
-            let session = try await MobileMeshSession.start(identity: localIdentity, counterStore: store)
-            mobileMeshSession = session
-            return session
-        } catch {
-            throw MeshEngineError.coreFailure
-        }
+    /// The identity last unlocked, handed out once: starting the app core
+    /// consumes it, so each start unlocks again.
+    func takeIdentity() -> MobileIdentity? {
+        defer { localIdentity = nil }
+        return localIdentity
     }
 }

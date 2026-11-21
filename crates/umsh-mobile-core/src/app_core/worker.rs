@@ -97,6 +97,19 @@ pub(super) struct Worker {
     /// Sessions start on virtual time in tests that ask for it.
     #[cfg(test)]
     pub(super) virtual_time: bool,
+    #[cfg(test)]
+    pub(super) hooks: Arc<TestHooks>,
+}
+
+/// Where tests hold the worker up and watch what it pushed.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct TestHooks {
+    /// When set, `start` takes a permit once it is starting, before it
+    /// opens anything.
+    pub(crate) start_gate: Option<tokio::sync::Semaphore>,
+    /// Each name pushed to a session for its group messages, oldest first.
+    pub(crate) pushed_names: std::sync::Mutex<Vec<String>>,
 }
 
 /// A command counted as running until it drops.
@@ -113,8 +126,10 @@ impl Worker {
         self.shared.snapshot().lifecycle
     }
 
-    /// Count a command as running, when the lifecycle takes commands.
-    pub(super) fn begin_command(&self) -> Result<InFlight, MobileAppError> {
+    /// Count a command as running, when the lifecycle takes commands. One
+    /// made while starting waits for the start to end, as `stop` does.
+    pub(super) async fn begin_command(&self) -> Result<InFlight, MobileAppError> {
+        self.start_settled().await;
         match self.lifecycle() {
             MobileAppLifecycle::Running => {
                 self.in_flight.send_modify(|count| *count += 1);
@@ -125,6 +140,15 @@ impl Worker {
             MobileAppLifecycle::Idle
             | MobileAppLifecycle::Starting
             | MobileAppLifecycle::Failed { .. } => Err(MobileAppError::NotRunning),
+        }
+    }
+
+    /// Wait out a start under way. `start` holds the transition lock from
+    /// before it enters starting until it has left it, so once the lock is
+    /// had the start has ended, run or failed.
+    pub(super) async fn start_settled(&self) {
+        if self.lifecycle() == MobileAppLifecycle::Starting {
+            drop(self.transitions.lock().await);
         }
     }
 
@@ -183,6 +207,8 @@ pub(super) struct WorkerParts {
     pub(super) signals: Arc<Signals>,
     #[cfg(test)]
     pub(super) virtual_time: bool,
+    #[cfg(test)]
+    pub(super) hooks: Arc<TestHooks>,
 }
 
 /// Run the worker until `stop` finishes it, or until the object is dropped,
@@ -222,6 +248,8 @@ pub(super) fn run(
                 revocation_done: Notify::new(),
                 #[cfg(test)]
                 virtual_time: parts.virtual_time,
+                #[cfg(test)]
+                hooks: parts.hooks,
             });
             tokio::task::spawn_local(worker.clone().pump());
             tokio::task::spawn_local(worker.clone().run_policy());

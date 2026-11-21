@@ -245,16 +245,20 @@ impl Worker {
         if self.lifecycle() != MobileAppLifecycle::Running {
             return;
         }
-        let stale = {
+        let (stale, unseen_write) = {
             let cache = self.channels.borrow();
-            cache.incomplete || cache.seen_writes != Some(self.store.content_writes())
+            let writes = self.store.content_writes();
+            (
+                cache.incomplete || cache.seen_writes != Some(writes),
+                cache.seen_writes.is_some_and(|seen| seen != writes),
+            )
         };
+        if unseen_write {
+            // A channel write native code made without `content_changed()`:
+            // late, not wrong.
+            log::debug!("the store changed without content_changed()");
+        }
         if stale {
-            if self.channels.borrow().seen_writes.is_some() {
-                // A write native code made without `content_changed()`:
-                // late, not wrong.
-                log::debug!("the store changed without content_changed()");
-            }
             self.refresh_channels().await;
         }
         let state = self.shared.snapshot().radio.clone();

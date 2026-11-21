@@ -1,10 +1,15 @@
 //! `start`, `erase`, `stop` and `use_radio`, checked by the state they
 //! leave.
 
+use std::sync::Arc;
 use std::time::Duration;
 
-use super::test_support::{Core, identity};
-use super::{MobileAppError, MobileAppLifecycle, MobileAppStartFailure};
+use super::test_support::{Core, NOW_MS, identity};
+use super::worker::TestHooks;
+use super::{
+    MobileAppCore, MobileAppCoreListener, MobileAppError, MobileAppLifecycle,
+    MobileAppStartFailure, Options,
+};
 use crate::radio_driver::{MobileRadioError, MobileRadioPhase};
 use crate::store::MobileStoredChannelKind;
 use crate::test_support::{eventually, linked_driver};
@@ -111,9 +116,12 @@ async fn erase_takes_the_identity_down_and_another_starts() {
         .unwrap();
     let counters = core.counter_directory();
     eventually("the counters reserved", || counters.exists());
+    core.core.poll_changes();
 
     core.core.erase(false).await.unwrap();
     assert_eq!(core.lifecycle(), MobileAppLifecycle::Idle);
+    // The old owner's claims no longer read.
+    assert!(core.core.poll_changes().claimed_radios_changed);
     assert_eq!(core.core.state(true), Err(MobileAppError::NoOwner));
     assert!(core.vault.accounts().is_empty());
     assert!(!core.counter_directory().exists());
@@ -131,6 +139,48 @@ async fn erase_takes_the_identity_down_and_another_starts() {
     let next = core.start(4).await;
     assert_ne!(next.canonical_address, me.canonical_address);
     assert_eq!(core.vault.accounts().len(), 2);
+}
+
+/// A listener that drains each batch the moment it is told of one, and
+/// reads the stranded radios whenever their flag is up.
+#[derive(Default)]
+struct EagerReader {
+    core: std::sync::OnceLock<std::sync::Weak<MobileAppCore>>,
+    stranded: std::sync::Mutex<Vec<Result<usize, MobileAppError>>>,
+}
+
+impl MobileAppCoreListener for EagerReader {
+    fn on_changes_pending(&self) {
+        let Some(core) = self.core.get().and_then(std::sync::Weak::upgrade) else {
+            return;
+        };
+        if core.poll_changes().claimed_radios_changed {
+            let read = core.stranded_radios().map(|radios| radios.len());
+            self.stranded.lock().unwrap().push(read);
+        }
+    }
+}
+
+#[tokio::test]
+async fn lists_raised_while_erasing_are_raised_again_once_idle() {
+    let core = Core::new();
+    let me = core.start(3).await;
+    let radio = identity(4).public_identity().canonical_address;
+    core.store
+        .record_claimed_radio(me.canonical_address, radio, None, NOW_MS)
+        .unwrap();
+    let reader = Arc::new(EagerReader::default());
+    let _ = reader.core.set(Arc::downgrade(&core.core));
+    core.core.set_listener(reader.clone());
+    core.core.poll_changes();
+
+    core.core.erase(false).await.unwrap();
+    // The last read of the list is the one that finds no owner, not one
+    // refused while erasing.
+    assert_eq!(
+        reader.stranded.lock().unwrap().last(),
+        Some(&Err(MobileAppError::NoOwner))
+    );
 }
 
 #[tokio::test]
@@ -378,4 +428,215 @@ async fn an_advert_goes_once_its_interval_and_scatter_have_passed() {
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
+}
+
+/// A core whose `start` holds once it is starting, until a permit is
+/// added to its gate.
+fn gated() -> (Core, Arc<TestHooks>) {
+    let hooks = Arc::new(TestHooks {
+        start_gate: Some(tokio::sync::Semaphore::new(0)),
+        ..TestHooks::default()
+    });
+    let core = Core::with_options(Options {
+        hooks: hooks.clone(),
+        ..Options::default()
+    });
+    (core, hooks)
+}
+
+/// Start `seed`'s identity in the background, and wait until it is held
+/// at the gate.
+async fn start_held(core: &Core, seed: u8) -> tokio::task::JoinHandle<Result<(), MobileAppError>> {
+    let app = core.core.clone();
+    let starting = tokio::spawn(async move { app.start(identity(seed)).await });
+    core.until("starting", |core| {
+        core.status().unwrap().lifecycle == MobileAppLifecycle::Starting
+    })
+    .await;
+    starting
+}
+
+/// Give the spawned calls time to reach the worker, and check that each is
+/// still waiting there.
+async fn still_waiting<T>(calls: &[&tokio::task::JoinHandle<T>]) {
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(calls.iter().all(|call| !call.is_finished()));
+}
+
+fn pushed_names(hooks: &TestHooks) -> Vec<String> {
+    hooks.pushed_names.lock().unwrap().clone()
+}
+
+#[tokio::test]
+async fn a_command_made_while_starting_runs_once_the_start_is_done() {
+    let (core, hooks) = gated();
+    let starting = start_held(&core, 3).await;
+    let owner = identity(3).public_identity().canonical_address;
+
+    let app = core.core.clone();
+    let session = tokio::spawn(async move { app.mesh_session().await });
+    let app = core.core.clone();
+    let refreshed = tokio::spawn(async move { app.content_changed().await });
+    let app = core.core.clone();
+    let named = tokio::spawn(async move { app.set_advertised_name(" Ridge Camp ".into()).await });
+    still_waiting(&[&refreshed, &named]).await;
+    assert!(!session.is_finished());
+
+    hooks.start_gate.as_ref().unwrap().add_permits(1);
+    starting.await.unwrap().unwrap();
+    let session = session.await.unwrap().unwrap();
+    assert_eq!(
+        session.node_public_key(),
+        crate::public_identity_bytes(owner.clone()).unwrap()
+    );
+    refreshed.await.unwrap().unwrap();
+    named.await.unwrap().unwrap();
+    assert_eq!(
+        core.store.local_advertised_name(owner).unwrap().as_deref(),
+        Some("Ridge Camp")
+    );
+    // The session carries the name, whichever push came last.
+    assert_eq!(
+        pushed_names(&hooks).last().map(String::as_str),
+        Some("Ridge Camp")
+    );
+}
+
+#[tokio::test]
+async fn lists_read_while_starting_are_raised_again_once_running() {
+    let (core, hooks) = gated();
+    let starting = start_held(&core, 3).await;
+    // A listener that read everything while the start held, before the
+    // built-in channels and the public conversation were written.
+    let early = core.core.poll_changes();
+    assert!(early.channels_changed);
+    assert!(core.core.state(true).unwrap().channels.is_empty());
+
+    hooks.start_gate.as_ref().unwrap().add_permits(1);
+    starting.await.unwrap().unwrap();
+    let running = core.core.poll_changes();
+    assert_eq!(running.lifecycle, Some(MobileAppLifecycle::Running));
+    assert!(running.channels_changed);
+    assert!(running.conversations_changed);
+    assert!(running.all_transcripts);
+    assert_eq!(core.core.state(true).unwrap().channels.len(), 2);
+}
+
+#[tokio::test]
+async fn a_command_made_while_a_start_fails_is_not_running() {
+    let (core, hooks) = gated();
+    let owner = identity(3).public_identity().canonical_address;
+    // A returning identity, whose row the store already holds.
+    core.store
+        .upsert_identity(owner.clone(), owner.clone(), 1)
+        .unwrap();
+    // A file where the counter directory goes.
+    std::fs::write(core.counter_directory(), b"in the way").unwrap();
+    let starting = start_held(&core, 3).await;
+
+    let app = core.core.clone();
+    let session = tokio::spawn(async move { app.mesh_session().await });
+    let app = core.core.clone();
+    let advertised = tokio::spawn(async move { app.advertise_identity().await });
+    let app = core.core.clone();
+    let named = tokio::spawn(async move { app.set_advertised_name("Ridge Camp".into()).await });
+    still_waiting(&[&advertised, &named]).await;
+    assert!(!session.is_finished());
+
+    hooks.start_gate.as_ref().unwrap().add_permits(1);
+    assert_eq!(
+        starting.await.unwrap(),
+        Err(MobileAppError::StartFailed {
+            reason: MobileAppStartFailure::Session
+        })
+    );
+    assert_eq!(
+        session.await.unwrap().err(),
+        Some(MobileAppError::NotRunning)
+    );
+    assert_eq!(advertised.await.unwrap(), Err(MobileAppError::NotRunning));
+    // Failed with an owner, the name is still kept for the next start.
+    named.await.unwrap().unwrap();
+    assert_eq!(
+        core.store.local_advertised_name(owner).unwrap().as_deref(),
+        Some("Ridge Camp")
+    );
+    assert!(pushed_names(&hooks).is_empty());
+}
+
+#[tokio::test]
+async fn a_name_kept_while_idle_is_the_one_the_start_pushes() {
+    let hooks = Arc::new(TestHooks::default());
+    let core = Core::with_options(Options {
+        hooks: hooks.clone(),
+        ..Options::default()
+    });
+    assert_eq!(
+        core.core.set_advertised_name("Ridge Camp".into()).await,
+        Err(MobileAppError::NoOwner)
+    );
+    let owner = identity(3).public_identity().canonical_address;
+    core.store
+        .upsert_identity(owner.clone(), owner.clone(), 1)
+        .unwrap();
+    core.core.set_owner(Some(owner.clone())).unwrap();
+    core.core
+        .set_advertised_name("  Ridge Camp \n".into())
+        .await
+        .unwrap();
+    assert_eq!(
+        core.store
+            .local_advertised_name(owner.clone())
+            .unwrap()
+            .as_deref(),
+        Some("Ridge Camp")
+    );
+    // Nothing runs to push it to.
+    assert!(pushed_names(&hooks).is_empty());
+
+    core.start(3).await;
+    assert_eq!(pushed_names(&hooks), ["Ridge Camp"]);
+}
+
+#[tokio::test]
+async fn a_name_kept_before_the_identity_has_a_row_is_the_one_the_start_pushes() {
+    let hooks = Arc::new(TestHooks::default());
+    let core = Core::with_options(Options {
+        hooks: hooks.clone(),
+        ..Options::default()
+    });
+    // Never started: the store has no row for the owner yet.
+    let owner = identity(3).public_identity().canonical_address;
+    core.core.set_owner(Some(owner.clone())).unwrap();
+    core.core
+        .set_advertised_name("Ridge Camp".into())
+        .await
+        .unwrap();
+    assert_eq!(
+        core.store
+            .local_advertised_name(owner.clone())
+            .unwrap()
+            .as_deref(),
+        Some("Ridge Camp")
+    );
+
+    // A start that fails before its repairs leaves the name where it was.
+    std::fs::write(core.counter_directory(), b"in the way").unwrap();
+    assert!(core.core.start(identity(3)).await.is_err());
+    core.core
+        .set_advertised_name("Summit Camp".into())
+        .await
+        .unwrap();
+    assert_eq!(
+        core.store
+            .local_advertised_name(owner.clone())
+            .unwrap()
+            .as_deref(),
+        Some("Summit Camp")
+    );
+    assert!(pushed_names(&hooks).is_empty());
+
+    std::fs::remove_file(core.counter_directory()).unwrap();
+    core.start(3).await;
+    assert_eq!(pushed_names(&hooks), ["Summit Camp"]);
 }

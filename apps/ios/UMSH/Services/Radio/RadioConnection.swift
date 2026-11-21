@@ -1,69 +1,15 @@
 import Foundation
 import UMSHMobileCore
 
+/// A companion radio's transport and the plain commands it takes.
+///
+/// The mesh is not here: the app core holds the radio's driver and runs the
+/// mesh session over it. What stays is the link itself—discovery,
+/// connecting, the picker—and the commands a person gives the radio.
 protocol RadioConnection: AnyObject, Sendable {
-    func snapshots() async -> AsyncStream<RadioSnapshot>
-    /// What the core's stored chat changed, as it changes.
-    func chatChanges() async -> AsyncStream<MobileChatChangesRecord>
-    func advertisementEvents() async -> AsyncStream<RadioAdvertisementEvent>
-    /// Every frame the mesh accepted, reported as presence only. This is the
-    /// sole signal a beacon produces, so it is what keeps "last heard" honest
-    /// for nodes that are reachable but have nothing to say.
-    func peerHeardEvents() async -> AsyncStream<RadioPeerHeardEvent>
-    /// The node hints of the addresses the phone answers to besides its own,
-    /// one per session with forward secrecy: the current set first, then
-    /// each change.
-    func localDestinationHints() async -> AsyncStream<[Data]>
-    /// The addresses of the direct conversations whose next message goes
-    /// under a session with forward secrecy: the current set first, then
-    /// each change.
-    func forwardSecretConversations() async -> AsyncStream<Set<String>>
-    /// The device address of each radio that confirmed it let go of this
-    /// phone's host key.
-    func hostReleases() async -> AsyncStream<String>
-    /// Add Peer's contact exchange: the current state first, then each
-    /// change. Nil while no mesh session is installed.
-    func meetStates() async -> AsyncStream<MobileMeetStateRecord?>
-    /// Open Add Peer's contact exchange under a fresh session key, ending
-    /// any attempt in progress; Try again and Not now open it again.
-    /// `model` is this phone's platform id (`platforms.json`).
-    func openMeet(model: UInt16) async throws
-    func closeMeet() async throws
-    /// Ask the device listed as `device` to exchange. Returns whether the
-    /// ask went out.
-    func askToExchange(device: UInt32) async throws -> Bool
-    func answerExchange(accept: Bool) async throws
-    /// The holder pressed Same (`true`) or Different.
-    func confirmCode(same: Bool) async throws
-    func cancelExchange() async throws
-    func advertiseIdentity(name: String?) async throws
-    /// The same advertisement, sent because the phone's own interval came
-    /// round rather than because someone asked for it. Reaches only direct
-    /// neighbours, since a restatement on a timer does not need to cross
-    /// the mesh the way an introduction does.
-    func advertiseIdentityScheduled(name: String?) async throws
-    /// Broadcast an empty beacon: it publishes the path back to this
-    /// phone rather than who this phone is, for a fraction of the airtime.
-    func sendBeacon() async throws
-    /// Set the position this phone's identity carries, already reduced to
-    /// the disclosed cell, or nil to stop sharing one. Reaches live
-    /// identity payloads—advertisements and Identity Request replies—
-    /// and never the durable QR/URI bundle. Best-effort, like
-    /// discoverability: the value is reapplied on every session install.
-    func setAdvertisedLocation(_ location: MobileMeshSharedLocationRecord?) async
-    /// Set whether this phone answers nearby nodes' Identity Requests with
-    /// its own identity, and the display name those replies carry.
-    /// Best-effort: the preference is reapplied on every session install.
-    func setPhoneDiscoverable(_ enabled: Bool, name: String?) async
-    /// Set how far what this phone sends may travel: `defaultHops` is the
-    /// ceiling on messages, pings, identity and management requests, and a
-    /// manual advertisement, and what a channel without a ceiling of its
-    /// own uses; `beaconHops` is the budget on a scheduled beacon.
-    /// Best-effort: the preference is reapplied on every session install.
-    func setFloodHops(defaultHops: UInt8, beaconHops: UInt8) async
-    func signIdentityBundle(name: String?) async throws -> Data
-    func useHostIdentity(_ identity: MeshPublicIdentity?) async throws
-    func useMeshSession(_ session: MobileMeshSession?) async
+    /// The driver the app core holds, or `nil` for a connection with no
+    /// radio behind it.
+    var radioDriver: MobileRadioDriver? { get }
     func autoConnect() async
     func reconnect() async
     func connect() async throws
@@ -89,7 +35,6 @@ protocol RadioConnection: AnyObject, Sendable {
     /// comes back is the same radio.
     func reboot() async throws
     func enterDfu(mode: UlcpDfuMode) async throws
-    func enterRemoteDfu(peerAddress: String, mode: UlcpDfuMode) async throws
     /// Ask the radio to announce itself now (`CMD_ANNOUNCE`)—an
     /// advertisement or a beacon, outside either schedule. The radio
     /// answers once it has the announcement queued; channel access and
@@ -110,14 +55,6 @@ protocol RadioConnection: AnyObject, Sendable {
     /// the radio ends it on a button press or its own deadline, reported
     /// back through `RadioSnapshot.alert`.
     func setAlert(_ state: RadioAlertState) async throws
-    /// Set the radio's wall clock (`PROP_TIME`), or clear it back to
-    /// unknown with `nil`.
-    ///
-    /// Live state, never saved: an epoch written to flash comes back
-    /// arbitrarily wrong, since nothing bounds how long a radio spends
-    /// powered off. The time *zone* is saved configuration and travels
-    /// with a device-configuration write instead.
-    func setTime(epochSeconds: UInt32?) async throws
     func refresh() async throws -> RadioSnapshot
     /// Sample where the radio is, and how well it knows.
     ///
@@ -131,28 +68,6 @@ protocol RadioConnection: AnyObject, Sendable {
     ///
     /// Throws on a radio without `CAP_GNSS`, which has nothing to sample.
     func refreshPositioning() async throws -> RadioSnapshot
-    func configure(_ settings: RadioSettings) async throws
-    /// Apply and persist the radio's time zone and positioning policy.
-    ///
-    /// Separate from `configure` because it touches the radio's own
-    /// domain rather than its PHY, and separate from the commissioning
-    /// path because changing where a tethered radio's receiver stands has
-    /// no business restating that radio's role or forwarding policy.
-    /// Each argument must be present exactly when the radio advertises
-    /// the matching capability.
-    func configurePositioning(
-        gnss: UlcpGnssSettingsRecord?,
-        timeZoneRule: String?,
-        time24h: Bool?
-    ) async throws
-    /// Apply and persist what the radio announces on its own schedule.
-    ///
-    /// Separate from `configurePositioning` for the same reason that one
-    /// is separate from `configure`: it is its own decision, and a phone
-    /// changing how often its radio speaks has no business restating
-    /// anything else. Must be present exactly when the radio advertises
-    /// `CAP_ADVERT`.
-    func configureAdvertising(_ advert: UlcpAdvertSettingsRecord?) async throws
     /// Store a peer public key on the radio's device identity
     /// (`PROP_DEV_PEERS`), persisting it with a chained save. Idempotent:
     /// a key the radio already holds resolves as success.
@@ -188,136 +103,6 @@ protocol RadioConnection: AnyObject, Sendable {
     func addDeviceChannel(_ channelKey: Data) async throws
     /// Remove a channel key from the radio's device identity. Idempotent.
     func removeDeviceChannel(_ channelKey: Data) async throws
-    /// Register channels with the phone's own MAC so their traffic is
-    /// accepted, each with the flood-hop ceiling its group messages go out
-    /// under. Called with the full joined set at session start,
-    /// incrementally on join, and again for a channel whose ceiling
-    /// changed: re-registering is how the new ceiling takes effect.
-    func registerChannels(_ channels: [ChannelRegistration]) async throws
-    /// Drop channel keys from the phone's MAC.
-    func removeChannels(_ channelKeys: [Data]) async throws
-    /// Make the radio's host channel-key table match the phone's joined
-    /// channels, so it can filter and queue that traffic while the phone is
-    /// away. Bookkeeping between the app and its own radio: callers reconcile
-    /// on attach and after every membership change, and never surface it.
-    func reconcileHostChannels(_ channelKeys: [Data]) async throws
-    /// Make the radio's host peer-key table match `entries`—the pairwise
-    /// keys for the peers whose conversations are open, so the radio can
-    /// verify and acknowledge their unicast traffic while the phone is away.
-    /// Bookkeeping like the channel reconcile above, never surfaced.
-    func reconcileHostPeerKeys(_ entries: [HostPeerKeyEntryRecord]) async throws
-    /// Name the sources whose queued frames the radio should take in without
-    /// a sound: full channel identifiers and peer public keys. Follows the
-    /// phone's own notification switches; reaches the radio's cue and
-    /// nothing else.
-    func reconcileHostMutes(channelIdentifiers: [Data], peerKeys: [Data]) async throws
-    /// Make the radio's destination-hint receive filters match `hints`, so
-    /// it passes what is sent to the phone's session addresses. Bookkeeping
-    /// like the reconciles above, never surfaced.
-    func reconcileHostDestinationHints(_ hints: [Data]) async throws
-    /// Whether the radio acknowledges queued unicast on the phone's behalf
-    /// while the phone is away, using the peer keys provisioned above.
-    func setHostAutoAcknowledgement(_ enabled: Bool) async throws
-    /// Replay every frame the radio queued while the phone was away. The
-    /// frames arrive through the ordinary receive path wearing buffered
-    /// metadata; completion leaves the radio's queue empty. Callers drain
-    /// once per attach, after the host tables are reconciled.
-    func drainOfflineQueue() async throws
-    /// Send one traced ping. Without a `path` it pings the usual way; with
-    /// one it goes down exactly that path, to test it without installing
-    /// it.
-    func ping(peerAddress: String, path: MobileMeshExplicitPath?) async throws -> RadioPingResult
-    /// This phone's own node public key—what a device lists to let this
-    /// phone manage it from a distance. Nil before a mesh session exists.
-    func nodePublicKey() async -> Data?
-    /// Read named properties from a device on the mesh, in as few
-    /// exchanges as the device will take, and answer with what it said
-    /// about each—values and refusals alike.
-    ///
-    /// Only what was asked for. A device several flood hops away answers
-    /// slowly and at everyone's expense, so a screen asks for its own
-    /// handful of properties rather than the device whole.
-    ///
-    /// `multiHint` says whether batching is worth trying; a device that
-    /// declines is asked again a property at a time regardless, so it
-    /// costs one exchange to be wrong.
-    ///
-    /// `progress` reports how many properties the read has yet to ask for,
-    /// which is the only honest measure of how long this takes: the number
-    /// of exchanges depends on what the device agrees to answer at once.
-    func fetchRemoteProperties(
-        peerAddress: String,
-        propertyIDs: [UInt32],
-        multiHint: Bool,
-        progress: (@Sendable (UInt32?) -> Void)?
-    ) async throws -> [MobileMeshManagementAnswerRecord]
-    /// Write properties to a device on the mesh, and answer with what it
-    /// says each is now worth.
-    ///
-    /// All of them or none: a device applies writes until the next answer
-    /// would not fit and stops there, so what it left out is reissued until
-    /// every write has been answered for. A caller that got a value back
-    /// knows that value reached the device.
-    func writeRemoteProperties(
-        peerAddress: String,
-        writes: [MobileMeshPropertyWriteRecord]
-    ) async throws -> [MobileMeshManagementAnswerRecord]
-    /// Persist a remote device's live configuration.
-    func saveRemoteDevice(peerAddress: String) async throws
-    /// Add or remove one administrator on a device across the mesh. Live
-    /// until a save, like every other remote write.
-    func setRemoteDeviceAdmin(
-        peerAddress: String,
-        publicKey: Data,
-        present: Bool
-    ) async throws
-    /// Add or remove one peer on a device's identity across the mesh, so
-    /// it can hold a secure session with that node on its own. Live until
-    /// a save.
-    func setRemoteDevicePeer(
-        peerAddress: String,
-        publicKey: Data,
-        present: Bool
-    ) async throws
-    /// Store a Wi-Fi network on a device across the mesh, or forget one by
-    /// name. The mesh counterparts of `addDeviceWifiNetwork` and
-    /// `removeDeviceWifiNetwork`, live until a save like every other
-    /// remote write.
-    func setRemoteWifiNetwork(
-        peerAddress: String,
-        item: Data,
-        present: Bool
-    ) async throws
-    /// Tell a device across the mesh to make itself conspicuous, or to
-    /// stop, and answer with the state it reports.
-    ///
-    /// Never saved, unlike the writes above: an alert is something
-    /// happening now. The device ends it on a deadline of its own, so a
-    /// search that outlasts that is kept alive by asking again.
-    func setRemoteAlert(
-        peerAddress: String,
-        state: RadioAlertState
-    ) async throws -> RadioAlertState
-    /// Restart a device across the mesh, or return it to a blank factory
-    /// state. Both are reset-class: the device acts and answers nothing, so
-    /// returning normally means the command was delivered rather than that
-    /// the device has finished with it.
-    func resetRemoteDevice(
-        peerAddress: String,
-        scope: MobileMeshResetScope
-    ) async throws
-    /// Ask a device across the mesh to announce itself now. Answered, so
-    /// returning means the device said the announcement was queued.
-    func announceRemoteDevice(
-        peerAddress: String,
-        request: MobileAnnouncementRecord
-    ) async throws
-    /// Clear a device's Bluetooth bonds across the mesh—the same write
-    /// of `PROP_BLE_BOND_COUNT`. Unlike the resets above this is answered,
-    /// so returning means the device said it did it; an administrator
-    /// addresses the device's node rather than one of its Bluetooth hosts,
-    /// so even clearing bonds leaves this exchange intact.
-    func clearRemoteBluetoothBonds(peerAddress: String) async throws
     /// Read named properties from the companion radio itself, over the
     /// local link, and answer with what it said about each—values and
     /// refusals alike. The local counterpart of `fetchRemoteProperties`,
@@ -334,110 +119,6 @@ protocol RadioConnection: AnyObject, Sendable {
     ) async throws -> [MobileMeshManagementAnswerRecord]
     /// Persist the companion radio's live configuration.
     func saveCompanionDevice() async throws
-    /// Values the companion radio announces on its own over the local
-    /// link—the battery moving, an alert ending, a fix arriving—
-    /// verbatim, by property number. What the mesh path can never offer:
-    /// a device pushes only to the host it is attached to.
-    func companionPropertyPushes() async -> AsyncStream<UlcpPropertyPushRecord>
-    /// Solicit a peer's current node identity by sending a targeted MAC
-    /// Identity Request. Resolves once the request is handed to the radio;
-    /// the peer's response arrives asynchronously on `advertisementEvents()`.
-    func requestIdentity(peerAddress: String) async throws
-    /// Ask a router for one page of the repeaters it knows of. Resolves with
-    /// the page as answered; a listing longer than one frame comes back with
-    /// a cursor, and the next page is a separate call with that cursor. The
-    /// cursor is never followed here.
-    ///
-    /// A plain MAC command any node may send: unlike the remote-management
-    /// reads above, the router need not list this phone as an administrator.
-    /// Throws `RemoteManagementError.noAnswer` when the page deadline passes.
-    ///
-    /// An empty `route` asks along whatever route the MAC holds; a non-empty
-    /// one asks down exactly those router hints, in send order.
-    func requestPeerRepeaters(
-        peerAddress: String,
-        cursor: Data?,
-        route: [Data]
-    ) async throws -> MobileMeshPeerRepeatersPageRecord
-    /// Ask matching nodes around a chosen point to identify themselves, with
-    /// one broadcast Identity Request. Replies arrive on
-    /// `advertisementEvents()`.
-    ///
-    /// An empty `sourceRoute` asks this phone's own neighbors: the request is
-    /// zero-hop, so repeaters never carry it. Otherwise it is steered along
-    /// those two-byte router hints, in send order, and answered by whatever is
-    /// in range of where the route ends. It is never flooded—nothing would
-    /// bound how many nodes replied.
-    ///
-    /// The filters narrow who answers, and nil for all of them asks everyone
-    /// the request reaches. `roleFilter` is a wire role byte. `nodeHint` is a
-    /// leading part of one node's hint: two bytes is a router hint, which is
-    /// what a route names its hops by, and pairing it with a route that stops
-    /// one hop short is how a named router is asked who it is.
-    func requestNearbyIdentities(
-        roleFilter: UInt8?,
-        nodeHint: Data?,
-        sourceRoute: [Data]
-    ) async throws
-    /// Ask one channel member—known only by the hint their group messages
-    /// claim—to identify themselves. The request goes out over that
-    /// channel, since a hint is not an address anything can be unicast to.
-    /// The reply arrives on `advertisementEvents()`.
-    func requestIdentityByHint(conversationAddress: String, hint: Data) async throws
-    /// Set the name carried on this phone's own group messages. Direct
-    /// messages never carry it—the recipient authenticated us by key.
-    func setChatDisplayName(_ name: String) async throws
-    /// The route the phone's MAC will use for the next frame to this peer.
-    /// Read-only: inspecting a peer never registers it.
-    func peerRoute(peerAddress: String) async throws -> RadioPeerRoute
-    /// Discard this peer's learned route, returning whether one was held.
-    /// Keys and counters are untouched.
-    func clearPeerRoute(peerAddress: String) async throws -> Bool
-    /// Install `path` as this peer's route and hold it for
-    /// `holdMilliseconds` against learning and failure. Returns whether the
-    /// MAC took it. `clearPeerRoute` ends the hold.
-    func holdPeerRoute(
-        peerAddress: String,
-        path: MobileMeshExplicitPath,
-        holdMilliseconds: UInt64
-    ) async throws -> Bool
-    /// End a hold by switching to the path learned while it was held.
-    /// Returns whether there was one to switch to.
-    func adoptLearnedPeerRoute(peerAddress: String) async throws -> Bool
-    /// Keep the session's chat in `store` for `ownerIdentityID` from now
-    /// on, then register the chat peers and resume each outbound stream
-    /// from its checkpoint. `silentTestsIn` is where
-    /// ``setChatSilentTestsIn(_:)`` starts.
-    func prepareChat(
-        peers: [MobilePeerRegistrationRecord],
-        checkpoints: [MobileChatCheckpointRecord],
-        store: MobileAppStore,
-        ownerIdentityID: String,
-        silentTestsIn: String?
-    ) async throws
-    func registerChatPeers(_ peers: [MobilePeerRegistrationRecord]) async throws
-    /// Drop these peers from the phone MAC's peer registry (idempotent;
-    /// unknown peers are ignored). Best-effort: the store is the authority
-    /// and `prepareChat` rebuilds the registry on the next attach.
-    func removeChatPeers(_ peerAddresses: [String]) async throws
-    /// Send a message, kept in the store before anything goes on the air.
-    /// The send runs to its end even if the caller stops waiting.
-    func sendChat(conversationAddress: String, request: MobileChatSendRequest) async throws
-    /// The conversation whose test messages arrive without counting as
-    /// unread, or `nil` for none.
-    func setChatSilentTestsIn(_ conversationAddress: String?) async throws
-    /// Send a message that was not delivered again as itself, from the
-    /// frames archived for its unacknowledged fragments. Throws
-    /// `ChatResendNotInPlace` when its stream has moved past it.
-    func resendChat(
-        conversationAddress: String,
-        original: MobileChatOriginalRef,
-        frames: [MobileChatArchiveRecord],
-        forwardSecret: Bool
-    ) async throws
-    /// Ask for a missing message the engine is holding for the user. False
-    /// when it no longer holds that gap.
-    func requestChatRepair(sessionID: UInt64, handle: UInt32) async throws -> Bool
     func disconnect() async
     /// Unbind from the remembered radio entirely: revoke any standing connect
     /// and clear the persisted `connectedUUID`. The app stops offering
@@ -446,194 +127,11 @@ protocol RadioConnection: AnyObject, Sendable {
     func forget() async
 }
 
-/// A node-identity advertisement received over the mesh. The payload is the
-/// raw bundle; consumers verify its signature before trusting any claim.
-struct RadioAdvertisementEvent: Equatable, Sendable {
-    let peerAddress: String
-    let payload: Data
-    /// Whether the MAC authenticated the sender of the frame that carried
-    /// this bundle.
-    ///
-    /// An Identity Request reply arrives as a unicast authenticated by its
-    /// MIC, so it carries no detached signature; a broadcast advertisement
-    /// has no MIC and must carry one. See `isTrustworthy(given:)`.
-    let sourceAuthenticated: Bool
-
-    /// Whether these claims may be attributed to the peer.
-    ///
-    /// A bundle is trustworthy when *something* authenticated it: either its
-    /// embedded signature verifies against the claimed key, or the MAC
-    /// authenticated the frame that delivered it. A broadcast advertisement
-    /// has no MIC, so it must be signed—anything else could be spoofed by
-    /// any nearby transmitter. An Identity Request reply is a unicast
-    /// authenticated by its MIC and deliberately carries no signature, so it
-    /// is trusted without one.
-    ///
-    /// A signature that is present and fails to verify is never trusted,
-    /// however the bundle arrived.
-    func isTrustworthy(given signature: MeshIdentitySignatureState) -> Bool {
-        switch signature {
-        case .valid: true
-        case .unsigned: sourceAuthenticated
-        case .invalid: false
-        }
-    }
-}
-
-/// Evidence that a node was on the air. Carries no claims—only who sent a
-/// frame the mesh accepted, and how confidently that can be said.
-struct RadioPeerHeardEvent: Equatable, Sendable {
-    /// Canonical Base58 address, when the frame named a full public key.
-    let peerAddress: String?
-    /// The 3-byte source hint, when the frame carried one.
-    let nodeHint: Data?
-    /// Whether the MAC authenticated the sender. A beacon is an
-    /// unauthenticated broadcast, so this is normally false.
-    let sourceAuthenticated: Bool
-
-    /// Which saved peer this was, if it can be said at all.
-    ///
-    /// A full key is decisive. A hint is three bytes of a 32-byte key and is
-    /// ambiguous by design, so it resolves a peer only when exactly one saved
-    /// peer could have sent it: a hint two peers share names neither.
-    func resolve(among peers: [PeerSummary]) -> PeerSummary? {
-        if let peerAddress {
-            return peers.first { $0.identity.canonicalAddress == peerAddress }
-        }
-        guard let nodeHint else { return nil }
-        let candidates = peers.filter { $0.identity.hint.bytes == nodeHint }
-        return candidates.count == 1 ? candidates[0] : nil
-    }
-}
-
-struct RadioPingReply: Equatable, Sendable {
-    let roundTripMilliseconds: UInt64
-    /// Radio links the reply crossed, counting the final one into this
-    /// phone's radio: a direct reply is one hop. `nil` when the reply came
-    /// source-routed without a trace route—hops it took went unrecorded.
-    let hopCount: UInt8?
-    /// The repeaters the reply crossed, the one nearest this phone first.
-    let routeHints: [Data]
-    /// How each repeater in `routeHints` heard the node one step farther
-    /// out, entry for entry. Empty when the reply carried no such readings.
-    let traceSignal: [MeshLegSignal]
-    /// How this phone's radio heard the last hop.
-    let rssiDBm: Int16?
-    let signalToNoiseCentibels: Int16?
-    let linkQuality: UInt8?
-    /// The reply answered the ping's Route Retry: the first attempt, or
-    /// its acknowledgment, was lost along the route it took.
-    let viaRouteRetry: Bool
-}
-
 /// How one hop of a path was heard. Both readings are absent when the hop
 /// was a point-to-point link—a bridge—that measured nothing.
 struct MeshLegSignal: Hashable, Sendable {
     let rssiDBm: Int16?
     let signalToNoiseCentibels: Int16?
-}
-
-enum RadioPingResult: Equatable, Sendable {
-    case reply(RadioPingReply)
-    case timedOut
-    /// A newer ping to the same peer replaced this one before it was
-    /// answered.
-    case canceled
-}
-
-extension RadioConnection {
-    func ping(peerAddress: String) async throws -> RadioPingResult {
-        try await ping(peerAddress: peerAddress, path: nil)
-    }
-
-    func requestPeerRepeaters(
-        peerAddress: String,
-        cursor: Data?
-    ) async throws -> MobileMeshPeerRepeatersPageRecord {
-        try await requestPeerRepeaters(peerAddress: peerAddress, cursor: cursor, route: [])
-    }
-}
-
-/// The route the phone's MAC currently holds for one peer, as raw wire values.
-struct RadioPeerRoute: Equatable, Sendable {
-    /// A path learned while a route was held.
-    struct Candidate: Equatable, Sendable {
-        let kind: MobileMeshRouteKind
-        /// Routers it names, in send order.
-        let hints: [Data]
-        let hopCount: UInt8?
-    }
-
-    let kind: MobileMeshRouteKind
-    /// Routers named by a source route, in send order.
-    let hints: [Data]
-    /// Distance to the peer in hops, the number a ping reply reports.
-    let hopCount: UInt8?
-    /// Flood hops (`FHOPS_ACC`) a flood route was learned at: the raw wire
-    /// value, one less than `hopCount`.
-    let floodHops: UInt8?
-    /// Two-octet region codes learned with a flood route.
-    let floodRegions: [Data]
-    /// How much longer the route is held; `nil` when it is not.
-    let holdRemainingMilliseconds: UInt64?
-    /// The held route's flood allowance past its end; `nil` when not held.
-    let holdFloodHops: UInt8?
-    /// Consecutive sends on the held route that missed and were then
-    /// acknowledged through the flood fallback.
-    let fallbackAcks: UInt8
-    /// How long ago an acknowledgment last vouched for the route.
-    let confirmedAgeMilliseconds: UInt64?
-    /// The best path learned while the route was held.
-    let candidate: Candidate?
-
-    static let unknown = RadioPeerRoute(
-        kind: .unknown, hints: [], hopCount: nil, floodHops: nil, floodRegions: []
-    )
-
-    init(
-        kind: MobileMeshRouteKind,
-        hints: [Data],
-        hopCount: UInt8?,
-        floodHops: UInt8?,
-        floodRegions: [Data],
-        holdRemainingMilliseconds: UInt64? = nil,
-        holdFloodHops: UInt8? = nil,
-        fallbackAcks: UInt8 = 0,
-        confirmedAgeMilliseconds: UInt64? = nil,
-        candidate: Candidate? = nil
-    ) {
-        self.kind = kind
-        self.hints = hints
-        self.hopCount = hopCount
-        self.floodHops = floodHops
-        self.floodRegions = floodRegions
-        self.holdRemainingMilliseconds = holdRemainingMilliseconds
-        self.holdFloodHops = holdFloodHops
-        self.fallbackAcks = fallbackAcks
-        self.confirmedAgeMilliseconds = confirmedAgeMilliseconds
-        self.candidate = candidate
-    }
-
-    init(_ record: MobileMeshRouteRecord) {
-        self.init(
-            kind: record.kind,
-            hints: record.hints,
-            hopCount: record.hopCount,
-            floodHops: record.floodHops,
-            floodRegions: record.floodRegions,
-            holdRemainingMilliseconds: record.holdRemainingMs,
-            holdFloodHops: record.holdFloodHops,
-            fallbackAcks: record.fallbackAcks,
-            confirmedAgeMilliseconds: record.confirmedAgeMs,
-            candidate: record.candidateKind.map {
-                Candidate(
-                    kind: $0,
-                    hints: record.candidateHints,
-                    hopCount: record.candidateHopCount
-                )
-            }
-        )
-    }
 }
 
 enum RadioConnectionError: Error, Equatable, Sendable {
@@ -684,9 +182,21 @@ enum DfuEntryError: Error, LocalizedError, Sendable {
 
     var errorDescription: String? {
         switch self {
-        case .unconfirmed: "DFU entry could not be confirmed"
-        case .unsupported: "This firmware does not support the requested DFU mode."
-        case let .refused(status): "The device refused DFU entry: \(ulcpStatusName(status: status))."
+        case .unconfirmed:
+            String(
+                localized: "DFU entry could not be confirmed",
+                comment: "Managing a device: it was asked to enter its bootloader and never said it had."
+            )
+        case .unsupported:
+            String(
+                localized: "This firmware does not support the requested DFU mode.",
+                comment: "Managing a device: its firmware has no such bootloader mode."
+            )
+        case let .refused(status):
+            String(
+                localized: "The device refused DFU entry: \(ulcpStatusName(status: status)).",
+                comment: "Managing a device: it refused to enter its bootloader. The placeholder is a protocol status name, not translated."
+            )
         }
     }
 
@@ -721,8 +231,7 @@ enum RemoteManagementError: Error, Equatable, Sendable {
     /// a value where a status belonged, or a read that ended with nothing
     /// read.
     case unreadable
-    /// No mesh session to send through: no companion radio attached, or
-    /// one that is not this phone's.
+    /// The companion radio's own link could not carry the exchange.
     case unavailable
 }
 

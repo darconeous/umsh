@@ -26,6 +26,10 @@ impl Worker {
         self.shared.enter(MobileAppLifecycle::Starting);
         self.reset_session_state();
         self.set_owner(Some(address.clone()));
+        #[cfg(test)]
+        if let Some(gate) = &self.hooks.start_gate {
+            let _ = gate.acquire().await;
+        }
 
         // 1. The host key, so a radio already linked can attach.
         if let Some(driver) = self.driver()
@@ -75,7 +79,18 @@ impl Worker {
             self.lose_driver(&driver);
         }
 
-        self.shared.enter(MobileAppLifecycle::Running);
+        // The repairs and the bootstrap wrote rows that lists read while
+        // starting lack, and changed messages no address names.
+        self.shared.publish(|snapshot| {
+            snapshot.lifecycle = MobileAppLifecycle::Running;
+            MobileAppChangesRecord {
+                lifecycle: Some(MobileAppLifecycle::Running),
+                channels_changed: true,
+                conversations_changed: true,
+                all_transcripts: true,
+                ..MobileAppChangesRecord::default()
+            }
+        });
         // Whatever the session reported while starting.
         self.signals.raise_session();
         self.policy_triggered();
@@ -103,9 +118,18 @@ impl Worker {
         let result = self.remove_identity_data(also_content);
         // A reading taken for the old identity is not the next one's.
         self.settings.borrow_mut().position = None;
-        self.set_owner(None);
         self.reset_session_state();
-        self.shared.enter(MobileAppLifecycle::Idle);
+        // Nobody's rows from here on, raised with the move to idle in one
+        // publish: a list raised while erasing was read as busy, and must
+        // be read again once it can be.
+        self.shared.publish(|snapshot| {
+            snapshot.owner = None;
+            snapshot.lifecycle = MobileAppLifecycle::Idle;
+            MobileAppChangesRecord {
+                lifecycle: Some(MobileAppLifecycle::Idle),
+                ..MobileAppChangesRecord::every_list()
+            }
+        });
         result
     }
 
@@ -203,12 +227,7 @@ impl Worker {
     pub(super) fn set_owner(&self, owner: Option<String>) {
         self.shared.publish(|snapshot| {
             snapshot.owner = owner;
-            MobileAppChangesRecord {
-                peers_changed: true,
-                channels_changed: true,
-                conversations_changed: true,
-                ..MobileAppChangesRecord::default()
-            }
+            MobileAppChangesRecord::every_list()
         });
     }
 

@@ -4,12 +4,11 @@ import Testing
 import UMSHMobileCore
 @testable import UMSH
 
-/// Renders the app's read mapping over the committed parity stores and holds
-/// it to the goldens `MobileAppCore` must reproduce. The format is the
-/// contract in `crates/umsh-mobile-core/src/app_core/parity/README.md`.
-/// `UMSH_WRITE_PARITY_GOLDENS=1` in the test process rewrites the goldens
-/// instead; through `xcodebuild`, pass it as
-/// `TEST_RUNNER_UMSH_WRITE_PARITY_GOLDENS=1`.
+/// Renders what the app shows of the committed parity stores, read through a
+/// radio-less `MobileAppCore` and mapped by `CoreRecordMapping`, and holds it
+/// to the goldens. The format is the contract in
+/// `crates/umsh-mobile-core/src/app_core/parity/README.md`; the core's own
+/// parity test owns the goldens, so nothing here writes them.
 @Suite @MainActor
 struct ReadMappingParityTests {
     private static let directory = URL(fileURLWithPath: #filePath)
@@ -23,10 +22,6 @@ struct ReadMappingParityTests {
     func goldenMatches(store name: String, owner: String) async throws {
         let rendered = try await Self.render(store: name, owner: owner)
         let golden = Self.directory.appendingPathComponent("\(name).golden")
-        if ProcessInfo.processInfo.environment["UMSH_WRITE_PARITY_GOLDENS"] != nil {
-            try rendered.write(to: golden, atomically: true, encoding: .utf8)
-            return
-        }
         let expected = try String(contentsOf: golden, encoding: .utf8)
         guard rendered != expected else { return }
         let ours = rendered.split(separator: "\n", omittingEmptySubsequences: false)
@@ -51,7 +46,7 @@ struct ReadMappingParityTests {
             }
         }
         let store = try SQLiteApplicationStore(path: copy.path)
-        let runtime = AppRuntime(radioConnection: FakeRadioConnection(), openStore: { store })
+        let runtime = try radioLessRuntime(store: store)
         let publicAddress = try query(copy, "SELECT public_address FROM local_identity WHERE id = ?", owner).first ?? owner
         // Nothing in the read mapping looks at the owner's own identity, and
         // the augmented owner's address does not decode.

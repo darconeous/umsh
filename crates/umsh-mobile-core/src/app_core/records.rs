@@ -178,6 +178,19 @@ const NOTIFICATIONS_KEPT: usize = 64;
 const TRANSCRIPTS_KEPT: usize = 256;
 
 impl MobileAppChangesRecord {
+    /// Every list's flag: what a change of owner raises, since each list
+    /// then reads differently.
+    pub(super) fn every_list() -> Self {
+        Self {
+            peers_changed: true,
+            channels_changed: true,
+            conversations_changed: true,
+            all_transcripts: true,
+            claimed_radios_changed: true,
+            ..Self::default()
+        }
+    }
+
     /// Fold a later change into this one.
     pub(super) fn merge(&mut self, later: Self) {
         let Self {

@@ -1,4 +1,5 @@
 import SwiftUI
+import UMSHMobileCore
 
 /// The app's interface: tabs, sheets, and navigation over a running
 /// ``AppRuntime``.
@@ -71,6 +72,17 @@ struct AppRootView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(.bar)
                     }
+                }
+                .alert(
+                    runtime.failureNotice?.title ?? "",
+                    isPresented: Binding(
+                        get: { runtime.failureNotice != nil },
+                        set: { if !$0 { runtime.failureNotice = nil } }
+                    ),
+                    presenting: runtime.failureNotice
+                ) { _ in
+                } message: { notice in
+                    Text(verbatim: notice.message)
                 }
         }
     }
@@ -254,7 +266,7 @@ struct AppRootView: View {
                     phoneDiscoverable: phoneDiscoverable,
                     setPhoneDiscoverable: { enabled in
                         phoneDiscoverable = enabled
-                        await runtime.pushPhoneDiscoverability()
+                        await runtime.pushPolicy()
                     },
                     eraseIdentity: runtime.eraseIdentity,
                     startOver: runtime.startOver,
@@ -732,9 +744,54 @@ private extension View {
 }
 
 #Preview {
-    // Unstarted on purpose: a preview wants the interface, not a bootstrap
-    // that opens the real store and asks the Keychain for an identity.
-    AppRootView(runtime: AppRuntime(radioConnection: FakeRadioConnection()))
+    // Never started, and never near the Keychain: a radio-less core over a
+    // staged store in memory, with its channel keys in memory too.
+    AppRootPreview()
+}
+
+/// The preview's interface over a staged store, built once the store is.
+private struct AppRootPreview: View {
+    @State private var runtime: AppRuntime?
+
+    var body: some View {
+        Group {
+            if let runtime {
+                AppRootView(runtime: runtime)
+            } else {
+                ProgressView()
+            }
+        }
+        .task {
+            guard runtime == nil else { return }
+            runtime = await Self.makeRuntime()
+        }
+    }
+
+    private static func makeRuntime() async -> AppRuntime? {
+        let vault = MemorySecretVault()
+        guard let store = try? SQLiteApplicationStore(path: ":memory:"),
+              let opened = try? AppCoreHost.radioLess(over: store, vault: vault),
+              let owner = try? MobileIdentity.unlock(secretKey: Data(repeating: 7, count: 32))
+                  .publicIdentity()
+        else { return nil }
+        try? await seedStaging(
+            store: store.coreStore,
+            vault: vault,
+            ownerIdentityId: owner.canonicalAddress,
+            nowMs: Date.now.storeMilliseconds
+        )
+        let runtime = AppRuntime(
+            radioConnection: NoRadioConnection(),
+            opened: .success(opened),
+            channelKeyVault: vault
+        )
+        runtime.localIdentity = LocalIdentitySnapshot(
+            id: owner.canonicalAddress,
+            publicIdentity: MeshPublicIdentity(owner)
+        )
+        await runtime.reloadApplicationState()
+        return runtime
+    }
 }
 
 /// Which of the two full-screen first-run flows is up.

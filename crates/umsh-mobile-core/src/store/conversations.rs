@@ -140,7 +140,6 @@ impl MobileAppStore {
         peer_address: String,
         created_at_ms: i64,
     ) -> Result<i64, MobileStoreError> {
-        let _counted = self.wrote_content();
         self.write(|transaction| {
             transaction.execute(
             "INSERT OR IGNORE INTO direct_conversation (owner_identity_id, node_id, created_at_ms)
@@ -183,7 +182,6 @@ impl MobileAppStore {
         conversation_address: String,
         created_at_ms: i64,
     ) -> Result<i64, MobileStoreError> {
-        let _counted = self.wrote_content();
         let channel_id = self::channel_id(&channel_id)?;
         self.write(|transaction| {
             let known = transaction
@@ -235,7 +233,6 @@ impl MobileAppStore {
         owner_identity_id: String,
         conversation_id: i64,
     ) -> Result<(), MobileStoreError> {
-        let _counted = self.wrote_content();
         self.erase(|transaction| {
             let Some(address) = transaction
                 .query_row(
@@ -338,7 +335,6 @@ impl MobileAppStore {
         owner_identity_id: String,
         conversation_id: i64,
     ) -> Result<(), MobileStoreError> {
-        let _counted = self.wrote_content();
         self.erase(|transaction| {
             let Some(peer_address) = transaction
                 .query_row(
@@ -372,7 +368,6 @@ impl MobileAppStore {
         owner_identity_id: String,
         public_address: String,
     ) -> Result<bool, MobileStoreError> {
-        let _counted = self.wrote_content();
         self.erase(|transaction| {
             let Some(node_id) = transaction
                 .query_row(
@@ -405,7 +400,6 @@ impl MobileAppStore {
         conversation_id: i64,
         enabled: bool,
     ) -> Result<(), MobileStoreError> {
-        let _counted = self.wrote_content();
         self.connection().execute(
             "UPDATE direct_conversation SET notifications_enabled = ?
             WHERE id = ? AND owner_identity_id = ?",

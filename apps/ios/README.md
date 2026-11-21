@@ -149,13 +149,15 @@ typed core errors, and local-operation cancellation. Host smoke checks remain
 under `scripts/ios/verify-*.sh`; the persistence check loads a frozen, populated
 version-12 SQL fixture from commit `94502d422`.
 
-`AppRuntime` composes identity decisions (`IdentityOperations`), draft writes
-(`ConversationDraftStore`), a send and its draft (`ChatSubmissionCoordinator`),
-and storage-to-view mapping (`ApplicationStateLoader`). The runtime still owns
-observable application state and the process's companion connection. A full
-reload is authoritative and publishes only after every read succeeds. Sending
-and marking a conversation read use narrower summary reads; a missing peer
-triggers full reconciliation. Failed draft writes retain text in memory and
+The Rust app core (`MobileAppCore`, opened by `AppCoreHost`) runs the radio,
+the mesh session, and which arrivals notify; `CoreRecordMapping` maps its
+read records onto the view models. `AppRuntime` holds the observable state,
+redraws it from the core's change batches, and composes identity decisions
+(`IdentityOperations`), draft writes (`ConversationDraftStore`), and a send
+and its draft (`ChatSubmissionCoordinator`). A full read is authoritative and
+publishes only once it succeeds. Sending and marking a conversation read use
+the narrower conversations read; a conversation naming an unknown peer
+escalates it to a full one. Failed draft writes retain text in memory and
 report failure to the caller; they are not a persistent outbox.
 
 ## Running against a real radio in the simulator

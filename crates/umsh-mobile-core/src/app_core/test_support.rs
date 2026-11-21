@@ -21,6 +21,10 @@ pub(super) struct Core {
 
 impl Core {
     pub(super) fn new() -> Self {
+        Self::with_options(Options::default())
+    }
+
+    pub(super) fn with_options(options: Options) -> Self {
         let directory = tempfile::tempdir().unwrap();
         let store = MobileAppStore::open(directory.path().join("app.sqlite").display().to_string())
             .unwrap();
@@ -34,7 +38,7 @@ impl Core {
                 platform_model: 0,
             },
             clock.clone(),
-            Options::default(),
+            options,
         )
         .unwrap();
         Self {

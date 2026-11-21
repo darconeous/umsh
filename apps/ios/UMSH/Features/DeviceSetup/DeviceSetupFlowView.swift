@@ -417,7 +417,7 @@ final class AdminFlowController {
                 AsyncStream { continuation in
                     let task = Task {
                         for await push in await session.propertyPushes() {
-                            continuation.yield(push)
+                            continuation.yield(.push(push))
                         }
                         continuation.finish()
                     }

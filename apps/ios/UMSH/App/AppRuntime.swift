@@ -10,10 +10,12 @@ import UMSHMobileCore
 ///
 /// iOS launches this app into the background with no scene at all—for
 /// CoreBluetooth state restoration today, and for notification actions
-/// later—and everything a background launch needs lives here: the store,
-/// the identity, the mesh session, the radio streams, and the bootstrap
-/// that ties them together. Views observe this object and call into it;
-/// nothing in it presents UI or assumes a scene exists.
+/// later—and everything a background launch needs lives here: the
+/// identity, the app core's changes, the queries over its store, and what
+/// the phone says about them. The core runs the mesh; this side holds the
+/// identity's custody, the preferences, the location readings and the
+/// words. Views observe this object and call into it; nothing in it
+/// presents UI or assumes a scene exists.
 @MainActor
 @Observable
 final class AppRuntime {
@@ -24,11 +26,12 @@ final class AppRuntime {
     /// a stuck message is only diagnosable from the sequence.
     private static let chatLogger = Logger(subsystem: "com.voria.umsh.ios", category: "Chat")
 
+    /// A runtime over `opened`'s core and store, or, when they could not be
+    /// opened, one that says why.
     init(
         radioConnection: any RadioConnection,
-        openStore: () throws -> SQLiteApplicationStore = {
-            try SQLiteApplicationStore.applicationStore()
-        },
+        opened: Result<AppCoreHost.Opened, any Error>,
+        channelKeyVault: any SecretVault,
         isStaging: Bool = false,
         identityVault: (any IdentityVault)? = nil
     ) {
@@ -36,16 +39,17 @@ final class AppRuntime {
         self.meshEngine = meshEngine
         self.identityVault = identityVault ?? KeychainIdentityVault(meshEngine: meshEngine)
         self.radioConnection = radioConnection
+        self.channelKeyVault = channelKeyVault
         self.isStaging = isStaging
-        do {
-            applicationStore = try openStore()
+        switch opened {
+        case let .success(opened):
+            core = opened.core
+            applicationStore = opened.store
             applicationStoreError = nil
-        } catch {
+        case let .failure(error):
+            core = nil
             applicationStore = nil
             applicationStoreError = error
-            Self.logger.error(
-                "Could not open the application store: \(String(describing: error), privacy: .public)"
-            )
         }
         identityOperations = IdentityOperations(
             vault: self.identityVault,
@@ -53,9 +57,11 @@ final class AppRuntime {
                 guard let applicationStore else { throw AppOperationError.unavailable("The database is unavailable.") }
                 return try await applicationStore.knowsIdentity(id: identity.id, publicAddress: identity.publicIdentity.canonicalAddress)
             },
-            persistName: { [applicationStore] owner, name in
-                guard let applicationStore else { throw AppOperationError.unavailable("The database is unavailable.") }
-                try await applicationStore.updateLocalAdvertisedName(ownerIdentityID: owner, name: name)
+            // The core keeps the name: as a store write before it starts,
+            // and pushed to the mesh session once it runs.
+            persistName: { [core] _, name in
+                guard let core else { throw AppOperationError.unavailable("The database is unavailable.") }
+                try await core.setAdvertisedName(name: name ?? "")
             }
         )
         drafts = ConversationDraftStore { [applicationStore] key, text in
@@ -75,23 +81,35 @@ final class AppRuntime {
     // these (via @Bindable) for the child views that mutate summaries in
     // place.
     var radioSnapshot = RadioSnapshot.idle
-    /// Add Peer's contact exchange, as the mesh session reports it; nil
-    /// while none is open.
+    /// The app core's lifecycle, as it last reported it.
+    private(set) var lifecycle: MobileAppLifecycle = .idle
+    /// A failure nothing on screen can retry, for the root view to say once.
+    var failureNotice: FailureNotice?
+    /// Add Peer's contact exchange, as the core reports it; nil while none
+    /// is open.
     var meet: MobileMeetStateRecord?
     /// The addresses of the direct conversations whose next message goes
-    /// under a session with forward secrecy, as the mesh session reports
-    /// them.
+    /// under a session with forward secrecy, as the core reports them.
     var forwardSecretConversations: Set<String> = []
     /// The peer the last exchange produced, recorded unsaved, for Add Peer
-    /// to open. Add Peer clears it once it has.
+    /// to open. Shown while that exchange is; Add Peer clears it once it
+    /// has.
     var exchangedPeer: PeerSummary?
     /// Add Peer is on screen with the app in the foreground, so the
     /// exchange runs whenever the radio can carry it.
     private var meetWanted = false
-    /// The contact already recorded for the exchange now showing, so a
-    /// repeated state does not record it twice.
-    private var recordedExchange: String?
-    var localIdentity: LocalIdentitySnapshot?
+    var localIdentity: LocalIdentitySnapshot? {
+        // The core answers queries for its owner, so it follows whichever
+        // identity is current.
+        didSet {
+            guard localIdentity?.id != oldValue?.id else { return }
+            do {
+                try core?.setOwner(ownerIdentityId: localIdentity?.id)
+            } catch {
+                Self.logger.error("The core did not take the owner: \(String(describing: error), privacy: .public)")
+            }
+        }
+    }
     var identityError: IdentityVaultError?
     var isLoadingIdentity = true
     var peers: [PeerSummary] = []
@@ -106,6 +124,9 @@ final class AppRuntime {
     /// for, so they can be shown as present without being named.
     var unknownDeviceChannels: [UnknownDeviceChannel] = []
     var advertisedName = ""
+    /// Bumped by every write of `advertisedName` other than a state reload's,
+    /// so a reload whose read began before such a write leaves it standing.
+    @ObservationIgnored private var advertisedNameRevision = 0
     /// Whether this launch owes the user an introduction. Set by
     /// ``settleOnboarding(mintedIdentity:)`` once the identity is known; the
     /// root view binds its first-run cover to it. State rather than a
@@ -123,17 +144,21 @@ final class AppRuntime {
     /// session is installed, and no identity is minted while this stands:
     /// answering it is what decides which of those happens.
     var orphanedIdentity: LocalIdentitySnapshot?
-    /// Radios this phone left holding its identity as their host, most
-    /// recent first. Each could still acknowledge for this phone, so each
-    /// is revoked across the mesh from whichever radio it attaches next.
-    private(set) var claimedRadios: [StoredClaimedRadio] = []
-    /// Whether a revocation of ``claimedRadios`` is under way.
+    /// Radios this phone left holding its identity as their host, other
+    /// than the one attached now, most recent first. Each could still
+    /// acknowledge for this phone; the core revokes them across the mesh
+    /// from whichever radio this phone attaches next.
+    private(set) var strandedRadios: [StoredClaimedRadio] = []
+    /// Whether a revocation of ``strandedRadios`` is under way.
     private(set) var isRevokingClaimedRadios = false
 
     // MARK: - Dependencies
 
     let meshEngine: RustMeshEngine
-    let channelKeyVault = KeychainChannelKeyVault()
+    let channelKeyVault: any SecretVault
+    /// The app core this runtime observes, over ``applicationStore``.
+    /// `nil` exactly when the store is.
+    let core: MobileAppCore?
     let applicationStore: SQLiteApplicationStore?
     /// Why ``applicationStore`` is nil, when it is. Every store call site
     /// degrades to a silent no-op without one, which renders as an account
@@ -156,13 +181,12 @@ final class AppRuntime {
     private let radioConnection: any RadioConnection
     private let notificationService = ChatNotificationService.shared
     /// Whether this runtime runs against fabricated content in the staging
-    /// store, in which case bootstrap reseeds it. Always false outside debug
-    /// builds, where nothing can set it.
+    /// store, in which case every start reseeds it. Always false outside
+    /// debug builds, where nothing can set it.
     private let isStaging: Bool
-    /// The last cell pushed into the mesh session, kept so a session
-    /// reinstall—which starts with none—can resume with it rather
-    /// than waiting for the phone to move.
-    private var sharedLocation: MobileMeshSharedLocationRecord?
+    /// The last position handed to the core, kept so a new identity shares
+    /// it at once rather than waiting for the phone to move.
+    private var lastPosition: MobilePositionRecord?
     /// Mutable, non-visual bookkeeping. A reference type on purpose: the
     /// observation macro tracks assignments, not interior mutation, so
     /// updating it never invalidates a view.
@@ -170,24 +194,39 @@ final class AppRuntime {
 
     // MARK: - Lifecycle
 
-    /// The stream consumers and the bootstrap, which live as long as this
-    /// runtime does.
+    /// The tasks and observers that live as long as this runtime does.
     private var tasks: [Task<Void, Never>] = []
     private var observers: [any NSObjectProtocol] = []
-    /// Each recurring schedule, with the setting it was armed for. Cancelled
-    /// and restarted when that setting changes, and only then.
-    private var advertSchedule: (seconds: Int, task: Task<Void, Never>)?
-    private var beaconSchedule: (seconds: Int, task: Task<Void, Never>)?
-    /// The flood-hop pair last handed to the mesh session, so a preference
-    /// write that changed something else does not restate it.
-    private var pushedFloodHops: (defaultHops: UInt8, beaconHops: UInt8)?
-    private var locationSharing: (key: Int, task: Task<Void, Never>)?
+    /// The core's wakes, which the drain loop reads. Finished on detach.
+    private var wakes: AsyncStream<Void>.Continuation?
+    /// Positions on their way to the core, in the order they were read.
+    private var positions: AsyncStream<MobilePositionRecord?>.Continuation?
+    /// The cell size location readings are being taken for; nil while
+    /// they are not.
+    private var locationSharingPrecision: UInt8?
+    /// A retry of a failed start under way.
+    private var isRetryingStart = false
+    /// Set by ``detach()``. A replaced runtime starts nothing more: no
+    /// location readings, no seed, no core start. Work it already began
+    /// still resumes after the detach, and checks this.
+    private var isDetached = false
+    #if DEBUG
+    /// The staged seed this runtime began, which may still be writing.
+    private var stagedSeed: Task<Void, Never>?
+    #endif
+    /// Each reason a start failed for that has been shown, so a retry that
+    /// fails the same way says nothing new.
+    private var shownStartFailures: Set<MobileAppStartFailure> = []
+    /// Remote-management progress, by the operation it belongs to.
+    private var progressHandlers: [UInt64: @Sendable (UInt32?) -> Void] = [:]
+    /// The companion management screens listening for the radio's pushes.
+    private var pushListeners: [UUID: AsyncStream<PropertyPushEvent>.Continuation] = [:]
 
-    /// Subscribe to the radio, arm the schedules, and bootstrap.
+    /// Attach to the core, then bring the identity up.
     ///
-    /// Called once per runtime, by whoever owns it. The consumers start
-    /// before the bootstrap that attaches the radio, so nothing the radio
-    /// says on attach arrives at a stream no one is reading yet.
+    /// Called once per runtime, by whoever owns it. The listener is set
+    /// before anything can start the core, so nothing it reports goes
+    /// unread.
     func start() {
         guard tasks.isEmpty else { return }
         // Installed before anything async: a notification reply action can
@@ -200,55 +239,94 @@ final class AppRuntime {
                 text: text
             )
         }
-        tasks.append(Task { await self.consumeSnapshots() })
-        tasks.append(Task { await self.consumeChatUpdates() })
-        tasks.append(Task { await self.consumeAdvertisementEvents() })
-        tasks.append(Task { await self.consumePeerHeardEvents() })
-        tasks.append(Task { await self.consumeLocalDestinationHints() })
-        tasks.append(Task { await self.consumeForwardSecretConversations() })
-        tasks.append(Task { await self.consumeHostReleases() })
-        tasks.append(Task { await self.consumeMeetStates() })
+        attachToCore()
         tasks.append(Task { await self.regionService.load() })
         installObservers()
-        rearmSchedules()
-        tasks.append(Task { await self.loadIdentity() })
+        tasks.append(Task {
+            // The policy first: the core drops a position it is not yet
+            // told to share, and starts on whatever policy it holds.
+            await self.pushPolicy()
+            self.applyLocationSharing()
+            await self.loadIdentity()
+        })
     }
 
-    /// Stop everything this runtime subscribed to or scheduled.
+    /// Stop everything this runtime subscribed to.
     ///
-    /// Deliberately leaves the radio connected and its mesh session
-    /// installed: a runtime is replaced only when a debug toggle picks a
-    /// different radio, and the one being left behind is not the one being
-    /// torn down. Cancelling the tasks is also what releases this object,
-    /// which they hold while they run.
-    func stop() {
+    /// Leaves the core and its radio running: a runtime is replaced only
+    /// when a debug toggle picks a different radio, and its successor
+    /// attaches to the same core or to a new one. A drain under way
+    /// finishes, so a batch it already took is not lost; the successor's
+    /// listener replaces this one's.
+    func detach() {
+        isDetached = true
         notificationService.clearReplyHandler()
         drafts.stop()
         coordinator.pendingReload?.cancel()
         coordinator.runningReload?.cancel()
         for task in tasks { task.cancel() }
         tasks.removeAll()
+        wakes?.finish()
+        wakes = nil
+        positions?.finish()
+        positions = nil
         for observer in observers { NotificationCenter.default.removeObserver(observer) }
         observers.removeAll()
-        advertSchedule?.task.cancel()
-        advertSchedule = nil
-        beaconSchedule?.task.cancel()
-        beaconSchedule = nil
-        locationSharing?.task.cancel()
-        locationSharing = nil
+        for listener in pushListeners.values { listener.finish() }
+        pushListeners.removeAll()
+        locationSharingPrecision = nil
         locationService.stop()
+    }
+
+    /// Become the core's listener, take its state as it stands, and start
+    /// the loops that carry what it says next.
+    private func attachToCore() {
+        guard let core else { return }
+        let (wakeStream, wakes) = AsyncStream.makeStream(
+            of: Void.self,
+            bufferingPolicy: .bufferingNewest(1)
+        )
+        self.wakes = wakes
+        core.setListener(listener: CoreWake(wakes))
+        if let status = try? core.status() {
+            apply(status)
+        }
+        let (positionStream, positions) = AsyncStream.makeStream(of: MobilePositionRecord?.self)
+        self.positions = positions
+        // One at a time, so the core holds the latest.
+        tasks.append(Task {
+            for await position in positionStream {
+                do {
+                    try await core.setLocation(position: position)
+                } catch {
+                    Self.logger.debug("Position not taken: \(String(describing: error), privacy: .public)")
+                }
+            }
+        })
+        // Not among `tasks`: detach lets a drain under way finish. A wake
+        // buffered before the detach still arrives after it, and is left
+        // for the successor's drain.
+        Task {
+            for await _ in wakeStream {
+                guard self.wakes != nil else { break }
+                await self.drain()
+            }
+        }
+        // A wake that came before this listener is not raised again.
+        wakes.yield()
     }
 
     private func installObservers() {
         let center = NotificationCenter.default
-        // The identity is read once at bootstrap, and a launch is not always
+        // The identity is read once at launch, and a launch is not always
         // a moment when it can be read: iOS relaunches the app in the
         // background for a radio event, and before the phone's first unlock
         // the Keychain refuses the item outright. Without this the process
         // would run to its end with no identity—no mesh session, and a
         // radio parked on a host decision the app cannot make. It fires
         // while still in the background, so the phone being unlocked is
-        // enough to finish bootstrap and attach.
+        // enough to finish starting and attach. A start that failed is
+        // retried on the same occasions.
         observers.append(center.addObserver(
             forName: UIApplication.protectedDataDidBecomeAvailableNotification,
             object: nil,
@@ -269,6 +347,10 @@ final class AppRuntime {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 Task { await self.retryIdentityLoadIfNeeded() }
+                // Schedules that came due while the phone slept go now.
+                self.core?.resumed()
+                // A claim lapses with time, which the core does not announce.
+                Task { await self.reloadStrandedRadios() }
                 // A radio that attached while the app was in the background
                 // could not have asked for notification permission there.
                 if self.radioSnapshot.linkState == .attached {
@@ -276,11 +358,10 @@ final class AppRuntime {
                 }
             }
         })
-        // The schedules are settings, and a runtime outlives the screen that
+        // The policy is settings, and a runtime outlives the screen that
         // edits them. The keys contain dots, which rules out key-value
-        // observing, so this watches every defaults write and compares—
-        // both the comparison and its usual answer are cheap enough to run
-        // on the radio's own connection bookkeeping writes.
+        // observing, so this watches every defaults write. The core compares
+        // the policy whole, so an unrelated write costs a comparison.
         observers.append(center.addObserver(
             forName: UserDefaults.didChangeNotification,
             object: nil,
@@ -288,155 +369,263 @@ final class AppRuntime {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                self.rearmSchedules()
-                Task { await self.pushChatSilentTests() }
-                // Compared with what the radio last held, so an unrelated
-                // write costs a comparison.
-                if let held = self.coordinator.lastReconciledTestMessageAlerts,
-                   held != self.testMessageAlerts {
-                    Task { await self.reconcileTestMessageAlerts() }
+                Task {
+                    await self.pushPolicy()
+                    self.applyLocationSharing()
                 }
             }
         })
     }
 
-    /// Start each recurring schedule the settings ask for, restarting one
-    /// only when its setting changed: a changed interval must not wait out
-    /// the old one, and an unchanged interval must not be pushed back by an
-    /// unrelated write.
-    private func rearmSchedules() {
-        let defaults = UserDefaults.standard
-        // How often this phone announces itself unasked, in seconds, with 0
-        // for never. Both default to off: a radio is deployed to be part of
-        // the mesh, but a phone is carried, and putting its identity on the
-        // air on a timer is a decision rather than a default.
-        let advertSeconds = defaults.integer(forKey: "phone.advertIntervalSeconds")
-        if advertSchedule?.seconds != advertSeconds {
-            advertSchedule?.task.cancel()
-            advertSchedule = (
-                advertSeconds,
-                Task { await self.runAdvertSchedule(seconds: advertSeconds) }
-            )
-        }
-        let beaconSeconds = defaults.integer(forKey: "phone.beaconIntervalSeconds")
-        if beaconSchedule?.seconds != beaconSeconds {
-            beaconSchedule?.task.cancel()
-            beaconSchedule = (
-                beaconSeconds,
-                Task { await self.runBeaconSchedule(seconds: beaconSeconds) }
-            )
-        }
-        // Keyed on one Int so either change—the toggle or the cell size—
-        // restarts the readings; zero is "off", which no precision can be.
-        let locationKey = phoneSharesLocation ? phoneLocationPrecision : 0
-        if locationSharing?.key != locationKey {
-            locationSharing?.task.cancel()
-            locationSharing = (
-                locationKey,
-                Task { await self.applyLocationSharing() }
-            )
-        }
-        // Pushed only when it changed: the session holds one current pair,
-        // and an unrelated write must not restate it.
-        let floodHops = (phoneFloodHops, phoneBeaconFloodHops)
-        if pushedFloodHops.map({ $0 != floodHops }) ?? true {
-            Task { await self.pushFloodHops() }
-        }
-    }
+    // MARK: - The core's changes
 
-    // MARK: - Stream consumers
-
-    /// Drain the radio's snapshot stream for as long as the caller's task
-    /// lives. Each of these consumers is subscribed exactly once.
-    func consumeSnapshots() async {
-        for await snapshot in await radioConnection.snapshots() {
-            guard !Task.isCancelled else { break }
-            // A snapshot is published for every ULCP frame the radio
-            // sends, so the same state arrives many times a second while
-            // the link is busy. Writing the observed property
-            // unconditionally would re-evaluate every observer—the whole
-            // tab tree included—on each one, which is felt as stutter
-            // while typing.
-            if radioSnapshot != snapshot {
-                let previous = radioSnapshot
-                let carried = radioSnapshot.carriesThisPhone
-                radioSnapshot = snapshot
-                await noteClaimTransition(from: previous, to: snapshot)
-                if snapshot.carriesThisPhone != carried {
-                    await settleMeet()
-                }
-            }
-            if snapshot.linkState == .attached {
-                // The first successful attach is the first moment a
-                // message notification has concrete meaning.
-                notificationService.requestAuthorizationIfNeeded()
-            }
-            noteDroppedFrames(from: snapshot)
-            await synchronizeRadioPeer(from: snapshot)
-            await synchronizeRadioChannels(from: snapshot)
-            await reconcileHostChannels()
-            await reconcileHostPeers()
-            await reconcileHostMutes()
-            await reconcileTestMessageAlerts()
-            await reconcileHostDestinations()
-            await drainOfflineQueueIfNeeded()
-        }
-    }
-
-    func consumeChatUpdates() async {
-        for await changes in await radioConnection.chatChanges() {
-            guard !Task.isCancelled else { break }
-            await applyChatChanges(changes)
-        }
-    }
-
-    func consumeAdvertisementEvents() async {
-        for await advertisement in await radioConnection.advertisementEvents() {
-            guard !Task.isCancelled else { break }
-            await applyReceivedAdvertisement(advertisement)
-        }
-    }
-
-    func consumePeerHeardEvents() async {
-        for await heard in await radioConnection.peerHeardEvents() {
-            guard !Task.isCancelled else { break }
-            await applyPeerHeard(heard)
-        }
-    }
-
-    func consumeLocalDestinationHints() async {
-        for await hints in await radioConnection.localDestinationHints() {
-            guard !Task.isCancelled else { break }
-            coordinator.localDestinationHints = hints
-            await reconcileHostDestinations()
-        }
-    }
-
-    func consumeHostReleases() async {
-        for await address in await radioConnection.hostReleases() {
-            guard !Task.isCancelled else { break }
-            coordinator.releasedRadios.insert(address)
-            await forgetClaimedRadio(address)
-        }
-    }
-
-    func consumeForwardSecretConversations() async {
-        for await addresses in await radioConnection.forwardSecretConversations() {
-            guard !Task.isCancelled else { break }
-            forwardSecretConversations = addresses
-        }
-    }
-
-    func consumeMeetStates() async {
-        for await state in await radioConnection.meetStates() {
-            guard !Task.isCancelled else { break }
-            meet = state
-            if case let .exchanged(contact)? = state?.exchange {
-                await recordExchanged(contact)
-            } else {
-                recordedExchange = nil
+    /// Apply one batch of what the core changed. One loop runs these in
+    /// turn, so two never overlap.
+    private func drain() async {
+        guard let core else { return }
+        // A background wake gives a short grace window; this keeps iOS from
+        // suspending the app before what the batch says is posted.
+        let assertion = UIApplication.shared.beginBackgroundTask(withName: "umsh.core.changes")
+        defer {
+            if assertion != .invalid {
+                UIApplication.shared.endBackgroundTask(assertion)
             }
         }
+        let changes = core.pollChanges()
+        if let lifecycle = changes.lifecycle {
+            apply(lifecycle)
+        }
+        if let radio = changes.radio {
+            apply(RadioSnapshot(radio))
+        }
+        for push in changes.propertyPushes {
+            publish(.push(push))
+        }
+        if changes.propertyPushesDropped > 0 {
+            publish(.resync)
+        }
+        for progress in changes.operationProgress {
+            progressHandlers[progress.operation]?(progress.remaining)
+        }
+        if let addresses = changes.forwardSecretConversations,
+           Set(addresses) != forwardSecretConversations {
+            forwardSecretConversations = Set(addresses)
+        }
+        if changes.meetChanged {
+            applyMeet(changes.meet)
+        }
+        if let revoking = changes.revokingClaimedRadios, revoking != isRevokingClaimedRadios {
+            isRevokingClaimedRadios = revoking
+        }
+        // Before the lists publish: the reload is what carries a bumped
+        // revision to an open transcript.
+        var transcripts = Set(changes.transcripts)
+        if changes.allTranscripts {
+            // A change the core could not place. Refreshing every open
+            // transcript costs one bounded query; not refreshing the right
+            // one leaves it showing something that is no longer true.
+            transcripts.formUnion(conversations.map(\.conversationAddress))
+            transcripts.formUnion(channelConversations.map(\.conversationAddress))
+        }
+        if !transcripts.isEmpty {
+            coordinator.bumpChatRevisions(transcripts)
+        }
+        if changes.peersChanged || changes.channelsChanged || changes.exchangedPeer != nil {
+            await reloadApplicationState()
+        } else if changes.conversationsChanged || !transcripts.isEmpty {
+            await reloadConversationState()
+        }
+        if changes.lifecycle == .running {
+            // From the lists just reloaded: `running` comes with the
+            // channels the start wrote.
+            await refreshChannelAddresses()
+        }
+        if changes.claimedRadiosChanged || changes.radio != nil {
+            await reloadStrandedRadios()
+        }
+        if let address = changes.exchangedPeer, case .exchanged? = meet?.exchange {
+            exchangedPeer = peers.first { $0.identity.canonicalAddress == address }
+        }
+        for notification in changes.notifications {
+            post(notification)
+        }
+        if changes.notificationsDropped > 0 {
+            Self.logger.notice(
+                "\(changes.notificationsDropped, privacy: .public) notification(s) were not posted"
+            )
+        }
+    }
+
+    /// Take the core's state as it stands, on attaching to it.
+    private func apply(_ status: MobileAppStatusRecord) {
+        apply(status.lifecycle)
+        apply(status.radio.map(RadioSnapshot.init) ?? .idle)
+        forwardSecretConversations = Set(status.forwardSecretConversations)
+        applyMeet(status.meet)
+        isRevokingClaimedRadios = status.revokingClaimedRadios
+    }
+
+    private func apply(_ lifecycle: MobileAppLifecycle) {
+        self.lifecycle = lifecycle
+        guard case let .failed(reason) = lifecycle else { return }
+        Self.logger.error("The core did not start: \(String(describing: reason), privacy: .public)")
+        guard shownStartFailures.insert(reason).inserted else { return }
+        failureNotice = FailureNotice(
+            title: String(
+                localized: "Couldn't start",
+                comment: "Alert title: this phone's identity did not start. The message says why."
+            ),
+            message: reason.message
+        )
+    }
+
+    private func apply(_ snapshot: RadioSnapshot) {
+        // An equal write to an observed property still re-evaluates every
+        // observer—the whole tab tree included.
+        if radioSnapshot != snapshot {
+            radioSnapshot = snapshot
+        }
+        if snapshot.linkState == .attached {
+            // The first attach is the first moment a message notification
+            // has concrete meaning.
+            notificationService.requestAuthorizationIfNeeded()
+        }
+    }
+
+    private func applyMeet(_ state: MobileMeetStateRecord?) {
+        meet = state
+        // The exchanged peer shows while its exchange does.
+        if case .exchanged? = state?.exchange {} else {
+            exchangedPeer = nil
+        }
+    }
+
+    /// Hand the core the preferences it acts on. It compares the policy
+    /// whole, so restating an unchanged one costs nothing.
+    func pushPolicy() async {
+        guard let core else { return }
+        do {
+            try await core.setPolicy(policy: currentPolicy)
+        } catch {
+            Self.logger.debug("Policy not taken: \(String(describing: error), privacy: .public)")
+        }
+    }
+
+    /// Start or stop location readings to match the stored preference.
+    ///
+    /// The readings only need to be good to the disclosed cell, so the
+    /// chosen precision sizes both the accuracy asked of CoreLocation and
+    /// how far the phone must move before a new reading is sent. The core
+    /// holds the one current position, reduces it to the cell, and
+    /// withdraws it when sharing stops; the readings are this side's.
+    private func applyLocationSharing() {
+        guard !isDetached else { return }
+        let precision = phoneSharesLocation ? UInt8(clamping: phoneLocationPrecision) : nil
+        guard precision != locationSharingPrecision else { return }
+        locationSharingPrecision = precision
+        guard let precision else {
+            locationService.stop()
+            return
+        }
+        let cellMeters = LocationPresentation.cellMeters(precisionBytes: precision) ?? 40
+        locationService.start(
+            cellMeters: cellMeters,
+            onReading: { reading in
+                let position = MobilePositionRecord(reading)
+                self.lastPosition = position
+                self.positions?.yield(position)
+            },
+            onAuthorizationLost: {
+                // Access revoked in iOS Settings while sharing: the last
+                // position must not outlive the permission it was read
+                // under. A later re-grant resumes readings on its own.
+                self.lastPosition = nil
+                self.positions?.yield(nil)
+            }
+        )
+    }
+
+    /// The radios still holding this phone's identity, as the core reads
+    /// them.
+    private func reloadStrandedRadios() async {
+        let radios: [MobileStoredClaimedRadioRecord]
+        do {
+            radios = try await read { try $0.strandedRadios() }
+        } catch MobileAppError.NoOwner {
+            // No identity, so no radio holds it.
+            radios = []
+        } catch {
+            // Busy or stopped: the list stands until the next change.
+            return
+        }
+        let stranded = radios.map(StoredClaimedRadio.init)
+        if stranded != strandedRadios {
+            strandedRadios = stranded
+        }
+    }
+
+    /// Ask each stranded radio again to let go of this phone.
+    func retryClaimedRadioRevocation() async {
+        do {
+            try await core?.retryClaimedRadioRevocation()
+        } catch {
+            Self.logger.notice("Revocation not retried: \(String(describing: error), privacy: .public)")
+        }
+        await reloadStrandedRadios()
+    }
+
+    /// Values the companion radio announces on its own, for a screen
+    /// managing it.
+    private func companionPropertyPushes() -> AsyncStream<PropertyPushEvent> {
+        // Pushes are sparse, and a lost one turns into a resync (`publish`).
+        let (stream, continuation) = AsyncStream.makeStream(
+            of: PropertyPushEvent.self,
+            bufferingPolicy: .bufferingNewest(16)
+        )
+        let id = UUID()
+        pushListeners[id] = continuation
+        continuation.onTermination = { [weak self] _ in
+            Task { @MainActor in self?.pushListeners[id] = nil }
+        }
+        return stream
+    }
+
+    private func publish(_ event: PropertyPushEvent) {
+        for listener in pushListeners.values {
+            // A listener behind by a whole buffer lost the oldest push it
+            // held; the resync after it says to read everything again.
+            if case .dropped = listener.yield(event) {
+                listener.yield(.resync)
+            }
+        }
+    }
+
+    /// The core's mesh session, fetched for each use; `nil` while the core
+    /// is not running.
+    private func meshSession() async -> MobileMeshSession? {
+        try? await core?.meshSession()
+    }
+
+    /// The core's mesh session, for a command that cannot go without one.
+    private func requireSession() async throws -> MobileMeshSession {
+        guard let session = await meshSession() else { throw MobileMeshError.SessionUnavailable }
+        return session
+    }
+
+    /// After a write the core did not make itself, or one a core command
+    /// made without raising a change: let it re-derive what it keeps from
+    /// the store, then read the lists again.
+    private func afterWrite() async {
+        if let core {
+            do {
+                try await core.contentChanged()
+            } catch MobileAppError.NotRunning {
+                // Not started yet: the start reads the store whole.
+            } catch {
+                Self.logger.debug("Content change not taken: \(String(describing: error), privacy: .public)")
+            }
+        }
+        await reloadApplicationState()
     }
 
     // MARK: - Contact exchange
@@ -445,7 +634,7 @@ final class AppRuntime {
     var contactExchange: ContactExchange {
         ContactExchange(
             state: meet,
-            ownModel: Self.platformModel,
+            ownModel: AppCoreHost.platformModel,
             radioReady: radioSnapshot.carriesThisPhone,
             exchangedPeer: exchangedPeer,
             setWanted: setMeetWanted,
@@ -453,127 +642,56 @@ final class AppRuntime {
             answer: answerExchange(accept:),
             confirm: confirmCode(same:),
             backOut: backOutOfExchange,
-            openAgain: openMeet
+            openAgain: openMeetAgain
         )
     }
 
     /// Add Peer appeared or went, or the app came to or left the
-    /// foreground with it showing.
+    /// foreground with it showing. The core opens the exchange whenever the
+    /// radio can carry it and closes it otherwise.
     func setMeetWanted(_ wanted: Bool) async {
         guard wanted != meetWanted else { return }
         meetWanted = wanted
         if !wanted {
             exchangedPeer = nil
         }
-        await settleMeet()
-    }
-
-    /// Opens the exchange while it is wanted and the radio can carry it,
-    /// and closes it otherwise. Every attempt opens under a fresh key.
-    private func settleMeet() async {
-        let open = meet != nil && meet?.exchange != .closed
-        if meetWanted && radioSnapshot.carriesThisPhone {
-            if !open {
-                await openMeet()
-            }
-        } else if open {
-            try? await radioConnection.closeMeet()
+        do {
+            try await core?.setMeetWanted(wanted: wanted)
+        } catch {
+            Self.logger.debug("Meet not settled: \(String(describing: error), privacy: .public)")
         }
-    }
-
-    /// Opens the exchange under a fresh session key: on arrival, and for
-    /// Try again and Not now.
-    func openMeet() async {
-        guard meetWanted, radioSnapshot.carriesThisPhone else { return }
-        exchangedPeer = nil
-        try? await radioConnection.openMeet(model: Self.platformModel)
     }
 
     func askToExchange(device: UInt32) async {
-        _ = try? await radioConnection.askToExchange(device: device)
+        _ = try? await core?.askToExchange(device: device)
     }
 
-    /// Answers the device that asked; Not now opens again under a new key.
-    /// Views can call this after the question has gone (a card dismissing
-    /// once the answer has moved the exchange on), so it checks that a
-    /// device is still asking.
+    /// Answers the device that asked; on Not now the core opens again under
+    /// a new key. Views can call this after the question has gone (a card
+    /// dismissing once the answer has moved the exchange on), so it checks
+    /// that a device is still asking.
     func answerExchange(accept: Bool) async {
         guard meet?.exchange.askedBy != nil else { return }
-        try? await radioConnection.answerExchange(accept: accept)
-        if !accept {
-            await openMeet()
-        }
+        try? await core?.answerExchange(accept: accept)
     }
 
     func confirmCode(same: Bool) async {
-        try? await radioConnection.confirmCode(same: same)
+        try? await core?.confirmCode(same: same)
     }
 
-    /// Ends the attempt under way and opens a fresh one. Like answering, it
-    /// checks the live state: the screen it backs out of can be leaving
-    /// because the attempt is already over.
+    /// Ends the attempt under way; the core opens a fresh one. Like
+    /// answering, it checks the live state: the screen it backs out of can
+    /// be leaving because the attempt is already over.
     func backOutOfExchange() async {
         guard meet?.exchange.isUnderWay == true else { return }
-        try? await radioConnection.cancelExchange()
-        await openMeet()
+        try? await core?.backOutOfExchange()
     }
 
-    /// This device's platform id (`platforms.json`), which its Hellos carry.
-    static var platformModel: UInt16 {
-        UIDevice.current.userInterfaceIdiom == .pad ? 0xFE01 : 0xFE00
-    }
-
-    /// Records who the other device says its holder is, unsaved, the tier
-    /// a node heard over the air lands in, and hands it to Add Peer.
-    /// Saving it stays the holder's call.
-    ///
-    /// The bundle came from the exchange's session key rather than from the
-    /// peer's own, so it is not authenticated by the MAC; its signature,
-    /// when it has one, is what links the name to the key.
-    func recordExchanged(_ contact: MobileMeetContactRecord) async {
-        guard recordedExchange != contact.peerAddress else { return }
-        recordedExchange = contact.peerAddress
-        guard let applicationStore, let localIdentity,
-              contact.peerAddress != localIdentity.publicIdentity.canonicalAddress
-        else { return }
-        let identity = try? await meshEngine.decodeNodeIdentity(
-            address: contact.peerAddress,
-            payload: contact.identityBundle
-        )
-        do {
-            try await applicationStore.upsertPeer(
-                ownerIdentityID: localIdentity.id,
-                publicAddress: contact.peerAddress,
-                alias: nil,
-                advertisedName: identity?.name,
-                nodeKind: identity.map { PeerRole(roleCode: $0.roleCode).storedKind },
-                advertisement: contact.identityBundle,
-                advertisementAuthenticated: false,
-                advertisementReceivedAt: Date()
-            )
-            await reloadApplicationState()
-            exchangedPeer = peers.first {
-                $0.identity.canonicalAddress == contact.peerAddress
-            }
-        } catch {
-            Self.logger.error("Failed to record an exchanged contact")
-        }
-    }
-
-    // MARK: - Announcement schedules
-
-    func runAdvertSchedule(seconds: Int) async {
-        await runAnnouncementSchedule(seconds: seconds) {
-            try await self.radioConnection.advertiseIdentityScheduled(
-                name: self.advertisedName.isEmpty ? nil : self.advertisedName
-            )
-        }
-    }
-
-    func runBeaconSchedule(seconds: Int) async {
-        await runAnnouncementSchedule(seconds: seconds) {
-            try await self.radioConnection.sendBeacon()
-        }
+    /// Try again, after an attempt ended: the core counts an ended attempt
+    /// as one to back out of, and backing out opens a fresh one.
+    func openMeetAgain() async {
+        exchangedPeer = nil
+        try? await core?.backOutOfExchange()
     }
 
     // MARK: - Preferences
@@ -625,6 +743,24 @@ final class AppRuntime {
     private static func floodHops(_ stored: Any?, fallback: UInt8) -> UInt8 {
         guard let value = stored as? Int, let hops = UInt8(exactly: value) else { return fallback }
         return min(hops, 15)
+    }
+
+    /// The preferences the core acts on, as it takes them.
+    private var currentPolicy: MobileAppPolicyRecord {
+        let defaults = UserDefaults.standard
+        // How often this phone announces itself unasked, in seconds, with 0
+        // for never. Both default to off: a radio is deployed to be part of
+        // the mesh, but a phone is carried, and putting its identity on the
+        // air on a timer is a decision rather than a default.
+        return MobileAppPolicyRecord(
+            advertIntervalSeconds: UInt32(clamping: defaults.integer(forKey: "phone.advertIntervalSeconds")),
+            beaconIntervalSeconds: UInt32(clamping: defaults.integer(forKey: "phone.beaconIntervalSeconds")),
+            discoverable: phoneDiscoverable,
+            floodHops: phoneFloodHops,
+            beaconFloodHops: phoneBeaconFloodHops,
+            locationPrecision: phoneSharesLocation ? UInt8(clamping: phoneLocationPrecision) : nil,
+            testMessageAlerts: testMessageAlerts
+        )
     }
 
     /// The first-run flow finished, however it finished.
@@ -693,135 +829,161 @@ final class AppRuntime {
     /// disappears with the radio is one an operator cannot find when they
     /// need it.
     var remoteDeviceManagement: DeviceManagementBackend {
-        let store = applicationStore
-        let ownerIdentityID = localIdentity?.id
-        return DeviceManagementBackend(
+        DeviceManagementBackend(
             fetch: { address, properties, multiHint, progress in
-                try await self.radioConnection.fetchRemoteProperties(
-                    peerAddress: address,
-                    propertyIDs: properties,
-                    multiHint: multiHint,
-                    progress: progress
-                )
-            },
-            write: { address, writes in
-                try await self.radioConnection.writeRemoteProperties(
-                    peerAddress: address,
-                    writes: writes
-                )
-            },
-            save: { address in
-                try await self.radioConnection.saveRemoteDevice(peerAddress: address)
-            },
-            setAdministrator: { address, key, present in
-                try await self.radioConnection.setRemoteDeviceAdmin(
-                    peerAddress: address,
-                    publicKey: key,
-                    present: present
-                )
-            },
-            setPeer: { address, key, present in
-                try await self.radioConnection.setRemoteDevicePeer(
-                    peerAddress: address,
-                    publicKey: key,
-                    present: present
-                )
-            },
-            insertNetwork: { address, item in
-                try await self.radioConnection.setRemoteWifiNetwork(
-                    peerAddress: address,
-                    item: item,
-                    present: true
-                )
-            },
-            removeNetwork: { address, ssid in
-                try await self.radioConnection.setRemoteWifiNetwork(
-                    peerAddress: address,
-                    item: ssid,
-                    present: false
-                )
-            },
-            setAlert: { address, state in
-                try await self.radioConnection.setRemoteAlert(
-                    peerAddress: address,
-                    state: state
-                )
-            },
-            reset: { address, scope in
-                try await self.radioConnection.resetRemoteDevice(
-                    peerAddress: address,
-                    scope: scope
-                )
-            },
-            enterDfu: { address, mode in
-                try await self.radioConnection.enterRemoteDfu(peerAddress: address, mode: mode)
-            },
-            announce: { address, request in
-                try await self.radioConnection.announceRemoteDevice(
-                    peerAddress: address,
-                    request: request
-                )
-            },
-            clearBluetoothBonds: { address in
-                try await self.radioConnection.clearRemoteBluetoothBonds(
-                    peerAddress: address
-                )
-            },
-            // The attached radio's own key, which is what a managed device
-            // sees requests arrive from. The phone's stored identity is the
-            // same bytes rendered, and stands in until a radio can say—
-            // otherwise a screen opened before one attaches would think
-            // none of the listed administrators is this phone.
-            phoneNodeKey: {
-                if let key = await self.radioConnection.nodePublicKey() { return key }
-                return self.localIdentity.flatMap {
-                    try? UMSHMobileCore.publicIdentityBytes(
-                        address: $0.publicIdentity.canonicalAddress
+                try await self.manage(progress: progress) { core, operation in
+                    try await core.remoteFetch(
+                        operation: operation,
+                        address: address,
+                        propertyIds: properties,
+                        multiHint: multiHint
                     )
                 }
             },
-            // Without a store these read empty and write nowhere, which
+            write: { address, writes in
+                try await self.manage { core, operation in
+                    try await core.remoteWrite(operation: operation, address: address, writes: writes)
+                }
+            },
+            save: { address in
+                try await self.manage { core, operation in
+                    try await core.remoteSave(operation: operation, address: address)
+                }
+            },
+            setAdministrator: { address, key, present in
+                try await self.manage { core, operation in
+                    try await core.remoteSetAdmin(
+                        operation: operation,
+                        address: address,
+                        publicKey: key,
+                        present: present
+                    )
+                }
+            },
+            setPeer: { address, key, present in
+                try await self.manage { core, operation in
+                    try await core.remoteSetPeer(
+                        operation: operation,
+                        address: address,
+                        publicKey: key,
+                        present: present
+                    )
+                }
+            },
+            insertNetwork: { address, item in
+                try await self.manage { core, operation in
+                    try await core.remoteSetWifiNetwork(
+                        operation: operation,
+                        address: address,
+                        item: item,
+                        present: true
+                    )
+                }
+            },
+            removeNetwork: { address, ssid in
+                try await self.manage { core, operation in
+                    try await core.remoteSetWifiNetwork(
+                        operation: operation,
+                        address: address,
+                        item: ssid,
+                        present: false
+                    )
+                }
+            },
+            setAlert: { address, state in
+                RadioAlertState(try await self.manage { core, operation in
+                    try await core.remoteSetAlert(operation: operation, address: address, state: state.wire)
+                })
+            },
+            reset: { address, scope in
+                try await self.manage { core, operation in
+                    try await core.remoteReset(operation: operation, address: address, scope: scope)
+                }
+            },
+            enterDfu: { address, mode in
+                try await self.manage { core, operation in
+                    try await core.remoteEnterDfu(operation: operation, address: address, mode: mode)
+                }
+            },
+            announce: { address, request in
+                try await self.manage { core, operation in
+                    try await core.remoteAnnounce(operation: operation, address: address, request: request)
+                }
+            },
+            clearBluetoothBonds: { address in
+                try await self.manage { core, operation in
+                    try await core.remoteClearBonds(operation: operation, address: address)
+                }
+            },
+            // This phone's own key, which is what a managed device sees
+            // requests arrive from: the stored identity is the same bytes.
+            phoneNodeKey: {
+                try? await self.read { try $0.phoneNodeKey() }
+            },
+            // Without an owner these read empty and write nowhere, which
             // costs a fetch on every open rather than breaking anything.
             loadCard: { address in
-                guard let store, let ownerIdentityID else { return nil }
-                return try? await store.managementCard(
-                    ownerIdentityID: ownerIdentityID,
-                    publicAddress: address
-                )
+                (try? await self.read { try $0.managementCard(publicAddress: address) })?
+                    .map(StoredManagementCard.init)
             },
             saveCard: { address, card in
-                guard let store, let ownerIdentityID else { return }
-                try? await store.saveManagementCard(
-                    ownerIdentityID: ownerIdentityID,
-                    publicAddress: address,
-                    card: card
-                )
+                let record = MobileStoredManagementCardRecord(card)
+                _ = try? await self.read { try $0.saveManagementCard(publicAddress: address, card: record) }
             },
             forgetCache: { address in
-                guard let store, let ownerIdentityID else { return }
-                try? await store.forgetManagementCache(
-                    ownerIdentityID: ownerIdentityID,
-                    publicAddress: address
-                )
+                _ = try? await self.read { try $0.forgetManagementCache(publicAddress: address) }
             },
             loadValues: { address, properties in
-                guard let store, let ownerIdentityID else { return [:] }
-                return (try? await store.cachedProperties(
-                    ownerIdentityID: ownerIdentityID,
-                    publicAddress: address,
-                    propertyIDs: properties
-                )) ?? [:]
+                (try? await self.read {
+                    try $0.cachedProperties(publicAddress: address, propertyIds: properties)
+                })?.mapValues(StoredCachedProperty.init) ?? [:]
             },
             saveValues: { address, values in
-                guard let store, let ownerIdentityID else { return }
-                try? await store.saveCachedProperties(
-                    ownerIdentityID: ownerIdentityID,
-                    publicAddress: address,
-                    values: values,
-                    at: Date()
-                )
+                _ = try? await self.read { try $0.saveCachedProperties(publicAddress: address, values: values) }
             }
         )
+    }
+
+    /// Run one remote-management command under an operation of its own.
+    ///
+    /// Its progress reaches `progress`, and canceling the calling task
+    /// cancels it in the core, which stops the mesh retrying a request
+    /// nobody is waiting on. The core's codes become the errors the
+    /// management screens read.
+    private func manage<Value>(
+        progress: (@Sendable (UInt32?) -> Void)? = nil,
+        _ command: (MobileAppCore, MobileOperation) async throws -> Value
+    ) async throws -> Value {
+        guard let core else { throw MobileAppError.Stopped }
+        let operation = MobileOperation()
+        let id = operation.id()
+        progressHandlers[id] = progress
+        defer { progressHandlers[id] = nil }
+        do {
+            return try await withTaskCancellationHandler {
+                try await command(core, operation)
+            } onCancel: {
+                operation.cancel()
+            }
+        } catch let error as MobileAppError {
+            throw Self.managementError(error)
+        }
+    }
+
+    /// The core's management codes as the screens' own errors; anything
+    /// else stays the core's, and is said by its presenter.
+    private static func managementError(_ error: MobileAppError) -> any Error {
+        switch error {
+        case .NoAnswer: RemoteManagementError.noAnswer
+        case .Unreachable: RemoteManagementError.unreachable
+        case let .Refused(status): RemoteManagementError.refused(status: status)
+        case .Unreadable: RemoteManagementError.unreadable
+        case .Cancelled: CancellationError()
+        case .DfuUnsupported: DfuEntryError.unsupported
+        case let .DfuRefused(status): DfuEntryError.refused(status)
+        case .DfuUnconfirmed: DfuEntryError.unconfirmed
+        default: error
+        }
     }
 
     /// Managing the companion radio itself, over its own link.
@@ -894,17 +1056,7 @@ final class AppRuntime {
         management.clearBluetoothBonds = { _ in
             try await self.radioConnection.clearBluetoothBonds()
         }
-        management.propertyPushes = {
-            AsyncStream { continuation in
-                let task = Task {
-                    for await push in await self.radioConnection.companionPropertyPushes() {
-                        continuation.yield(push)
-                    }
-                    continuation.finish()
-                }
-                continuation.onTermination = { _ in task.cancel() }
-            }
-        }
+        management.propertyPushes = { self.companionPropertyPushes() }
         // The cache rows hang off the radio's node, so a radio with no
         // identity of its own has nowhere to keep them. Over its own link
         // a fresh read costs next to nothing, so it simply goes uncached.
@@ -949,72 +1101,7 @@ final class AppRuntime {
         )
     }
 
-    // MARK: - Pipeline
-
-    /// Persist a node-identity bundle heard over the air, whether it arrived
-    /// as a broadcast advertisement or as the reply to an Identity Request.
-    ///
-    /// A broadcast frame is unauthenticated at the MAC layer, so it is stored
-    /// only when its embedded signature verifies against the claimed sender
-    /// key—anything else could be spoofed by any nearby transmitter. An
-    /// Identity Request reply is a unicast the MAC already authenticated and
-    /// carries no signature of its own, so it is stored on that basis.
-    @MainActor
-    private func applyReceivedAdvertisement(_ advertisement: RadioAdvertisementEvent) async {
-        guard let applicationStore, let localIdentity else { return }
-        guard let identity = try? await meshEngine.decodeNodeIdentity(
-            address: advertisement.peerAddress,
-            payload: advertisement.payload
-        ), advertisement.isTrustworthy(given: identity.signature) else { return }
-        let heardAt = Date()
-        do {
-            try await applicationStore.upsertPeer(
-                ownerIdentityID: localIdentity.id,
-                publicAddress: advertisement.peerAddress,
-                alias: nil,
-                advertisedName: identity.name,
-                // The node's own statement of what it is, refreshed on every
-                // bundle so the recorded role tracks the node.
-                nodeKind: PeerRole(roleCode: identity.roleCode).storedKind,
-                advertisement: advertisement.payload,
-                advertisementAuthenticated: advertisement.sourceAuthenticated,
-                advertisementReceivedAt: heardAt
-            )
-            await touchLastHeard(advertisement.peerAddress, at: heardAt)
-            // An over-the-air row lands in the transient tier, which stays
-            // bounded: oldest-heard evictable transients drop past the cap.
-            try await applicationStore.enforceTransientRetention(
-                ownerIdentityID: localIdentity.id
-            )
-            await reloadApplicationState()
-        } catch {
-            Self.logger.error("Failed to persist received advertisement")
-        }
-    }
-
-    /// Record that a saved peer was on the air.
-    ///
-    /// A beacon carries no payload, so this is the only trace it leaves: no
-    /// advertisement, no message, no ping reply. Presence needs no
-    /// authentication to be worth recording—the claim being made is only
-    /// "a frame naming this node was accepted", and a spoofer gains nothing
-    /// by making a node look reachable. Nothing is created here: a node this
-    /// phone has never saved has no row, and hearing it is not a reason to
-    /// start keeping one.
-    @MainActor
-    private func applyPeerHeard(_ heard: RadioPeerHeardEvent) async {
-        guard let peer = heard.resolve(among: peers) else { return }
-        // Reloading the whole application state for every accepted frame
-        // would be a full transcript read per packet. Skip the write and the
-        // reload when the recorded instant would not visibly move—unless a
-        // watch is armed, which is the one case where the write does
-        // something a second hand cannot show.
-        if !peer.notifyWhenHeard,
-           let lastHeard = peer.lastHeard,
-           Date().timeIntervalSince(lastHeard) < 1 { return }
-        await touchLastHeard(peer.identity.canonicalAddress)
-        await reloadApplicationState()
-    }
+    // MARK: - Identity
 
     @MainActor
     private func loadIdentity() async {
@@ -1024,8 +1111,7 @@ final class AppRuntime {
             switch try await identityOperations.load() {
             case let .ready(identity, minted):
                 try Task.checkCancellation()
-                localIdentity = identity
-                try await bootstrapIdentity(minted: minted)
+                await bringUp(identity, minted: minted)
             case let .needsAdoption(identity):
                 orphanedIdentity = identity
                 identityError = nil
@@ -1046,33 +1132,58 @@ final class AppRuntime {
         }
     }
 
-    /// Bring the app up on whatever ``localIdentity`` now holds: publish it
-    /// to the radio, install the mesh session, and rebuild every view of the
-    /// store from it.
+    /// Bring the app up on `identity`: read its lists, settle onboarding,
+    /// then start the core on it.
     ///
     /// The one sequence that turns an identity into a running app, shared by
-    /// launch, by minting one by hand, and by the two erasures—a phone
-    /// that has just destroyed its key comes back exactly the way one that
-    /// never had a key comes up.
+    /// launch, by minting one by hand, by adopting one, and by the two
+    /// erasures—a phone that has just destroyed its key comes back exactly
+    /// the way one that never had a key comes up.
     @MainActor
-    private func bootstrapIdentity(minted: Bool) async throws {
-        try Task.checkCancellation()
-        try await radioConnection.useHostIdentity(localIdentity?.publicIdentity)
-        try Task.checkCancellation()
-        try await installMeshSession()
-        try Task.checkCancellation()
-        await prepareApplicationState()
-        try Task.checkCancellation()
-        await prepareChatState()
-        try Task.checkCancellation()
-        await reinstallManualPaths()
-        try Task.checkCancellation()
-        await loadAdvertisedName()
-        try Task.checkCancellation()
-        await pushPhoneDiscoverability()
-        await pushFloodHops()
+    private func bringUp(_ identity: LocalIdentitySnapshot, minted: Bool) async {
+        localIdentity = identity
         identityError = nil
+        // The lists show before the core starts: reading needs only the
+        // owner. Onboarding reads the stored name from the same read.
+        await reloadApplicationState()
         settleOnboarding(mintedIdentity: minted)
+        await startCore()
+    }
+
+    /// Start the core on the identity the vault last unlocked, reseeding
+    /// the staged mesh first when this is staging.
+    ///
+    /// A core already starting or running is attached to, not started:
+    /// that is a debug switch to another radio over the same store.
+    @MainActor
+    private func startCore() async {
+        guard !isDetached, let core, let localIdentity, let status = try? core.status() else { return }
+        switch status.lifecycle {
+        case .idle, .failed: break
+        case .running:
+            Self.logger.notice("Attached to the running core")
+            // No `running` will come to derive them from: derive them
+            // from the lists just read.
+            await refreshChannelAddresses()
+            return
+        default:
+            Self.logger.notice("Attached to the core as it stands")
+            return
+        }
+        Self.logger.notice("Starting the core")
+        await seedStagedContentIfNeeded(owner: localIdentity.id)
+        guard !isDetached else { return }
+        // Unlocked when the vault read the identity. A start consumes it,
+        // so every start has unlocked again.
+        guard let identity = await meshEngine.takeIdentity() else { return }
+        do {
+            try await core.start(identity: identity)
+        } catch MobileAppError.Busy {
+            // Another start got there first.
+        } catch {
+            // A failed start arrives as the lifecycle, and is shown there.
+            Self.logger.error("Start failed: \(String(describing: error), privacy: .public)")
+        }
     }
 
     /// Decide whether this launch owes the user an introduction.
@@ -1097,20 +1208,27 @@ final class AppRuntime {
         }
     }
 
-    /// Re-run bootstrap after a failed identity load, once the reason for the
-    /// failure may have passed.
+    /// Try again after a failed identity load or a failed start, once the
+    /// reason for the failure may have passed.
     ///
     /// Scoped to attempts that actually failed: a phone with no identity yet
     /// reports success with none, and is waiting on onboarding rather than on
-    /// anything a retry could change. `isLoadingIdentity` guards against
-    /// overlapping with the launch attempt or with a retry already running—
-    /// bootstrap installs the mesh session and rebuilds application state, so
-    /// two at once would be two sessions.
+    /// anything a retry could change. A start that failed consumed the
+    /// unlocked identity, so its retry unlocks again.
     @MainActor
     private func retryIdentityLoadIfNeeded() async {
-        guard identityError != nil, localIdentity == nil, !isLoadingIdentity else { return }
-        Self.logger.notice("Retrying the identity load after an earlier failure")
-        await loadIdentity()
+        guard !isLoadingIdentity, !isRetryingStart else { return }
+        if identityError != nil, localIdentity == nil {
+            Self.logger.notice("Retrying the identity load after an earlier failure")
+            await loadIdentity()
+            return
+        }
+        guard case .failed = lifecycle, localIdentity != nil else { return }
+        Self.logger.notice("Retrying the start after an earlier failure")
+        isRetryingStart = true
+        defer { isRetryingStart = false }
+        guard (try? await identityVault.loadIdentity())?.id == localIdentity?.id else { return }
+        await startCore()
     }
 
     @MainActor
@@ -1118,9 +1236,9 @@ final class AppRuntime {
         isLoadingIdentity = true
         defer { isLoadingIdentity = false }
         do {
-            localIdentity = try await identityVault.createIdentity()
+            let identity = try await identityVault.createIdentity()
             orphanedIdentity = nil
-            try await bootstrapIdentity(minted: true)
+            await bringUp(identity, minted: true)
         } catch is CancellationError {
             return
         } catch let error as IdentityVaultError {
@@ -1143,9 +1261,9 @@ final class AppRuntime {
         isLoadingIdentity = true
         defer { isLoadingIdentity = false }
         do {
-            localIdentity = try await identityVault.adoptStoredIdentity()
+            let identity = try await identityVault.adoptStoredIdentity()
             orphanedIdentity = nil
-            try await bootstrapIdentity(minted: true)
+            await bringUp(identity, minted: true)
             await radioConnection.autoConnect()
         } catch is CancellationError {
             return
@@ -1181,36 +1299,81 @@ final class AppRuntime {
     private func eraseIdentity(alsoErasingContent: Bool) async {
         isLoadingIdentity = true
         defer { isLoadingIdentity = false }
+        let failureTitle = String(
+            localized: "Couldn't erase",
+            comment: "Alert title: erasing this phone's identity did not finish. The message says why."
+        )
 
         // The radio holds this phone's public key as its host key, so a
         // radio kept across the erasure would belong to a node that no
         // longer exists. Let it go first, while the link is still ours.
         await forgetRadio()
-        try? await radioConnection.useHostIdentity(nil)
-        await radioConnection.useMeshSession(nil)
-        // Only now: the engine must not be holding the key while the
-        // counter files that protect it are removed.
+        // The secret before anything else: if it cannot be destroyed,
+        // nothing is, and the phone stays the node it was.
+        do {
+            try await identityVault.eraseIdentity()
+        } catch {
+            Self.logger.error("The identity secret was not erased: \(String(describing: error), privacy: .public)")
+            failureNotice = FailureNotice(
+                title: failureTitle,
+                message: String(
+                    localized: "This phone's key could not be removed.",
+                    comment: "Erasing this phone's identity: the Keychain kept its private key, so nothing was erased."
+                )
+            )
+            return
+        }
         await meshEngine.lockIdentity()
         localIdentity = nil
         orphanedIdentity = nil
-
-        try? await identityVault.eraseIdentity()
-        try? channelKeyVault.deleteAll()
-        Self.eraseCounterReservations()
+        if let core {
+            // An erase is refused while a start runs, and the secret is
+            // already gone: the erase follows the start however long it
+            // takes. Giving up would leave the session running as the
+            // erased identity under the new one about to be minted.
+            while true {
+                do {
+                    try await core.erase(alsoContent: alsoErasingContent)
+                } catch MobileAppError.Busy {
+                    try? await Task.sleep(for: .milliseconds(200))
+                    continue
+                } catch let error as MobileAppError {
+                    Self.logger.error("The core did not erase everything: \(String(describing: error), privacy: .public)")
+                    failureNotice = FailureNotice(title: failureTitle, message: error.message)
+                } catch {
+                    Self.logger.error("The core did not erase everything: \(String(describing: error), privacy: .public)")
+                }
+                break
+            }
+        }
+        #if DEBUG
+        // The identity is shared between the live and staged stores, and
+        // the core removed only its own counters.
+        AppCoreHost.removeOtherCounterDirectory(inUse: isStaging ? .staging : .live)
+        #endif
         notificationService.withdrawAllDelivered()
 
         if alsoErasingContent {
-            try? await applicationStore?.eraseAllContent()
             Self.eraseStoredPreferences()
+            // The core keeps the policy it was given across an erase.
+            await pushPolicy()
+            applyLocationSharing()
         }
         // Both erasures produce a node nobody has met, under a name nobody
         // has chosen, so both owe the introduction a first launch owes.
         onboardingCompleted = false
+        advertisedName = ""
+        advertisedNameRevision += 1
 
         // Straight back up on a new key, the way a first launch comes up.
         do {
-            localIdentity = try await identityVault.createIdentity()
-            try await bootstrapIdentity(minted: true)
+            let identity = try await identityVault.createIdentity()
+            await bringUp(identity, minted: true)
+            // The erase dropped the position the core held; a phone still
+            // sharing shares it again without waiting to move.
+            if phoneSharesLocation, let lastPosition {
+                positions?.yield(lastPosition)
+            }
         } catch is CancellationError {
             return
         } catch let error as IdentityVaultError {
@@ -1218,19 +1381,6 @@ final class AppRuntime {
         } catch {
             identityError = .keychainFailure
         }
-    }
-
-    /// Remove the frame-counter reservations, which are per-identity files
-    /// naming an identity that is about to stop existing.
-    private static func eraseCounterReservations() {
-        guard let applicationSupport = FileManager.default.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        ).first else { return }
-        let root = applicationSupport.appendingPathComponent("UMSH", isDirectory: true)
-        try? FileManager.default.removeItem(
-            at: root.appendingPathComponent("CounterReservations", isDirectory: true)
-        )
     }
 
     /// Forget every preference this phone has accumulated, so the next
@@ -1262,14 +1412,6 @@ final class AppRuntime {
         }
     }
 
-    @MainActor
-    private func loadAdvertisedName() async {
-        guard let applicationStore, let localIdentity else { return }
-        advertisedName = (try? await applicationStore.localAdvertisedName(
-            ownerIdentityID: localIdentity.id
-        ).flatMap { $0 }) ?? ""
-    }
-
     func saveAdvertisedName(_ name: String) async -> AppOperationResult {
         guard let owner = localIdentity?.id else {
             return .failure(.unavailable("The local identity is unavailable."))
@@ -1277,133 +1419,25 @@ final class AppRuntime {
         do {
             let saved = try await identityOperations.saveName(name, owner: owner)
             guard localIdentity?.id == owner else { return .failure(.cancelled) }
-            advertisedName = saved
-            await pushPhoneDiscoverability()
+            // What the core kept is the name; none kept reads as none.
+            let held = try? await read { try $0.state(conversationsOnly: true).advertisedName }
+            advertisedName = held ?? saved
+            advertisedNameRevision += 1
             return .success(())
         } catch { return .failure(AppOperationError.storage(error)) }
-    }
-
-    /// Hand the stored discoverability preference and display name to the
-    /// mesh session's identity-request responder. Best-effort: with no
-    /// session yet, the next install reapplies it.
-    func pushPhoneDiscoverability() async {
-        await radioConnection.setPhoneDiscoverable(
-            phoneDiscoverable,
-            name: advertisedName.isEmpty ? nil : advertisedName
-        )
-        // The same name rides our group messages. A channel member may hold
-        // no identity for us at all, so without it we arrive as a bare hint.
-        // Unaffected by the discoverable preference: that governs answering
-        // identity requests, not signing what we say.
-        try? await radioConnection.setChatDisplayName(advertisedName)
-        // The shared location rides the same reinstall rail: a fresh
-        // session holds none, and the last accepted cell is what it
-        // should resume with rather than waiting for the phone to move.
-        await radioConnection.setAdvertisedLocation(sharedLocation)
-    }
-
-    /// Hand the stored reach preferences to the mesh session. Best-effort,
-    /// on the same reinstall rail as discoverability: a fresh session
-    /// starts at the built-in defaults, and this is what brings it back to
-    /// what the user chose.
-    func pushFloodHops() async {
-        let floodHops = (defaultHops: phoneFloodHops, beaconHops: phoneBeaconFloodHops)
-        pushedFloodHops = floodHops
-        await radioConnection.setFloodHops(
-            defaultHops: floodHops.defaultHops,
-            beaconHops: floodHops.beaconHops
-        )
-    }
-
-    /// Start or stop location readings to match the stored preference.
-    ///
-    /// The readings only need to be good to the disclosed cell, so the
-    /// chosen precision sizes both the accuracy asked of CoreLocation and
-    /// how far the phone must move before a new cell is pushed. Each
-    /// reading goes to the mesh session immediately—the session holds
-    /// exactly one current cell, so there is no backlog to manage—and
-    /// switching off clears the session's copy rather than letting the
-    /// last position linger in every later advertisement.
-    private func applyLocationSharing() async {
-        guard phoneSharesLocation else {
-            locationService.stop()
-            if sharedLocation != nil {
-                sharedLocation = nil
-                await radioConnection.setAdvertisedLocation(nil)
-            }
-            return
-        }
-        let precision = UInt8(clamping: phoneLocationPrecision)
-        // A precision change must not wait for the phone to move: the
-        // retained reading is re-disclosed at the new cell size now, or
-        // the old—possibly finer—cell would stay on the air until a
-        // fresh reading cleared the new distance filter.
-        if var record = sharedLocation, record.precisionBytes != precision {
-            record.precisionBytes = precision
-            sharedLocation = record
-            await radioConnection.setAdvertisedLocation(record)
-        }
-        let cellMeters = LocationPresentation.cellMeters(precisionBytes: precision) ?? 40
-        locationService.start(
-            cellMeters: cellMeters,
-            onReading: { reading in
-                let record = MobileMeshSharedLocationRecord(
-                    latitudeDegrees: reading.coordinate.latitude,
-                    longitudeDegrees: reading.coordinate.longitude,
-                    precisionBytes: precision
-                )
-                self.sharedLocation = record
-                Task { await self.radioConnection.setAdvertisedLocation(record) }
-            },
-            onAuthorizationLost: {
-                // Access revoked in iOS Settings while sharing: readings
-                // stop arriving, and the last cell must not outlive the
-                // permission it was read under. A later re-grant resumes
-                // readings and re-shares on its own.
-                self.sharedLocation = nil
-                Task { await self.radioConnection.setAdvertisedLocation(nil) }
-            }
-        )
     }
 
     /// Broadcast a signed identity advertisement. Returns a user-facing
     /// failure message, or nil on success.
     func advertiseIdentity() async -> String? {
+        guard let core else { return MobileAppError.Stopped.message }
         do {
-            let name = advertisedName.isEmpty ? nil : advertisedName
-            try await radioConnection.advertiseIdentity(name: name)
+            try await core.advertiseIdentity()
             return nil
+        } catch let error as MobileAppError {
+            return error.message
         } catch {
-            return "The advertisement could not be sent. Check that the companion radio is connected."
-        }
-    }
-
-    /// Sleep out one interval, send, repeat, until the task is cancelled.
-    ///
-    /// The first send waits a full interval rather than firing at launch:
-    /// an app opened and closed repeatedly would otherwise transmit on
-    /// every launch, which is the one thing an interval is supposed to
-    /// prevent. A failed send is skipped rather than retried—the next
-    /// interval is the retry, and there is no backlog worth keeping.
-    ///
-    /// Each period is scattered later by up to a quarter, as on the radio,
-    /// so that phones sharing a schedule do not transmit together. Only
-    /// ever later: the chosen interval stays the shortest gap between two
-    /// announcements. `Double.random` draws from the system generator,
-    /// which is seeded from the same entropy the Keychain relies on.
-    private func runAnnouncementSchedule(
-        seconds: Int,
-        send: @escaping () async throws -> Void
-    ) async {
-        guard seconds > 0 else { return }
-        while !Task.isCancelled {
-            let scatter = Double.random(in: 0...(Double(seconds) * announcementJitterFraction))
-            do {
-                try await Task.sleep(for: .seconds(Double(seconds) + scatter))
-            } catch {
-                return
-            }
-            try? await send()
+            return MobileAppError.SendFailed.message
         }
     }
 
@@ -1413,7 +1447,11 @@ final class AppRuntime {
         guard let localIdentity else { return "" }
         let bare = localIdentity.publicIdentity.nodeURI
         let name = advertisedName.isEmpty ? nil : advertisedName
-        guard let bundle = try? await radioConnection.signIdentityBundle(name: name),
+        guard let session = await meshSession(),
+              let bundle = try? await session.signIdentityBundle(
+                  name: name,
+                  timestamp: UInt32(clamping: Int(Date.now.timeIntervalSince1970))
+              ),
               let uri = try? nodeUriWithIdentity(
                   address: localIdentity.publicIdentity.canonicalAddress,
                   identityPayload: bundle
@@ -1472,10 +1510,10 @@ final class AppRuntime {
         }
     }
 
+    /// Ask the radio for its state again. The answer reaches the screen
+    /// the way every radio state does, through the core.
     func refreshRadio() async {
-        if let refreshed = try? await radioConnection.refresh() {
-            radioSnapshot = refreshed
-        }
+        _ = try? await radioConnection.refresh()
     }
 
     /// Sample the radio's position, for a screen that is showing one.
@@ -1485,9 +1523,7 @@ final class AppRuntime {
     /// link already reports. An error banner per missed sample would say
     /// the same thing once a minute.
     func refreshRadioPosition() async {
-        if let refreshed = try? await radioConnection.refreshPositioning() {
-            radioSnapshot = refreshed
-        }
+        _ = try? await radioConnection.refreshPositioning()
     }
 
     func inspectPeerIdentity(_ input: String) async -> Result<MeshNodeURIPreview, MeshEngineError> {
@@ -1526,17 +1562,16 @@ final class AppRuntime {
                     peerAddress: identity.canonicalAddress
                 )
             }
-            await reloadApplicationState()
             // Best effort, for the same reason as in `startConversation`: the
-            // peer and any conversation are already on disk, and an unattached
-            // radio must not turn that into a failed import.
-            try? await radioConnection.registerChatPeers([
+            // peer and any conversation are already on disk, and a core that
+            // is not running must not turn that into a failed import.
+            try? await meshSession()?.registerPeers(peers: [
                 MobilePeerRegistrationRecord(
                     address: identity.canonicalAddress,
                     mobile: preview.identity?.capabilityBits.contains(.mobile) == true
                 )
             ])
-            await reconcileHostPeers()
+            await afterWrite()
             return conversations.first { $0.peer.identity.canonicalAddress == identity.canonicalAddress }
         } catch {
             return nil
@@ -1571,7 +1606,7 @@ final class AppRuntime {
             )
             // No retention pass here: a row never heard is the oldest-heard
             // there is, so a full tier would evict it before its page opened.
-            await reloadApplicationState()
+            await afterWrite()
             return peers.first { $0.identity.canonicalAddress == address }
         } catch {
             return nil
@@ -1598,7 +1633,7 @@ final class AppRuntime {
                 isSaved: true,
                 nodeKind: role.storedKind
             )
-            await reloadApplicationState()
+            await afterWrite()
             return true
         } catch {
             return false
@@ -1613,7 +1648,7 @@ final class AppRuntime {
                 publicAddress: peer.identity.canonicalAddress,
                 alias: alias
             )
-            await reloadApplicationState()
+            await afterWrite()
             return true
         } catch {
             return false
@@ -1628,7 +1663,7 @@ final class AppRuntime {
                 publicAddress: peer.identity.canonicalAddress,
                 isFavorite: favorite
             )
-            await reloadApplicationState()
+            await afterWrite()
             return true
         } catch {
             return false
@@ -1649,7 +1684,7 @@ final class AppRuntime {
                 enabled: armed
             )
             if armed { notificationService.requestAuthorizationIfNeeded() }
-            await reloadApplicationState()
+            await afterWrite()
             return true
         } catch {
             return false
@@ -1663,7 +1698,7 @@ final class AppRuntime {
                 ownerIdentityID: localIdentity.id,
                 publicAddress: peer.identity.canonicalAddress
             )
-            await reloadApplicationState()
+            await afterWrite()
             return true
         } catch {
             return false
@@ -1680,7 +1715,7 @@ final class AppRuntime {
                 ownerIdentityID: localIdentity.id,
                 publicAddress: peer.identity.canonicalAddress
             )
-            await reloadApplicationState()
+            await afterWrite()
             return true
         } catch {
             return false
@@ -1695,7 +1730,7 @@ final class AppRuntime {
                 publicAddress: peer.identity.canonicalAddress
             ) else { return false }
             await removeMeshPeer(peer)
-            await reloadApplicationState()
+            await afterWrite()
             return true
         } catch {
             return false
@@ -1710,19 +1745,18 @@ final class AppRuntime {
                 publicAddress: peer.identity.canonicalAddress
             ) else { return false }
             await removeMeshPeer(peer)
-            await reloadApplicationState()
+            await afterWrite()
             return true
         } catch {
             return false
         }
     }
 
-    /// Best-effort MAC-layer removal behind a store delete. A disconnected
-    /// radio is not an error: the store is the authority, and
-    /// `prepareChatState` rebuilds the registry from it on the next attach.
+    /// Best-effort removal from the mesh session behind a store delete. A
+    /// core that is not running is not an error: the store is the
+    /// authority, and the next start registers peers from it.
     private func removeMeshPeer(_ peer: PeerSummary) async {
-        try? await radioConnection.removeChatPeers([peer.identity.canonicalAddress])
-        await reconcileHostPeers()
+        try? await meshSession()?.removePeers(peerAddresses: [peer.identity.canonicalAddress])
     }
 
     // MARK: - Channels
@@ -1731,35 +1765,18 @@ final class AppRuntime {
     /// `umsh:ck:` URI—into a preview, with whatever local context the user
     /// needs to see before committing.
     private func previewChannel(_ input: String) async -> Result<ChannelPreview, MeshEngineError> {
-        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return .failure(.invalidChannelURI) }
         do {
-            let preview = trimmed.lowercased().hasPrefix("umsh:")
-                ? try await meshEngine.inspectChannelURI(trimmed)
-                : try await meshEngine.inspectChannelName(trimmed)
-            let digest = channelKeyDigest(key: preview.key)
-            let existing = try await storedChannel(keyDigest: digest)
-            let resolvedName = preview.displayName ?? preview.canonicalName
-            // Two channels may share a name with different keys, which is
-            // legitimate and worth seeing before joining.
-            let conflict = channels.first { channel in
-                channel.id != existing?.id
-                    && resolvedName != nil
-                    && channel.title.caseInsensitiveCompare(resolvedName!) == .orderedSame
-            }
-            return .success(
-                ChannelPreview(preview: preview, existing: existing, nameConflict: conflict)
-            )
-        } catch let error as MeshEngineError {
-            return .failure(error)
+            return .success(ChannelPreview(try await read { try $0.previewChannel(input: input) }))
+        } catch MobileAppError.InvalidInput(let error) {
+            return .failure(RustMeshEngine.inputError(error, invalidURI: .invalidChannelURI))
         } catch {
             return .failure(.coreFailure)
         }
     }
 
     /// Join on the phone identity, or update local details when the key is
-    /// already held. Registering with the MAC is what actually makes traffic
-    /// arrive; the radio's host table is reconciled behind it.
+    /// already held. Registering with the mesh session is what actually
+    /// makes traffic arrive; the core gives the radio the key behind it.
     private func joinChannel(
         _ preview: MeshChannelPreview,
         details: ChannelDetails
@@ -1772,7 +1789,7 @@ final class AppRuntime {
                 if !existing.joinedPhone {
                     return await setChannelPhoneMembership(existing, joined: true)
                 }
-                await reloadApplicationState()
+                await afterWrite()
                 return .success
             }
 
@@ -1819,9 +1836,7 @@ final class AppRuntime {
             if let address = try? await meshEngine.channelConversationAddress(key: preview.key) {
                 coordinator.channelAddresses[id] = address
             }
-            await reloadApplicationState()
-            await reconcileHostChannels()
-            await reconcileHostMutes()
+            await afterWrite()
             return .success
         } catch {
             return .failed
@@ -1860,9 +1875,6 @@ final class AppRuntime {
     private func leaveChannel(_ channel: ChannelSummary) async -> ChannelActionOutcome {
         guard let applicationStore, let localIdentity else { return .failed }
         let key = try? channelKeyVault.loadKey(channelID: channel.id)
-        if let key {
-            try? await radioConnection.removeChannels([key])
-        }
         // The group chat cannot outlive membership: without the key there is
         // nothing to send with, and nothing further will arrive.
         if let conversation = channelConversations.first(where: { $0.channel.id == channel.id }) {
@@ -1891,13 +1903,16 @@ final class AppRuntime {
                 try await applicationStore.deleteChannel(id: channel.id)
                 try? channelKeyVault.deleteKey(channelID: channel.id)
             }
-            await reloadApplicationState()
-            await reconcileHostChannels()
-            await reconcileHostMutes()
-            return .success
         } catch {
             return .failed
         }
+        // After the store: the core registers again whatever the store
+        // still says is joined.
+        if let key {
+            try? await meshSession()?.removeChannels(keys: [key])
+        }
+        await afterWrite()
+        return .success
     }
 
     private func setChannelPhoneMembership(
@@ -1911,8 +1926,6 @@ final class AppRuntime {
             guard await registerChannels([
                 ChannelRegistration(key: key, maxFloodHops: channel.maxFloodHops),
             ]) else { return .phoneFull }
-        } else {
-            try? await radioConnection.removeChannels([key])
         }
         do {
             try await applicationStore.setChannelMembership(
@@ -1920,27 +1933,34 @@ final class AppRuntime {
                 joinedPhone: joined,
                 joinedDevice: channel.joinedDevice
             )
-            // The address map is otherwise only rebuilt at session start, and
-            // leaving cleared this entry—a rejoin that skipped it would
-            // leave the channel unreachable from chat until relaunch.
-            if joined, let address = try? await meshEngine.channelConversationAddress(key: key) {
-                coordinator.channelAddresses[channel.id] = address
-            } else if !joined {
-                coordinator.channelAddresses[channel.id] = nil
-            }
-            await reloadApplicationState()
-            if joined, channel.canonicalName == "public" {
-                // Rejoining public restores its always-present conversation,
-                // the same invariant session start establishes.
-                await ensurePublicConversation()
-                await reloadApplicationState()
-            }
-            await reconcileHostChannels()
-            await reconcileHostMutes()
-            return .success
         } catch {
             return .failed
         }
+        if !joined {
+            // After the store, as in `leaveChannel`.
+            try? await meshSession()?.removeChannels(keys: [key])
+        }
+        // The address map is otherwise only rebuilt when the core starts,
+        // and leaving cleared this entry—a rejoin that skipped it would
+        // leave the channel unreachable from chat until relaunch.
+        if joined, let address = try? await meshEngine.channelConversationAddress(key: key) {
+            coordinator.channelAddresses[channel.id] = address
+        } else if !joined {
+            coordinator.channelAddresses[channel.id] = nil
+        }
+        if joined, channel.canonicalName == "public", let localIdentity,
+           let address = coordinator.channelAddresses[channel.id] {
+            // Rejoining public restores its always-present conversation,
+            // the same invariant the core's start establishes. Before the
+            // core is told, so its pass reads the row.
+            _ = try? await applicationStore.ensureChannelConversation(
+                ownerIdentityID: localIdentity.id,
+                channelID: channel.id,
+                conversationAddress: address
+            )
+        }
+        await afterWrite()
+        return .success
     }
 
     /// Add or remove the channel on the companion radio's own device identity,
@@ -1963,7 +1983,7 @@ final class AppRuntime {
                 joinedPhone: channel.joinedPhone,
                 joinedDevice: joined
             )
-            await reloadApplicationState()
+            await afterWrite()
             return .success
         } catch let error as DevicePeerError {
             return switch error {
@@ -2001,7 +2021,7 @@ final class AppRuntime {
                     ChannelRegistration(key: key, maxFloodHops: details.maxFloodHops),
                 ])
             }
-            await reloadApplicationState()
+            await afterWrite()
             return true
         } catch {
             return false
@@ -2011,6 +2031,8 @@ final class AppRuntime {
     /// Toggle a channel's banners from inside its conversation, where the
     /// question actually comes up. Everything else the user set stays put:
     /// this is one field of the same local details the Channels tab edits.
+    /// The same switch decides, through the core, whether a companion radio
+    /// holding this channel's traffic makes a sound about it.
     func setChannelNotifications(_ channel: ChannelSummary, _ enabled: Bool) async {
         _ = await updateChannelDetails(
             channel,
@@ -2021,9 +2043,6 @@ final class AppRuntime {
                 notificationsEnabled: enabled
             )
         )
-        // The same switch decides whether a companion radio holding this
-        // channel's traffic makes a sound about it.
-        await reconcileHostMutes()
     }
 
     /// Toggle a direct conversation's banners, from the same sheet the
@@ -2041,8 +2060,7 @@ final class AppRuntime {
                 conversationID: conversation.id,
                 enabled: enabled
             )
-            await reloadApplicationState()
-            await reconcileHostMutes()
+            await afterWrite()
         } catch {
             // The toggle re-reads the store, so a failed write shows the
             // old value rather than a lie.
@@ -2081,343 +2099,20 @@ final class AppRuntime {
             ownerIdentityID: localIdentity.id,
             keyDigest: keyDigest
         )
-        return stored.map(ApplicationStateLoader.summary(from:))
+        return stored.map { ChannelSummary($0) }
     }
 
-    /// Register channels with the phone's MAC, reporting whether they all fit.
+    /// Register channels with the phone's mesh session, reporting whether
+    /// they all fit. With no session running there is nothing to fit into
+    /// yet: the core registers every joined channel when it starts.
     private func registerChannels(_ channels: [ChannelRegistration]) async -> Bool {
+        guard !channels.isEmpty, let session = await meshSession() else { return true }
         do {
-            try await radioConnection.registerChannels(channels)
+            try await session.registerChannels(channels: channels.map(\.record))
             return true
         } catch {
             return false
         }
-    }
-
-    /// Give the radio the channel keys the phone identity has joined, so it
-    /// can recognize and queue that traffic while the phone is away. A
-    /// radio that takes no keys gets a filter per channel instead, without
-    /// which it passes no channel traffic at all once it holds the host key.
-    ///
-    /// Bookkeeping between the app and its own radio: no part of it is a user
-    /// setting, and a radio that cannot hold them all still leaves the phone
-    /// fully able to use every channel while attached.
-    private func reconcileHostChannels() async {
-        guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready,
-              radioSnapshot.hostState == .matchesCurrentIdentity,
-              let provisioning = radioSnapshot.provisioning,
-              // A filter count is reported exactly when the radio filters.
-              provisioning.supportsHostKeys || provisioning.filterCount != nil
-        else {
-            coordinator.lastReconciledHostChannels = nil
-            return
-        }
-        var keys: [Data] = []
-        // Deterministic priority, so a radio that cannot hold every key holds
-        // the same ones each time rather than whichever arrived first.
-        for channel in channels.filter(\.joinedPhone).sorted(by: Self.hostChannelPriority) {
-            if let key = try? channelKeyVault.loadKey(channelID: channel.id) {
-                keys.append(key)
-            }
-        }
-        guard coordinator.lastReconciledHostChannels != keys else { return }
-        do {
-            try await radioConnection.reconcileHostChannels(keys)
-            coordinator.lastReconciledHostChannels = keys
-        } catch {
-            // Retried on the next attach or membership change.
-        }
-    }
-
-    /// Give the radio pairwise keys for the peers of open direct
-    /// conversations, so it can verify and acknowledge their unicast
-    /// traffic while the phone is away, then turn delegated
-    /// acknowledgement on.
-    ///
-    /// Open conversations only—deliberately narrower than the chat
-    /// registry's union with checkpoints: key material leaves the phone
-    /// here, and a conversation the user closed takes its key with it.
-    /// Most recent activity first, capped at the radio's table size, so an
-    /// over-full table keeps the conversations that matter.
-    private func reconcileHostPeers() async {
-        guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready,
-              radioSnapshot.hostState == .matchesCurrentIdentity,
-              radioSnapshot.provisioning?.supportsHostKeys == true
-        else {
-            coordinator.lastReconciledHostPeers = nil
-            return
-        }
-        let addresses = conversations
-            .sorted {
-                ($0.lastMessage?.createdAtMilliseconds ?? $0.createdAtMilliseconds)
-                    > ($1.lastMessage?.createdAtMilliseconds ?? $1.createdAtMilliseconds)
-            }
-            .prefix(Int(ulcpMaxHostPeers()))
-            .map(\.peer.identity.canonicalAddress)
-        guard coordinator.lastReconciledHostPeers != addresses else { return }
-        do {
-            guard let session = try await meshEngine.meshSession() else { return }
-            let entries = try await session.hostPeerKeyEntries(peerAddresses: addresses)
-            try await radioConnection.reconcileHostPeerKeys(entries)
-            coordinator.lastReconciledHostPeers = addresses
-            if radioSnapshot.provisioning?.supportsDelegatedAcknowledgements == true {
-                try await radioConnection.setHostAutoAcknowledgement(true)
-            }
-        } catch {
-            // Retried on the next attach or conversation change.
-        }
-    }
-
-    /// Have the radio pass what is sent to the phone's session addresses.
-    ///
-    /// A session with forward secrecy answers to an address of its own, and
-    /// a filtering radio passes unicast only for the host key and the
-    /// destination hints it is given—without these, a peer's half of every
-    /// such session goes unheard.
-    private func reconcileHostDestinations() async {
-        guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready,
-              radioSnapshot.hostState == .matchesCurrentIdentity,
-              // A filter count is reported exactly when the radio filters.
-              radioSnapshot.provisioning?.filterCount != nil
-        else {
-            coordinator.lastReconciledHostDestinations = nil
-            return
-        }
-        let hints = coordinator.localDestinationHints
-        guard coordinator.lastReconciledHostDestinations != hints else { return }
-        do {
-            try await radioConnection.reconcileHostDestinationHints(hints)
-            coordinator.lastReconciledHostDestinations = hints
-        } catch {
-            // Retried on the next snapshot or session change.
-        }
-    }
-
-    /// Record it when the radio's queue has thrown traffic away.
-    ///
-    /// `PROP_HOST_RX_QUEUE_DROPPED` rising across a detached interval is the
-    /// one honest signal that the transcript is incomplete: the queue holds
-    /// sixteen frames and evicts the oldest to make room, so a busy hour
-    /// away is not fully recoverable. There is nothing the user can do about
-    /// it and no way to name what was lost, so this goes to the log rather
-    /// than to a banner—the Settings diagnostics row already shows the
-    /// count itself.
-    private func noteDroppedFrames(from snapshot: RadioSnapshot) {
-        guard let dropped = snapshot.provisioning?.droppedFrames else {
-            coordinator.lastDroppedFrames = nil
-            return
-        }
-        defer { coordinator.lastDroppedFrames = dropped }
-        // A counter that went backwards is a rebooted radio, not a loss.
-        guard let previous = coordinator.lastDroppedFrames, dropped > previous else { return }
-        Self.logger.notice(
-            """
-            Companion radio dropped \(dropped - previous, privacy: .public) queued \
-            frames; the transcript for that interval is incomplete
-            """
-        )
-    }
-
-    /// Tell the radio which conversations to take in quietly, so a
-    /// companion holding messages for a phone that is away chirps for the
-    /// ones its owner asked to hear about and no others.
-    ///
-    /// The lists follow the same switches the phone's own banners follow:
-    /// a channel is muted unless its Notifications toggle is on (channels
-    /// default off), a peer is muted when its conversation's toggle is off
-    /// (direct conversations default on). Muting reaches the radio's cue
-    /// alone—the traffic is still queued, acknowledged, and drained.
-    private func reconcileHostMutes() async {
-        guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready,
-              radioSnapshot.hostState == .matchesCurrentIdentity,
-              radioSnapshot.provisioning?.supportsOfflineQueue == true
-        else {
-            coordinator.lastReconciledHostMutes = nil
-            return
-        }
-        var mutedChannels: [Data] = []
-        for channel in channels.filter({ $0.joinedPhone && !$0.notificationsEnabled })
-            .sorted(by: Self.hostChannelPriority)
-            .prefix(Int(ulcpMaxHostMutedChannels()))
-        {
-            guard let key = try? channelKeyVault.loadKey(channelID: channel.id),
-                  let identifier = try? UMSHMobileCore.channelIdentifier(key: key)
-            else { continue }
-            mutedChannels.append(identifier)
-        }
-        // The peers the radio holds keys for are the only ones it can
-        // attribute a frame to, so mirror that ordering: a mute for a peer
-        // outside the provisioned table is inert either way.
-        let mutedPeers = conversations
-            .filter { !$0.notificationsEnabled }
-            .sorted {
-                ($0.lastMessage?.createdAtMilliseconds ?? $0.createdAtMilliseconds)
-                    > ($1.lastMessage?.createdAtMilliseconds ?? $1.createdAtMilliseconds)
-            }
-            .prefix(Int(ulcpMaxHostMutedPeers()))
-            .compactMap { try? publicIdentityBytes(address: $0.peer.identity.canonicalAddress) }
-        let desired = HostMuteLists(channels: mutedChannels, peers: mutedPeers)
-        guard coordinator.lastReconciledHostMutes != desired else { return }
-        do {
-            try await radioConnection.reconcileHostMutes(
-                channelIdentifiers: desired.channels,
-                peerKeys: desired.peers
-            )
-            coordinator.lastReconciledHostMutes = desired
-        } catch {
-            // Retried on the next attach or notification-setting change.
-        }
-    }
-
-    /// Tell the radio whether a test message on `EMERGENCY` earns its
-    /// receipt cue, as this phone's own switch says: a companion holding
-    /// messages for a phone that is away chirps for them only when its
-    /// owner asked to hear of them. Read first and written only when it
-    /// differs, since the write is saved. A radio from before the setting
-    /// has no such property, and stays as it is.
-    private func reconcileTestMessageAlerts() async {
-        guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready,
-              radioSnapshot.hostState == .matchesCurrentIdentity,
-              radioSnapshot.provisioning?.supportsOfflineQueue == true
-        else {
-            coordinator.lastReconciledTestMessageAlerts = nil
-            return
-        }
-        let desired = testMessageAlerts
-        guard coordinator.lastReconciledTestMessageAlerts != desired else { return }
-        let property = ulcpManagedPropertyIds().testMessageAlerts
-        let value = Data([desired ? 1 : 0])
-        do {
-            let held = try await radioConnection.fetchCompanionProperties([property]).first
-            guard held?.statusCode == nil else {
-                coordinator.lastReconciledTestMessageAlerts = desired
-                return
-            }
-            if held?.value != value {
-                let answer = try await radioConnection.writeCompanionProperties([
-                    MobileMeshPropertyWriteRecord(propertyId: property, value: value)
-                ]).first
-                guard answer?.statusCode == nil else { return }
-                try await radioConnection.saveCompanionDevice()
-            }
-            coordinator.lastReconciledTestMessageAlerts = desired
-        } catch {
-            // Retried on the next attach or change of the setting.
-        }
-    }
-
-    /// Replay the radio's offline queue, once per attach, after the host
-    /// tables are reconciled. The backlog arrives through the ordinary
-    /// receive path wearing buffered metadata, so the MAC skips the
-    /// double-ack and the transcript backdates each message.
-    private func drainOfflineQueueIfNeeded() async {
-        guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready,
-              radioSnapshot.hostState == .matchesCurrentIdentity,
-              radioSnapshot.provisioning?.supportsOfflineQueue == true,
-              coordinator.meshSessionInstalled
-        else {
-            coordinator.drainedOfflineQueue = false
-            return
-        }
-        guard !coordinator.drainedOfflineQueue else { return }
-        coordinator.drainedOfflineQueue = true
-        do {
-            try await radioConnection.drainOfflineQueue()
-        } catch {
-            // A racing operation or a dropped link; the next snapshot
-            // retries.
-            coordinator.drainedOfflineQueue = false
-        }
-    }
-
-    /// `public` and `EMERGENCY` first, then the most recently joined.
-    private static func hostChannelPriority(_ lhs: ChannelSummary, _ rhs: ChannelSummary) -> Bool {
-        if (lhs.kind == .builtin) != (rhs.kind == .builtin) {
-            return lhs.kind == .builtin
-        }
-        return (lhs.joinedAt ?? .distantPast) > (rhs.joinedAt ?? .distantPast)
-    }
-
-    /// Ensure `public` and `EMERGENCY` exist for this identity.
-    ///
-    /// Both start joined with notifications off: they are the channels a new
-    /// user is expected to be reachable on, but neither should announce
-    /// itself before the user has any reason to care. Leaving either clears
-    /// the joined flags without deleting the row, which is what lets the join
-    /// flow offer them back.
-    private func ensureBuiltinChannels() async {
-        guard let applicationStore, let localIdentity else { return }
-        // Written the way the protocol names them. Only the canonicalized
-        // form reaches the key derivation, so the casing here is purely how
-        // the channels are labeled.
-        for name in ["Public", "EMERGENCY"] {
-            guard let preview = try? await meshEngine.inspectChannelName(name) else { continue }
-            let digest = channelKeyDigest(key: preview.key)
-            guard (try? await applicationStore.channel(
-                ownerIdentityID: localIdentity.id,
-                keyDigest: digest
-            )) ?? nil == nil else { continue }
-            let id = UUID()
-            do {
-                try channelKeyVault.storeKey(preview.key, channelID: id)
-                try await applicationStore.insertChannel(
-                    StoredChannel(
-                        id: id,
-                        ownerIdentityID: localIdentity.id,
-                        kind: .builtin,
-                        canonicalName: preview.canonicalName,
-                        name: preview.displayName,
-                        alias: nil,
-                        channelIDHex: Self.hex(preview.channelID),
-                        tint: preview.tint,
-                        regionCode: nil,
-                        maxFloodHops: nil,
-                        joinedPhone: true,
-                        joinedDevice: false,
-                        notificationsEnabled: false,
-                        joinedAt: Date()
-                    ),
-                    keyDigest: digest
-                )
-            } catch {
-                try? channelKeyVault.deleteKey(channelID: id)
-            }
-        }
-    }
-
-    /// Register every phone-joined channel with a freshly built mesh session.
-    /// The session starts with an empty channel table, so this is what makes
-    /// membership survive a relaunch.
-    private func replayChannelMembership() async {
-        var registrations: [ChannelRegistration] = []
-        for channel in channels where channel.joinedPhone {
-            if let key = try? channelKeyVault.loadKey(channelID: channel.id) {
-                registrations.append(
-                    ChannelRegistration(key: key, maxFloodHops: channel.maxFloodHops)
-                )
-            }
-        }
-        // Registration has to precede chat restore: a channel checkpoint can
-        // only be understood once its key is held.
-        _ = await registerChannels(registrations)
-        await refreshChannelAddresses()
-        await ensurePublicConversation()
-        await reloadApplicationState()
-    }
-
-    /// The public channel is where an off-grid conversation starts when the
-    /// user has nobody's key yet, so its chat is always there to open. Every
-    /// other channel waits to be asked.
-    private func ensurePublicConversation() async {
-        guard let applicationStore, let localIdentity else { return }
-        guard let channel = channels.first(where: {
-            $0.canonicalName == "public" && $0.joinedPhone
-        }), let address = coordinator.channelAddresses[channel.id] else { return }
-        _ = try? await applicationStore.ensureChannelConversation(
-            ownerIdentityID: localIdentity.id,
-            channelID: channel.id,
-            conversationAddress: address
-        )
     }
 
     /// Derive each joined channel's conversation address once, so the rest of
@@ -2431,60 +2126,15 @@ final class AppRuntime {
             addresses[channel.id] = address
         }
         coordinator.channelAddresses = addresses
-        await pushChatSilentTests()
     }
-
-    /// Reconcile the device's channel list into the local cache flags, and
-    /// collect the identifiers this phone cannot name.
-    private func synchronizeRadioChannels(from snapshot: RadioSnapshot) async {
-        guard snapshot.linkState == .attached || snapshot.linkState == .ready,
-              snapshot.hostState == .matchesCurrentIdentity,
-              let applicationStore
-        else {
-            coordinator.lastReconciledDeviceChannels = nil
-            if !unknownDeviceChannels.isEmpty { unknownDeviceChannels = [] }
-            return
-        }
-        guard let identifiers = snapshot.provisioning?.devChannelIDs,
-              coordinator.lastReconciledDeviceChannels != identifiers
-        else { return }
-
-        // The device reports identifiers only—the full sixteen octets, since
-        // the two-octet one can collide—so naming them means deriving that
-        // identifier from each key this phone holds and matching.
-        var identified: Set<Data> = []
-        for channel in channels {
-            guard let key = try? channelKeyVault.loadKey(channelID: channel.id),
-                  let derived = try? await meshEngine.channelIdentifier(key: key)
-            else { continue }
-            let onDevice = identifiers.contains(derived)
-            if onDevice { identified.insert(derived) }
-            if channel.joinedDevice != onDevice {
-                try? await applicationStore.setChannelMembership(
-                    id: channel.id,
-                    joinedPhone: channel.joinedPhone,
-                    joinedDevice: onDevice
-                )
-            }
-        }
-        let unknown = identifiers
-            .filter { !identified.contains($0) }
-            .map(UnknownDeviceChannel.init(identifier:))
-        if unknownDeviceChannels != unknown { unknownDeviceChannels = unknown }
-        coordinator.lastReconciledDeviceChannels = identifiers
-        await reloadApplicationState()
-    }
-
-
 
     private static func hex(_ data: Data) -> String {
         data.map { String(format: "%02x", $0) }.joined()
     }
 
     /// One broadcast Identity Request for the Discover sheet: matching nodes
-    /// reply with their identities, which land through
-    /// `applyReceivedAdvertisement`. Returns whether the request was handed to
-    /// the radio.
+    /// reply with their identities, which the core records. Returns whether
+    /// the request was handed to the radio.
     ///
     /// Without a vantage it is zero-hop, answered by nodes in this phone's own
     /// range. With one it is steered down that route and answered by whatever
@@ -2493,12 +2143,14 @@ final class AppRuntime {
         _ roleFilter: PeerRole?,
         _ vantage: SolicitVantage?
     ) async -> Bool {
-        guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready,
-              radioSnapshot.hostState == .matchesCurrentIdentity
+        guard radioSnapshot.linkState == .attached,
+              radioSnapshot.hostState == .matchesCurrentIdentity,
+              let session = await meshSession()
         else { return false }
         do {
-            try await radioConnection.requestNearbyIdentities(
-                roleFilter: roleFilter?.roleCode,
+            try await session.discoverIdentities(
+                roleCode: roleFilter?.roleCode,
+                capabilityBits: nil,
                 nodeHint: nil,
                 sourceRoute: vantage?.repeaters ?? []
             )
@@ -2520,12 +2172,14 @@ final class AppRuntime {
         _ hint: Data,
         precededBy precedingRepeaters: [Data]
     ) async -> Bool {
-        guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready,
-              radioSnapshot.hostState == .matchesCurrentIdentity
+        guard radioSnapshot.linkState == .attached,
+              radioSnapshot.hostState == .matchesCurrentIdentity,
+              let session = await meshSession()
         else { return false }
         do {
-            try await radioConnection.requestNearbyIdentities(
-                roleFilter: nil,
+            try await session.discoverIdentities(
+                roleCode: nil,
+                capabilityBits: nil,
                 nodeHint: hint,
                 sourceRoute: precedingRepeaters
             )
@@ -2541,7 +2195,7 @@ final class AppRuntime {
     func clearDiscoveredNodes() async {
         guard let applicationStore, let localIdentity else { return }
         try? await applicationStore.clearTransientPeers(ownerIdentityID: localIdentity.id)
-        await reloadApplicationState()
+        await afterWrite()
     }
 
     @discardableResult
@@ -2604,7 +2258,8 @@ final class AppRuntime {
         // A radio behind a background wake can still be dialing; give the
         // link the launch it is already making before giving up on it.
         await waitUntil(timeout: .seconds(15)) {
-            (self.radioSnapshot.linkState == .attached || self.radioSnapshot.linkState == .ready)
+            self.lifecycle == .running
+                && self.radioSnapshot.linkState == .attached
                 && self.radioSnapshot.hostState == .matchesCurrentIdentity
         }
         switch await sendMessage(item, text) {
@@ -2720,7 +2375,7 @@ final class AppRuntime {
             guard !frames.isEmpty else {
                 return await resendMessageAsNew(conversation, message, forwardSecret)
             }
-            try await radioConnection.resendChat(
+            try await requireSession().resendChat(
                 conversationAddress: conversation.conversationAddress,
                 original: originalRef(message),
                 frames: frames,
@@ -2847,14 +2502,14 @@ final class AppRuntime {
         guard let applicationStore, let localIdentity else {
             return .failed("The local identity or message database is unavailable.")
         }
-        guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready,
+        guard radioSnapshot.linkState == .attached,
               radioSnapshot.hostState == .matchesCurrentIdentity
         else { return .failed("Connect a companion radio configured for this phone before sending.") }
         var lost: [ChatMessageSummary] = []
         for message in messages where message.isGapIdle {
             do {
-                let held = try await radioConnection.requestChatRepair(
-                    sessionID: UInt64(message.sessionID) ?? 0,
+                let held = try await requireSession().requestChatRepair(
+                    sessionId: UInt64(message.sessionID) ?? 0,
                     handle: message.handle
                 )
                 if !held { lost.append(message) }
@@ -2919,21 +2574,11 @@ final class AppRuntime {
         )
     }
 
-    /// Which kind of conversation a log line is about. Never the address
-    /// itself: a peer address identifies a person, and the console is not the
-    /// place to publish who this phone talks to.
-    private static func conversationKindLabel(_ conversation: ConversationListItem) -> String {
-        switch conversation {
-        case .direct: "direct"
-        case .channel: "channel"
-        }
-    }
-
     /// Why nothing can go on the air in this conversation right now, or
     /// `nil` when something can.
     private func chatSendRefusal(_ conversation: ConversationListItem) -> MessageSendResult? {
         if let refusal = uncertifiedEmergencyRefusal(conversation) { return refusal }
-        guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready,
+        guard radioSnapshot.linkState == .attached,
               radioSnapshot.hostState == .matchesCurrentIdentity
         else { return .failed("Connect a companion radio configured for this phone before sending.") }
         return nil
@@ -2957,7 +2602,7 @@ final class AppRuntime {
         let submittedDraft = drafts.latestText(for: draftKey) ?? conversation.draftText
         let outcome = await ChatSubmissionCoordinator().submit(
             send: {
-                try await self.radioConnection.sendChat(
+                try await self.requireSession().sendChat(
                     conversationAddress: conversation.conversationAddress,
                     request: request
                 )
@@ -3013,7 +2658,7 @@ final class AppRuntime {
                 channelID: channel.id,
                 conversationAddress: address
             )
-            await reloadApplicationState()
+            await afterWrite()
             return channelConversations.first { $0.channel.id == channel.id }
         } catch {
             Self.logger.error(
@@ -3043,7 +2688,7 @@ final class AppRuntime {
                 ownerIdentityID: localIdentity.id,
                 conversationID: conversation.id
             )
-            await reloadApplicationState()
+            await afterWrite()
         } catch {
             Self.logger.error(
                 "Could not delete channel conversation \(conversation.id): \(String(describing: error), privacy: .public)"
@@ -3093,7 +2738,7 @@ final class AppRuntime {
         _ conversation: ChannelConversationSummary,
         _ hint: Data
     ) async {
-        try? await radioConnection.requestIdentityByHint(
+        try? await meshSession()?.requestIdentityByHint(
             conversationAddress: conversation.conversationAddress,
             hint: hint
         )
@@ -3137,14 +2782,9 @@ final class AppRuntime {
 
     @Sendable
     private func newestTranscriptPage(_ address: String, _ limit: Int) async -> TranscriptPage {
-        guard let applicationStore, let localIdentity else { return .empty }
-        return await transcriptPage(
-            try? await applicationStore.chatMessagePage(
-                ownerIdentityID: localIdentity.id,
-                conversationAddress: address,
-                newest: limit
-            )
-        ) ?? .empty
+        await transcriptPage {
+            try $0.transcriptNewest(conversationAddress: address, limit: UInt32(clamping: limit))
+        } ?? .empty
     }
 
     @Sendable
@@ -3153,15 +2793,13 @@ final class AppRuntime {
         _ cursor: ChatMessageCursor,
         _ limit: Int
     ) async -> TranscriptPage {
-        guard let applicationStore, let localIdentity else { return .empty }
-        return await transcriptPage(
-            try? await applicationStore.chatMessagePage(
-                ownerIdentityID: localIdentity.id,
+        await transcriptPage {
+            try $0.transcriptBefore(
                 conversationAddress: address,
-                before: cursor,
-                limit: limit
+                cursor: MobileStoredChatCursorRecord(cursor),
+                limit: UInt32(clamping: limit)
             )
-        ) ?? .empty
+        } ?? .empty
     }
 
     @Sendable
@@ -3171,16 +2809,14 @@ final class AppRuntime {
         _ including: Bool,
         _ limit: Int
     ) async -> TranscriptPage {
-        guard let applicationStore, let localIdentity else { return .empty }
-        return await transcriptPage(
-            try? await applicationStore.chatMessagePage(
-                ownerIdentityID: localIdentity.id,
+        await transcriptPage {
+            try $0.transcriptAfter(
                 conversationAddress: address,
-                after: cursor,
+                cursor: MobileStoredChatCursorRecord(cursor),
                 including: including,
-                limit: limit
+                limit: UInt32(clamping: limit)
             )
-        ) ?? .empty
+        } ?? .empty
     }
 
     @Sendable
@@ -3189,87 +2825,65 @@ final class AppRuntime {
         _ messageID: String,
         _ radius: Int
     ) async -> TranscriptPage? {
-        guard let applicationStore, let localIdentity,
-              let reference = Self.messageReference(messageID)
-        else { return nil }
-        let stored = try? await applicationStore.chatMessageWindow(
-            ownerIdentityID: localIdentity.id,
-            conversationAddress: address,
-            around: reference.sessionID,
-            handle: reference.handle,
-            radius: radius
-        )
-        // A nil read and a nil window mean the same thing to the caller: this
-        // message is not somewhere the transcript can go.
-        guard let stored else { return nil }
-        return await transcriptPage(stored)
-    }
-
-    /// Map one bounded read for display, resolving the sender hints that page
-    /// needs. A page is at most a few hundred rows, so hint rendering is
-    /// bounded by what is about to be on screen rather than by stored history.
-    private func transcriptPage(_ stored: StoredChatMessagePage?) async -> TranscriptPage? {
-        guard let stored else { return nil }
-        let nodeHints = await renderedNodeHints(in: stored.messages)
-        let repeaters = await namedRepeaters(in: stored.messages)
-        return TranscriptPage(
-            messages: stored.messages.map {
-                Self.messageSummary(from: $0, nodeHints: nodeHints, repeaters: repeaters)
-            },
-            hasOlder: stored.hasOlder,
-            hasNewer: stored.hasNewer
-        )
-    }
-
-    /// Split a `ChatMessageSummary.id` back into the durable identity it was
-    /// built from. The transcript names messages this way throughout, so a
-    /// search result can be handed straight back as an anchor.
-    private static func messageReference(
-        _ messageID: String
-    ) -> (sessionID: String, handle: UInt32)? {
-        guard let separator = messageID.lastIndex(of: ":"),
-              let handle = UInt32(messageID[messageID.index(after: separator)...])
-        else { return nil }
-        return (String(messageID[..<separator]), handle)
-    }
-
-    /// Record which conversations a chat batch changed, so an open transcript
-    /// re-reads its window.
-    ///
-    /// Not everything in a batch names its conversation. A body edit or a
-    /// tombstone identifies its message by durable handle alone, and a delivery
-    /// carries only the handle it acknowledges, so both are resolved from the
-    /// row already in storage. Deliveries arrive per fragment, so identical
-    /// handles are collapsed first: each distinct message is worth one lookup,
-    /// not one per fragment.
-    #if DEBUG
-    /// Rewrite the staged mesh, when this root is the staging one.
-    ///
-    /// Runs on every bootstrap rather than only on a first launch, because the
-    /// staged timeline is written relative to now: reseeding is what keeps the
-    /// newest message reading "4 minutes ago" in a screenshot taken next month.
-    /// Every write is keyed, so repeating it replaces rather than accumulates.
-    private func seedStagedContentIfNeeded() async {
-        guard isStaging, let applicationStore, let localIdentity else { return }
-        do {
-            try await seedStaging(
-                store: applicationStore.coreStore,
-                vault: channelKeyVault,
-                ownerIdentityId: localIdentity.id,
-                nowMs: Date.now.storeMilliseconds
-            )
-            // The staged crew channel needs no registration here: bootstrap's
-            // own reload picks up the row this just wrote, and the
-            // `replayChannelMembership` that follows derives its address and
-            // registers the key like any other joined channel.
-        } catch {
-            Self.logger.error(
-                "Could not seed staged content: \(String(describing: error), privacy: .public)"
+        guard let reference = MobileStoredChatMessageRefRecord(messageID: messageID) else { return nil }
+        // A failed read and a missing message mean the same thing to the
+        // caller: this message is not somewhere the transcript can go.
+        return await transcriptPage {
+            try $0.transcriptAround(
+                conversationAddress: address,
+                message: reference,
+                radius: UInt32(clamping: radius)
             )
         }
     }
+
+    /// One bounded transcript read, mapped for display; `nil` when it could
+    /// not be made.
+    private func transcriptPage(
+        _ query: @escaping @Sendable (MobileAppCore) throws -> MobileAppTranscriptPageRecord?
+    ) async -> TranscriptPage? {
+        guard let record = try? await read(query) else { return nil }
+        return TranscriptPage(record, peers: peers)
+    }
+
+    #if DEBUG
+    /// Rewrite the staged mesh, when this root is the staging one.
+    ///
+    /// Runs before every start rather than only on a first launch, because
+    /// the staged timeline is written relative to now: reseeding is what
+    /// keeps the newest message reading "4 minutes ago" in a screenshot
+    /// taken next month. Every write is keyed, so repeating it replaces
+    /// rather than accumulates.
+    private func seedStagedContentIfNeeded(owner: String) async {
+        guard isStaging, !isDetached, let applicationStore else { return }
+        // Kept, because canceling does not stop it: the seed writes in
+        // several steps, and an erase of the staged store must not land
+        // between them.
+        let seed = Task { [channelKeyVault] in
+            do {
+                try await seedStaging(
+                    store: applicationStore.coreStore,
+                    vault: channelKeyVault,
+                    ownerIdentityId: owner,
+                    nowMs: Date.now.storeMilliseconds
+                )
+            } catch {
+                Self.logger.error(
+                    "Could not seed staged content: \(String(describing: error), privacy: .public)"
+                )
+            }
+        }
+        stagedSeed = seed
+        await seed.value
+    }
+
+    /// Wait for a staged seed this runtime began to finish writing. Once
+    /// it is detached, it begins no other.
+    func stagedSeedFinished() async {
+        await stagedSeed?.value
+    }
     #else
-    private func seedStagedContentIfNeeded() async {}
+    private func seedStagedContentIfNeeded(owner: String) async {}
     #endif
 
     #if DEBUG
@@ -3405,11 +3019,7 @@ final class AppRuntime {
     /// than carried on every summary through every reload.
     @Sendable
     func countConversationMessages(_ address: String) async -> Int {
-        guard let applicationStore, let localIdentity else { return 0 }
-        return (try? await applicationStore.chatMessageCount(
-            ownerIdentityID: localIdentity.id,
-            conversationAddress: address
-        )) ?? 0
+        (try? await read { Int(try $0.messageCount(conversationAddress: address)) }) ?? 0
     }
 
     func deleteConversation(_ conversation: DirectConversationSummary) async {
@@ -3419,10 +3029,9 @@ final class AppRuntime {
                 ownerIdentityID: localIdentity.id,
                 conversationID: conversation.id
             )
-            await reloadApplicationState()
-            // The reconcile also sheds the peer's key from the radio: a
-            // closed conversation takes its custody with it.
-            await reconcileHostPeers()
+            // The core sheds the peer's key from the radio: a closed
+            // conversation takes its custody with it.
+            await afterWrite()
         } catch {
             Self.logger.error("Could not delete conversation \(conversation.id): \(String(describing: error), privacy: .public)")
         }
@@ -3435,15 +3044,13 @@ final class AppRuntime {
                 ownerIdentityID: localIdentity.id,
                 peerAddress: peer.identity.canonicalAddress
             )
-            await reloadApplicationState()
-            // Telling the radio is an optimization for the attached case, not
-            // part of creating the conversation: with no radio there is
-            // nothing to tell, and `prepareChatState` registers every
-            // conversation peer on the next attach anyway. Letting it fail the
+            // Telling the mesh session is an optimization for a running
+            // core, not part of creating the conversation: the core registers
+            // every conversation peer when it starts. Letting it fail the
             // whole operation would leave a conversation that exists on disk
             // but that nothing ever opens.
-            try? await radioConnection.registerChatPeers([peer.meshRegistration])
-            await reconcileHostPeers()
+            try? await meshSession()?.registerPeers(peers: [peer.meshRegistration])
+            await afterWrite()
             return conversations.first {
                 $0.peer.identity.canonicalAddress == peer.identity.canonicalAddress
             }
@@ -3457,93 +3064,46 @@ final class AppRuntime {
     }
 
     /// Ping `peer`, down `path` when one is given: a test of a path that
-    /// installs nothing.
+    /// installs nothing. A reply counts as hearing the peer, which the core
+    /// records.
     private func pingPeer(_ peer: PeerSummary, along path: ManualPath?) async -> PeerPingResult {
-        guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready else {
-            return .unavailable(reason: String(localized: "No companion radio is connected.", comment: "Why a ping could not be sent."))
-        }
-        guard radioSnapshot.hostState == .matchesCurrentIdentity else {
-            return .unavailable(reason: String(localized: "This radio is not set up for this phone.", comment: "Why a ping could not be sent."))
-        }
+        let unsent = String(localized: "The radio could not send the ping.", comment: "Why a ping could not be sent.")
+        guard let core else { return .unavailable(reason: unsent) }
         do {
-            switch try await radioConnection.ping(
-                peerAddress: peer.identity.canonicalAddress,
-                path: path?.explicitPath
-            ) {
+            switch try await core.ping(address: peer.identity.canonicalAddress, path: path?.explicitPath) {
             case let .reply(reply):
-                // A pong is evidence we heard from the peer; a timeout is not.
-                await touchLastHeard(peer.identity.canonicalAddress)
-                await reloadApplicationState()
-                return .reply(
-                    PeerPingReply(
-                        roundTripMilliseconds: reply.roundTripMilliseconds,
-                        hopCount: reply.hopCount,
-                        routeHints: await renderRouterHints(reply.routeHints),
-                        traceSignal: reply.traceSignal,
-                        rssiDBm: reply.rssiDBm,
-                        signalToNoiseCentibels: reply.signalToNoiseCentibels,
-                        linkQuality: reply.linkQuality,
-                        viaRouteRetry: reply.viaRouteRetry
-                    )
-                )
+                return .reply(PeerPingReply(reply))
             case .timedOut:
                 return .timedOut
             case .canceled:
                 return .canceled
             }
+        } catch MobileAppError.NoAnswer {
+            // The core's backstop on a ping nothing ever ended.
+            return .timedOut
+        } catch MobileAppError.SendFailed {
+            return .unavailable(reason: unsent)
+        } catch let error as MobileAppError {
+            return .unavailable(reason: error.message)
         } catch {
-            return .unavailable(reason: String(localized: "The radio could not send the ping.", comment: "Why a ping could not be sent."))
+            return .unavailable(reason: unsent)
         }
     }
 
     /// Report the route this phone will use for the next frame to `peer`.
-    /// A radio that cannot answer reads as nothing learned, which is what an
+    /// A core that cannot answer reads as nothing learned, which is what an
     /// unreachable MAC effectively means for the next send.
     private func peerRoute(_ peer: PeerSummary) async -> PeerRoute {
-        guard let route = try? await radioConnection.peerRoute(
-            peerAddress: peer.identity.canonicalAddress
-        ) else { return .unavailable }
-        let kind = Self.routeKind(route.kind)
-        var candidate: PeerRoute.Candidate?
-        if let learned = route.candidate {
-            candidate = PeerRoute.Candidate(
-                kind: Self.routeKind(learned.kind),
-                hints: await renderRouterHints(learned.hints),
-                hopCount: learned.hopCount
-            )
+        guard let route = try? await core?.peerRoute(address: peer.identity.canonicalAddress) else {
+            return .unavailable
         }
-        let now = Date()
-        return PeerRoute(
-            kind: kind,
-            hints: await renderRouterHints(route.hints),
-            hopCount: route.hopCount,
-            floodHops: route.floodHops,
-            floodRegions: route.floodRegions,
-            heldFloodHops: route.holdFloodHops,
-            holdUntil: route.holdRemainingMilliseconds.map {
-                now.addingTimeInterval(Double($0) / 1000)
-            },
-            fallbackAcks: route.fallbackAcks,
-            lastAcknowledged: route.confirmedAgeMilliseconds.map {
-                now.addingTimeInterval(-Double($0) / 1000)
-            },
-            candidate: candidate
-        )
-    }
-
-    private static func routeKind(_ kind: MobileMeshRouteKind) -> PeerRoute.Kind {
-        switch kind {
-        case .unknown: .unknown
-        case .direct: .direct
-        case .source: .source
-        case .flood: .flood
-        }
+        return PeerRoute(route)
     }
 
     // MARK: - Manual paths
 
-    /// Hold `route` for `peer`, then keep it so the next session can hold it
-    /// again: the phone's routing remembers routes only while it runs.
+    /// Hold `path` for `peer`, and keep it so the next session holds it
+    /// again.
     ///
     /// Notes where the phone is, when it already may know, as the point a
     /// later move is measured from. Saving a path never asks for location.
@@ -3552,133 +3112,70 @@ final class AppRuntime {
         path: ManualPath,
         hold: ManualPathHold
     ) async -> Bool {
-        let holdUntil = Date().addingTimeInterval(hold.duration)
-        let held = (try? await radioConnection.holdPeerRoute(
-            peerAddress: peer.identity.canonicalAddress,
-            path: path.explicitPath,
-            holdMilliseconds: UInt64(hold.duration * 1000)
-        )) ?? false
-        guard held else { return false }
-        let position = await locationService.readOnceIfAuthorized()
-        if let applicationStore, let localIdentity {
-            try? await applicationStore.saveManualRoute(
-                ownerIdentityID: localIdentity.id,
-                publicAddress: peer.identity.canonicalAddress,
-                hints: path.hops.map(\.bytes),
-                floodHops: path.floodHops,
-                holdUntil: holdUntil,
-                latitude: position?.coordinate.latitude,
-                longitude: position?.coordinate.longitude,
-                accuracy: position?.horizontalAccuracy
+        guard let core else { return false }
+        let position = await locationService.readOnceIfAuthorized().map(MobilePositionRecord.init)
+        do {
+            let held = try await core.setManualPath(
+                address: peer.identity.canonicalAddress,
+                path: path.explicitPath,
+                holdMs: UInt64(hold.duration * 1000),
+                position: position
             )
+            await afterWrite()
+            return held
+        } catch {
+            Self.logger.error("A manual path was not kept: \(String(describing: error), privacy: .public)")
+            return false
         }
-        return true
     }
 
     /// Drop a held path and what the phone kept about it.
     private func clearManualPath(_ peer: PeerSummary) async -> Bool {
-        await forgetManualPath(peer)
-        return await clearPeerRoute(peer)
+        let cleared = (try? await core?.clearManualPath(address: peer.identity.canonicalAddress)) ?? false
+        await afterWrite()
+        return cleared
     }
 
     /// Switch a held path for the one learned while it was held.
     private func adoptLearnedPath(_ peer: PeerSummary) async -> Bool {
-        let adopted = (try? await radioConnection.adoptLearnedPeerRoute(
-            peerAddress: peer.identity.canonicalAddress
-        )) ?? false
-        if adopted { await forgetManualPath(peer) }
+        let adopted = (try? await core?.adoptLearnedPath(address: peer.identity.canonicalAddress)) ?? false
+        await afterWrite()
         return adopted
     }
 
     private func keepManualPath(_ peer: PeerSummary) async {
-        guard let applicationStore, let localIdentity else { return }
-        try? await applicationStore.settleManualRoutePrompt(
-            ownerIdentityID: localIdentity.id,
-            publicAddress: peer.identity.canonicalAddress
-        )
+        try? await core?.keepManualPath(address: peer.identity.canonicalAddress)
+        await afterWrite()
     }
 
-    /// The held route, when its learned rival is due to be offered: the
-    /// rule is `ManualPathRecord.shouldOfferLearnedPath`, and the phone's
-    /// position is read only where location access was already granted.
+    /// The held route, when the path learned while holding it is due to be
+    /// offered. The phone's position is read only when the core asks for
+    /// it, and only where location access was already granted.
     private func learnedPathOffer(_ peer: PeerSummary) async -> PeerRoute? {
-        guard let record = await manualPathRecord(peer), !record.promptSettled else { return nil }
-        let route = await peerRoute(peer)
-        guard route.isHeld, route.candidate != nil, route.fallbackAcks > 0 else { return nil }
-        var moved = false
-        if route.fallbackAcks < 2, let fix = await locationService.readOnceIfAuthorized() {
-            moved = record.hasMoved(
-                latitude: fix.coordinate.latitude,
-                longitude: fix.coordinate.longitude,
-                accuracy: fix.horizontalAccuracy
-            )
-        }
-        return record.shouldOfferLearnedPath(route: route, moved: moved) ? route : nil
-    }
-
-    private func manualPathRecord(_ peer: PeerSummary) async -> ManualPathRecord? {
-        guard let applicationStore, let localIdentity,
-              let stored = try? await applicationStore.manualRoute(
-                  ownerIdentityID: localIdentity.id,
-                  publicAddress: peer.identity.canonicalAddress
-              )
-        else { return nil }
-        return ManualPathRecord(
-            holdUntil: stored.holdUntil,
-            savedLatitude: stored.savedLatitude,
-            savedLongitude: stored.savedLongitude,
-            savedAccuracy: stored.savedAccuracy,
-            promptSettled: stored.promptSettled
-        )
-    }
-
-    private func forgetManualPath(_ peer: PeerSummary) async {
-        guard let applicationStore, let localIdentity else { return }
-        try? await applicationStore.clearManualRoute(
-            ownerIdentityID: localIdentity.id,
-            publicAddress: peer.identity.canonicalAddress
-        )
-    }
-
-    /// Hold again every path still within its hold, for what is left of it.
-    /// A new mesh session starts with no routes at all.
-    private func reinstallManualPaths() async {
-        guard let applicationStore, let localIdentity,
-              let routes = try? await applicationStore.manualRoutes(ownerIdentityID: localIdentity.id)
-        else { return }
-        for route in routes {
-            let remaining = route.holdUntil.timeIntervalSinceNow
-            guard remaining > 0 else { continue }
-            _ = try? await radioConnection.holdPeerRoute(
-                peerAddress: route.publicAddress,
-                path: MobileMeshExplicitPath(hints: route.hints, floodHops: route.floodHops),
-                holdMilliseconds: UInt64(remaining * 1000)
-            )
+        guard let core else { return nil }
+        let address = peer.identity.canonicalAddress
+        do {
+            var offer = try await core.learnedPathOffer(address: address, position: nil)
+            if case .needsPosition = offer {
+                let reading: MobileAppPositionReading
+                if let fix = await locationService.readOnceIfAuthorized() {
+                    reading = .found(position: MobilePositionRecord(fix))
+                } else {
+                    reading = .unavailable
+                }
+                offer = try await core.learnedPathOffer(address: address, position: reading)
+            }
+            guard case let .offer(route) = offer else { return nil }
+            return PeerRoute(route)
+        } catch {
+            return nil
         }
     }
 
     /// Discard a peer's learned route. Returns whether one was held, so the
     /// UI can distinguish a reset from a no-op.
     private func clearPeerRoute(_ peer: PeerSummary) async -> Bool {
-        (try? await radioConnection.clearPeerRoute(
-            peerAddress: peer.identity.canonicalAddress
-        )) ?? false
-    }
-
-    /// Render wire router hints for display. A hint the core rejects—a
-    /// wrong-width option, say—is dropped rather than shown as raw bytes:
-    /// the route reads as incomplete, which it is.
-    private func renderRouterHints(_ hints: [Data]) async -> [MeshRouterHint] {
-        var rendered: [MeshRouterHint] = []
-        rendered.reserveCapacity(hints.count)
-        for hint in hints {
-            guard let routerHint = try? await meshEngine.renderRouterHint(hint) else {
-                Self.logger.error("Dropping a \(hint.count)-byte router hint from a ping route")
-                continue
-            }
-            rendered.append(routerHint)
-        }
-        return rendered
+        (try? await core?.clearRoute(address: peer.identity.canonicalAddress)) ?? false
     }
 
     // MARK: - Neighboring repeaters
@@ -3686,17 +3183,15 @@ final class AppRuntime {
     /// What a repeater last said about its neighbors, from this phone's own
     /// store. Nothing goes on the air.
     private func cachedPeerRepeaters(_ peer: PeerSummary) async -> PeerRepeaterListing? {
-        guard let applicationStore, let localIdentity,
-              let stored = try? await applicationStore.peerRepeaterListing(
-                  ownerIdentityID: localIdentity.id,
-                  publicAddress: peer.identity.canonicalAddress
-              )
-        else { return nil }
-        return await listing(from: stored)
+        let address = peer.identity.canonicalAddress
+        guard let record = try? await read({ try $0.peerRepeaters(publicAddress: address) }) else {
+            return nil
+        }
+        return PeerRepeaterListing(record)
     }
 
-    /// Ask a repeater for one page of its neighbor listing and fold it into
-    /// what this phone holds about that repeater. The cursor is the caller's:
+    /// Ask a repeater for one page of its neighbor listing, folded into what
+    /// this phone holds about that repeater. The cursor is the caller's:
     /// none asks for the top of the listing and replaces what was held, one
     /// asks for the page after it and adds to it. Never follows a cursor on
     /// its own.
@@ -3713,159 +3208,52 @@ final class AppRuntime {
         cursor: Data?,
         route: [MeshRouterHint]
     ) async -> PeerRepeatersPageResult {
-        guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready else {
-            return .unavailable(
-                reason: "Connect a configured companion radio to ask this repeater."
-            )
-        }
-        guard radioSnapshot.hostState == .matchesCurrentIdentity else {
-            return .unavailable(
-                reason: "Set up this radio for the current phone identity before asking repeaters."
-            )
-        }
-        let page: MobileMeshPeerRepeatersPageRecord
+        guard let core else { return .failed }
         do {
-            page = try await radioConnection.requestPeerRepeaters(
-                peerAddress: peer.identity.canonicalAddress,
+            return .page(PeerRepeaterListing(try await core.requestPeerRepeaters(
+                address: peer.identity.canonicalAddress,
                 cursor: cursor,
                 route: route.map(\.bytes)
-            )
-        } catch RemoteManagementError.noAnswer {
-            return .noAnswer
+            )))
+        } catch let error as MobileAppError {
+            switch error {
+            case .NoAnswer:
+                return .noAnswer
+            case .NoRadio:
+                return .unavailable(reason: String(
+                    localized: "Connect a configured companion radio to ask this repeater.",
+                    comment: "Why a repeater's neighbors could not be asked for: no radio is attached."
+                ))
+            case .NotThisPhone:
+                return .unavailable(reason: String(
+                    localized: "Set up this radio for the current phone identity before asking repeaters.",
+                    comment: "Why a repeater's neighbors could not be asked for: the radio is not this phone's."
+                ))
+            case .NoOwner, .NotRunning, .Busy, .Stopped:
+                return .unavailable(reason: error.message)
+            default:
+                return .failed
+            }
         } catch {
             return .failed
         }
-
-        // The page is authenticated unicast from the repeater, which is as
-        // good a hearing as a pong.
-        let now = Date()
-        await touchLastHeard(peer.identity.canonicalAddress)
-        let entries = page.entries.map { record in
-            StoredPeerRepeaterEntry(
-                hint: record.hint,
-                name: record.name,
-                rssiDBm: record.rssiDbm,
-                snrQuarterDB: record.snrQuarterDb,
-                lastHeardMinutes: record.lastHeardMinutes,
-                latitude: record.latitudeDegrees,
-                longitude: record.longitudeDegrees,
-                locationPrecision: record.locationPrecision,
-                regionCodes: record.regionCodes,
-                reportedAt: now
-            )
-        }
-        if let applicationStore, let localIdentity {
-            try? await applicationStore.savePeerRepeaterPage(
-                ownerIdentityID: localIdentity.id,
-                publicAddress: peer.identity.canonicalAddress,
-                entries: entries,
-                total: page.total.map(Int.init),
-                nextCursor: page.nextCursor,
-                replacing: cursor == nil,
-                at: now
-            )
-        }
-        await reloadApplicationState()
-        if let cached = await cachedPeerRepeaters(peer) {
-            return .page(cached)
-        }
-        // A repeater this phone holds no row for has nowhere to keep the
-        // listing; the page is still what it said.
-        return .page(
-            await listing(
-                from: StoredPeerRepeaterListing(
-                    entries: entries,
-                    total: page.total.map(Int.init),
-                    nextCursor: page.nextCursor,
-                    asOf: now
-                )
-            )
-        )
-    }
-
-    private func listing(from stored: StoredPeerRepeaterListing) async -> PeerRepeaterListing {
-        var entries: [PeerRepeaterNeighbor] = []
-        entries.reserveCapacity(stored.entries.count)
-        for entry in stored.entries {
-            entries.append(await neighbor(from: entry))
-        }
-        return PeerRepeaterListing(
-            entries: entries,
-            total: stored.total,
-            nextCursor: stored.nextCursor,
-            asOf: stored.asOf
-        )
-    }
-
-    /// A stored entry with its hint rendered the way the core renders every
-    /// hint, so a neighbor reads the same as the node it may turn out to be.
-    private func neighbor(from stored: StoredPeerRepeaterEntry) async -> PeerRepeaterNeighbor {
-        let hintText: String
-        if stored.hint.count == 3,
-           let rendered = try? await meshEngine.renderNodeHint(stored.hint)
-        {
-            hintText = rendered.text
-        } else if stored.hint.count >= 2,
-                  let rendered = try? await meshEngine.renderRouterHint(Data(stored.hint.prefix(2)))
-        {
-            hintText = rendered.text
-        } else {
-            hintText = stored.hint.map { String(format: "%02X", $0) }.joined()
-        }
-        return PeerRepeaterNeighbor(
-            hint: stored.hint,
-            hintText: hintText,
-            name: stored.name,
-            rssiDBm: stored.rssiDBm,
-            snrQuarterDB: stored.snrQuarterDB,
-            lastHeardMinutes: stored.lastHeardMinutes,
-            latitude: stored.latitude,
-            longitude: stored.longitude,
-            locationPrecision: stored.locationPrecision,
-            regionCodes: stored.regionCodes,
-            reportedAt: stored.reportedAt
-        )
     }
 
     /// Solicit a peer's current identity over the mesh. The response is not
-    /// awaited here—it returns asynchronously as a node-identity
-    /// advertisement, captured by `applyReceivedAdvertisement`, which upserts
-    /// the fresh bundle and refreshes the sheet. Returns whether the request
-    /// was sent, for a brief UI confirmation.
+    /// awaited here—the core records it when it arrives, which refreshes
+    /// the sheet. Returns whether the request was sent, for a brief UI
+    /// confirmation.
     private func fetchIdentity(_ peer: PeerSummary) async -> Bool {
-        guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready,
-              radioSnapshot.hostState == .matchesCurrentIdentity
+        guard radioSnapshot.linkState == .attached,
+              radioSnapshot.hostState == .matchesCurrentIdentity,
+              let session = await meshSession()
         else { return false }
         do {
-            try await radioConnection.requestIdentity(
-                peerAddress: peer.identity.canonicalAddress
-            )
+            try await session.requestIdentity(peerAddress: peer.identity.canonicalAddress)
             return true
         } catch {
             return false
         }
-    }
-
-    /// Record that we just heard from a peer by any inbound evidence. Safe to
-    /// call for peers not yet saved locally—the store no-ops on a missing
-    /// row. Callers reload application state afterward to surface the change.
-    ///
-    /// Every piece of evidence goes through here, which is what makes it the
-    /// place to answer a pending watch: "the next time this node is heard"
-    /// has to mean the same thing whether the node beaconed, advertised,
-    /// spoke, or merely acked, and that is exactly the set that moves
-    /// last-heard. The store disarms the watch in the same call that records
-    /// the hearing and reports whether this call was the one that did it, so
-    /// the notice cannot double-post.
-    private func touchLastHeard(_ peerAddress: String, at instant: Date = Date()) async {
-        guard let applicationStore, let localIdentity else { return }
-        let firedWatch = (try? await applicationStore.touchLastHeard(
-            ownerIdentityID: localIdentity.id,
-            publicAddress: peerAddress,
-            at: instant
-        )) ?? false
-        guard firedWatch else { return }
-        postPeerHeard(peerAddress)
     }
 
     /// Tell the user a peer they were waiting on was heard.
@@ -3877,303 +3265,103 @@ final class AppRuntime {
         )
     }
 
-    private func installMeshSession() async throws {
-        let session = try await meshEngine.meshSession()
-        await radioConnection.useMeshSession(session)
-        coordinator.meshSessionInstalled = true
-    }
+    // MARK: - Notifications
 
-    private func prepareChatState() async {
-        guard let applicationStore, let localIdentity else { return }
-        do {
-            let checkpoints = try await applicationStore.chatCheckpoints(
-                ownerIdentityID: localIdentity.id
-            )
-            // Register only the peers chat actually involves: those with a
-            // conversation, plus every checkpointed stream. Registering every
-            // stored row would grow with the transient tier and can exceed
-            // the mesh session's peer table.
-            // Channel streams are checkpointed too, but a channel is not a
-            // peer and must not be registered as one.
-            let addresses = Set(
-                conversations.map(\.peer.identity.canonicalAddress)
-                    + checkpoints.map(\.conversationAddress)
-                        .filter { !Self.isChannelAddress($0) }
-            )
-            // Each carries what the peer's stored advertisement says about
-            // whether it moves; a checkpointed stream with no stored peer
-            // has said nothing.
-            let known = Dictionary(
-                peers.map { ($0.identity.canonicalAddress, $0) },
-                uniquingKeysWith: { first, _ in first }
-            )
-            try await radioConnection.prepareChat(
-                peers: addresses.sorted().map {
-                    known[$0]?.meshRegistration
-                        ?? MobilePeerRegistrationRecord(address: $0, mobile: false)
-                },
-                checkpoints: checkpoints,
-                store: applicationStore.coreStore,
-                ownerIdentityID: localIdentity.id,
-                // With the store, so what waited for it is stored under
-                // the same setting as what follows.
-                silentTestsIn: chatSilentTestsAddress
-            )
-        } catch {
-            // Chat stays unavailable until the durable state can be restored.
-        }
-        // Whatever the attach held, the core is told once more: a session
-        // that already had its store kept the setting it had.
-        coordinator.chatSilentTestsIn = nil
-        await pushChatSilentTests()
-    }
-
-    /// The conversation whose test messages arrive without counting as
-    /// unread: `EMERGENCY`'s, unless the user asked to hear of them.
-    private var chatSilentTestsAddress: String? {
-        testMessageAlerts ? nil : emergencyConversationAddress
-    }
-
-    /// Tell the core ``chatSilentTestsAddress``. Sent only when it changed.
-    private func pushChatSilentTests() async {
-        let address = chatSilentTestsAddress
-        guard coordinator.chatSilentTestsIn != .some(address) else { return }
-        do {
-            try await radioConnection.setChatSilentTestsIn(address)
-            coordinator.chatSilentTestsIn = .some(address)
-        } catch {
-            // No session yet: `prepareChatState` sends it with the store.
-        }
-    }
-
-    /// Show what the core's stored chat changed: redraw the transcripts it
-    /// names, and say out loud what it says is worth telling.
-    private func applyChatChanges(_ changes: MobileChatChangesRecord) async {
-        // A background BLE wake gives a short grace window; the assertion
-        // keeps iOS from suspending us before the notifications are posted.
-        let assertion = UIApplication.shared.beginBackgroundTask(withName: "umsh.chat.changes")
-        defer {
-            if assertion != .invalid {
-                UIApplication.shared.endBackgroundTask(assertion)
-            }
-        }
-        Self.chatLogger.debug(
-            """
-            Chat stored: \(changes.conversations.count, privacy: .public) conversation(s)\
-            \(changes.allConversations ? " and possibly others" : "", privacy: .public), \
-            \(changes.notifications.count, privacy: .public) notification(s), \
-            \(changes.deliveryFailures.count, privacy: .public) delivery failure(s)
-            """
-        )
-        postDeliveryFailureNotifications(changes.deliveryFailures.map(ChatDeliveryFailure.init))
-        for address in changes.heardWatches {
-            postPeerHeard(address)
-        }
-        var addresses = Set(changes.conversations)
-        if changes.allConversations {
-            // A change this phone cannot place. Refreshing every open
-            // transcript costs one bounded query; not refreshing the right
-            // one leaves it showing something that is no longer true.
-            addresses.formUnion(conversations.map(\.conversationAddress))
-            addresses.formUnion(channelConversations.map(\.conversationAddress))
-        }
-        if !addresses.isEmpty {
-            coordinator.bumpChatRevisions(addresses)
-            // The reload is what carries the bumped revisions to an open
-            // transcript.
-            await reloadApplicationState()
-        }
-        await postNotifications(for: changes.notifications)
-    }
-
-    /// Raise the notifications the core found worth raising: arrivals it
-    /// has already stored, each read back from storage. The willPresent
-    /// delegate suppresses the banner when that conversation is visible in
-    /// the foreground.
-    private func postNotifications(for notifications: [MobileChatNotificationRecord]) async {
-        let subjects = notifications.map(Self.notificationSubject).filter { !isSilentTest($0) }
-        // A batch carrying several messages for one conversation gets one
-        // banner rather than several. Drained backlogs arrive exactly this
-        // way, and live traffic almost never does.
-        var batchCount: [String: Int] = [:]
-        for subject in subjects {
-            batchCount[subject.conversationAddress, default: 0] += 1
-        }
-        var summarized: Set<String> = []
-
-        for target in subjects {
-            if let count = batchCount[target.conversationAddress], count > 1 {
-                guard summarized.insert(target.conversationAddress).inserted else { continue }
-                if Self.isChannelAddress(target.conversationAddress) {
-                    guard let channel = channels.first(where: {
-                        coordinator.channelAddresses[$0.id] == target.conversationAddress
-                    }), channel.notificationsEnabled else { continue }
-                    notificationService.postInboundMessageSummary(
-                        conversationAddress: target.conversationAddress,
-                        displayName: channel.title,
-                        count: count
-                    )
-                } else {
-                    guard notificationsEnabled(forPeerAddress: target.conversationAddress) else {
-                        continue
-                    }
-                    let peer = peers.first {
-                        $0.identity.canonicalAddress == target.conversationAddress
-                    }
-                    notificationService.postInboundMessageSummary(
-                        conversationAddress: target.conversationAddress,
-                        displayName: peer?.displayName
-                            ?? String(target.conversationAddress.prefix(10)),
-                        count: count
-                    )
-                }
-                continue
-            }
-            if Self.isChannelAddress(target.conversationAddress) {
-                guard let channel = channels.first(where: {
-                    coordinator.channelAddresses[$0.id] == target.conversationAddress
-                }) else { continue }
-                // Muting a channel silences its banners. The messages still
-                // arrive and still count as unread.
-                guard channel.notificationsEnabled else { continue }
-                // The sender's saved avatar rides along when the member is a
-                // peer this phone knows; an unknown member styles without one.
-                let senderPeer = target.senderAddress.flatMap { address in
-                    peers.first { $0.identity.canonicalAddress == address }
-                }
+    /// Say what the core decided is worth saying. Which arrivals notify—
+    /// mutes, silent tests, batching—is the core's call; the words are
+    /// this side's. The willPresent delegate suppresses the banner when
+    /// that conversation is visible in the foreground.
+    private func post(_ notification: MobileNotificationEventRecord) {
+        switch notification {
+        case let .message(conversation, channelId, senderAddress, senderHandle, senderHint, body, isStatus, reaction):
+            let text = reaction.map { Self.reactionLine($0.token, on: $0.targetBody) } ?? body
+            if let channelId {
+                let channel = channel(withID: channelId)
                 // A group message is from someone in particular, and the
                 // banner is unreadable without saying who.
-                let sender = await memberName(
-                    address: target.senderAddress,
-                    handle: target.senderHandle,
-                    hint: target.senderHint
-                )
+                let sender = memberName(address: senderAddress, handle: senderHandle, hint: senderHint)
+                // The sender's saved avatar rides along when the member is a
+                // peer this phone knows; an unknown member styles without one.
+                let senderPeer = senderAddress.flatMap(peer(withAddress:))
                 notificationService.postInboundMessage(
-                    conversationAddress: target.conversationAddress,
-                    displayName: channel.title,
+                    conversationAddress: conversation,
+                    displayName: channel?.title ?? Self.unnamedChannelTitle,
                     sender: sender,
-                    senderAddress: target.senderAddress,
+                    senderAddress: senderAddress,
                     senderHint: senderPeer?.identity.hint,
-                    channel: channel.avatarStyle,
-                    body: target.isStatus
-                        ? statusLine(name: sender, body: target.body)
-                        : target.body
+                    channel: channel?.avatarStyle,
+                    body: isStatus ? statusLine(name: sender, body: text) : text
                 )
             } else {
-                // Muting a conversation silences its banners the same way
-                // muting a channel does.
-                guard notificationsEnabled(forPeerAddress: target.conversationAddress) else {
-                    continue
-                }
-                let peer = peers.first {
-                    $0.identity.canonicalAddress == target.conversationAddress
-                }
-                let displayName = peer?.displayName ?? String(target.conversationAddress.prefix(10))
+                let peer = peer(withAddress: conversation)
+                let displayName = peer?.displayName ?? String(conversation.prefix(10))
                 notificationService.postInboundMessage(
-                    conversationAddress: target.conversationAddress,
+                    conversationAddress: conversation,
                     displayName: displayName,
                     sender: nil,
-                    senderAddress: target.conversationAddress,
+                    senderAddress: conversation,
                     senderHint: peer?.identity.hint,
                     channel: nil,
-                    body: target.isStatus
-                        ? statusLine(name: displayName, body: target.body)
-                        : target.body
+                    body: isStatus ? statusLine(name: displayName, body: text) : text
                 )
             }
-        }
-    }
-
-    /// The address of `EMERGENCY`'s conversation, while it is joined.
-    private var emergencyConversationAddress: String? {
-        channels.first(where: \.isEmergency).flatMap { coordinator.channelAddresses[$0.id] }
-    }
-
-    /// Whether `subject` is a test message on `EMERGENCY` that no one asked
-    /// to hear of: it raises no banner, and is never counted toward one.
-    private func isSilentTest(_ subject: ChatNotificationSubject) -> Bool {
-        !testMessageAlerts
-            && subject.conversationAddress == emergencyConversationAddress
-            && isTestMessageBody(body: subject.body)
-    }
-
-    /// Whether a direct conversation may notify. A conversation this phone
-    /// has no row for has never been muted, so it may.
-    private func notificationsEnabled(forPeerAddress address: String) -> Bool {
-        conversations.first { $0.peer.identity.canonicalAddress == address }?
-            .notificationsEnabled ?? true
-    }
-
-    /// Say out loud that a message is not going to arrive.
-    ///
-    /// The transcript already marks it failed, and the delegate suppresses
-    /// the banner when that transcript is on screen—so this speaks up
-    /// exactly when nobody was watching it happen, which over a mesh is the
-    /// normal case. A muted conversation stays muted: the user asked not to
-    /// hear from it, and that covers the app's own bad news about it.
-    private func postDeliveryFailureNotifications(_ failures: [ChatDeliveryFailure]) {
-        for failure in failures {
-            let name: String
-            if Self.isChannelAddress(failure.conversationAddress) {
-                guard let channel = channels.first(where: {
-                    coordinator.channelAddresses[$0.id] == failure.conversationAddress
-                }), channel.notificationsEnabled else { continue }
-                name = channel.title
-            } else {
-                guard notificationsEnabled(forPeerAddress: failure.conversationAddress) else {
-                    continue
-                }
-                name = peers.first {
-                    $0.identity.canonicalAddress == failure.conversationAddress
-                }?.displayName ?? String(failure.conversationAddress.prefix(10))
-            }
+        case let .summary(conversation, channelId, count):
+            notificationService.postInboundMessageSummary(
+                conversationAddress: conversation,
+                displayName: notificationTitle(conversation, channelID: channelId),
+                count: Int(count)
+            )
+        case let .deliveryFailure(conversation, channelId, body, undelivered):
+            // The transcript already marks it failed, and the delegate
+            // suppresses the banner when that transcript is on screen—so
+            // this speaks up exactly when nobody was watching it happen,
+            // which over a mesh is the normal case.
             notificationService.postDeliveryFailure(
-                conversationAddress: failure.conversationAddress,
-                displayName: name,
-                quotedBody: Self.quotedBody(failure.body, limit: Self.failureQuoteLimit),
-                undelivered: failure.undelivered
+                conversationAddress: conversation,
+                displayName: notificationTitle(conversation, channelID: channelId),
+                quotedBody: Self.quotedBody(body, limit: Self.failureQuoteLimit),
+                undelivered: undelivered
             )
+        case let .peerHeard(address):
+            postPeerHeard(address)
         }
     }
 
-    /// What a notifying mutation is about: a message, or a reaction to one of
-    /// this phone's own messages.
-    ///
-    /// The engine sets `notify` on any inbound message it completes, and a
-    /// reaction is a message like any other as far as the wire is concerned.
-    /// Which of the two it turns out to be is settled here, against durable
-    /// storage, because the flag can ride an `UpdateBody` that carries
-    /// neither peer nor body.
-    private static func notificationSubject(
-        _ notification: MobileChatNotificationRecord
-    ) -> ChatNotificationSubject {
-        switch notification {
-        case let .message(target):
-            ChatNotificationSubject(
-                conversationAddress: target.conversationAddress,
-                body: target.body,
-                senderAddress: target.senderAddress,
-                senderHint: target.senderHint,
-                senderHandle: target.senderHandle,
-                isStatus: target.isStatus
-            )
-        case let .reaction(target):
-            ChatNotificationSubject(
-                conversationAddress: target.conversationAddress,
-                body: reactionLine(target.body, on: target.targetBody),
-                senderAddress: target.senderAddress,
-                senderHint: target.senderHint,
-                senderHandle: target.senderHandle,
-                isStatus: false
-            )
+    /// What a notification about `conversation` is titled: its channel's
+    /// name, or its peer's.
+    private func notificationTitle(_ conversation: String, channelID: String?) -> String {
+        if let channelID {
+            return channel(withID: channelID)?.title ?? Self.unnamedChannelTitle
         }
+        return peer(withAddress: conversation)?.displayName ?? String(conversation.prefix(10))
+    }
+
+    /// The title for a channel this phone has not read yet.
+    private static var unnamedChannelTitle: String {
+        String(
+            localized: "New message",
+            comment: "Notification title for a channel message, when the channel's name is not known yet."
+        )
+    }
+
+    private func channel(withID id: String) -> ChannelSummary? {
+        guard let id = UUID(uuidString: id) else { return nil }
+        return channels.first { $0.id == id }
+    }
+
+    private func peer(withAddress address: String) -> PeerSummary? {
+        peers.first { $0.identity.canonicalAddress == address }
     }
 
     /// A reaction, said out loud: what was done, the glyph it renders as, and
     /// the message it landed on.
-    private static func reactionLine(_ body: String, on target: String) -> String {
-        "Reacted \(ReactionEmoji.displayGlyph(for: body)) to "
-            + quotedBody(target, limit: reactionQuoteLimit)
+    private static func reactionLine(_ token: String, on target: String) -> String {
+        let glyph = ReactionEmoji.displayGlyph(for: token)
+        let quoted = quotedBody(target, limit: reactionQuoteLimit)
+        return String(
+            localized: "Reacted \(glyph) to \(quoted)",
+            comment: "Notification body for a reaction to one of your messages: the reaction's emoji, then your message in quotation marks."
+        )
     }
 
     /// A message as a notification *refers* to it, rather than shows it: one
@@ -4185,10 +3373,17 @@ final class AppRuntime {
         let flattened = body
             .replacingOccurrences(of: "\n", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let clipped = flattened.count > limit
-            ? flattened.prefix(limit - 1).trimmingCharacters(in: .whitespaces) + "…"
-            : flattened
-        return "“\(clipped)”"
+        guard flattened.count > limit else {
+            return String(
+                localized: "“\(flattened)”",
+                comment: "A message quoted in a notification. Use your language's quotation marks."
+            )
+        }
+        let clipped = flattened.prefix(limit - 1).trimmingCharacters(in: .whitespaces)
+        return String(
+            localized: "“\(clipped)…”",
+            comment: "A message quoted in a notification, cut short. Use your language's quotation marks and ellipsis."
+        )
     }
 
     /// Roughly what one line of a banner holds at the default text size,
@@ -4206,30 +3401,19 @@ final class AppRuntime {
     /// A message-borne name is the sender's unverified claim—anyone holding
     /// the channel key can write anything there—so it never displaces a
     /// name this phone established for a peer it actually knows.
-    private func memberName(address: String?, handle: String?, hint: Data?) async -> String {
-        if let address, let peer = peers.first(where: {
-            $0.identity.canonicalAddress == address
-        }) {
+    private func memberName(address: String?, handle: String?, hint: String?) -> String {
+        if let address, let peer = peer(withAddress: address) {
             return peer.displayName
         }
         if let handle, !handle.isEmpty { return handle }
         if let address { return String(address.prefix(10)) }
-        guard let hint, let rendered = try? await meshEngine.renderNodeHint(hint) else {
-            return "Unknown member"
+        guard let hint else {
+            return String(localized: "Unknown member", comment: "A channel message's sender, when nothing names them.")
         }
-        return "Member \(rendered.text)"
-    }
-
-    /// Whatever a notifying mutation turned out to be, reduced to the four
-    /// things a notification needs: where it belongs, what it says, and who
-    /// said it.
-    private struct ChatNotificationSubject {
-        let conversationAddress: String
-        let body: String
-        let senderAddress: String?
-        let senderHint: Data?
-        let senderHandle: String?
-        let isStatus: Bool
+        return String(
+            localized: "Member \(hint)",
+            comment: "A channel message's sender, named by their node hint. The placeholder is the hint, which is not translated."
+        )
     }
 
     /// Whether an address names a channel's group conversation rather than a
@@ -4238,268 +3422,11 @@ final class AppRuntime {
         address.hasPrefix("ch:")
     }
 
-    private func prepareApplicationState() async {
-        guard let applicationStore, let localIdentity else { return }
-        do {
-            try await applicationStore.upsertIdentity(
-                id: localIdentity.id,
-                publicAddress: localIdentity.publicIdentity.canonicalAddress
-            )
-            // Runs before any compose in this process, so every outbound row
-            // still awaiting word is an orphan from a previous launch. No
-            // transcript can be open this early, so the rows it rewrites need
-            // no revision bump—the first reload below publishes them.
-            try await applicationStore.settleInterruptedDeliveries(
-                ownerIdentityID: localIdentity.id
-            )
-            // Gaps are held by the mesh session that saw them, and that
-            // session ended with the previous launch: nothing will fill them.
-            try await applicationStore.resolveGapsUnavailable(
-                ownerIdentityID: localIdentity.id
-            )
-            await ensureBuiltinChannels()
-            await seedStagedContentIfNeeded()
-            await synchronizeRadioPeer(from: radioSnapshot)
-            await reloadClaimedRadios()
-            await reloadApplicationState()
-            // The mesh session starts with an empty channel table, so
-            // membership only survives a relaunch by being replayed into it.
-            await replayChannelMembership()
-            await reconcileHostChannels()
-            await reconcileHostPeers()
-            await reconcileHostMutes()
-        } catch {
-            peers = []
-            conversations = []
-            channels = []
-        }
-    }
-
-    private func synchronizeRadioPeer(from snapshot: RadioSnapshot) async {
-        guard snapshot.linkState == .attached || snapshot.linkState == .ready,
-              snapshot.hostState == .matchesCurrentIdentity,
-              let radioIdentity = snapshot.deviceIdentity,
-              let identifier = snapshot.localIdentifier,
-              let applicationStore,
-              let localIdentity
-        else {
-            // Re-persist on the next attach: a reconnect can bring a
-            // different radio, or the same one under a new name.
-            coordinator.synchronizedRadioPeer = nil
-            coordinator.lastReconciledDevicePeers = nil
-            await forgetClaimIfHeldElsewhere(snapshot)
-            return
-        }
-        await recordClaimedRadio(snapshot, refresh: false)
-        revokeClaimedRadiosOncePerAttach(attachedTo: radioIdentity.canonicalAddress)
-        // The radio's device-identity peer list, read back on attach. The
-        // device is the authority; the store rows only cache it. Gated on
-        // the last reconciled list so the steady snapshot stream costs
-        // nothing.
-        if let addresses = snapshot.provisioning?.devPeerAddresses,
-           coordinator.lastReconciledDevicePeers != addresses {
-            do {
-                try await applicationStore.reconcileDeviceIdentityPeers(
-                    ownerIdentityID: localIdentity.id,
-                    addresses: addresses
-                )
-                coordinator.lastReconciledDevicePeers = addresses
-                await reloadApplicationState()
-            } catch {
-                // The cache stays stale until the next attach retries.
-            }
-        }
-        // Only the four facts below reach storage. Every other part of a
-        // snapshot—duty cycle, queue depth, battery—changes constantly
-        // while the radio works, and re-running an fsync-backed write plus a
-        // full application-state reload behind each of those is what made the
-        // UI feel like it was waiting on the radio.
-        let record = SynchronizedRadioPeer(
-            ownerIdentityID: localIdentity.id,
-            publicAddress: radioIdentity.canonicalAddress,
-            advertisedName: snapshot.name,
-            radioIdentifier: identifier.uuidString
-        )
-        guard coordinator.synchronizedRadioPeer != record else { return }
-        do {
-            try await applicationStore.upsertUlcpDevicePeer(
-                ownerIdentityID: record.ownerIdentityID,
-                publicAddress: record.publicAddress,
-                advertisedName: record.advertisedName,
-                radioIdentifier: record.radioIdentifier
-            )
-            coordinator.synchronizedRadioPeer = record
-            await reloadApplicationState()
-        } catch {
-            // The live radio remains usable; persistence failure must not
-            // synthesize or duplicate a peer in memory.
-        }
-    }
-
-    // MARK: - Claimed radios
-
-    /// How often an attached radio's claim record is rewritten, so the
-    /// record's age follows the last time this phone was attached to it.
-    private static let claimRecordInterval: TimeInterval = 10 * 60
-
-    /// Whether `snapshot` is this phone attached to a radio as its host.
-    private static func isAttachedAsHost(_ snapshot: RadioSnapshot) -> Bool {
-        (snapshot.linkState == .attached || snapshot.linkState == .ready)
-            && snapshot.hostState == .matchesCurrentIdentity
-            && snapshot.deviceIdentity != nil
-    }
-
-    /// Follow the link across an attach and a detach: a fresh attach to a
-    /// radio is a new claim on it, and leaving it is the moment its record
-    /// must be current, since the radio's own lease runs from then.
-    private func noteClaimTransition(from previous: RadioSnapshot, to snapshot: RadioSnapshot) async {
-        let wasAttached = previous.linkState == .attached || previous.linkState == .ready
-        let isAttached = snapshot.linkState == .attached || snapshot.linkState == .ready
-        if !wasAttached, isAttached, let address = snapshot.deviceIdentity?.canonicalAddress {
-            coordinator.releasedRadios.remove(address)
-            coordinator.claimRecordedAt[address] = nil
-        }
-        if wasAttached, !isAttached {
-            coordinator.revokedClaimedRadiosThisAttach = false
-            if Self.isAttachedAsHost(previous) {
-                await recordClaimedRadio(previous, refresh: true)
-            }
-        }
-    }
-
-    /// Write the record of the radio this phone is attached to as host:
-    /// once per attach, every ``claimRecordInterval`` after, and on
-    /// `refresh`.
-    private func recordClaimedRadio(_ snapshot: RadioSnapshot, refresh: Bool) async {
-        guard Self.isAttachedAsHost(snapshot),
-              let address = snapshot.deviceIdentity?.canonicalAddress,
-              !coordinator.releasedRadios.contains(address),
-              let applicationStore, let localIdentity
-        else { return }
-        let now = Date()
-        if !refresh, let recorded = coordinator.claimRecordedAt[address],
-           now.timeIntervalSince(recorded) < Self.claimRecordInterval {
-            return
-        }
-        coordinator.claimRecordedAt[address] = now
-        do {
-            try await applicationStore.recordClaimedRadio(
-                ownerIdentityID: localIdentity.id,
-                deviceAddress: address,
-                name: snapshot.name,
-                now: now
-            )
-            // A release confirmed while the write was waiting its turn
-            // outranks it.
-            if coordinator.releasedRadios.contains(address) {
-                await forgetClaimedRadio(address)
-                return
-            }
-        } catch {
-            coordinator.claimRecordedAt[address] = nil
-            return
-        }
-        await reloadClaimedRadios()
-    }
-
-    /// A radio found holding some other host, or none, no longer answers
-    /// for this phone.
-    private func forgetClaimIfHeldElsewhere(_ snapshot: RadioSnapshot) async {
-        guard snapshot.linkState == .attached || snapshot.linkState == .ready,
-              ([.unclaimed, .belongsToAnotherIdentity, .unsupported] as [RadioHostState])
-                  .contains(snapshot.hostState),
-              let address = snapshot.deviceIdentity?.canonicalAddress,
-              claimedRadios.contains(where: { $0.deviceAddress == address })
-        else { return }
-        await forgetClaimedRadio(address)
-    }
-
-    private func forgetClaimedRadio(_ address: String) async {
-        guard let applicationStore, let localIdentity else { return }
-        coordinator.claimRecordedAt[address] = nil
-        try? await applicationStore.clearClaimedRadio(
-            ownerIdentityID: localIdentity.id,
-            deviceAddress: address
-        )
-        await reloadClaimedRadios()
-    }
-
-    private func reloadClaimedRadios() async {
-        guard let applicationStore, let localIdentity else {
-            claimedRadios = []
-            return
-        }
-        guard let radios = try? await applicationStore.claimedRadios(
-            ownerIdentityID: localIdentity.id
-        ) else { return }
-        if radios != claimedRadios {
-            claimedRadios = radios
-        }
-    }
-
-    /// The recorded radios other than the one attached now, still within
-    /// their lapse.
-    var strandedRadios: [StoredClaimedRadio] {
-        let attached = Self.isAttachedAsHost(radioSnapshot)
-            ? radioSnapshot.deviceIdentity?.canonicalAddress
-            : nil
-        let now = Date()
-        return claimedRadios.filter {
-            $0.deviceAddress != attached
-                && now.timeIntervalSince($0.attachedAt) < StoredClaimedRadio.lapse
-        }
-    }
-
-    /// Revoke the recorded radios once per attach, as soon as the mesh
-    /// session can carry the request. In its own task: a radio out of
-    /// reach takes the full management timeout to give up on, and the
-    /// snapshot stream must not wait for it.
-    private func revokeClaimedRadiosOncePerAttach(attachedTo address: String) {
-        guard !coordinator.revokedClaimedRadiosThisAttach,
-              coordinator.meshSessionInstalled
-        else { return }
-        coordinator.revokedClaimedRadiosThisAttach = true
-        Task { await self.revokeClaimedRadios(except: address) }
-    }
-
-    /// Ask each recorded radio again to let go of this phone.
-    func retryClaimedRadioRevocation() async {
-        guard Self.isAttachedAsHost(radioSnapshot),
-              let address = radioSnapshot.deviceIdentity?.canonicalAddress
-        else { return }
-        await revokeClaimedRadios(except: address)
-    }
-
-    /// Empty `PROP_HOST_KEY` on each recorded radio across the mesh. A
-    /// radio honors that from the identity it holds, and it is the one
-    /// write it honors from it. Only a radio that echoes the write is
-    /// forgotten; any other answer, or none, leaves the record to the
-    /// next attach or Retry.
-    private func revokeClaimedRadios(except attached: String) async {
-        guard !isRevokingClaimedRadios else { return }
-        isRevokingClaimedRadios = true
-        defer { isRevokingClaimedRadios = false }
-        await reloadClaimedRadios()
-        let hostKey = ulcpProperties.hostKey
-        for radio in claimedRadios where radio.deviceAddress != attached {
-            guard let answers = try? await radioConnection.writeRemoteProperties(
-                peerAddress: radio.deviceAddress,
-                writes: [MobileMeshPropertyWriteRecord(propertyId: hostKey, value: Data())]
-            ) else { continue }
-            let revoked = answers.contains {
-                $0.propertyId == hostKey && $0.statusCode == nil && $0.value?.isEmpty == true
-            }
-            if revoked {
-                await forgetClaimedRadio(radio.deviceAddress)
-            }
-        }
-    }
-
     /// Reload every peer and transcript from storage.
     ///
-    /// Full reconciliation decodes identity bundles and reloads neighbor reports.
-    /// Chat submission and read cursors only reload conversation summaries;
-    /// neither operation changes peer identity or map metadata.
+    /// A full read takes the peers and neighbor reports too. Chat submission
+    /// and read cursors only reload conversation summaries; neither
+    /// operation changes peer identity or map metadata.
     /// Callers arriving before a queued reload has begun join it instead of
     /// adding another; a caller arriving mid-reload gets a fresh one chained
     /// behind it. Either way `await` still returns only once state observed
@@ -4532,21 +3459,22 @@ final class AppRuntime {
     }
 
     private func performApplicationStateReload(includingPeers: Bool) async {
-        guard let applicationStore, let owner = localIdentity?.id, !Task.isCancelled else { return }
+        guard core != nil, let owner = localIdentity?.id, !Task.isCancelled else { return }
         do {
             var full = includingPeers
-            var records = try await applicationStore.applicationRecords(ownerIdentityID: owner, conversationsOnly: !full)
-            // A structural change while the request waited requires authoritative
-            // peer reconciliation, rather than silently dropping a conversation.
+            let conversationsOnly = !full
+            let nameRevision = advertisedNameRevision
+            var record = try await read { try $0.state(conversationsOnly: conversationsOnly) }
+            // A structural change while the request waited requires a full
+            // read, rather than silently dropping a conversation.
             let knownIDs = Set(peers.map(\.id))
-            if !full, records.conversations.contains(where: { !knownIDs.contains($0.node.id) }) {
+            if !full, record.directConversations.contains(where: { !knownIDs.contains($0.peer.stored.id) }) {
                 full = true
-                records = try await applicationStore.applicationRecords(ownerIdentityID: owner)
+                record = try await read { try $0.state(conversationsOnly: false) }
             }
-            var loaded = try await ApplicationStateLoader(meshEngine: meshEngine).load(
-                records: records, chatRevisions: coordinator.chatRevisions,
-                knownPeers: full ? nil : peers, neighbor: neighbor(from:))
+            var loaded = MappedApplicationState(record, chatRevisions: coordinator.chatRevisions)
             guard localIdentity?.id == owner, !Task.isCancelled else { return }
+            coordinator.channelAddresses.merge(loaded.channelAddresses) { _, read in read }
             for index in loaded.conversations.indices {
                 let key = ConversationDraftKey(owner: owner, kind: .direct, id: loaded.conversations[index].id)
                 if let text = drafts.pendingText(for: key) { loaded.conversations[index].draftText = text }
@@ -4555,198 +3483,69 @@ final class AppRuntime {
                 let key = ConversationDraftKey(owner: owner, kind: .channel, id: loaded.channelConversations[index].id)
                 if let text = drafts.pendingText(for: key) { loaded.channelConversations[index].draftText = text }
             }
-            if full, peers != loaded.peers { peers = loaded.peers }
+            // Assign only on a real change: most reloads are triggered by
+            // radio or chat activity that leaves the displayed state
+            // identical, and an equal-value write to an observed property
+            // still invalidates everything that reads it.
+            if let read = loaded.peers, peers != read { peers = read }
             if channels != loaded.channels { channels = loaded.channels }
-            if full, neighborReports != loaded.neighborReports { neighborReports = loaded.neighborReports }
+            if let read = loaded.neighborReports, neighborReports != read { neighborReports = read }
             if conversations != loaded.conversations { conversations = loaded.conversations }
             if channelConversations != loaded.channelConversations { channelConversations = loaded.channelConversations }
+            if unknownDeviceChannels != loaded.unknownDeviceChannels {
+                unknownDeviceChannels = loaded.unknownDeviceChannels
+            }
+            // A name saved while the read ran is newer than the one it read.
+            let name = loaded.advertisedName ?? ""
+            if advertisedNameRevision == nameRevision, advertisedName != name {
+                advertisedName = name
+            }
             if full, failedReadAddress == nil { stateLoadError = nil }
         } catch is CancellationError {
             return
-        } catch {
+        } catch MobileAppError.Store(let error) {
             Self.logger.error("Could not reload application state: \(String(describing: error), privacy: .public)")
             stateLoadError = .persistence("Stored information could not be refreshed. Your last loaded information is still shown.")
+        } catch {
+            // No owner yet, or the core busy or stopped: the lists stand
+            // until a read can be made.
+            Self.logger.debug("State not read: \(String(describing: error), privacy: .public)")
         }
     }
 
-    private static func messageSummary(
-        from stored: StoredChatMessage,
-        nodeHints: [Data: MeshNodeHint] = [:],
-        repeaters: [Data: MessageRepeats.Repeater] = [:]
-    ) -> ChatMessageSummary {
-        ChatMessageSummary(
-            id: stored.id,
-            body: stored.body,
-            isOutbound: stored.outbound,
-            deliveryState: stored.deliveryState,
-            isDeleted: stored.isDeleted,
-            isEdited: stored.isEdited,
-            sessionID: stored.sessionID,
-            handle: stored.handle,
-            wireID: stored.wireID,
-            epoch: stored.epoch,
-            cursor: stored.cursor,
-            isGapPlaceholder: stored.isGapPlaceholder,
-            isGapIdle: stored.isGapIdle,
-            isUnavailable: stored.isUnavailable,
-            isReceivedLate: stored.receivedLate,
-            isEditOfUnknown: stored.isEditOfUnknown,
-            isStatus: stored.isStatus,
-            isForwardSecret: stored.isForwardSecret,
-            isDeliveredLate: stored.deliveredLate,
-            isDeliveredFlooded: stored.deliveredFlooded,
-            originalBody: stored.originalBody,
-            createdAtMilliseconds: stored.createdAtMilliseconds,
-            senderAddress: stored.senderAddress,
-            senderHint: stored.senderHint,
-            senderHandle: stored.senderHandle,
-            senderNodeHint: stored.senderHint.flatMap { nodeHints[$0] },
-            reception: stored.reception,
-            reactions: stored.reactions.map(messageReaction(from:)),
-            reply: stored.quote.map { messageQuote(from: $0, nodeHints: nodeHints) },
-            repeats: stored.repeats.map { repeats in
-                MessageRepeats(
-                    repeaters: repeats.repeaters.map { hint in
-                        repeaters[hint] ?? .init(
-                            hint: MeshRouterHint(
-                                bytes: hint,
-                                text: hint.map { String(format: "%02x", $0) }.joined()
-                            ),
-                            name: nil
-                        )
-                    },
-                    anonymous: repeats.anonymous,
-                    progressAt: repeats.progressAt
-                )
-            }
-        )
-    }
-
-    private static func messageQuote(
-        from stored: StoredMessageQuote,
-        nodeHints: [Data: MeshNodeHint]
-    ) -> MessageQuote {
-        guard let original = stored.original else { return .unavailable }
-        return MessageQuote(
-            state: original.isDeleted ? .deleted : .present,
-            targetID: original.ref.id,
-            body: original.isDeleted ? "" : original.body,
-            isOutbound: original.outbound,
-            senderAddress: original.senderAddress,
-            senderHandle: original.senderHandle,
-            senderNodeHint: original.senderHint.flatMap { nodeHints[$0] }
-        )
-    }
-
-    private static func messageReaction(from stored: StoredMessageReaction) -> MessageReaction {
-        MessageReaction(
-            body: stored.body,
-            isMine: stored.outbound,
-            senderAddress: stored.senderAddress,
-            senderHint: stored.senderHint,
-            sessionID: stored.sessionID,
-            handle: stored.handle,
-            wireID: stored.wireID,
-            epoch: stored.epoch,
-            // Only our own reactions have delivery to report, and only an
-            // outright failure is worth showing: in flight looks like any
-            // other reaction, the same way an unacknowledged bubble does.
-            isFailed: stored.outbound && StoredChatMessage.isDeliveryFailure(stored.deliveryState),
-            isForwardSecret: stored.forwardSecret
-        )
-    }
-
-    /// The repeaters the outbound messages on a page were heard through:
-    /// each hint rendered, with the node it most plausibly names.
-    private func namedRepeaters(
-        in messages: [StoredChatMessage]
-    ) async -> [Data: MessageRepeats.Repeater] {
-        let hints = Set(messages.flatMap { $0.repeats?.repeaters ?? [] })
-        var repeaters: [Data: MessageRepeats.Repeater] = [:]
-        for hint in hints {
-            if coordinator.renderedRouterHints[hint] == nil,
-               let value = try? await meshEngine.renderRouterHint(hint) {
-                coordinator.renderedRouterHints[hint] = value
-            }
-            guard let rendered = coordinator.renderedRouterHints[hint] else { continue }
-            repeaters[hint] = MessageRepeats.Repeater(
-                hint: rendered,
-                name: RouterHintNaming.match(rendered, among: peers)?.displayName
-            )
-        }
-        return repeaters
-    }
-
-    /// Render every distinct sender hint in a transcript page once, so each
-    /// group bubble can carry its sender's avatar without re-deriving it per
-    /// row. Rendering is an FFI round trip and the answer never changes, so the
-    /// coordinator keeps what it has already resolved for the whole session.
-    private func renderedNodeHints(in messages: [StoredChatMessage]) async -> [Data: MeshNodeHint] {
-        let hints = messages.compactMap(\.senderHint)
-            + messages.compactMap { $0.quote?.original?.senderHint }
-        for hint in Set(hints) where coordinator.renderedNodeHints[hint] == nil {
-            if let value = try? await meshEngine.renderNodeHint(hint) {
-                coordinator.renderedNodeHints[hint] = value
-            }
-        }
-        return coordinator.renderedNodeHints
+    /// Run one of the core's synchronous queries off the main actor.
+    private func read<T: Sendable>(
+        _ body: @escaping @Sendable (MobileAppCore) throws -> T
+    ) async throws -> T {
+        guard let core else { throw MobileAppError.Stopped }
+        return try await Task.detached(priority: .userInitiated) { try body(core) }.value
     }
 }
 
-/// What the radio has been told to take in quietly: full channel
-/// identifiers and peer public keys.
-struct HostMuteLists: Equatable, Sendable {
-    var channels: [Data]
-    var peers: [Data]
+/// A failure the person is told about once, with what failed and why.
+struct FailureNotice: Equatable, Sendable {
+    let title: String
+    let message: String
+}
+
+/// Wakes the drain loop. Called on whichever thread the core published
+/// from, so it only schedules.
+private final class CoreWake: MobileAppCoreListener {
+    private let wakes: AsyncStream<Void>.Continuation
+
+    init(_ wakes: AsyncStream<Void>.Continuation) {
+        self.wakes = wakes
+    }
+
+    func onChangesPending() {
+        wakes.yield()
+    }
 }
 
 /// Mutable, non-visual bookkeeping for ``AppRuntime``. Held by reference so
 /// updating it never invalidates the view graph.
 @MainActor
 private final class AppStateCoordinator {
-    var synchronizedRadioPeer: SynchronizedRadioPeer?
-    /// When each radio's claim record was last written in this process,
-    /// so the steady snapshot stream rewrites it only now and then.
-    var claimRecordedAt: [String: Date] = [:]
-    /// Radios that confirmed they let go of this phone, until this phone
-    /// attaches to them again. A snapshot still in flight from before the
-    /// release must not write the record back.
-    var releasedRadios: Set<String> = []
-    /// Whether this attach has already tried to revoke the recorded radios.
-    var revokedClaimedRadiosThisAttach = false
-    /// The device-identity peer list last written into the store's cache
-    /// flags, so the steady snapshot stream reconciles only on real change.
-    var lastReconciledDevicePeers: [String]?
-    /// The device-identity channel identifiers last reconciled, gating the
-    /// same way.
-    var lastReconciledDeviceChannels: [Data]?
-    /// The channel keys last provisioned to the radio's host table, so
-    /// reconciling is free when nothing has changed.
-    var lastReconciledHostChannels: [Data]?
-    /// The peer addresses last provisioned to the radio's host peer-key
-    /// table, gating the same way.
-    var lastReconciledHostPeers: [String]?
-    /// The mute lists last written to the radio, gating the same way.
-    var lastReconciledHostMutes: HostMuteLists?
-    /// Whether the radio was last found or set to cue for test messages on
-    /// `EMERGENCY`, gating the same way.
-    var lastReconciledTestMessageAlerts: Bool?
-    /// The node hints of the mesh session's own addresses besides the phone
-    /// identity's, as last reported.
-    var localDestinationHints: [Data] = []
-    /// The hints last admitted by the radio's receive filter, gating the
-    /// same way.
-    var lastReconciledHostDestinations: [Data]?
-    /// The radio's dropped-frame counter as of the last snapshot, so a rise
-    /// across a detached interval can be told from the standing total.
-    var lastDroppedFrames: UInt32?
-    /// Whether this attach's offline queue has been replayed. Cleared when
-    /// the link drops so the next attach drains again.
-    var drainedOfflineQueue = false
-    /// Whether the Rust mesh session has been installed on the radio
-    /// connection. Draining before that would spill the backlog into the
-    /// bounded pre-bootstrap holding buffer instead of the MAC.
-    var meshSessionInstalled = false
     /// Each joined channel's conversation address, derived from its key when
     /// the key is unlocked. Kept here rather than on `ChannelSummary` because
     /// deriving it needs the key, which the summary deliberately never holds.
@@ -4758,13 +3557,6 @@ private final class AppStateCoordinator {
     /// The most recently queued reload, joined or not. New reloads chain
     /// behind it so two never read and publish state concurrently.
     var runningReload: Task<Void, Never>?
-    /// How many times the current chat batch has failed to apply. The core
-    /// hands out one batch at a time and holds it until acknowledged, so a
-    /// batch that can never be applied would otherwise stall every later
-    /// chat update—delivery receipts included—for the whole session.
-    /// The silent-tests conversation last sent to the core; `nil` until one
-    /// has been.
-    var chatSilentTestsIn: String??
     /// How many times each conversation's stored messages have changed.
     ///
     /// An open transcript holds a bounded window rather than the whole history,
@@ -4776,12 +3568,6 @@ private final class AppStateCoordinator {
     /// unread badge, which rides the summary directly, and re-reading a
     /// transcript every time one is opened is the cost this exists to avoid.
     var chatRevisions: [String: Int] = [:]
-    /// Rendered forms of every sender hint seen this session. Deriving one is
-    /// an FFI round trip and the answer never changes, so a transcript page
-    /// pays for each distinct hint at most once per process.
-    var renderedNodeHints: [Data: MeshNodeHint] = [:]
-    /// The same, for the repeaters heard carrying our messages.
-    var renderedRouterHints: [Data: MeshRouterHint] = [:]
 
     /// Record that these conversations' messages changed. Callers that cannot
     /// resolve which conversation a change belongs to pass every address they
@@ -4792,21 +3578,6 @@ private final class AppStateCoordinator {
             chatRevisions[address, default: 0] += 1
         }
     }
-}
-
-/// A message's durable identity, for collapsing repeated references to it
-/// within one batch—deliveries name the same message once per fragment.
-private struct ChatMessageKey: Hashable {
-    let sessionID: UInt64
-    let handle: UInt32
-}
-
-/// The subset of a radio snapshot that reaches persistent storage.
-private struct SynchronizedRadioPeer: Equatable {
-    let ownerIdentityID: String
-    let publicAddress: String
-    let advertisedName: String?
-    let radioIdentifier: String
 }
 
 extension ManualPath {

@@ -80,8 +80,9 @@ struct SettingsView: View {
     /// so a closure round trip would only add a way for the two to disagree.
     @AppStorage("staging.enabled") private var stagingEnabled = false
     @AppStorage("staging.wifiScanOnly") private var stagedWifiScanOnly = false
-    @State private var stagingResetFailed = false
-    /// Staging only: whether the fake radio is currently dropping everything.
+    @Environment(\.resetStagedData) private var resetStagedData
+    @Environment(\.stagedResetFailed) private var stagedResetFailed
+    /// Staging only: whether the staged radio is currently dropping everything.
     @State private var dropsTransmissions = false
     /// Staging only: whether the managed staged repeater is off the air.
     @State private var remoteDevicesOutOfReach = false
@@ -266,9 +267,9 @@ struct SettingsView: View {
                         stagedPeerMeets(true)
                     }
                 }
-                // Read once when the staged radio is built, so switching
-                // it needs a trip out of staging and back. Said in the
-                // footer rather than left for someone to discover.
+                // Read once, when the staged air is first built; the air is
+                // kept while staging is off, so only a relaunch changes it.
+                // Said in the footer rather than left for someone to discover.
                 Toggle("Staged device only scans Wi-Fi", isOn: $stagedWifiScanOnly)
                 if stagingEnabled, let stagedDropTransmissions {
                     Toggle("Drop everything sent", isOn: $dropsTransmissions)
@@ -286,29 +287,23 @@ struct SettingsView: View {
                         }
                 }
                 Button("Reset staged data", role: .destructive) {
-                    // Leaving staging hands the app back to the real store, so
-                    // the emptied database is one nothing is about to write to
-                    // again—and the next time it is switched on, bootstrap
-                    // seeds the staged mesh afresh against that day's clock.
-                    stagingEnabled = false
-                    Task {
-                        do {
-                            try await SQLiteApplicationStore.eraseStagingStore()
-                            stagingResetFailed = false
-                        } catch {
-                            stagingResetFailed = true
-                        }
-                    }
+                    // The app leaves staging first and erases only once the
+                    // staging core has stopped, so nothing is writing to the
+                    // database as it empties—and the next time staging is
+                    // switched on, the staged mesh is seeded afresh against
+                    // that day's clock.
+                    guard let resetStagedData else { return }
+                    Task { await resetStagedData() }
                 }
-                if stagingResetFailed {
-                    Text("The staged database could not be removed.")
+                if stagedResetFailed {
+                    Text("The staged database could not be erased.")
                         .font(.caption)
                         .foregroundStyle(.red)
                 }
             } header: {
                 Text("Staging")
             } footer: {
-                Text("Replaces this phone's data with a fabricated trail-crew mesh—peers, conversations, reactions and map nodes—and reports a companion radio that is attached, charged and holding a fix. For marketing screenshots. Staged content lives in its own database and never touches your real one. The scan-only switch gives the staged device a Wi-Fi receiver and no station, which is the other shape the Wi-Fi screen has to render; it is read when the staged radio is built, so switch staging off and on again to change it. Debug builds only.")
+                Text("Replaces this phone's data with a fabricated trail-crew mesh—peers, conversations, reactions and map nodes—and reports a companion radio that is attached, charged and holding a fix. For marketing screenshots. Staged content lives in its own database and never touches your real one. The scan-only switch gives the staged device a Wi-Fi receiver and no station, which is the other shape the Wi-Fi screen has to render; it takes effect at the next launch. Debug builds only.")
             }
 
             Section {

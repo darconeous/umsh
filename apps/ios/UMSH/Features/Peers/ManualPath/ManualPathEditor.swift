@@ -202,7 +202,9 @@ struct ManualPathEditSections: View {
                 }
             } label: {
                 Label {
-                    Text(verbatim: PingSheet.secondsText(Double(reply.roundTripMilliseconds) / 1_000))
+                    if let milliseconds = reply.roundTripMilliseconds {
+                        Text(verbatim: PingSheet.secondsText(Double(milliseconds) / 1_000))
+                    }
                 } icon: {
                     Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
                 }

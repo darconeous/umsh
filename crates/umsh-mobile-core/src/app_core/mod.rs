@@ -325,12 +325,7 @@ impl MobileAppCore {
                 return MobileAppChangesRecord::default();
             }
             snapshot.owner = owner_identity_id;
-            MobileAppChangesRecord {
-                peers_changed: true,
-                channels_changed: true,
-                conversations_changed: true,
-                ..MobileAppChangesRecord::default()
-            }
+            MobileAppChangesRecord::every_list()
         });
         refused.map_or(Ok(()), Err)
     }
@@ -352,8 +347,10 @@ impl MobileAppCore {
     /// Bring `identity` up: the host key to the radio, the mesh session,
     /// the store's repairs, channels and chat, held paths, and the
     /// settings; then the radio's traffic. Resolves once running, or once
-    /// failed. The session takes the secret out of `identity`, so a failed
-    /// start needs a fresh unlock.
+    /// failed. Running is reported with the channels, the conversations
+    /// and every transcript changed, for what the start wrote. The session
+    /// takes the secret out of `identity`, so a failed start needs a fresh
+    /// unlock.
     pub async fn start(&self, identity: Arc<MobileIdentity>) -> Result<(), MobileAppError> {
         self.on_worker(move |worker| async move { worker.start(identity).await })
             .await
@@ -433,7 +430,7 @@ impl MobileAppCore {
     /// once they have moved.
     pub async fn mesh_session(&self) -> Result<Arc<MobileMeshSession>, MobileAppError> {
         self.on_worker(|worker| async move {
-            let _command = worker.begin_command()?;
+            let _command = worker.begin_command().await?;
             worker.session().ok_or(MobileAppError::NotRunning)
         })
         .await
@@ -443,7 +440,7 @@ impl MobileAppCore {
     /// date. Resolves once it is. Deleted once those writes have moved.
     pub async fn content_changed(&self) -> Result<(), MobileAppError> {
         self.on_worker(|worker| async move {
-            let _command = worker.begin_command()?;
+            let _command = worker.begin_command().await?;
             worker.refresh_channels().await;
             worker.policy_triggered();
             Ok(())
@@ -458,6 +455,8 @@ pub(crate) struct Options {
     /// Sessions run on virtual time.
     #[cfg(test)]
     pub(crate) virtual_time: bool,
+    #[cfg(test)]
+    pub(crate) hooks: Arc<worker::TestHooks>,
 }
 
 impl MobileAppCore {
@@ -491,6 +490,8 @@ impl MobileAppCore {
             signals: Arc::new(Signals::default()),
             #[cfg(test)]
             virtual_time: options.virtual_time,
+            #[cfg(test)]
+            hooks: options.hooks,
         };
         #[cfg(not(test))]
         let _ = options;

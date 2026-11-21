@@ -11,7 +11,7 @@ enum AppOperationError: Error, Equatable, Sendable, LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .cancelled: "The operation was canceled."
+        case .cancelled: String(localized: "The operation was canceled.", comment: "A request the person stopped.")
         case let .unavailable(message), let .validation(message),
              let .persistence(message), let .operation(message): message
         }
@@ -20,7 +20,10 @@ enum AppOperationError: Error, Equatable, Sendable, LocalizedError {
     static func storage(_ error: any Error) -> Self {
         if error is CancellationError { return .cancelled }
         if let error = error as? Self { return error }
-        return .persistence("Changes could not be saved. Please try again.")
+        return .persistence(String(
+            localized: "Changes could not be saved.",
+            comment: "A write to the phone's database failed."
+        ))
     }
 }
 

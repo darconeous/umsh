@@ -359,7 +359,7 @@ impl MobileAppCore {
         Fut: std::future::Future<Output = Result<T, MobileAppError>> + 'static,
     {
         self.on_worker(move |worker| async move {
-            let _command = worker.begin_command()?;
+            let _command = worker.begin_command().await?;
             work(worker).await
         })
         .await

@@ -208,10 +208,14 @@ impl Worker {
         {
             log::warn!(error:? = error; "discoverability not pushed");
         }
-        if let Err(error) = session
-            .set_chat_display_name(name.unwrap_or_default())
-            .await
-        {
+        let name = name.unwrap_or_default();
+        #[cfg(test)]
+        self.hooks
+            .pushed_names
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(name.clone());
+        if let Err(error) = session.set_chat_display_name(name).await {
             log::warn!(error:? = error; "chat display name not pushed");
         }
     }

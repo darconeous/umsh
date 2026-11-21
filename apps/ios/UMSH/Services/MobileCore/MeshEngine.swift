@@ -154,14 +154,11 @@ enum MeshEngineError: Error, Equatable, Sendable {
 }
 
 protocol MeshEngine: Actor {
-    func renderNodeHint(_ bytes: Data) throws -> MeshNodeHint
     func renderRouterHint(_ bytes: Data) throws -> MeshRouterHint
     /// Read a router hint typed by a person.
     func parseRouterHintInput(_ text: String, format: RouterHintFormat) -> RouterHintInput
     func inspectPublicIdentity(_ address: String) throws -> MeshPublicIdentity
-    func inspectNodeURI(_ uri: String) throws -> MeshNodeURIPreview
     func inspectPeerIdentity(_ input: String) throws -> MeshNodeURIPreview
-    func decodeNodeIdentity(address: String, payload: Data) throws -> MeshNodeIdentity
     func unlockIdentity(secretKey: Data) throws -> MeshPublicIdentity
     /// Forget the unlocked identity and everything built on it.
     ///
@@ -169,17 +166,11 @@ protocol MeshEngine: Actor {
     /// holding none: erasing a phone's identity has to leave the engine
     /// with nothing rather than with the key it is about to destroy.
     func lockIdentity()
-    func inspectChannelURI(_ uri: String) throws -> MeshChannelPreview
-    func inspectChannelName(_ name: String) throws -> MeshChannelPreview
     /// A fresh secret for a new local identity, redrawn while the hint
     /// filter matches its key.
     func generateIdentitySecret() -> Data
     func generateChannelKey() -> Data
     func deriveChannelID(key: Data) throws -> Data
-    /// The full sixteen-octet channel identifier, which is what a radio
-    /// reports for each channel key it holds. The two-octet identifier is
-    /// its prefix and can collide; this is the width that names a channel.
-    func channelIdentifier(key: Data) throws -> Data
     /// The address the mesh facade keys this channel's chat records by.
     /// Derived rather than stored, so it can never disagree with the records
     /// it is matched against.

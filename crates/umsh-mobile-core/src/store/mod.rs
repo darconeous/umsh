@@ -175,10 +175,11 @@ impl From<rusqlite::Error> for MobileStoreError {
 #[derive(uniffi::Object)]
 pub struct MobileAppStore {
     connection: Mutex<Connection>,
-    /// Bumped by every write to what the app core derives its radio
-    /// tables from (peers, channels, conversations, manual routes), but
-    /// not by last-heard or chat writes, which move it all the time. The
-    /// core compares it to catch a write it was not told of.
+    /// Bumped by every write to the channel rows the app core derives its
+    /// channel cache from: a channel added or deleted, the phone joining
+    /// or leaving one, or its details changed. Not by the core's own
+    /// `joined_device` writes, which the cache does not read. The core
+    /// compares it to catch such a write it was not told of.
     content_writes: AtomicU64,
 }
 
@@ -248,14 +249,14 @@ impl Drop for ContentWrite<'_> {
 }
 
 impl MobileAppStore {
-    /// How many writes the app core's derived state could depend on have
-    /// been asked for.
+    /// How many writes to the channel rows the app core's channel cache
+    /// derives from have been asked for.
     pub(crate) fn content_writes(&self) -> u64 {
         self.content_writes.load(Ordering::Acquire)
     }
 
-    /// Count a write the app core's derived state could depend on. The
-    /// count moves when the returned guard drops, after the write: a reader
+    /// Count a write the app core's channel cache derives from. The count
+    /// moves when the returned guard drops, after the write: a reader
     /// that reads the count before the rows then never records a count
     /// whose write it has not seen.
     fn wrote_content(&self) -> ContentWrite<'_> {

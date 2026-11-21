@@ -132,6 +132,17 @@ final class TcpRadioConnection: RadioDriverAdapter, RadioConnection, UlcpFrameLi
         }
     }
 
+    /// End this bridge for good, once a bridge to another endpoint has
+    /// replaced it: no redial, and its driver stops. Going away does the
+    /// same, but whatever still holds the connection decides when that is.
+    func close() {
+        sessionQueue.async { [self] in
+            wantsConnection = false
+            teardown(problem: nil, reporting: true)
+        }
+        driver.stop()
+    }
+
     /// Nothing is persisted for a bridged radio—the endpoint is the
     /// binding, and it lives in Settings—so forgetting is just
     /// disconnecting.

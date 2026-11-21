@@ -260,48 +260,16 @@ struct ChatSubmissionTests {
 
 @Suite @MainActor
 struct RuntimePersistenceTests {
-    @Test func conversationRefreshDoesNotReadNeighborReports() async throws {
-        let fixture = try await StoreFixture()
-        defer { fixture.remove() }
-        let runtime = AppRuntime(radioConnection: FakeRadioConnection(), openStore: { fixture.store })
-        runtime.localIdentity = fixture.identity
-        try await fixture.store.upsertPeer(ownerIdentityID: fixture.identity.id,
-            publicAddress: fixture.identity.publicIdentity.canonicalAddress, alias: "Peer", isSaved: true)
-        _ = try await fixture.store.ensureDirectConversation(ownerIdentityID: fixture.identity.id,
-            peerAddress: fixture.identity.publicIdentity.canonicalAddress)
-        await runtime.reloadApplicationState()
-        #expect(runtime.conversations.count == 1)
-        // A query against this unrelated table would now fail. Marking a
-        // conversation read must refresh only its summary, not the map.
-        try fixture.execute("ALTER TABLE node_peer_repeater_entry RENAME TO test_hidden_reports;")
-        await runtime.markConversationRead(fixture.identity.publicIdentity.canonicalAddress)
-        #expect(runtime.stateLoadError == nil)
-        #expect(runtime.conversations.count == 1)
-        #expect(runtime.peers.count == 1)
-    }
-
     @Test func writingMissingDraftIsNotSuccess() async throws {
         let store = try SQLiteApplicationStore(path: ":memory:")
         await #expect(throws: ApplicationStoreError.recordNotFound) {
             try await store.updateDraft(ownerIdentityID: "absent", conversationID: 1, text: "unsaved")
         }
     }
-    @Test func failedNameSaveKeepsPublishedName() async throws {
-        let fixture = try await StoreFixture()
-        defer { fixture.remove() }
-        let runtime = AppRuntime(radioConnection: FakeRadioConnection(), openStore: { fixture.store })
-        runtime.localIdentity = fixture.identity
-        runtime.advertisedName = "Original"
-        try fixture.execute("CREATE TRIGGER fail_name BEFORE UPDATE ON local_identity BEGIN SELECT RAISE(FAIL, 'test'); END;")
-        let result = await runtime.saveAdvertisedName("New")
-        if case .success = result { Issue.record("Failed save reported success") }
-        #expect(runtime.advertisedName == "Original")
-    }
-
     @Test func failedReloadRetainsLastSnapshotAndRetryRecovers() async throws {
         let fixture = try await StoreFixture()
         defer { fixture.remove() }
-        let runtime = AppRuntime(radioConnection: FakeRadioConnection(), openStore: { fixture.store })
+        let runtime = try radioLessRuntime(store: fixture.store)
         runtime.localIdentity = fixture.identity
         try await fixture.store.upsertPeer(ownerIdentityID: fixture.identity.id,
             publicAddress: fixture.identity.publicIdentity.canonicalAddress, alias: "Peer", isSaved: true)
@@ -315,149 +283,6 @@ struct RuntimePersistenceTests {
         await runtime.reloadApplicationState()
         #expect(runtime.stateLoadError == nil)
         #expect(runtime.peers.count == 1)
-    }
-}
-
-@Suite @MainActor
-struct ContactExchangeTests {
-    private func contact(secret: Data, name: String) async throws -> MobileMeetContactRecord {
-        let theirs = try MobileIdentity.unlock(secretKey: secret).publicIdentity()
-        let bundle = try await signNodeIdentityBundle(secretKey: secret,
-            profile: NodeIdentityProfileRecord(roleCode: 0, capabilityBits: 0, name: name,
-                latitude: nil, longitude: nil, locationPrecision: nil, altitudeM: nil, timestamp: nil))
-        return MobileMeetContactRecord(peerAddress: theirs.canonicalAddress,
-            identityBundle: bundle, signed: true)
-    }
-
-    @Test func exchangedContactIsRecordedUnsaved() async throws {
-        let fixture = try await StoreFixture()
-        defer { fixture.remove() }
-        let runtime = AppRuntime(radioConnection: FakeRadioConnection(), openStore: { fixture.store })
-        runtime.localIdentity = fixture.identity
-        await runtime.reloadApplicationState()
-        let theirs = try await contact(secret: Data(repeating: 9, count: 32), name: "Maya")
-        await runtime.recordExchanged(theirs)
-        let peer = try #require(runtime.exchangedPeer)
-        #expect(peer.identity.canonicalAddress == theirs.peerAddress)
-        #expect(peer.advertisedName == "Maya")
-        #expect(!peer.isSaved)
-        // The bundle came from the exchange's session key, not the peer's.
-        #expect(!peer.advertisedIdentityAuthenticated)
-    }
-
-    @Test func exchangingWithASavedPeerKeepsItSaved() async throws {
-        let fixture = try await StoreFixture()
-        defer { fixture.remove() }
-        let runtime = AppRuntime(radioConnection: FakeRadioConnection(), openStore: { fixture.store })
-        runtime.localIdentity = fixture.identity
-        let theirs = try await contact(secret: Data(repeating: 9, count: 32), name: "Maya")
-        try await fixture.store.upsertPeer(ownerIdentityID: fixture.identity.id,
-            publicAddress: theirs.peerAddress, alias: "Peer", isSaved: true)
-        await runtime.reloadApplicationState()
-        await runtime.recordExchanged(theirs)
-        let peer = try #require(runtime.exchangedPeer)
-        #expect(peer.isSaved)
-        #expect(peer.alias == "Peer")
-    }
-
-    @Test func ownContactIsNotRecorded() async throws {
-        let fixture = try await StoreFixture()
-        defer { fixture.remove() }
-        let runtime = AppRuntime(radioConnection: FakeRadioConnection(), openStore: { fixture.store })
-        runtime.localIdentity = fixture.identity
-        await runtime.reloadApplicationState()
-        await runtime.recordExchanged(try await contact(secret: Data(repeating: 7, count: 32), name: "Me"))
-        #expect(runtime.exchangedPeer == nil)
-        #expect(runtime.peers.isEmpty)
-    }
-}
-
-@Suite @MainActor
-struct ManualPathTests {
-    @Test func savedPathRoundTripsUntilItsHoldEnds() async throws {
-        let fixture = try await StoreFixture()
-        defer { fixture.remove() }
-        let owner = fixture.identity.id
-        let address = fixture.identity.publicIdentity.canonicalAddress
-        try await fixture.store.upsertPeer(ownerIdentityID: owner, publicAddress: address,
-            alias: "Peer", isSaved: true)
-        let now = Date(timeIntervalSince1970: 1_800_000_000)
-        let hints = [Data([0x5E, 0xBD]), Data([0xED, 0xBC])]
-        try await fixture.store.saveManualRoute(ownerIdentityID: owner, publicAddress: address,
-            hints: hints, floodHops: 3, holdUntil: now.addingTimeInterval(3600),
-            latitude: 44.05, longitude: -123.09, accuracy: 12)
-        try await fixture.store.settleManualRoutePrompt(ownerIdentityID: owner, publicAddress: address)
-
-        let stored = try #require(try await fixture.store.manualRoute(
-            ownerIdentityID: owner, publicAddress: address, now: now))
-        #expect(stored.hints == hints)
-        #expect(stored.floodHops == 3)
-        #expect(stored.promptSettled)
-        #expect(stored.savedLatitude == 44.05)
-        #expect(try await fixture.store.manualRoutes(ownerIdentityID: owner, now: now).count == 1)
-
-        // Saving again is a new choice: the declined offer does not carry over.
-        try await fixture.store.saveManualRoute(ownerIdentityID: owner, publicAddress: address,
-            hints: [], floodHops: 0, holdUntil: now.addingTimeInterval(3600),
-            latitude: nil, longitude: nil, accuracy: nil)
-        let direct = try #require(try await fixture.store.manualRoute(
-            ownerIdentityID: owner, publicAddress: address, now: now))
-        #expect(direct.promptSettled == false)
-        #expect(direct.hints.isEmpty)
-        #expect(direct.floodHops == 0)
-
-        let later = now.addingTimeInterval(3601)
-        #expect(try await fixture.store.manualRoutes(ownerIdentityID: owner, now: later).isEmpty)
-        #expect(try await fixture.store.manualRoute(
-            ownerIdentityID: owner, publicAddress: address, now: now) == nil)
-    }
-
-    @Test func clearingForgetsThePath() async throws {
-        let fixture = try await StoreFixture()
-        defer { fixture.remove() }
-        let owner = fixture.identity.id
-        let address = fixture.identity.publicIdentity.canonicalAddress
-        try await fixture.store.upsertPeer(ownerIdentityID: owner, publicAddress: address,
-            alias: "Peer", isSaved: true)
-        try await fixture.store.saveManualRoute(ownerIdentityID: owner, publicAddress: address,
-            hints: [Data([1, 2])], floodHops: 1, holdUntil: .now.addingTimeInterval(60),
-            latitude: nil, longitude: nil, accuracy: nil)
-        try await fixture.store.clearManualRoute(ownerIdentityID: owner, publicAddress: address)
-        #expect(try await fixture.store.manualRoute(ownerIdentityID: owner, publicAddress: address) == nil)
-    }
-
-    private func record(accuracy: Double? = 10, settled: Bool = false) -> ManualPathRecord {
-        ManualPathRecord(holdUntil: .now.addingTimeInterval(3600), savedLatitude: 44.0,
-            savedLongitude: -123.0, savedAccuracy: accuracy, promptSettled: settled)
-    }
-
-    /// About 222 m north of the saved fix, and about 111 m.
-    private let farLatitude = 44.002
-    private let nearLatitude = 44.001
-
-    @Test func movingTwoHundredMetersCounts() {
-        #expect(record().hasMoved(latitude: farLatitude, longitude: -123.0, accuracy: 10))
-        #expect(!record().hasMoved(latitude: nearLatitude, longitude: -123.0, accuracy: 10))
-    }
-
-    @Test func vagueOrMissingFixesNeverCountAsMoving() {
-        #expect(!record().hasMoved(latitude: farLatitude, longitude: -123.0, accuracy: 150))
-        #expect(!record(accuracy: 150).hasMoved(latitude: farLatitude, longitude: -123.0, accuracy: 10))
-        #expect(!record(accuracy: nil).hasMoved(latitude: farLatitude, longitude: -123.0, accuracy: 10))
-    }
-
-    @Test func offerNeedsTwoFloodedAcksOrOneAfterMoving() {
-        let candidate = PeerRoute.Candidate(kind: .source, hints: [], hopCount: 1)
-        func route(acks: UInt8, candidate: PeerRoute.Candidate? = candidate) -> PeerRoute {
-            PeerRoute(kind: .source, hints: [], hopCount: 2, floodHops: nil, floodRegions: [],
-                holdUntil: .now.addingTimeInterval(60), fallbackAcks: acks, candidate: candidate)
-        }
-        #expect(!record().shouldOfferLearnedPath(route: route(acks: 1), moved: false))
-        #expect(record().shouldOfferLearnedPath(route: route(acks: 1), moved: true))
-        #expect(record().shouldOfferLearnedPath(route: route(acks: 2), moved: false))
-        #expect(!record().shouldOfferLearnedPath(route: route(acks: 0), moved: true))
-        #expect(!record().shouldOfferLearnedPath(route: route(acks: 3, candidate: nil), moved: true))
-        #expect(!record(settled: true).shouldOfferLearnedPath(route: route(acks: 3), moved: true))
     }
 }
 
@@ -540,7 +365,8 @@ struct MapNodeTests {
                 hint: hint, hintText: "A1B2C3", name: "Ridge", rssiDBm: -90, snrQuarterDB: 20,
                 lastHeardMinutes: minutesAgo,
                 latitude: placed ? 38.9 : nil, longitude: placed ? -120.1 : nil,
-                locationPrecision: nil, regionCodes: [], reportedAt: reportedAt
+                locationPrecision: nil, regionCodes: [], reportedAt: reportedAt,
+                peerAddress: "node-1"
             )
         )
     }
@@ -633,6 +459,17 @@ struct MapNodeTests {
         #expect(!longAgo.passes(tier: .all, capabilities: [], recency: .week, now: now))
         #expect(longAgo.passes(tier: .all, capabilities: [], recency: .any, now: now))
     }
+}
+
+/// A runtime over a core that is never started and never given a radio,
+/// reading `store`.
+@MainActor
+func radioLessRuntime(store: SQLiteApplicationStore) throws -> AppRuntime {
+    AppRuntime(
+        radioConnection: NoRadioConnection(),
+        opened: .success(try AppCoreHost.radioLess(over: store)),
+        channelKeyVault: KeychainChannelKeyVault()
+    )
 }
 
 private struct StoreFixture {

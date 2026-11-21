@@ -1,11 +1,12 @@
 # Read-mapping parity goldens
 
-Golden output of the Swift read mapping (`ApplicationStateLoader`, the
-transcript mapping in `AppRuntime`, and the cached repeater listing), which
-`MobileAppCore`'s queries must reproduce. The Swift suite
-`ReadMappingParityTests` (apps/ios/UMSHTests) writes them; the Rust test
-`app_core::parity` compares against them. Both render to the text format
-below, so the format is the contract and is changed on both sides at once.
+Golden output of `MobileAppCore`'s queries (state, transcripts and cached
+repeater listings) as the app shows them. The Rust test `app_core::parity`
+renders the core's records; the Swift suite `ReadMappingParityTests`
+(apps/ios/UMSHTests) renders the same stores read through a radio-less core
+and mapped by `CoreRecordMapping`. Both compare against these files and
+render to the text format below, so the format is the contract and is
+changed on both sides at once.
 
 ## Files
 
@@ -13,13 +14,12 @@ below, so the format is the contract and is changed on both sides at once.
 |---|---|
 | `seeded.sqlite` | `seed_staging` over an empty store, owner `owner`, `now_ms` 1790000000000. |
 | `augmented.sqlite` | The v31 fixture (`store/swift_store_v31.sqlite`), migrated, plus the rows `generate_parity_stores` adds, owner `alice`. |
-| `seeded.golden`, `augmented.golden` | What Swift produces from each store. |
+| `seeded.golden`, `augmented.golden` | What the app shows of each store. |
 
-The stores are written by the ignored Rust test `generate_parity_stores`;
-the goldens by the Swift suite with `UMSH_WRITE_PARITY_GOLDENS=1` set in
-its test process (through `xcodebuild`, as
-`TEST_RUNNER_UMSH_WRITE_PARITY_GOLDENS=1`). Both open a copy, never the
-committed file, since opening migrates in place.
+The stores are written by the ignored Rust test `generate_parity_stores`.
+The goldens are edited by hand, alongside the change that moves them. Both
+suites open a copy of each store, never the committed file, since opening
+migrates in place.
 
 ## Text format
 

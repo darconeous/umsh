@@ -407,7 +407,7 @@ impl Worker {
     }
 
     /// The meet's state changed, or the meet closed with its session.
-    fn meet_changed(&self, meet: Option<MobileMeetStateRecord>) {
+    pub(super) fn meet_changed(&self, meet: Option<MobileMeetStateRecord>) {
         if self.pipeline.borrow().meet == meet {
             return;
         }

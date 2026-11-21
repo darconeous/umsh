@@ -515,12 +515,6 @@ struct RadioProvisioningSummary: Equatable, Sendable {
 let advertisementIntervalChoices: [UInt32] = [0, 3600, 4 * 3600, 12 * 3600, 24 * 3600]
 let beaconIntervalChoices: [UInt32] = [0, 1200, 1800, 3600, 4 * 3600]
 
-/// The fraction of an interval by which each period is scattered later, to
-/// keep nodes on the same schedule from transmitting in lockstep. Matches
-/// `ANNOUNCE_JITTER_SHIFT` on the device side; scatter only ever delays,
-/// so a chosen interval stays a floor.
-let announcementJitterFraction = 0.25
-
 /// An interval as "Every 4 hours", or "Off" for zero.
 func formattedAnnouncementInterval(_ seconds: UInt32) -> String {
     guard seconds > 0 else { return "Off" }
@@ -652,10 +646,6 @@ extension UlcpFixKind {
     }
 }
 
-/// Capacity of a radio's device-identity peer list, for labels only—
-/// the device's own `NOMEM` stays authoritative.
-let devicePeerCapacity = Int(ulcpMaxDevPeers())
-
 /// Capacity of a radio's device-identity channel list, for labels only.
 let deviceChannelCapacity = Int(ulcpMaxDevChannels())
 
@@ -689,17 +679,6 @@ extension SavedSnapshotRecord {
             String(localized: "The radio could not use some of its saved settings and started those with defaults. Check its settings, then save again.")
         }
     }
-}
-
-struct RadioSettings: Equatable, Sendable {
-    let deviceName: String?
-    let phyEnabled: Bool
-    let frequencyKHz: UInt32
-    let transmitPowerDBm: Int8
-    let bandwidthHz: UInt32?
-    let spreadingFactor: UInt8?
-    let codingRateDenominator: UInt8?
-    let dutyCycleLimit: UInt16?
 }
 
 extension RadioSnapshot {

@@ -136,54 +136,12 @@ struct StoredPeerRepeaterEntry: Equatable, Sendable {
     let reportedAt: Date
 }
 
-/// What a router last said about its neighbors, as far as this phone asked.
-///
-/// The cursor is kept so the next open can carry on where the last page
-/// stopped rather than starting the listing over—the ask is the operator's
-/// to make, and the cache should make it cheap to make the right one.
-struct StoredPeerRepeaterListing: Equatable, Sendable {
-    let entries: [StoredPeerRepeaterEntry]
-    let total: Int?
-    let nextCursor: Data?
-    let asOf: Date
-}
-
-/// A path the person chose for one node, held until `holdUntil`.
-struct StoredManualRoute: Equatable, Sendable {
-    let publicAddress: String
-    /// Two-byte router hints, in send order. None is a direct path.
-    let hints: [Data]
-    /// How far the path floods past its last repeater.
-    let floodHops: UInt8
-    let holdUntil: Date
-    /// Where the phone stood when the path was saved, if it knew.
-    let savedLatitude: Double?
-    let savedLongitude: Double?
-    /// Horizontal accuracy of that fix, in meters.
-    let savedAccuracy: Double?
-    /// The offer to switch to a learned path was declined.
-    let promptSettled: Bool
-}
-
 /// A radio that took this phone's identity as its host and has not been
 /// seen to let it go.
 struct StoredClaimedRadio: Equatable, Sendable {
-    /// After this long the radio has stood down on its own, so the record
-    /// lapses: the device lease runs this long from detach. The core's
-    /// figure, which its own lapse check uses.
-    static let lapse = TimeInterval(claimedRadioLapseMs()) / 1_000
-
     /// The radio's device address.
     let deviceAddress: String
     let name: String?
-    /// The last time this phone was attached to it.
-    let attachedAt: Date
-}
-
-/// A neighbor entry with the row of the router that reported it.
-struct StoredPeerRepeaterReport: Equatable, Sendable {
-    let reporterNodeID: Int64
-    let entry: StoredPeerRepeaterEntry
 }
 
 /// The newest message in a conversation, reduced to what a list row draws.
@@ -237,15 +195,6 @@ struct StoredChannelConversation: Equatable, Sendable {
     let createdAtMilliseconds: Int64
     let lastMessage: StoredConversationPreview?
     let unreadCount: Int
-}
-
-/// An outbound message whose delivery has just been given up on.
-struct ChatDeliveryFailure: Equatable, Sendable {
-    let conversationAddress: String
-    let body: String
-    /// It never went out where the peer could read it, rather than going
-    /// out and drawing no acknowledgment.
-    let undelivered: Bool
 }
 
 /// How a channel's key was established, which decides what may be shared.
@@ -482,21 +431,11 @@ struct StoredMessageReception: Hashable, Sendable {
     let sourceAuthenticated: Bool
 }
 
-/// Everything the interface lists, read together so a concurrent writer
-/// cannot produce a mixture of old and new lists.
-///
-/// This store contains public application records only. Private identity and
-/// channel key bytes are never accepted by this API and remain in Keychain.
-struct ApplicationRecords: Sendable {
-    let peers: [StoredNode]
-    let channels: [StoredChannel]
-    let conversations: [StoredDirectConversation]
-    let channelConversations: [StoredChannelConversation]
-    let reports: [StoredPeerRepeaterReport]
-}
-
 /// The application database, kept by the shared Rust store
 /// (`MobileAppStore` in `umsh-mobile-core`), which Android uses too.
+///
+/// It holds public application records only. Private identity and channel
+/// key bytes are never accepted by this API and remain in Keychain.
 ///
 /// This actor only adapts: Swift types and `Date`s on this side, the core's
 /// records and millisecond instants on the other. Writes that need the time
@@ -509,20 +448,6 @@ actor SQLiteApplicationStore {
 
     init(path: String) throws {
         store = try Self.mapped { try MobileAppStore.open(path: path) }
-    }
-
-    /// One read transaction in the core.
-    func applicationRecords(ownerIdentityID: String, conversationsOnly: Bool = false) throws -> ApplicationRecords {
-        let records = try run {
-            try $0.applicationRecords(ownerIdentityId: ownerIdentityID, conversationsOnly: conversationsOnly)
-        }
-        return ApplicationRecords(
-            peers: records.peers.map(StoredNode.init),
-            channels: records.channels.compactMap(StoredChannel.init),
-            conversations: records.conversations.map(StoredDirectConversation.init),
-            channelConversations: records.channelConversations.compactMap(StoredChannelConversation.init),
-            reports: records.reports.map(StoredPeerRepeaterReport.init)
-        )
     }
 
     static func applicationStore(fileManager: FileManager = .default) throws -> SQLiteApplicationStore {
@@ -562,19 +487,6 @@ actor SQLiteApplicationStore {
             path: storeURL(named: "Staging", fileManager: fileManager).path
         )
     }
-
-    /// Throw away the staged set, by emptying the staging database rather than
-    /// deleting it. Nothing here can touch the real store: the name is fixed.
-    ///
-    /// Content and not the file, because nothing can know how many connections
-    /// a running app holds on that file: the app opens one per root and closes
-    /// them when ARC gets to it, so unlinking races them by construction, and
-    /// SQLite treats a file unlinked under an open connection as a corrupted
-    /// database rather than a missing one. Rows are the level SQLite is happy
-    /// to have several connections agree about.
-    static func eraseStagingStore(fileManager: FileManager = .default) async throws {
-        try await stagingStore(fileManager: fileManager).eraseAllContent()
-    }
     #endif
 
     /// Delete every row in every table, leaving the schema and its stamped
@@ -596,12 +508,6 @@ actor SQLiteApplicationStore {
     func insertIdentity(id: String, publicAddress: String, createdAt: Date = .now) throws {
         try run {
             try $0.insertIdentity(id: id, publicAddress: publicAddress, createdAtMs: createdAt.storeMilliseconds)
-        }
-    }
-
-    func upsertIdentity(id: String, publicAddress: String, createdAt: Date = .now) throws {
-        try run {
-            try $0.upsertIdentity(id: id, publicAddress: publicAddress, createdAtMs: createdAt.storeMilliseconds)
         }
     }
 
@@ -641,14 +547,6 @@ actor SQLiteApplicationStore {
             advertisementReceivedAtMs: advertisementReceivedAt?.storeMilliseconds
         )
         try run { try $0.upsertPeer(ownerIdentityId: ownerIdentityID, publicAddress: publicAddress, peer: peer) }
-    }
-
-    func localAdvertisedName(ownerIdentityID: String) throws -> String? {
-        try run { try $0.localAdvertisedName(ownerIdentityId: ownerIdentityID) }
-    }
-
-    func updateLocalAdvertisedName(ownerIdentityID: String, name: String?) throws {
-        try run { try $0.updateLocalAdvertisedName(ownerIdentityId: ownerIdentityID, name: name) }
     }
 
     func updateNodeAlias(
@@ -704,39 +602,6 @@ actor SQLiteApplicationStore {
         try run { try $0.clearTransientPeers(ownerIdentityId: ownerIdentityID) }
     }
 
-    /// Keep the transient tier bounded: beyond `cap` rows, the oldest-heard
-    /// evictable transients are dropped. Rows with a conversation, on the
-    /// device identity, with a system role, or carrying a pending watch are
-    /// never evicted—a watch that the cap quietly deleted would be a
-    /// promise the app stopped keeping without saying so.
-    func enforceTransientRetention(ownerIdentityID: String, cap: Int = 256) throws {
-        try run { try $0.enforceTransientRetention(ownerIdentityId: ownerIdentityID, cap: UInt32(clamping: cap)) }
-    }
-
-    /// Make the local cache of the radio's device-identity peer list match
-    /// the device's read-back. The device is the authority: flags clear
-    /// where it no longer holds a key, set where it does, and unknown keys
-    /// gain a transient row carrying the flag so lists can show them.
-    func reconcileDeviceIdentityPeers(ownerIdentityID: String, addresses: [String]) throws {
-        try run { try $0.reconcileDeviceIdentityPeers(ownerIdentityId: ownerIdentityID, addresses: addresses) }
-    }
-
-    /// Cache one device-identity membership change after a confirmed radio
-    /// mutation, without waiting for the next attach-edge reconcile.
-    func setPeerOnDeviceIdentity(
-        ownerIdentityID: String,
-        publicAddress: String,
-        isOnDeviceIdentity: Bool
-    ) throws {
-        try run {
-            try $0.setPeerOnDeviceIdentity(
-                ownerIdentityId: ownerIdentityID,
-                publicAddress: publicAddress,
-                isOnDeviceIdentity: isOnDeviceIdentity
-            )
-        }
-    }
-
     /// Arm or disarm the one-shot "tell me the next time this node is heard"
     /// watch. Unlike favoriting, this does not save a transient node: the
     /// retention queries exempt armed rows instead, so asking to be told
@@ -747,39 +612,6 @@ actor SQLiteApplicationStore {
         enabled: Bool
     ) throws {
         try run { try $0.setNotifyWhenHeard(ownerIdentityId: ownerIdentityID, publicAddress: publicAddress, enabled: enabled) }
-    }
-
-    /// Record that the node was heard at `instant`. Returns whether that
-    /// fired its one-shot watch.
-    @discardableResult
-    func touchLastHeard(
-        ownerIdentityID: String,
-        publicAddress: String,
-        at instant: Date
-    ) throws -> Bool {
-        try run {
-            try $0.touchLastHeard(
-                ownerIdentityId: ownerIdentityID,
-                publicAddress: publicAddress,
-                atMs: instant.storeMilliseconds
-            )
-        }
-    }
-
-    func upsertUlcpDevicePeer(
-        ownerIdentityID: String,
-        publicAddress: String,
-        advertisedName: String?,
-        radioIdentifier: String
-    ) throws {
-        try run {
-            try $0.upsertUlcpDevicePeer(
-                ownerIdentityId: ownerIdentityID,
-                publicAddress: publicAddress,
-                advertisedName: advertisedName,
-                radioIdentifier: radioIdentifier
-            )
-        }
     }
 
     func listNodes(ownerIdentityID: String) throws -> [StoredNode] {
@@ -970,225 +802,7 @@ actor SQLiteApplicationStore {
         try run { try $0.updateDraft(ownerIdentityId: ownerIdentityID, conversationId: conversationID, text: text) }
     }
 
-    // MARK: Device management cache
-
-    /// What a device last said it is, if this phone has ever asked.
-    func managementCard(
-        ownerIdentityID: String,
-        publicAddress: String
-    ) throws -> StoredManagementCard? {
-        try run { try $0.managementCard(ownerIdentityId: ownerIdentityID, publicAddress: publicAddress) }
-            .map(StoredManagementCard.init)
-    }
-
-    /// Record what a card read found.
-    ///
-    /// A device running different firmware is a device whose capabilities,
-    /// property set, and defaults may all have moved, so everything cached
-    /// about the old firmware is dropped in the same transaction. Nothing
-    /// about a cached value says which firmware produced it, and a value
-    /// that outlives its firmware is worse than no value: it prefills a
-    /// form with a plausible reading nobody can date.
-    func saveManagementCard(
-        ownerIdentityID: String,
-        publicAddress: String,
-        card: StoredManagementCard
-    ) throws {
-        try run {
-            try $0.saveManagementCard(
-                ownerIdentityId: ownerIdentityID,
-                publicAddress: publicAddress,
-                card: MobileStoredManagementCardRecord(card)
-            )
-        }
-    }
-
-    /// Forget everything cached about a device, so the next open asks it
-    /// afresh. The card goes too: a refresh that cannot be trusted to be
-    /// about the same firmware is not a refresh.
-    func forgetManagementCache(ownerIdentityID: String, publicAddress: String) throws {
-        try run { try $0.forgetManagementCache(ownerIdentityId: ownerIdentityID, publicAddress: publicAddress) }
-    }
-
-    /// What a device was last seen configured as, for the properties asked
-    /// for. Absent properties are simply not in the result: never fetched
-    /// and refused read the same from here, and the screen shows both as a
-    /// field it has nothing to prefill.
-    func cachedProperties(
-        ownerIdentityID: String,
-        publicAddress: String,
-        propertyIDs: [UInt32]
-    ) throws -> [UInt32: StoredCachedProperty] {
-        try run {
-            try $0.cachedProperties(ownerIdentityId: ownerIdentityID, publicAddress: publicAddress, propertyIds: propertyIDs)
-        }
-        .mapValues(StoredCachedProperty.init)
-    }
-
-    /// Record values a device reported—from a read, or from the echo a
-    /// write comes back with, which is the freshest statement of what the
-    /// device is actually holding.
-    func saveCachedProperties(
-        ownerIdentityID: String,
-        publicAddress: String,
-        values: [UInt32: Data],
-        at instant: Date
-    ) throws {
-        try run {
-            try $0.saveCachedProperties(
-                ownerIdentityId: ownerIdentityID,
-                publicAddress: publicAddress,
-                values: values,
-                atMs: instant.roundedStoreMilliseconds
-            )
-        }
-    }
-
-    // MARK: Manual routes
-
-    /// The path held for one node, or `nil` when none is held at `now`.
-    func manualRoute(
-        ownerIdentityID: String,
-        publicAddress: String,
-        now: Date = Date()
-    ) throws -> StoredManualRoute? {
-        try run {
-            try $0.manualRoute(ownerIdentityId: ownerIdentityID, publicAddress: publicAddress, nowMs: now.roundedStoreMilliseconds)
-        }
-        .map(StoredManualRoute.init)
-    }
-
-    /// Every path still held at `now`, forgetting those whose hold has ended.
-    func manualRoutes(ownerIdentityID: String, now: Date = Date()) throws -> [StoredManualRoute] {
-        try run { try $0.manualRoutes(ownerIdentityId: ownerIdentityID, nowMs: now.roundedStoreMilliseconds) }
-            .map(StoredManualRoute.init)
-    }
-
-    /// Hold `hints` for one node until `holdUntil`, replacing any path held
-    /// for it. A new path is a new choice, so a declined offer to switch
-    /// away from the old one does not carry over. A node with no row has
-    /// nowhere to keep it. Every hint must be two octets.
-    func saveManualRoute(
-        ownerIdentityID: String,
-        publicAddress: String,
-        hints: [Data],
-        floodHops: UInt8,
-        holdUntil: Date,
-        latitude: Double?,
-        longitude: Double?,
-        accuracy: Double?
-    ) throws {
-        try run {
-            try $0.saveManualRoute(
-                ownerIdentityId: ownerIdentityID,
-                publicAddress: publicAddress,
-                hints: hints,
-                floodHops: floodHops,
-                holdUntilMs: holdUntil.roundedStoreMilliseconds,
-                latitude: latitude,
-                longitude: longitude,
-                accuracy: accuracy
-            )
-        }
-    }
-
-    func clearManualRoute(ownerIdentityID: String, publicAddress: String) throws {
-        try run { try $0.clearManualRoute(ownerIdentityId: ownerIdentityID, publicAddress: publicAddress) }
-    }
-
-    /// Remember that the offer to switch away from this node's path was
-    /// declined, so it is not made again for the same path.
-    func settleManualRoutePrompt(ownerIdentityID: String, publicAddress: String) throws {
-        try run { try $0.settleManualRoutePrompt(ownerIdentityId: ownerIdentityID, publicAddress: publicAddress) }
-    }
-
-    // MARK: Claimed radios
-
-    /// Note that this phone is attached to the radio at `deviceAddress` as
-    /// its host, as of `now`.
-    func recordClaimedRadio(
-        ownerIdentityID: String,
-        deviceAddress: String,
-        name: String?,
-        now: Date = Date()
-    ) throws {
-        try run {
-            try $0.recordClaimedRadio(
-                ownerIdentityId: ownerIdentityID,
-                deviceAddress: deviceAddress,
-                name: name,
-                nowMs: now.roundedStoreMilliseconds
-            )
-        }
-    }
-
-    /// Every radio still recorded as holding this identity, forgetting
-    /// those whose record has lapsed by `now`. Most recent first.
-    func claimedRadios(ownerIdentityID: String, now: Date = Date()) throws -> [StoredClaimedRadio] {
-        try run { try $0.claimedRadios(ownerIdentityId: ownerIdentityID, nowMs: now.roundedStoreMilliseconds) }
-            .map(StoredClaimedRadio.init)
-    }
-
-    /// Forget the record of a radio: it let go of this identity, or is no
-    /// longer holding it.
-    func clearClaimedRadio(ownerIdentityID: String, deviceAddress: String) throws {
-        try run { try $0.clearClaimedRadio(ownerIdentityId: ownerIdentityID, deviceAddress: deviceAddress) }
-    }
-
-    // MARK: Repeater listings
-
-    /// What a router last said about its neighbors, or `nil` when it was
-    /// never asked. Entries come back in the order the router listed them.
-    func peerRepeaterListing(
-        ownerIdentityID: String,
-        publicAddress: String
-    ) throws -> StoredPeerRepeaterListing? {
-        try run { try $0.peerRepeaterListing(ownerIdentityId: ownerIdentityID, publicAddress: publicAddress) }
-            .map(StoredPeerRepeaterListing.init)
-    }
-
-    /// Record one page of a router's neighbor listing.
-    ///
-    /// A page asked for without a cursor is the top of a fresh listing and
-    /// replaces whatever was held. A page that followed a cursor is added to
-    /// it: new neighbors take their place at the end, and a neighbor the
-    /// router named again—the responder restarts a listing whose table has
-    /// moved under a stale cursor—updates in place rather than appearing
-    /// twice. Either way the cursor and the instant are the latest page's.
-    func savePeerRepeaterPage(
-        ownerIdentityID: String,
-        publicAddress: String,
-        entries: [StoredPeerRepeaterEntry],
-        total: Int?,
-        nextCursor: Data?,
-        replacing: Bool,
-        at instant: Date
-    ) throws {
-        try run {
-            try $0.savePeerRepeaterPage(
-                ownerIdentityId: ownerIdentityID,
-                publicAddress: publicAddress,
-                entries: entries.map(MobileStoredPeerRepeaterEntryRecord.init),
-                total: total.map(Int64.init),
-                nextCursor: nextCursor,
-                replacing: replacing,
-                atMs: instant.roundedStoreMilliseconds
-            )
-        }
-    }
-
-    /// Every neighbor any router has reported to this phone, with the row of
-    /// the router that said so. What the map draws.
-    func allPeerRepeaterEntries(ownerIdentityID: String) throws -> [StoredPeerRepeaterReport] {
-        try run { try $0.allPeerRepeaterEntries(ownerIdentityId: ownerIdentityID) }
-            .map(StoredPeerRepeaterReport.init)
-    }
-
     // MARK: Chat
-
-    func chatCheckpoints(ownerIdentityID: String) throws -> [MobileChatCheckpointRecord] {
-        try run { try $0.chatCheckpoints(ownerIdentityId: ownerIdentityID) }
-    }
 
     /// Remove a failed outbound message outright, because its text just went
     /// back on the air as a genuinely new message: keeping the dead row would
@@ -1210,17 +824,6 @@ actor SQLiteApplicationStore {
                 message: MobileStoredChatMessageRefRecord(sessionId: sessionID, handle: handle)
             )
         }
-    }
-
-    /// Outbound messages still awaiting word at launch were sent by a previous
-    /// process. Their in-flight transmissions died with that process and the
-    /// replacement Rust session issues new session IDs, so no delivery
-    /// evidence can ever arrive for them. One still 'pending' never went out:
-    /// 'undelivered'. A direct one that reached 'sent' went on the air and may
-    /// well have arrived, but its acknowledgment can no longer be heard:
-    /// 'failed'. A channel message's 'sent' is already its last word.
-    func settleInterruptedDeliveries(ownerIdentityID: String) throws {
-        try run { try $0.settleInterruptedDeliveries(ownerIdentityId: ownerIdentityID) }
     }
 
     /// Resolve gap placeholders as unavailable: the named rows, or every gap
@@ -1407,21 +1010,23 @@ extension Date {
     }
 }
 
-fileprivate extension Date {
+extension Date {
+    /// An instant the core stamped, in milliseconds since the Unix epoch.
     init(storeMilliseconds milliseconds: Int64) {
         self.init(timeIntervalSince1970: Double(milliseconds) / 1_000)
     }
+}
 
-    /// This instant to the nearest millisecond. The management cache,
-    /// manual routes, claimed radios and repeater listings have always been
-    /// stamped and compared this way, so their rows keep meaning the same.
+fileprivate extension Date {
+    /// This instant to the nearest millisecond, which is how the management
+    /// cache has always stamped its card, so stored rows keep meaning the same.
     var roundedStoreMilliseconds: Int64 {
         Int64((timeIntervalSince1970 * 1_000).rounded())
     }
 }
 
 extension StoredNode {
-    fileprivate init(_ record: MobileStoredNodeRecord) {
+    init(_ record: MobileStoredNodeRecord) {
         self.init(
             id: record.id,
             ownerIdentityID: record.ownerIdentityId,
@@ -1443,7 +1048,7 @@ extension StoredNode {
 }
 
 extension StoredManagementCard {
-    fileprivate init(_ record: MobileStoredManagementCardRecord) {
+    init(_ record: MobileStoredManagementCardRecord) {
         self.init(
             capabilities: record.capabilities,
             deviceVersion: record.deviceVersion,
@@ -1455,7 +1060,7 @@ extension StoredManagementCard {
 }
 
 extension MobileStoredManagementCardRecord {
-    fileprivate init(_ card: StoredManagementCard) {
+    init(_ card: StoredManagementCard) {
         self.init(
             capabilities: card.capabilities,
             deviceVersion: card.deviceVersion,
@@ -1467,13 +1072,13 @@ extension MobileStoredManagementCardRecord {
 }
 
 extension StoredCachedProperty {
-    fileprivate init(_ record: MobileStoredCachedPropertyRecord) {
+    init(_ record: MobileStoredCachedPropertyRecord) {
         self.init(value: record.value, fetchedAt: Date(storeMilliseconds: record.fetchedAtMs))
     }
 }
 
 extension StoredPeerRepeaterEntry {
-    fileprivate init(_ record: MobileStoredPeerRepeaterEntryRecord) {
+    init(_ record: MobileStoredPeerRepeaterEntryRecord) {
         self.init(
             hint: record.hint,
             name: record.name,
@@ -1489,67 +1094,17 @@ extension StoredPeerRepeaterEntry {
     }
 }
 
-extension MobileStoredPeerRepeaterEntryRecord {
-    fileprivate init(_ entry: StoredPeerRepeaterEntry) {
-        self.init(
-            hint: entry.hint,
-            name: entry.name,
-            rssiDbm: entry.rssiDBm,
-            snrQuarterDb: entry.snrQuarterDB,
-            lastHeardMinutes: entry.lastHeardMinutes,
-            latitude: entry.latitude,
-            longitude: entry.longitude,
-            locationPrecision: entry.locationPrecision,
-            regionCodes: entry.regionCodes,
-            reportedAtMs: entry.reportedAt.roundedStoreMilliseconds
-        )
-    }
-}
-
-extension StoredPeerRepeaterListing {
-    fileprivate init(_ record: MobileStoredPeerRepeaterListingRecord) {
-        self.init(
-            entries: record.entries.map(StoredPeerRepeaterEntry.init),
-            total: record.total.map { Int($0) },
-            nextCursor: record.nextCursor,
-            asOf: Date(storeMilliseconds: record.asOfMs)
-        )
-    }
-}
-
-extension StoredPeerRepeaterReport {
-    fileprivate init(_ record: MobileStoredPeerRepeaterReportRecord) {
-        self.init(reporterNodeID: record.reporterNodeId, entry: StoredPeerRepeaterEntry(record.entry))
-    }
-}
-
-extension StoredManualRoute {
-    fileprivate init(_ record: MobileStoredManualRouteRecord) {
-        self.init(
-            publicAddress: record.publicAddress,
-            hints: record.hints,
-            floodHops: record.floodHops,
-            holdUntil: Date(storeMilliseconds: record.holdUntilMs),
-            savedLatitude: record.savedLatitude,
-            savedLongitude: record.savedLongitude,
-            savedAccuracy: record.savedAccuracy,
-            promptSettled: record.promptSettled
-        )
-    }
-}
-
 extension StoredClaimedRadio {
-    fileprivate init(_ record: MobileStoredClaimedRadioRecord) {
+    init(_ record: MobileStoredClaimedRadioRecord) {
         self.init(
             deviceAddress: record.deviceAddress,
-            name: record.name,
-            attachedAt: Date(storeMilliseconds: record.attachedAtMs)
+            name: record.name
         )
     }
 }
 
 extension StoredConversationPreview {
-    fileprivate init(_ record: MobileStoredConversationPreviewRecord) {
+    init(_ record: MobileStoredConversationPreviewRecord) {
         self.init(
             createdAtMilliseconds: record.createdAtMs,
             body: record.body,
@@ -1594,12 +1149,6 @@ extension StoredChannelConversation {
     }
 }
 
-extension ChatDeliveryFailure {
-    init(_ record: MobileStoredChatDeliveryFailureRecord) {
-        self.init(conversationAddress: record.conversationAddress, body: record.body, undelivered: record.undelivered)
-    }
-}
-
 extension StoredChannelKind {
     fileprivate init(_ kind: MobileStoredChannelKind) {
         switch kind {
@@ -1622,7 +1171,7 @@ extension MobileStoredChannelKind {
 
 extension StoredChannel {
     /// `nil` when the stored ID is not a UUID.
-    fileprivate init?(_ record: MobileStoredChannelRecord) {
+    init?(_ record: MobileStoredChannelRecord) {
         guard let id = UUID(uuidString: record.id) else { return nil }
         self.init(
             id: id,
@@ -1671,13 +1220,13 @@ extension StoredMessageRef {
 }
 
 extension ChatMessageCursor {
-    fileprivate init(_ record: MobileStoredChatCursorRecord) {
+    init(_ record: MobileStoredChatCursorRecord) {
         self.init(createdAtMilliseconds: record.createdAtMs, rowID: record.rowId)
     }
 }
 
 extension MobileStoredChatCursorRecord {
-    fileprivate init(_ cursor: ChatMessageCursor) {
+    init(_ cursor: ChatMessageCursor) {
         self.init(createdAtMs: cursor.createdAtMilliseconds, rowId: cursor.rowID)
     }
 }
@@ -1740,7 +1289,7 @@ extension StoredMessageReaction {
 }
 
 extension StoredChatMessage {
-    fileprivate init(_ record: MobileStoredChatMessageRecord) {
+    init(_ record: MobileStoredChatMessageRecord) {
         self.init(
             sessionID: record.reference.sessionId,
             handle: record.reference.handle,

@@ -155,6 +155,8 @@ fn setting_the_owner_raises_every_list_once() {
             peers_changed: true,
             channels_changed: true,
             conversations_changed: true,
+            all_transcripts: true,
+            claimed_radios_changed: true,
             ..MobileAppChangesRecord::default()
         }
     );
@@ -420,6 +422,24 @@ fn stranded_radios_leave_out_the_attached_host_and_lapsed_claims() {
 }
 
 #[test]
+fn an_owner_change_says_to_read_the_stranded_radios_again() {
+    let fixture = Fixture::new();
+    fixture
+        .store
+        .record_claimed_radio(fixture.owner.clone(), address(3), None, NOW_MS - 1)
+        .unwrap();
+    assert_eq!(fixture.core.stranded_radios().unwrap().len(), 1);
+
+    fixture.core.set_owner(None).unwrap();
+    assert!(fixture.core.poll_changes().claimed_radios_changed);
+    assert_eq!(fixture.core.stranded_radios(), Err(MobileAppError::NoOwner));
+
+    fixture.core.set_owner(Some(address(5))).unwrap();
+    assert!(fixture.core.poll_changes().claimed_radios_changed);
+    assert_eq!(fixture.core.stranded_radios(), Ok(Vec::new()));
+}
+
+#[test]
 fn cached_properties_are_stamped_by_the_clock() {
     let fixture = Fixture::new();
     let device = address(2);
@@ -449,4 +469,107 @@ fn the_phone_node_key_is_the_owner_address_decoded() {
         fixture.core.phone_node_key(),
         Err(MobileAppError::InvalidInput { .. })
     ));
+}
+
+/// `seed`'s contact as an exchange brings it: a signed bundle naming it.
+async fn exchanged_contact(seed: u8, name: &str) -> crate::MobileMeetContactRecord {
+    let identity = umsh_crypto::software::SoftwareIdentity::from_secret_bytes(&[seed; 32]);
+    let identity_bundle = signed_node_identity_bundle(
+        &identity,
+        NodeIdentityProfileRecord {
+            role_code: 0,
+            capability_bits: 0,
+            name: Some(name.to_owned()),
+            latitude: None,
+            longitude: None,
+            location_precision: None,
+            altitude_m: None,
+            timestamp: None,
+        },
+    )
+    .await
+    .unwrap();
+    crate::MobileMeetContactRecord {
+        peer_address: address(seed),
+        identity_bundle,
+        signed: true,
+    }
+}
+
+impl Fixture {
+    /// The meet reports `contact` exchanged, as the session would; answer
+    /// with what that raised.
+    async fn exchange(&self, contact: crate::MobileMeetContactRecord) -> MobileAppChangesRecord {
+        let meet = crate::MobileMeetStateRecord {
+            own_color_rgb: None,
+            devices: Vec::new(),
+            device: None,
+            exchange: crate::MobileMeetExchange::Exchanged { contact },
+        };
+        self.core
+            .on_worker(move |worker| async move {
+                worker.meet_changed(Some(meet));
+                Ok(())
+            })
+            .await
+            .unwrap();
+        self.core.poll_changes()
+    }
+
+    fn peer_record(&self, address: &str) -> Option<MobileAppPeerRecord> {
+        self.core
+            .state(false)
+            .unwrap()
+            .peers
+            .unwrap()
+            .into_iter()
+            .find(|peer| peer.identity.canonical_address == address)
+    }
+}
+
+#[tokio::test]
+async fn an_exchanged_contact_is_recorded_unsaved() {
+    let fixture = Fixture::new();
+    let theirs = exchanged_contact(9, "Maya").await;
+    let changes = fixture.exchange(theirs.clone()).await;
+    assert_eq!(changes.exchanged_peer.as_ref(), Some(&theirs.peer_address));
+    assert!(changes.peers_changed);
+    let peer = fixture.peer_record(&theirs.peer_address).unwrap();
+    assert_eq!(peer.stored.advertised_name.as_deref(), Some("Maya"));
+    assert!(!peer.stored.is_saved);
+    // The bundle came over the exchange's session key, not the peer's.
+    assert!(!peer.stored.advertisement_authenticated);
+}
+
+#[tokio::test]
+async fn exchanging_with_a_saved_peer_keeps_it_saved() {
+    let fixture = Fixture::new();
+    let theirs = exchanged_contact(9, "Maya").await;
+    fixture
+        .store
+        .upsert_peer(
+            fixture.owner.clone(),
+            theirs.peer_address.clone(),
+            MobilePeerUpsertRecord {
+                alias: Some("Peer".to_owned()),
+                is_saved: true,
+                ..MobilePeerUpsertRecord::default()
+            },
+        )
+        .unwrap();
+    let changes = fixture.exchange(theirs.clone()).await;
+    assert_eq!(changes.exchanged_peer.as_ref(), Some(&theirs.peer_address));
+    let peer = fixture.peer_record(&theirs.peer_address).unwrap();
+    assert!(peer.stored.is_saved);
+    assert_eq!(peer.stored.alias.as_deref(), Some("Peer"));
+}
+
+#[tokio::test]
+async fn the_phones_own_contact_is_not_recorded() {
+    let fixture = Fixture::new();
+    // The owner is seed 1's address.
+    let changes = fixture.exchange(exchanged_contact(1, "Me").await).await;
+    assert_eq!(changes.exchanged_peer, None);
+    assert!(!changes.peers_changed);
+    assert!(fixture.core.state(false).unwrap().peers.unwrap().is_empty());
 }

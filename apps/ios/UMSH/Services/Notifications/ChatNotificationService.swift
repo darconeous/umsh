@@ -76,10 +76,19 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
         // paired Apple Watch answerable by dictation or scribble.
         let reply = UNTextInputNotificationAction(
             identifier: Self.replyActionIdentifier,
-            title: "Reply",
+            title: String(
+                localized: "Reply",
+                comment: "Notification action that answers a message. A verb."
+            ),
             options: [],
-            textInputButtonTitle: "Send",
-            textInputPlaceholder: "Message"
+            textInputButtonTitle: String(
+                localized: "Send",
+                comment: "Button that sends a reply typed into a notification. A verb."
+            ),
+            textInputPlaceholder: String(
+                localized: "Message",
+                comment: "Placeholder in the reply field of a notification. A noun."
+            )
         )
         UNUserNotificationCenter.current().setNotificationCategories([
             UNNotificationCategory(
@@ -290,7 +299,10 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
         postNotice(
             conversationAddress: conversationAddress,
             title: displayName,
-            body: "\(count) new messages"
+            body: String(
+                localized: "\(count) new messages",
+                comment: "Notification body for several messages that arrived in one conversation at once. Has plural variants."
+            )
         )
     }
 
@@ -304,7 +316,10 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
         postNotice(
             conversationAddress: conversationAddress,
             title: displayName,
-            body: "Your reply couldn't be sent. It's saved as a draft."
+            body: String(
+                localized: "Your reply couldn't be sent. It's saved as a draft.",
+                comment: "Notification body: a reply typed into a notification did not go out."
+            )
         )
     }
 
@@ -349,8 +364,14 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
     func postPeerHeard(peerAddress: String, displayName: String) {
         postNotice(
             conversationAddress: peerAddress,
-            title: "\(displayName) is on the air",
-            body: "You asked to be told the next time this node was heard.",
+            title: String(
+                localized: "\(displayName) is on the air",
+                comment: "Notification title: a node the user asked to watch for was just heard. The placeholder is its name."
+            ),
+            body: String(
+                localized: "You asked to be told the next time this node was heard.",
+                comment: "Notification body under the title saying a watched node is on the air."
+            ),
             alwaysPresent: true,
             aboutPeer: true
         )

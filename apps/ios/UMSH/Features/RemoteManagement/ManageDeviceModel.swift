@@ -89,7 +89,14 @@ struct DeviceManagementBackend {
     /// Values the device announces on its own, for backends that have a
     /// live link to hear them on. `nil` on the mesh: a device pushes only
     /// to the host it is attached to, never across the network.
-    var propertyPushes: (() -> AsyncStream<UlcpPropertyPushRecord>)? = nil
+    var propertyPushes: (() -> AsyncStream<PropertyPushEvent>)? = nil
+}
+
+/// What a live link says on its own: a value the device pushed, or word
+/// that some were lost on the way, so what is shown must be read again.
+enum PropertyPushEvent: Sendable {
+    case push(UlcpPropertyPushRecord)
+    case resync
 }
 
 extension DeviceManagementBackend {
@@ -583,14 +590,27 @@ final class ManageDeviceModel {
     func observePushes() {
         guard pushObserver == nil, let pushes = management.propertyPushes else { return }
         pushObserver = Task { [weak self] in
-            for await push in pushes() {
+            for await event in pushes() {
                 guard let self else { return }
-                await absorb(push)
+                switch event {
+                case let .push(push):
+                    await absorb(push)
+                case .resync:
+                    await rereadShown()
+                }
             }
         }
     }
 
     deinit { pushObserver?.cancel() }
+
+    /// Read again every category on screen: pushes were lost, and any of
+    /// them could have changed what it shows.
+    private func rereadShown() async {
+        for category in Array(readings.keys) {
+            await refreshCategory(category)
+        }
+    }
 
     private func absorb(_ push: UlcpPropertyPushRecord) async {
         // A scan arrives an access point at a time, so the whole value the
@@ -1080,6 +1100,7 @@ final class ManageDeviceModel {
     /// has to carry both.
     static func text(for error: any Error) -> String {
         if let error = error as? DfuEntryError { return error.localizedDescription }
+        if let error = error as? MobileAppError { return error.message }
         return switch error as? RemoteManagementError {
         case .noAnswer:
             String(
@@ -1092,7 +1113,10 @@ final class ManageDeviceModel {
                 comment: "Managing a node: a request was never acknowledged."
             )
         case let .refused(status):
-            "The device refused the request: \(ulcpStatusName(status: status))."
+            String(
+                localized: "The device refused the request: \(ulcpStatusName(status: status)).",
+                comment: "Managing a node: it refused. The placeholder is a protocol status name, not translated."
+            )
         case .unreadable:
             String(
                 localized: "The device's answer couldn't be read. Its firmware may be newer than this app.",

@@ -207,8 +207,10 @@ struct PingSheet: View {
                 case let .reply(reply):
                     Self.replyMark(reply)
                         .font(.title)
-                    Text(verbatim: Self.secondsText(Double(reply.roundTripMilliseconds) / 1_000))
-                        .font(.largeTitle.bold().monospacedDigit())
+                    if let milliseconds = reply.roundTripMilliseconds {
+                        Text(verbatim: Self.secondsText(Double(milliseconds) / 1_000))
+                            .font(.largeTitle.bold().monospacedDigit())
+                    }
                     Spacer()
                     if let hops = RoutePresentation.replyHopsText(reply.hopCount) {
                         Text(verbatim: hops)
@@ -249,15 +251,16 @@ struct PingSheet: View {
         Group {
             switch result {
             case let .reply(reply):
-                let time = Self.secondsText(Double(reply.roundTripMilliseconds) / 1_000)
+                let time = reply.roundTripMilliseconds.map { Self.secondsText(Double($0) / 1_000) }
+                let hops = RoutePresentation.replyHopsText(reply.hopCount)
                 HStack(spacing: 6) {
                     if reply.viaRouteRetry {
                         Self.replyMark(reply)
                     }
-                    if let hops = RoutePresentation.replyHopsText(reply.hopCount) {
+                    if let time, let hops {
                         Text("\(time) · \(hops)", comment: "An earlier ping: its round trip, then how many hops it took.")
-                    } else {
-                        Text(verbatim: time)
+                    } else if let text = time ?? hops {
+                        Text(verbatim: text)
                     }
                 }
             case .timedOut:

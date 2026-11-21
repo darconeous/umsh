@@ -199,8 +199,7 @@ fn ago(minutes: i64) -> i64 {
 }
 
 /// Write `seeded.sqlite` and `augmented.sqlite`. Run by hand after a
-/// change to what either holds, then regenerate the goldens on the Swift
-/// side.
+/// change to what either holds, then update the goldens to match.
 #[tokio::test]
 #[ignore = "writes the committed parity stores"]
 async fn generate_parity_stores() {

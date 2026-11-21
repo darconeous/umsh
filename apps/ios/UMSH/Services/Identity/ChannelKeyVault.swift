@@ -113,17 +113,39 @@ final class KeychainChannelKeyVault: SecretVault {
     }
 }
 
-extension KeychainChannelKeyVault {
-    func storeKey(_ key: Data, channelID: UUID) throws(SecretVaultError) {
-        guard key.count == 32 else { throw .Failed }
+extension SecretVault {
+    func storeKey(_ key: Data, channelID: UUID) throws {
+        guard key.count == 32 else { throw SecretVaultError.Failed }
         try store(account: channelID.uuidString, secret: key)
     }
 
-    func loadKey(channelID: UUID) throws(SecretVaultError) -> Data? {
+    func loadKey(channelID: UUID) throws -> Data? {
         try load(account: channelID.uuidString)
     }
 
-    func deleteKey(channelID: UUID) throws(SecretVaultError) {
+    func deleteKey(channelID: UUID) throws {
         try delete(account: channelID.uuidString)
+    }
+}
+
+/// Channel keys held in memory, for previews, which must never reach the
+/// Keychain.
+final class MemorySecretVault: SecretVault, @unchecked Sendable {
+    private let secrets = Mutex<[String: Data]>([:])
+
+    func load(account: String) throws -> Data? {
+        secrets.withLock { $0[account.uppercased()] }
+    }
+
+    func store(account: String, secret: Data) throws {
+        secrets.withLock { $0[account.uppercased()] = secret }
+    }
+
+    func delete(account: String) throws {
+        _ = secrets.withLock { $0.removeValue(forKey: account.uppercased()) }
+    }
+
+    func deleteAll() throws {
+        secrets.withLock { $0.removeAll() }
     }
 }

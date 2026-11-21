@@ -11,7 +11,7 @@ use std::sync::Arc;
 use super::mapping::{self, PeerIndex};
 use super::pipeline::carries_this_phone;
 use super::policy::MANAGEMENT_BACKSTOP_MS;
-use super::records::MobileAppRepeaterListingRecord;
+use super::records::{MobileAppLifecycle, MobileAppRepeaterListingRecord};
 use super::routes::{checked_address, rendered_hints};
 use super::worker::Worker;
 use super::{MobileAppCore, MobileAppError, mesh_error};
@@ -81,12 +81,24 @@ impl Worker {
         }
     }
 
+    /// While idle or failed this is only the store's write, which the next
+    /// start pushes. While starting it waits, so it cannot miss that push.
     async fn set_advertised_name(&self, name: String) -> Result<(), MobileAppError> {
+        self.start_settled().await;
+        let command = match self.lifecycle() {
+            MobileAppLifecycle::Idle | MobileAppLifecycle::Failed { .. } => None,
+            _ => Some(self.begin_command().await?),
+        };
         let owner = self.owner().ok_or(MobileAppError::NoOwner)?;
         let trimmed = name.trim();
         let name = (!trimmed.is_empty()).then(|| trimmed.to_owned());
+        // An owner never started, or whose start failed before the
+        // repairs, has no row yet; the start's own repair leaves this one.
+        self.store.ensure_identity(&owner, self.clock.now_ms())?;
         self.store.update_local_advertised_name(owner, name)?;
-        self.push_discoverability().await;
+        if command.is_some() {
+            self.push_discoverability().await;
+        }
         Ok(())
     }
 
@@ -267,9 +279,10 @@ fn stored_entries(
 #[uniffi::export]
 impl MobileAppCore {
     /// Keep the name this phone advertises, trimmed; empty clears it. The
-    /// session answers with it from then on.
+    /// session answers with it from then on. Kept while idle or failed,
+    /// when an owner is set, for the next start to push.
     pub async fn set_advertised_name(&self, name: String) -> Result<(), MobileAppError> {
-        self.command(move |worker| async move { worker.set_advertised_name(name).await })
+        self.on_worker(move |worker| async move { worker.set_advertised_name(name).await })
             .await
     }
 
