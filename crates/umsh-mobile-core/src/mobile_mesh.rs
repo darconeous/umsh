@@ -3559,14 +3559,6 @@ async fn build_signed_identity_bundle(
     Ok(bundle)
 }
 
-/// How many properties one batch of a whole-device read asks for.
-///
-/// Small enough that a device answers most batches in one frame, and that
-/// a batch lost to a timeout is cheap to have lost; a batch whose answer
-/// does overflow is continued by the binding's own cursors, so this is not
-/// a correctness bound.
-const SYNC_BATCH: usize = 8;
-
 /// Encode a management request, which must fit one Node Management
 /// payload. The frame's TID is ignored over this binding—the envelope
 /// token is what correlates a response—so every request carries zero.
@@ -3612,20 +3604,28 @@ impl FetchCrawl {
     }
 
     /// The next request, or `None` when there is nothing left to ask.
+    ///
+    /// A multi-property request asks for as many keys as its frame holds.
+    /// How much the device answers is the device's to decide: it stops
+    /// before its reply outgrows what it can retain, carries the rest over
+    /// cursors, and whatever it did not reach is asked for again. Asking
+    /// for less than fits only adds exchanges.
     fn next_request(&mut self) -> Result<Option<Vec<u8>>, MobileMeshError> {
-        // The compact battery group fits one response and shares one
-        // acquisition pass only when requested together.
-        let battery_group = self.pending.len() <= 14
-            && self
-                .pending
+        let batch = if self.multi {
+            let header = encode_management(|buf| frame::prop_multi_get(buf, 0, &[]))?.len();
+            let mut room = umsh_node_mgmt::REQUEST_MAX.saturating_sub(header);
+            self.pending
                 .iter()
-                .all(|key| umsh_ulcp::battery_diagnostics::Fields::ALL.contains(*key));
-        let batch = if !self.multi {
-            1
-        } else if battery_group {
-            14
+                .take_while(|key| {
+                    let len = umsh_ulcp::pui::encoded_len(**key);
+                    let fits = len <= room;
+                    room = room.saturating_sub(len);
+                    fits
+                })
+                .count()
+                .max(1)
         } else {
-            SYNC_BATCH
+            1
         };
         self.asked = self
             .pending
@@ -6004,7 +6004,7 @@ mod tests {
         assert!(crawl.next_request().unwrap().is_none());
     }
 
-    /// A list long enough to need more than one batch.
+    /// A whole category, for the crawl's batch handling.
     fn long_list() -> Vec<u32> {
         vec![
             prop::PHY_ENABLED,
@@ -6024,8 +6024,7 @@ mod tests {
     fn a_fetch_asks_for_what_it_was_given_and_nothing_else() {
         let mut crawl = FetchCrawl::new(long_list(), true);
         crawl.next_request().unwrap().unwrap();
-        assert_eq!(asked(&crawl).len(), SYNC_BATCH);
-        assert_eq!(asked(&crawl), long_list()[..SYNC_BATCH].to_vec());
+        assert_eq!(asked(&crawl), long_list());
 
         // An administrator reads everything: the host domain and session
         // state answer over the mesh like any other property, so a fetch
@@ -6135,6 +6134,50 @@ mod tests {
             Some(umsh_ulcp::Status::PROP_NOT_FOUND.0)
         );
         assert!(!crawl.pending.contains(&batch[0]));
+    }
+
+    /// Every statistic a forwarding device reports is one request.
+    #[test]
+    fn the_statistics_screen_is_one_request() {
+        use umsh_ulcp::ids::cap;
+        let caps = [cap::STATS, cap::REPEATER, cap::MESHCORE_FORWARDER]
+            .iter()
+            .flat_map(|value| {
+                let mut bytes = [0; umsh_ulcp::pui::MAX_LEN];
+                let len = umsh_ulcp::pui::encode(*value, &mut bytes).unwrap();
+                bytes[..len].to_vec()
+            })
+            .collect();
+        let stats = crate::ulcp::ulcp_category_properties(
+            crate::ulcp::UlcpManageCategory::Statistics,
+            caps,
+        )
+        .unwrap();
+        let mut crawl = FetchCrawl::new(stats.clone(), true);
+        crawl.next_request().unwrap().unwrap();
+        assert_eq!(asked(&crawl), stats);
+        assert!(crawl.pending.is_empty());
+    }
+
+    /// A list longer than one request frame holds is asked for in as many
+    /// frames as it takes, each as full as it can be.
+    #[test]
+    fn a_fetch_fills_each_request_frame() {
+        // Two-octet keys, far more than one frame holds.
+        let keys: Vec<u32> = (200..400).collect();
+        let mut crawl = FetchCrawl::new(keys.clone(), true);
+        let mut asked_in_order = Vec::new();
+        while let Some(request) = crawl.next_request().unwrap() {
+            assert!(request.len() <= umsh_node_mgmt::REQUEST_MAX);
+            let batch = asked(&crawl);
+            // Another key would not have fit.
+            if !crawl.pending.is_empty() {
+                assert!(request.len() + 2 > umsh_node_mgmt::REQUEST_MAX);
+            }
+            crawl.receive(&are_reply(&batch)).unwrap();
+            asked_in_order.extend(batch);
+        }
+        assert_eq!(asked_in_order, keys);
     }
 
     /// The identity card: capabilities, firmware version, name and model
