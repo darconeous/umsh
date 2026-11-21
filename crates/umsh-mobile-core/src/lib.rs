@@ -15,6 +15,7 @@ use umsh_crypto::{NodeIdentity, software::SoftwareIdentity};
 use umsh_uri::UmshUri;
 use zeroize::Zeroize;
 
+mod app_core;
 mod counter_store;
 mod logging;
 mod meet;
@@ -29,6 +30,14 @@ mod time_zone;
 mod ulcp;
 mod virtual_radio;
 
+pub use app_core::{
+    MobileAppChangesRecord, MobileAppChannelConversationRecord, MobileAppChannelPreviewRecord,
+    MobileAppChannelRecord, MobileAppCore, MobileAppCoreListener,
+    MobileAppDirectConversationRecord, MobileAppError, MobileAppLifecycle, MobileAppMessageRecord,
+    MobileAppMessageRepeaterRecord, MobileAppNeighborReportRecord, MobileAppPeerRecord,
+    MobileAppPreviewRecord, MobileAppRepeaterListingRecord, MobileAppRepeaterNeighborRecord,
+    MobileAppStateRecord, MobileAppStatusRecord, MobileAppTranscriptPageRecord,
+};
 pub use counter_store::{CounterStoreError, MobileCounterStore};
 pub use logging::{MobileLogField, MobileLogLevel, MobileLogRecord, MobileLogger, set_logger};
 pub use meet::{
@@ -105,7 +114,7 @@ uniffi::setup_scaffolding!();
 ///
 /// Increment this when a binding-visible operation, record, or error contract
 /// changes incompatibly. It is independent of the UMSH wire version.
-pub const MOBILE_API_VERSION: u16 = 85;
+pub const MOBILE_API_VERSION: u16 = 86;
 
 /// Stable error categories consumed by platform adapters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Error)]

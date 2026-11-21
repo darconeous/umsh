@@ -704,6 +704,726 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
 
 
 /**
+ * The application core.
+ */
+public protocol MobileAppCoreProtocol: AnyObject, Sendable {
+
+    func clearListener()
+
+    /**
+     * What changed since the last call. Answers in every state, so the
+     * last lifecycle change is never lost.
+     */
+    func pollChanges()  -> MobileAppChangesRecord
+
+    func setListener(listener: MobileAppCoreListener)
+
+    /**
+     * Whose rows the queries read, or nobody's. Kept in every state but
+     * stopped. Raises every list's change flag, since each now reads
+     * differently.
+     */
+    func setOwner(ownerIdentityId: String?) throws
+
+    func status() throws  -> MobileAppStatusRecord
+
+    /**
+     * Finish the core. It resolves once the worker has ended; a second
+     * call waits for the same end, and a call on a stopped core does
+     * nothing.
+     */
+    func stop() async
+
+    func cachedProperties(publicAddress: String, propertyIds: [UInt32]) throws  -> [UInt32: MobileStoredCachedPropertyRecord]
+
+    /**
+     * The radios this phone was host of recently, most recent first.
+     * Reading forgets those whose claim has lapsed.
+     */
+    func claimedRadios() throws  -> [MobileStoredClaimedRadioRecord]
+
+    func forgetManagementCache(publicAddress: String) throws
+
+    func managementCard(publicAddress: String) throws  -> MobileStoredManagementCardRecord?
+
+    /**
+     * How many messages a conversation holds, reactions not counted.
+     */
+    func messageCount(conversationAddress: String) throws  -> Int64
+
+    /**
+     * What a router last said about its neighbors, or `None` when it was
+     * never asked.
+     */
+    func peerRepeaters(publicAddress: String) throws  -> MobileAppRepeaterListingRecord?
+
+    /**
+     * This phone's node key, as `PROP_HOST_KEY` carries it.
+     */
+    func phoneNodeKey() throws  -> Data
+
+    /**
+     * A channel invitation (a `umsh:` URI) or name, with the stored
+     * channel that has its key and any other channel called the same.
+     */
+    func previewChannel(input: String) throws  -> MobileAppChannelPreviewRecord
+
+    /**
+     * Cache property values read now.
+     */
+    func saveCachedProperties(publicAddress: String, values: [UInt32: Data]) throws
+
+    func saveManagementCard(publicAddress: String, card: MobileStoredManagementCardRecord) throws
+
+    /**
+     * Everything the lists show. With `conversations_only`, peers and
+     * neighbor reports are neither read nor answered.
+     */
+    func state(conversationsOnly: Bool) throws  -> MobileAppStateRecord
+
+    /**
+     * The claimed radios other than the one attached with this phone as
+     * its host: those that may still hold this phone's key.
+     */
+    func strandedRadios() throws  -> [MobileStoredClaimedRadioRecord]
+
+    /**
+     * Up to `limit` messages newer than `cursor`, and the one at it when
+     * `including`.
+     */
+    func transcriptAfter(conversationAddress: String, cursor: MobileStoredChatCursorRecord, including: Bool, limit: UInt32) throws  -> MobileAppTranscriptPageRecord
+
+    /**
+     * `message` with up to `radius` messages on each side, or `None` when
+     * the conversation does not hold it.
+     */
+    func transcriptAround(conversationAddress: String, message: MobileStoredChatMessageRefRecord, radius: UInt32) throws  -> MobileAppTranscriptPageRecord?
+
+    /**
+     * Up to `limit` messages older than `cursor`.
+     */
+    func transcriptBefore(conversationAddress: String, cursor: MobileStoredChatCursorRecord, limit: UInt32) throws  -> MobileAppTranscriptPageRecord
+
+    /**
+     * The newest `limit` messages of a conversation. `limit` is held to
+     * between 1 and 500.
+     */
+    func transcriptNewest(conversationAddress: String, limit: UInt32) throws  -> MobileAppTranscriptPageRecord
+
+}
+/**
+ * The application core.
+ */
+open class MobileAppCore: MobileAppCoreProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_umsh_mobile_core_fn_clone_mobileappcore(self.handle, $0) }
+    }
+    /**
+     * A core over `store`, which native code opened and keeps using: both
+     * share its one connection.
+     */
+public convenience init(store: MobileAppStore)throws  {
+    let handle =
+        try rustCallWithError(FfiConverterTypeMobileAppError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_constructor_mobileappcore_new(
+        FfiConverterTypeMobileAppStore_lower(store),uniffiCallStatus
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_umsh_mobile_core_fn_free_mobileappcore(handle, $0) }
+    }
+
+
+
+
+open func clearListener()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappcore_clear_listener(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * What changed since the last call. Answers in every state, so the
+     * last lifecycle change is never lost.
+     */
+open func pollChanges() -> MobileAppChangesRecord  {
+    return try!  FfiConverterTypeMobileAppChangesRecord_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappcore_poll_changes(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+open func setListener(listener: MobileAppCoreListener)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappcore_set_listener(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileAppCoreListener_lower(listener),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Whose rows the queries read, or nobody's. Kept in every state but
+     * stopped. Raises every list's change flag, since each now reads
+     * differently.
+     */
+open func setOwner(ownerIdentityId: String?)throws   {try rustCallWithError(FfiConverterTypeMobileAppError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappcore_set_owner(
+            self.uniffiCloneHandle(),
+        FfiConverterOptionString.lower(ownerIdentityId),uniffiCallStatus
+    )
+}
+}
+
+open func status()throws  -> MobileAppStatusRecord  {
+    return try  FfiConverterTypeMobileAppStatusRecord_lift(try rustCallWithError(FfiConverterTypeMobileAppError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappcore_status(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Finish the core. It resolves once the worker has ended; a second
+     * call waits for the same end, and a call on a stopped core does
+     * nothing.
+     */
+open func stop()async   {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileappcore_stop(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: nil
+
+        )
+}
+
+open func cachedProperties(publicAddress: String, propertyIds: [UInt32])throws  -> [UInt32: MobileStoredCachedPropertyRecord]  {
+    return try  FfiConverterDictionaryUInt32TypeMobileStoredCachedPropertyRecord.lift(try rustCallWithError(FfiConverterTypeMobileAppError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappcore_cached_properties(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(publicAddress),
+        FfiConverterSequenceUInt32.lower(propertyIds),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * The radios this phone was host of recently, most recent first.
+     * Reading forgets those whose claim has lapsed.
+     */
+open func claimedRadios()throws  -> [MobileStoredClaimedRadioRecord]  {
+    return try  FfiConverterSequenceTypeMobileStoredClaimedRadioRecord.lift(try rustCallWithError(FfiConverterTypeMobileAppError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappcore_claimed_radios(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+open func forgetManagementCache(publicAddress: String)throws   {try rustCallWithError(FfiConverterTypeMobileAppError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappcore_forget_management_cache(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(publicAddress),uniffiCallStatus
+    )
+}
+}
+
+open func managementCard(publicAddress: String)throws  -> MobileStoredManagementCardRecord?  {
+    return try  FfiConverterOptionTypeMobileStoredManagementCardRecord.lift(try rustCallWithError(FfiConverterTypeMobileAppError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappcore_management_card(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(publicAddress),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * How many messages a conversation holds, reactions not counted.
+     */
+open func messageCount(conversationAddress: String)throws  -> Int64  {
+    return try  FfiConverterInt64.lift(try rustCallWithError(FfiConverterTypeMobileAppError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappcore_message_count(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(conversationAddress),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * What a router last said about its neighbors, or `None` when it was
+     * never asked.
+     */
+open func peerRepeaters(publicAddress: String)throws  -> MobileAppRepeaterListingRecord?  {
+    return try  FfiConverterOptionTypeMobileAppRepeaterListingRecord.lift(try rustCallWithError(FfiConverterTypeMobileAppError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappcore_peer_repeaters(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(publicAddress),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * This phone's node key, as `PROP_HOST_KEY` carries it.
+     */
+open func phoneNodeKey()throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeMobileAppError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappcore_phone_node_key(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * A channel invitation (a `umsh:` URI) or name, with the stored
+     * channel that has its key and any other channel called the same.
+     */
+open func previewChannel(input: String)throws  -> MobileAppChannelPreviewRecord  {
+    return try  FfiConverterTypeMobileAppChannelPreviewRecord_lift(try rustCallWithError(FfiConverterTypeMobileAppError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappcore_preview_channel(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(input),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Cache property values read now.
+     */
+open func saveCachedProperties(publicAddress: String, values: [UInt32: Data])throws   {try rustCallWithError(FfiConverterTypeMobileAppError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappcore_save_cached_properties(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(publicAddress),
+        FfiConverterDictionaryUInt32Data.lower(values),uniffiCallStatus
+    )
+}
+}
+
+open func saveManagementCard(publicAddress: String, card: MobileStoredManagementCardRecord)throws   {try rustCallWithError(FfiConverterTypeMobileAppError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappcore_save_management_card(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(publicAddress),
+        FfiConverterTypeMobileStoredManagementCardRecord_lower(card),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Everything the lists show. With `conversations_only`, peers and
+     * neighbor reports are neither read nor answered.
+     */
+open func state(conversationsOnly: Bool = false)throws  -> MobileAppStateRecord  {
+    return try  FfiConverterTypeMobileAppStateRecord_lift(try rustCallWithError(FfiConverterTypeMobileAppError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappcore_state(
+            self.uniffiCloneHandle(),
+        FfiConverterBool.lower(conversationsOnly),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * The claimed radios other than the one attached with this phone as
+     * its host: those that may still hold this phone's key.
+     */
+open func strandedRadios()throws  -> [MobileStoredClaimedRadioRecord]  {
+    return try  FfiConverterSequenceTypeMobileStoredClaimedRadioRecord.lift(try rustCallWithError(FfiConverterTypeMobileAppError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappcore_stranded_radios(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Up to `limit` messages newer than `cursor`, and the one at it when
+     * `including`.
+     */
+open func transcriptAfter(conversationAddress: String, cursor: MobileStoredChatCursorRecord, including: Bool, limit: UInt32)throws  -> MobileAppTranscriptPageRecord  {
+    return try  FfiConverterTypeMobileAppTranscriptPageRecord_lift(try rustCallWithError(FfiConverterTypeMobileAppError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappcore_transcript_after(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(conversationAddress),
+        FfiConverterTypeMobileStoredChatCursorRecord_lower(cursor),
+        FfiConverterBool.lower(including),
+        FfiConverterUInt32.lower(limit),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * `message` with up to `radius` messages on each side, or `None` when
+     * the conversation does not hold it.
+     */
+open func transcriptAround(conversationAddress: String, message: MobileStoredChatMessageRefRecord, radius: UInt32)throws  -> MobileAppTranscriptPageRecord?  {
+    return try  FfiConverterOptionTypeMobileAppTranscriptPageRecord.lift(try rustCallWithError(FfiConverterTypeMobileAppError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappcore_transcript_around(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(conversationAddress),
+        FfiConverterTypeMobileStoredChatMessageRefRecord_lower(message),
+        FfiConverterUInt32.lower(radius),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Up to `limit` messages older than `cursor`.
+     */
+open func transcriptBefore(conversationAddress: String, cursor: MobileStoredChatCursorRecord, limit: UInt32)throws  -> MobileAppTranscriptPageRecord  {
+    return try  FfiConverterTypeMobileAppTranscriptPageRecord_lift(try rustCallWithError(FfiConverterTypeMobileAppError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappcore_transcript_before(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(conversationAddress),
+        FfiConverterTypeMobileStoredChatCursorRecord_lower(cursor),
+        FfiConverterUInt32.lower(limit),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * The newest `limit` messages of a conversation. `limit` is held to
+     * between 1 and 500.
+     */
+open func transcriptNewest(conversationAddress: String, limit: UInt32)throws  -> MobileAppTranscriptPageRecord  {
+    return try  FfiConverterTypeMobileAppTranscriptPageRecord_lift(try rustCallWithError(FfiConverterTypeMobileAppError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappcore_transcript_newest(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(conversationAddress),
+        FfiConverterUInt32.lower(limit),uniffiCallStatus
+    )
+})
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileAppCore: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = MobileAppCore
+
+    public static func lift(_ handle: UInt64) throws -> MobileAppCore {
+        return MobileAppCore(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: MobileAppCore) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileAppCore {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: MobileAppCore, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppCore_lift(_ handle: UInt64) throws -> MobileAppCore {
+    return try FfiConverterTypeMobileAppCore.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppCore_lower(_ value: MobileAppCore) -> UInt64 {
+    return FfiConverterTypeMobileAppCore.lower(value)
+}
+
+
+
+
+
+
+/**
+ * Told that `poll_changes` has something new.
+ *
+ * Called on whichever thread published the change; implementations only
+ * schedule a drain on their own executor and return. Calls are coalesced:
+ * one per pending-to-drained cycle.
+ */
+public protocol MobileAppCoreListener: AnyObject, Sendable {
+
+    func onChangesPending()
+
+}
+/**
+ * Told that `poll_changes` has something new.
+ *
+ * Called on whichever thread published the change; implementations only
+ * schedule a drain on their own executor and return. Calls are coalesced:
+ * one per pending-to-drained cycle.
+ */
+open class MobileAppCoreListenerImpl: MobileAppCoreListener, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_umsh_mobile_core_fn_clone_mobileappcorelistener(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_umsh_mobile_core_fn_free_mobileappcorelistener(handle, $0) }
+    }
+
+
+
+
+open func onChangesPending()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappcorelistener_on_changes_pending(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+
+
+
+}
+
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceMobileAppCoreListener {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // Store the vtable directly.
+    static let vtable: UniffiVTableCallbackInterfaceMobileAppCoreListener = UniffiVTableCallbackInterfaceMobileAppCoreListener(
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            do {
+                try FfiConverterTypeMobileAppCoreListener.handleMap.remove(handle: uniffiHandle)
+            } catch {
+                print("Uniffi callback interface MobileAppCoreListener: handle missing in uniffiFree")
+            }
+        },
+        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
+            do {
+                return try FfiConverterTypeMobileAppCoreListener.handleMap.clone(handle: uniffiHandle)
+            } catch {
+                fatalError("Uniffi callback interface MobileAppCoreListener: handle missing in uniffiClone")
+            }
+        },
+        onChangesPending: { (
+            uniffiHandle: UInt64,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeMobileAppCoreListener.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onChangesPending(
+                )
+            }
+
+
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        }
+    )
+
+    // Rust stores this pointer for future callback invocations, so it must live
+    // for the process lifetime (not just for the init function call).
+    //
+    // `nonisolated(unsafe)` is needed under Swift 6 strict concurrency.
+    // This is safe because the pointee is initialized once during static init
+    // and never mutated by either side of the FFI.  Its fields are C function pointers.
+    nonisolated(unsafe) static let vtablePtr: UnsafePointer<UniffiVTableCallbackInterfaceMobileAppCoreListener> = {
+        let ptr = UnsafeMutablePointer<UniffiVTableCallbackInterfaceMobileAppCoreListener>.allocate(capacity: 1)
+        ptr.initialize(to: vtable)
+        return UnsafePointer(ptr)
+    }()
+}
+
+private func uniffiCallbackInitMobileAppCoreListener() {
+    uniffi_umsh_mobile_core_fn_init_callback_vtable_mobileappcorelistener(UniffiCallbackInterfaceMobileAppCoreListener.vtablePtr)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileAppCoreListener: FfiConverter {
+    fileprivate static let handleMap = UniffiHandleMap<MobileAppCoreListener>()
+
+    typealias FfiType = UInt64
+    typealias SwiftType = MobileAppCoreListener
+
+    public static func lift(_ handle: UInt64) throws -> MobileAppCoreListener {
+        if ((handle & 1) == 0) {
+            // Rust-generated handle, construct a new class that uses the handle to implement the
+            // interface
+            return MobileAppCoreListenerImpl(unsafeFromHandle: handle)
+        } else {
+            // Swift-generated handle, get the object from the handle map
+            return try handleMap.remove(handle: handle)
+        }
+    }
+
+    public static func lower(_ value: MobileAppCoreListener) -> UInt64 {
+         if let rustImpl = value as? MobileAppCoreListenerImpl {
+             // Rust-implemented object.  Clone the handle and return it
+            return rustImpl.uniffiCloneHandle()
+         } else {
+            // Swift object, generate a new vtable handle and return that.
+            return handleMap.insert(obj: value)
+         }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileAppCoreListener {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: MobileAppCoreListener, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppCoreListener_lift(_ handle: UInt64) throws -> MobileAppCoreListener {
+    return try FfiConverterTypeMobileAppCoreListener.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppCoreListener_lower(_ value: MobileAppCoreListener) -> UInt64 {
+    return FfiConverterTypeMobileAppCoreListener.lower(value)
+}
+
+
+
+
+
+
+/**
  * The application database, behind one connection.
  *
  * One connection serves every query, as the Swift store's single
@@ -10645,6 +11365,1127 @@ public func FfiConverterTypeMobileAnnouncementRecord_lift(_ buf: RustBuffer) thr
 #endif
 public func FfiConverterTypeMobileAnnouncementRecord_lower(_ value: MobileAnnouncementRecord) -> RustBuffer {
     return FfiConverterTypeMobileAnnouncementRecord.lower(value)
+}
+
+
+/**
+ * What changed since the last `poll_changes`. A raised flag says to read
+ * that part of `state()` again.
+ */
+public struct MobileAppChangesRecord: Equatable, Hashable {
+    /**
+     * The latest lifecycle, when it changed.
+     */
+    public var lifecycle: MobileAppLifecycle?
+    public var peersChanged: Bool
+    public var channelsChanged: Bool
+    public var conversationsChanged: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The latest lifecycle, when it changed.
+         */lifecycle: MobileAppLifecycle?, peersChanged: Bool, channelsChanged: Bool, conversationsChanged: Bool) {
+        self.lifecycle = lifecycle
+        self.peersChanged = peersChanged
+        self.channelsChanged = channelsChanged
+        self.conversationsChanged = conversationsChanged
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileAppChangesRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileAppChangesRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileAppChangesRecord {
+        return
+            try MobileAppChangesRecord(
+                lifecycle: FfiConverterOptionTypeMobileAppLifecycle.read(from: &buf),
+                peersChanged: FfiConverterBool.read(from: &buf),
+                channelsChanged: FfiConverterBool.read(from: &buf),
+                conversationsChanged: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileAppChangesRecord, into buf: inout [UInt8]) {
+        FfiConverterOptionTypeMobileAppLifecycle.write(value.lifecycle, into: &buf)
+        FfiConverterBool.write(value.peersChanged, into: &buf)
+        FfiConverterBool.write(value.channelsChanged, into: &buf)
+        FfiConverterBool.write(value.conversationsChanged, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppChangesRecord_lift(_ buf: RustBuffer) throws -> MobileAppChangesRecord {
+    return try FfiConverterTypeMobileAppChangesRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppChangesRecord_lower(_ value: MobileAppChangesRecord) -> RustBuffer {
+    return FfiConverterTypeMobileAppChangesRecord.lower(value)
+}
+
+
+/**
+ * A joined channel's group conversation.
+ *
+ * Instants are Unix milliseconds.
+ */
+public struct MobileAppChannelConversationRecord: Equatable, Hashable {
+    public var id: Int64
+    public var channel: MobileStoredChannelRecord
+    public var conversationAddress: String
+    public var draftText: String
+    public var lastReadAtMs: Int64
+    public var createdAtMs: Int64
+    public var lastMessage: MobileAppPreviewRecord?
+    public var unreadCount: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: Int64, channel: MobileStoredChannelRecord, conversationAddress: String, draftText: String, lastReadAtMs: Int64, createdAtMs: Int64, lastMessage: MobileAppPreviewRecord?, unreadCount: Int64) {
+        self.id = id
+        self.channel = channel
+        self.conversationAddress = conversationAddress
+        self.draftText = draftText
+        self.lastReadAtMs = lastReadAtMs
+        self.createdAtMs = createdAtMs
+        self.lastMessage = lastMessage
+        self.unreadCount = unreadCount
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileAppChannelConversationRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileAppChannelConversationRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileAppChannelConversationRecord {
+        return
+            try MobileAppChannelConversationRecord(
+                id: FfiConverterInt64.read(from: &buf),
+                channel: FfiConverterTypeMobileStoredChannelRecord.read(from: &buf),
+                conversationAddress: FfiConverterString.read(from: &buf),
+                draftText: FfiConverterString.read(from: &buf),
+                lastReadAtMs: FfiConverterInt64.read(from: &buf),
+                createdAtMs: FfiConverterInt64.read(from: &buf),
+                lastMessage: FfiConverterOptionTypeMobileAppPreviewRecord.read(from: &buf),
+                unreadCount: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileAppChannelConversationRecord, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.id, into: &buf)
+        FfiConverterTypeMobileStoredChannelRecord.write(value.channel, into: &buf)
+        FfiConverterString.write(value.conversationAddress, into: &buf)
+        FfiConverterString.write(value.draftText, into: &buf)
+        FfiConverterInt64.write(value.lastReadAtMs, into: &buf)
+        FfiConverterInt64.write(value.createdAtMs, into: &buf)
+        FfiConverterOptionTypeMobileAppPreviewRecord.write(value.lastMessage, into: &buf)
+        FfiConverterInt64.write(value.unreadCount, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppChannelConversationRecord_lift(_ buf: RustBuffer) throws -> MobileAppChannelConversationRecord {
+    return try FfiConverterTypeMobileAppChannelConversationRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppChannelConversationRecord_lower(_ value: MobileAppChannelConversationRecord) -> RustBuffer {
+    return FfiConverterTypeMobileAppChannelConversationRecord.lower(value)
+}
+
+
+/**
+ * A channel about to be joined.
+ */
+public struct MobileAppChannelPreviewRecord: Equatable, Hashable {
+    public var preview: ChannelPreviewRecord
+    /**
+     * The stored channel with the same key, when there is one.
+     */
+    public var existing: MobileStoredChannelRecord?
+    /**
+     * Another stored channel called what this one is called, ignoring case.
+     */
+    public var nameConflict: MobileStoredChannelRecord?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(preview: ChannelPreviewRecord,
+        /**
+         * The stored channel with the same key, when there is one.
+         */existing: MobileStoredChannelRecord?,
+        /**
+         * Another stored channel called what this one is called, ignoring case.
+         */nameConflict: MobileStoredChannelRecord?) {
+        self.preview = preview
+        self.existing = existing
+        self.nameConflict = nameConflict
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileAppChannelPreviewRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileAppChannelPreviewRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileAppChannelPreviewRecord {
+        return
+            try MobileAppChannelPreviewRecord(
+                preview: FfiConverterTypeChannelPreviewRecord.read(from: &buf),
+                existing: FfiConverterOptionTypeMobileStoredChannelRecord.read(from: &buf),
+                nameConflict: FfiConverterOptionTypeMobileStoredChannelRecord.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileAppChannelPreviewRecord, into buf: inout [UInt8]) {
+        FfiConverterTypeChannelPreviewRecord.write(value.preview, into: &buf)
+        FfiConverterOptionTypeMobileStoredChannelRecord.write(value.existing, into: &buf)
+        FfiConverterOptionTypeMobileStoredChannelRecord.write(value.nameConflict, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppChannelPreviewRecord_lift(_ buf: RustBuffer) throws -> MobileAppChannelPreviewRecord {
+    return try FfiConverterTypeMobileAppChannelPreviewRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppChannelPreviewRecord_lower(_ value: MobileAppChannelPreviewRecord) -> RustBuffer {
+    return FfiConverterTypeMobileAppChannelPreviewRecord.lower(value)
+}
+
+
+/**
+ * A channel, with the address its conversation is kept under.
+ */
+public struct MobileAppChannelRecord: Equatable, Hashable {
+    public var stored: MobileStoredChannelRecord
+    /**
+     * `None` when the channel has no conversation row.
+     */
+    public var conversationAddress: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(stored: MobileStoredChannelRecord,
+        /**
+         * `None` when the channel has no conversation row.
+         */conversationAddress: String?) {
+        self.stored = stored
+        self.conversationAddress = conversationAddress
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileAppChannelRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileAppChannelRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileAppChannelRecord {
+        return
+            try MobileAppChannelRecord(
+                stored: FfiConverterTypeMobileStoredChannelRecord.read(from: &buf),
+                conversationAddress: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileAppChannelRecord, into buf: inout [UInt8]) {
+        FfiConverterTypeMobileStoredChannelRecord.write(value.stored, into: &buf)
+        FfiConverterOptionString.write(value.conversationAddress, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppChannelRecord_lift(_ buf: RustBuffer) throws -> MobileAppChannelRecord {
+    return try FfiConverterTypeMobileAppChannelRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppChannelRecord_lower(_ value: MobileAppChannelRecord) -> RustBuffer {
+    return FfiConverterTypeMobileAppChannelRecord.lower(value)
+}
+
+
+/**
+ * A conversation with one peer.
+ *
+ * Instants are Unix milliseconds.
+ */
+public struct MobileAppDirectConversationRecord: Equatable, Hashable {
+    public var id: Int64
+    public var peer: MobileAppPeerRecord
+    public var draftText: String
+    public var lastReadAtMs: Int64
+    public var createdAtMs: Int64
+    public var notificationsEnabled: Bool
+    public var lastMessage: MobileAppPreviewRecord?
+    public var unreadCount: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: Int64, peer: MobileAppPeerRecord, draftText: String, lastReadAtMs: Int64, createdAtMs: Int64, notificationsEnabled: Bool, lastMessage: MobileAppPreviewRecord?, unreadCount: Int64) {
+        self.id = id
+        self.peer = peer
+        self.draftText = draftText
+        self.lastReadAtMs = lastReadAtMs
+        self.createdAtMs = createdAtMs
+        self.notificationsEnabled = notificationsEnabled
+        self.lastMessage = lastMessage
+        self.unreadCount = unreadCount
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileAppDirectConversationRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileAppDirectConversationRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileAppDirectConversationRecord {
+        return
+            try MobileAppDirectConversationRecord(
+                id: FfiConverterInt64.read(from: &buf),
+                peer: FfiConverterTypeMobileAppPeerRecord.read(from: &buf),
+                draftText: FfiConverterString.read(from: &buf),
+                lastReadAtMs: FfiConverterInt64.read(from: &buf),
+                createdAtMs: FfiConverterInt64.read(from: &buf),
+                notificationsEnabled: FfiConverterBool.read(from: &buf),
+                lastMessage: FfiConverterOptionTypeMobileAppPreviewRecord.read(from: &buf),
+                unreadCount: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileAppDirectConversationRecord, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.id, into: &buf)
+        FfiConverterTypeMobileAppPeerRecord.write(value.peer, into: &buf)
+        FfiConverterString.write(value.draftText, into: &buf)
+        FfiConverterInt64.write(value.lastReadAtMs, into: &buf)
+        FfiConverterInt64.write(value.createdAtMs, into: &buf)
+        FfiConverterBool.write(value.notificationsEnabled, into: &buf)
+        FfiConverterOptionTypeMobileAppPreviewRecord.write(value.lastMessage, into: &buf)
+        FfiConverterInt64.write(value.unreadCount, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppDirectConversationRecord_lift(_ buf: RustBuffer) throws -> MobileAppDirectConversationRecord {
+    return try FfiConverterTypeMobileAppDirectConversationRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppDirectConversationRecord_lower(_ value: MobileAppDirectConversationRecord) -> RustBuffer {
+    return FfiConverterTypeMobileAppDirectConversationRecord.lower(value)
+}
+
+
+/**
+ * One message of a transcript.
+ */
+public struct MobileAppMessageRecord: Equatable, Hashable {
+    public var stored: MobileStoredChatMessageRecord
+    /**
+     * The sender's node hint, rendered.
+     */
+    public var senderNodeHint: String?
+    /**
+     * The quoted message's sender's node hint, rendered.
+     */
+    public var quotedSenderNodeHint: String?
+    /**
+     * `stored.repeats`' repeaters, in the same order.
+     */
+    public var repeaters: [MobileAppMessageRepeaterRecord]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(stored: MobileStoredChatMessageRecord,
+        /**
+         * The sender's node hint, rendered.
+         */senderNodeHint: String?,
+        /**
+         * The quoted message's sender's node hint, rendered.
+         */quotedSenderNodeHint: String?,
+        /**
+         * `stored.repeats`' repeaters, in the same order.
+         */repeaters: [MobileAppMessageRepeaterRecord]) {
+        self.stored = stored
+        self.senderNodeHint = senderNodeHint
+        self.quotedSenderNodeHint = quotedSenderNodeHint
+        self.repeaters = repeaters
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileAppMessageRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileAppMessageRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileAppMessageRecord {
+        return
+            try MobileAppMessageRecord(
+                stored: FfiConverterTypeMobileStoredChatMessageRecord.read(from: &buf),
+                senderNodeHint: FfiConverterOptionString.read(from: &buf),
+                quotedSenderNodeHint: FfiConverterOptionString.read(from: &buf),
+                repeaters: FfiConverterSequenceTypeMobileAppMessageRepeaterRecord.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileAppMessageRecord, into buf: inout [UInt8]) {
+        FfiConverterTypeMobileStoredChatMessageRecord.write(value.stored, into: &buf)
+        FfiConverterOptionString.write(value.senderNodeHint, into: &buf)
+        FfiConverterOptionString.write(value.quotedSenderNodeHint, into: &buf)
+        FfiConverterSequenceTypeMobileAppMessageRepeaterRecord.write(value.repeaters, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppMessageRecord_lift(_ buf: RustBuffer) throws -> MobileAppMessageRecord {
+    return try FfiConverterTypeMobileAppMessageRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppMessageRecord_lower(_ value: MobileAppMessageRecord) -> RustBuffer {
+    return FfiConverterTypeMobileAppMessageRecord.lower(value)
+}
+
+
+/**
+ * A repeater overheard carrying a message of ours.
+ */
+public struct MobileAppMessageRepeaterRecord: Equatable, Hashable {
+    public var hint: Data
+    /**
+     * The router hint, rendered; `None` when it is not two bytes.
+     */
+    public var hintText: String?
+    /**
+     * The peer the hint names, when it names one.
+     */
+    public var peerAddress: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(hint: Data,
+        /**
+         * The router hint, rendered; `None` when it is not two bytes.
+         */hintText: String?,
+        /**
+         * The peer the hint names, when it names one.
+         */peerAddress: String?) {
+        self.hint = hint
+        self.hintText = hintText
+        self.peerAddress = peerAddress
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileAppMessageRepeaterRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileAppMessageRepeaterRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileAppMessageRepeaterRecord {
+        return
+            try MobileAppMessageRepeaterRecord(
+                hint: FfiConverterData.read(from: &buf),
+                hintText: FfiConverterOptionString.read(from: &buf),
+                peerAddress: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileAppMessageRepeaterRecord, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.hint, into: &buf)
+        FfiConverterOptionString.write(value.hintText, into: &buf)
+        FfiConverterOptionString.write(value.peerAddress, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppMessageRepeaterRecord_lift(_ buf: RustBuffer) throws -> MobileAppMessageRepeaterRecord {
+    return try FfiConverterTypeMobileAppMessageRepeaterRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppMessageRepeaterRecord_lower(_ value: MobileAppMessageRepeaterRecord) -> RustBuffer {
+    return FfiConverterTypeMobileAppMessageRepeaterRecord.lower(value)
+}
+
+
+/**
+ * A neighbor, with the address of the router that reported it.
+ */
+public struct MobileAppNeighborReportRecord: Equatable, Hashable {
+    public var reporterAddress: String
+    public var neighbor: MobileAppRepeaterNeighborRecord
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(reporterAddress: String, neighbor: MobileAppRepeaterNeighborRecord) {
+        self.reporterAddress = reporterAddress
+        self.neighbor = neighbor
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileAppNeighborReportRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileAppNeighborReportRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileAppNeighborReportRecord {
+        return
+            try MobileAppNeighborReportRecord(
+                reporterAddress: FfiConverterString.read(from: &buf),
+                neighbor: FfiConverterTypeMobileAppRepeaterNeighborRecord.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileAppNeighborReportRecord, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.reporterAddress, into: &buf)
+        FfiConverterTypeMobileAppRepeaterNeighborRecord.write(value.neighbor, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppNeighborReportRecord_lift(_ buf: RustBuffer) throws -> MobileAppNeighborReportRecord {
+    return try FfiConverterTypeMobileAppNeighborReportRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppNeighborReportRecord_lower(_ value: MobileAppNeighborReportRecord) -> RustBuffer {
+    return FfiConverterTypeMobileAppNeighborReportRecord.lower(value)
+}
+
+
+/**
+ * A peer, with its address decoded.
+ */
+public struct MobileAppPeerRecord: Equatable, Hashable {
+    public var stored: MobileStoredNodeRecord
+    /**
+     * The canonical address and the node hint.
+     */
+    public var identity: PublicIdentityRecord
+    /**
+     * The stored advertisement, decoded; `None` when there is none or it
+     * does not decode.
+     */
+    public var advertisedIdentity: NodeIdentityRecord?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(stored: MobileStoredNodeRecord,
+        /**
+         * The canonical address and the node hint.
+         */identity: PublicIdentityRecord,
+        /**
+         * The stored advertisement, decoded; `None` when there is none or it
+         * does not decode.
+         */advertisedIdentity: NodeIdentityRecord?) {
+        self.stored = stored
+        self.identity = identity
+        self.advertisedIdentity = advertisedIdentity
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileAppPeerRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileAppPeerRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileAppPeerRecord {
+        return
+            try MobileAppPeerRecord(
+                stored: FfiConverterTypeMobileStoredNodeRecord.read(from: &buf),
+                identity: FfiConverterTypePublicIdentityRecord.read(from: &buf),
+                advertisedIdentity: FfiConverterOptionTypeNodeIdentityRecord.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileAppPeerRecord, into buf: inout [UInt8]) {
+        FfiConverterTypeMobileStoredNodeRecord.write(value.stored, into: &buf)
+        FfiConverterTypePublicIdentityRecord.write(value.identity, into: &buf)
+        FfiConverterOptionTypeNodeIdentityRecord.write(value.advertisedIdentity, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppPeerRecord_lift(_ buf: RustBuffer) throws -> MobileAppPeerRecord {
+    return try FfiConverterTypeMobileAppPeerRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppPeerRecord_lower(_ value: MobileAppPeerRecord) -> RustBuffer {
+    return FfiConverterTypeMobileAppPeerRecord.lower(value)
+}
+
+
+/**
+ * A conversation's newest message, as a list row shows it.
+ */
+public struct MobileAppPreviewRecord: Equatable, Hashable {
+    public var stored: MobileStoredConversationPreviewRecord
+    /**
+     * The sender's node hint, rendered; `None` when the message carries
+     * none, or one that is not a node hint.
+     */
+    public var senderNodeHint: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(stored: MobileStoredConversationPreviewRecord,
+        /**
+         * The sender's node hint, rendered; `None` when the message carries
+         * none, or one that is not a node hint.
+         */senderNodeHint: String?) {
+        self.stored = stored
+        self.senderNodeHint = senderNodeHint
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileAppPreviewRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileAppPreviewRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileAppPreviewRecord {
+        return
+            try MobileAppPreviewRecord(
+                stored: FfiConverterTypeMobileStoredConversationPreviewRecord.read(from: &buf),
+                senderNodeHint: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileAppPreviewRecord, into buf: inout [UInt8]) {
+        FfiConverterTypeMobileStoredConversationPreviewRecord.write(value.stored, into: &buf)
+        FfiConverterOptionString.write(value.senderNodeHint, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppPreviewRecord_lift(_ buf: RustBuffer) throws -> MobileAppPreviewRecord {
+    return try FfiConverterTypeMobileAppPreviewRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppPreviewRecord_lower(_ value: MobileAppPreviewRecord) -> RustBuffer {
+    return FfiConverterTypeMobileAppPreviewRecord.lower(value)
+}
+
+
+/**
+ * What a router last said about its neighbors.
+ */
+public struct MobileAppRepeaterListingRecord: Equatable, Hashable {
+    /**
+     * In the order the router listed them.
+     */
+    public var entries: [MobileAppRepeaterNeighborRecord]
+    public var total: Int64?
+    /**
+     * Absent once the listing is complete.
+     */
+    public var nextCursor: Data?
+    public var asOfMs: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * In the order the router listed them.
+         */entries: [MobileAppRepeaterNeighborRecord], total: Int64?,
+        /**
+         * Absent once the listing is complete.
+         */nextCursor: Data?, asOfMs: Int64) {
+        self.entries = entries
+        self.total = total
+        self.nextCursor = nextCursor
+        self.asOfMs = asOfMs
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileAppRepeaterListingRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileAppRepeaterListingRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileAppRepeaterListingRecord {
+        return
+            try MobileAppRepeaterListingRecord(
+                entries: FfiConverterSequenceTypeMobileAppRepeaterNeighborRecord.read(from: &buf),
+                total: FfiConverterOptionInt64.read(from: &buf),
+                nextCursor: FfiConverterOptionData.read(from: &buf),
+                asOfMs: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileAppRepeaterListingRecord, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeMobileAppRepeaterNeighborRecord.write(value.entries, into: &buf)
+        FfiConverterOptionInt64.write(value.total, into: &buf)
+        FfiConverterOptionData.write(value.nextCursor, into: &buf)
+        FfiConverterInt64.write(value.asOfMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppRepeaterListingRecord_lift(_ buf: RustBuffer) throws -> MobileAppRepeaterListingRecord {
+    return try FfiConverterTypeMobileAppRepeaterListingRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppRepeaterListingRecord_lower(_ value: MobileAppRepeaterListingRecord) -> RustBuffer {
+    return FfiConverterTypeMobileAppRepeaterListingRecord.lower(value)
+}
+
+
+/**
+ * One neighbor a router reported.
+ */
+public struct MobileAppRepeaterNeighborRecord: Equatable, Hashable {
+    public var entry: MobileStoredPeerRepeaterEntryRecord
+    /**
+     * A three-byte hint rendered as a node hint, a longer or shorter one
+     * of at least two bytes as the router hint of its first two; `None`
+     * otherwise.
+     */
+    public var hintText: String?
+    /**
+     * The peer the hint names, when it names one.
+     */
+    public var peerAddress: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(entry: MobileStoredPeerRepeaterEntryRecord,
+        /**
+         * A three-byte hint rendered as a node hint, a longer or shorter one
+         * of at least two bytes as the router hint of its first two; `None`
+         * otherwise.
+         */hintText: String?,
+        /**
+         * The peer the hint names, when it names one.
+         */peerAddress: String?) {
+        self.entry = entry
+        self.hintText = hintText
+        self.peerAddress = peerAddress
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileAppRepeaterNeighborRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileAppRepeaterNeighborRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileAppRepeaterNeighborRecord {
+        return
+            try MobileAppRepeaterNeighborRecord(
+                entry: FfiConverterTypeMobileStoredPeerRepeaterEntryRecord.read(from: &buf),
+                hintText: FfiConverterOptionString.read(from: &buf),
+                peerAddress: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileAppRepeaterNeighborRecord, into buf: inout [UInt8]) {
+        FfiConverterTypeMobileStoredPeerRepeaterEntryRecord.write(value.entry, into: &buf)
+        FfiConverterOptionString.write(value.hintText, into: &buf)
+        FfiConverterOptionString.write(value.peerAddress, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppRepeaterNeighborRecord_lift(_ buf: RustBuffer) throws -> MobileAppRepeaterNeighborRecord {
+    return try FfiConverterTypeMobileAppRepeaterNeighborRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppRepeaterNeighborRecord_lower(_ value: MobileAppRepeaterNeighborRecord) -> RustBuffer {
+    return FfiConverterTypeMobileAppRepeaterNeighborRecord.lower(value)
+}
+
+
+/**
+ * Everything the lists show for the owner.
+ */
+public struct MobileAppStateRecord: Equatable, Hashable {
+    /**
+     * Store order. `None` in a conversations-only answer, which leaves
+     * whatever was last read in place.
+     */
+    public var peers: [MobileAppPeerRecord]?
+    /**
+     * Oldest first.
+     */
+    public var channels: [MobileAppChannelRecord]
+    /**
+     * Most recent first. A conversation whose peer's address does not
+     * decode is left out.
+     */
+    public var directConversations: [MobileAppDirectConversationRecord]
+    /**
+     * Most recent first; only those of joined channels.
+     */
+    public var channelConversations: [MobileAppChannelConversationRecord]
+    /**
+     * `None` in a conversations-only answer.
+     */
+    public var neighborReports: [MobileAppNeighborReportRecord]?
+    /**
+     * The name the owner advertises, when it set one.
+     */
+    public var advertisedName: String?
+    /**
+     * Identifiers of channels on the attached radio that no stored channel
+     * derives.
+     */
+    public var unknownDeviceChannels: [Data]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Store order. `None` in a conversations-only answer, which leaves
+         * whatever was last read in place.
+         */peers: [MobileAppPeerRecord]?,
+        /**
+         * Oldest first.
+         */channels: [MobileAppChannelRecord],
+        /**
+         * Most recent first. A conversation whose peer's address does not
+         * decode is left out.
+         */directConversations: [MobileAppDirectConversationRecord],
+        /**
+         * Most recent first; only those of joined channels.
+         */channelConversations: [MobileAppChannelConversationRecord],
+        /**
+         * `None` in a conversations-only answer.
+         */neighborReports: [MobileAppNeighborReportRecord]?,
+        /**
+         * The name the owner advertises, when it set one.
+         */advertisedName: String?,
+        /**
+         * Identifiers of channels on the attached radio that no stored channel
+         * derives.
+         */unknownDeviceChannels: [Data]) {
+        self.peers = peers
+        self.channels = channels
+        self.directConversations = directConversations
+        self.channelConversations = channelConversations
+        self.neighborReports = neighborReports
+        self.advertisedName = advertisedName
+        self.unknownDeviceChannels = unknownDeviceChannels
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileAppStateRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileAppStateRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileAppStateRecord {
+        return
+            try MobileAppStateRecord(
+                peers: FfiConverterOptionSequenceTypeMobileAppPeerRecord.read(from: &buf),
+                channels: FfiConverterSequenceTypeMobileAppChannelRecord.read(from: &buf),
+                directConversations: FfiConverterSequenceTypeMobileAppDirectConversationRecord.read(from: &buf),
+                channelConversations: FfiConverterSequenceTypeMobileAppChannelConversationRecord.read(from: &buf),
+                neighborReports: FfiConverterOptionSequenceTypeMobileAppNeighborReportRecord.read(from: &buf),
+                advertisedName: FfiConverterOptionString.read(from: &buf),
+                unknownDeviceChannels: FfiConverterSequenceData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileAppStateRecord, into buf: inout [UInt8]) {
+        FfiConverterOptionSequenceTypeMobileAppPeerRecord.write(value.peers, into: &buf)
+        FfiConverterSequenceTypeMobileAppChannelRecord.write(value.channels, into: &buf)
+        FfiConverterSequenceTypeMobileAppDirectConversationRecord.write(value.directConversations, into: &buf)
+        FfiConverterSequenceTypeMobileAppChannelConversationRecord.write(value.channelConversations, into: &buf)
+        FfiConverterOptionSequenceTypeMobileAppNeighborReportRecord.write(value.neighborReports, into: &buf)
+        FfiConverterOptionString.write(value.advertisedName, into: &buf)
+        FfiConverterSequenceData.write(value.unknownDeviceChannels, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppStateRecord_lift(_ buf: RustBuffer) throws -> MobileAppStateRecord {
+    return try FfiConverterTypeMobileAppStateRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppStateRecord_lower(_ value: MobileAppStateRecord) -> RustBuffer {
+    return FfiConverterTypeMobileAppStateRecord.lower(value)
+}
+
+
+/**
+ * The values a listener reads once when it attaches to a running core.
+ */
+public struct MobileAppStatusRecord: Equatable, Hashable {
+    public var lifecycle: MobileAppLifecycle
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(lifecycle: MobileAppLifecycle) {
+        self.lifecycle = lifecycle
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileAppStatusRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileAppStatusRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileAppStatusRecord {
+        return
+            try MobileAppStatusRecord(
+                lifecycle: FfiConverterTypeMobileAppLifecycle.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileAppStatusRecord, into buf: inout [UInt8]) {
+        FfiConverterTypeMobileAppLifecycle.write(value.lifecycle, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppStatusRecord_lift(_ buf: RustBuffer) throws -> MobileAppStatusRecord {
+    return try FfiConverterTypeMobileAppStatusRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppStatusRecord_lower(_ value: MobileAppStatusRecord) -> RustBuffer {
+    return FfiConverterTypeMobileAppStatusRecord.lower(value)
+}
+
+
+/**
+ * One slice of a transcript, oldest first. The flags say whether storage
+ * holds more beyond it in either direction.
+ */
+public struct MobileAppTranscriptPageRecord: Equatable, Hashable {
+    public var messages: [MobileAppMessageRecord]
+    public var hasOlder: Bool
+    public var hasNewer: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(messages: [MobileAppMessageRecord], hasOlder: Bool, hasNewer: Bool) {
+        self.messages = messages
+        self.hasOlder = hasOlder
+        self.hasNewer = hasNewer
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileAppTranscriptPageRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileAppTranscriptPageRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileAppTranscriptPageRecord {
+        return
+            try MobileAppTranscriptPageRecord(
+                messages: FfiConverterSequenceTypeMobileAppMessageRecord.read(from: &buf),
+                hasOlder: FfiConverterBool.read(from: &buf),
+                hasNewer: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileAppTranscriptPageRecord, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeMobileAppMessageRecord.write(value.messages, into: &buf)
+        FfiConverterBool.write(value.hasOlder, into: &buf)
+        FfiConverterBool.write(value.hasNewer, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppTranscriptPageRecord_lift(_ buf: RustBuffer) throws -> MobileAppTranscriptPageRecord {
+    return try FfiConverterTypeMobileAppTranscriptPageRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppTranscriptPageRecord_lower(_ value: MobileAppTranscriptPageRecord) -> RustBuffer {
+    return FfiConverterTypeMobileAppTranscriptPageRecord.lower(value)
 }
 
 
@@ -22467,6 +24308,212 @@ public func FfiConverterTypeMobileAnnouncementKind_lower(_ value: MobileAnnounce
 
 
 
+/**
+ * Why the core could not answer.
+ */
+public
+enum MobileAppError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
+
+
+
+    /**
+     * The store failed the read or write.
+     */
+    case Store(error: MobileStoreError
+    )
+    /**
+     * An argument does not parse: an address, a channel invitation.
+     */
+    case InvalidInput(error: MobileError
+    )
+    /**
+     * No owner is set, so there is nobody to read for.
+     */
+    case NoOwner
+    /**
+     * The core is stopping.
+     */
+    case Busy
+    /**
+     * The core has stopped.
+     */
+    case Stopped
+
+
+
+
+
+
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+
+}
+
+#if compiler(>=6)
+extension MobileAppError: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileAppError: FfiConverterRustBuffer {
+    typealias SwiftType = MobileAppError
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileAppError {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+
+
+
+        case 1: return .Store(
+            error: try FfiConverterTypeMobileStoreError.read(from: &buf)
+            )
+        case 2: return .InvalidInput(
+            error: try FfiConverterTypeMobileError.read(from: &buf)
+            )
+        case 3: return .NoOwner
+        case 4: return .Busy
+        case 5: return .Stopped
+
+         default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileAppError, into buf: inout [UInt8]) {
+        switch value {
+
+
+
+
+
+        case let .Store(error):
+            writeInt(&buf, Int32(1))
+            FfiConverterTypeMobileStoreError.write(error, into: &buf)
+
+
+        case let .InvalidInput(error):
+            writeInt(&buf, Int32(2))
+            FfiConverterTypeMobileError.write(error, into: &buf)
+
+
+        case .NoOwner:
+            writeInt(&buf, Int32(3))
+
+
+        case .Busy:
+            writeInt(&buf, Int32(4))
+
+
+        case .Stopped:
+            writeInt(&buf, Int32(5))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppError_lift(_ buf: RustBuffer) throws -> MobileAppError {
+    return try FfiConverterTypeMobileAppError.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppError_lower(_ value: MobileAppError) -> RustBuffer {
+    return FfiConverterTypeMobileAppError.lower(value)
+}
+
+
+/**
+ * Where a core is in its life.
+ */
+
+public enum MobileAppLifecycle: Equatable, Hashable {
+
+    /**
+     * Made, and answering queries.
+     */
+    case idle
+    /**
+     * `stop` was called; the worker is finishing.
+     */
+    case stopping
+    /**
+     * Finished. A stopped core answers nothing; another takes its place.
+     */
+    case stopped
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileAppLifecycle: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileAppLifecycle: FfiConverterRustBuffer {
+    typealias SwiftType = MobileAppLifecycle
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileAppLifecycle {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .idle
+
+        case 2: return .stopping
+
+        case 3: return .stopped
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileAppLifecycle, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .idle:
+            writeInt(&buf, Int32(1))
+
+
+        case .stopping:
+            writeInt(&buf, Int32(2))
+
+
+        case .stopped:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppLifecycle_lift(_ buf: RustBuffer) throws -> MobileAppLifecycle {
+    return try FfiConverterTypeMobileAppLifecycle.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppLifecycle_lower(_ value: MobileAppLifecycle) -> RustBuffer {
+    return FfiConverterTypeMobileAppLifecycle.lower(value)
+}
+
+
+
 
 public enum MobileChatDirection: Equatable, Hashable {
 
@@ -28173,6 +30220,78 @@ fileprivate struct FfiConverterOptionTypeMobileMeshSession: FfiConverterRustBuff
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeMobileAppPreviewRecord: FfiConverterRustBuffer {
+    typealias SwiftType = MobileAppPreviewRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileAppPreviewRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileAppPreviewRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileAppRepeaterListingRecord: FfiConverterRustBuffer {
+    typealias SwiftType = MobileAppRepeaterListingRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileAppRepeaterListingRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileAppRepeaterListingRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileAppTranscriptPageRecord: FfiConverterRustBuffer {
+    typealias SwiftType = MobileAppTranscriptPageRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileAppTranscriptPageRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileAppTranscriptPageRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeMobileChatChangesRecord: FfiConverterRustBuffer {
     typealias SwiftType = MobileChatChangesRecord?
 
@@ -29085,6 +31204,30 @@ fileprivate struct FfiConverterOptionTypeUlcpWifiLinkRecord: FfiConverterRustBuf
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeMobileAppLifecycle: FfiConverterRustBuffer {
+    typealias SwiftType = MobileAppLifecycle?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileAppLifecycle.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileAppLifecycle.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeMobileChatDirection: FfiConverterRustBuffer {
     typealias SwiftType = MobileChatDirection?
 
@@ -29397,6 +31540,54 @@ fileprivate struct FfiConverterOptionSequenceData: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionSequenceTypeMobileAppNeighborReportRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileAppNeighborReportRecord]?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterSequenceTypeMobileAppNeighborReportRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterSequenceTypeMobileAppNeighborReportRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionSequenceTypeMobileAppPeerRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileAppPeerRecord]?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterSequenceTypeMobileAppPeerRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterSequenceTypeMobileAppPeerRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionSequenceTypeMobileStoredChatMessageRefRecord: FfiConverterRustBuffer {
     typealias SwiftType = [MobileStoredChatMessageRefRecord]?
 
@@ -29634,6 +31825,206 @@ fileprivate struct FfiConverterSequenceTypeHostPeerKeyEntryRecord: FfiConverterR
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeHostPeerKeyEntryRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileAppChannelConversationRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileAppChannelConversationRecord]
+
+    public static func write(_ value: [MobileAppChannelConversationRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileAppChannelConversationRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileAppChannelConversationRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileAppChannelConversationRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileAppChannelConversationRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileAppChannelRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileAppChannelRecord]
+
+    public static func write(_ value: [MobileAppChannelRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileAppChannelRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileAppChannelRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileAppChannelRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileAppChannelRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileAppDirectConversationRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileAppDirectConversationRecord]
+
+    public static func write(_ value: [MobileAppDirectConversationRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileAppDirectConversationRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileAppDirectConversationRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileAppDirectConversationRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileAppDirectConversationRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileAppMessageRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileAppMessageRecord]
+
+    public static func write(_ value: [MobileAppMessageRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileAppMessageRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileAppMessageRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileAppMessageRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileAppMessageRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileAppMessageRepeaterRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileAppMessageRepeaterRecord]
+
+    public static func write(_ value: [MobileAppMessageRepeaterRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileAppMessageRepeaterRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileAppMessageRepeaterRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileAppMessageRepeaterRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileAppMessageRepeaterRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileAppNeighborReportRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileAppNeighborReportRecord]
+
+    public static func write(_ value: [MobileAppNeighborReportRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileAppNeighborReportRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileAppNeighborReportRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileAppNeighborReportRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileAppNeighborReportRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileAppPeerRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileAppPeerRecord]
+
+    public static func write(_ value: [MobileAppPeerRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileAppPeerRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileAppPeerRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileAppPeerRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileAppPeerRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileAppRepeaterNeighborRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileAppRepeaterNeighborRecord]
+
+    public static func write(_ value: [MobileAppRepeaterNeighborRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileAppRepeaterNeighborRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileAppRepeaterNeighborRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileAppRepeaterNeighborRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileAppRepeaterNeighborRecord.read(from: &buf))
         }
         return seq
     }
@@ -32119,6 +34510,75 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileidentity_public_identity() != 38823) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_clear_listener() != 4532) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_poll_changes() != 40298) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_set_listener() != 9977) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_set_owner() != 52732) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_status() != 14234) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_stop() != 21498) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_cached_properties() != 48302) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_claimed_radios() != 49230) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_forget_management_cache() != 24174) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_management_card() != 60254) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_message_count() != 47892) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_peer_repeaters() != 45727) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_phone_node_key() != 15201) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_preview_channel() != 48994) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_save_cached_properties() != 28179) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_save_management_card() != 55221) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_state() != 59217) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_stranded_radios() != 49053) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_transcript_after() != 7748) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_transcript_around() != 48518) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_transcript_before() != 47388) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_transcript_newest() != 12568) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcorelistener_on_changes_pending() != 46836) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobilecounterstore_commit_boundary() != 35727) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -32884,6 +35344,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_constructor_mobileidentity_unlock() != 33117) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_constructor_mobileappcore_new() != 13578) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_constructor_mobilecounterstore_new() != 37665) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -32927,6 +35390,7 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
 
+    uniffiCallbackInitMobileAppCoreListener()
     uniffiCallbackInitMobileLogger()
     uniffiCallbackInitMobileMeshWakeListener()
     uniffiCallbackInitMobileRadioDriverListener()
