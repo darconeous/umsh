@@ -1639,6 +1639,9 @@ pub struct PingReply {
     /// Its hops, in the same order: the first into this device, and each
     /// after it beyond the repeater before it.
     pub legs: Vec<Leg, { MAX_PATH + 1 }>,
+    /// It got through only by flooding, once the route it was sent along
+    /// had failed.
+    pub flooded: bool,
 }
 
 /// Where the latest ping to a saved peer stands.
@@ -1977,8 +1980,19 @@ pub trait Node {
     /// Pings `peer`. How it went comes as [`NodeEvent::PingSettled`].
     fn ping(&self, peer: PeerId);
 
+    /// Pings `peer` along `hints`, the repeater nearest this device first,
+    /// flooding `flood_hops` past the last of them, without holding that
+    /// route. No hints is direct. How it went comes as
+    /// [`NodeEvent::PingSettled`].
+    fn ping_along(&self, peer: PeerId, hints: &[[u8; 2]], flood_hops: u8);
+
     /// Where the latest ping to `peer` stands; `None` when none was sent.
     fn ping_view(&self, peer: PeerId) -> Option<PingView>;
+
+    /// The repeater that forwards under `hint`, a router hint: the node it
+    /// most plausibly is, else the hint alone. `None` when there is no room
+    /// to say.
+    fn repeater(&self, hint: [u8; 2]) -> Option<Repeater>;
 
     /// Reads the route to `peer` the radio holds now. When it differs from
     /// what [`Node::peer_route`] says, that comes as

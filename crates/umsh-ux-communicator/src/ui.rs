@@ -52,6 +52,7 @@ mod ping;
 mod profile;
 mod rail;
 mod route;
+pub mod route_edit;
 mod setting;
 mod setup;
 mod share;
@@ -220,6 +221,13 @@ fn peer_or_channel(state: &State) -> impl View<Rgb565, State> + use<> {
         Screen::ShareContact { peer, .. } => state
             .peer(*peer)
             .map(|summary| share_contact::view(state, &summary.name)),
+        Screen::Route {
+            peer,
+            edit: Some(draft),
+            ..
+        } => state
+            .peer(*peer)
+            .map(|summary| route_edit::view(state, *peer, &summary, draft)),
         Screen::Route { peer, .. } => state
             .peer(*peer)
             .map(|summary| route::view(state, *peer, &summary)),

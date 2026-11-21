@@ -505,11 +505,12 @@ where
                 return;
             }
             // A part of the date and time being changed takes the turn,
-            // and so does the brightness being set.
+            // and so do the brightness being set and a route being chosen.
             if app.state_mut().turn_set_time(detents)
                 || app.state_mut().turn_brightness(detents)
                 || app.state_mut().turn_volume(detents)
                 || app.state_mut().turn_gamma(detents)
+                || app.state_mut().turn_route_edit(detents)
             {
                 return;
             }
@@ -631,6 +632,13 @@ where
             Arrow::Up | Arrow::Right => 1,
             Arrow::Down | Arrow::Left => -1,
         });
+        return;
+    }
+    // A hop being moved, or a value of a route being chosen: up and down
+    // as the wheel turns.
+    if let Some(detents) = direction.detents()
+        && state.turn_route_edit(detents)
+    {
         return;
     }
     // The gamma chart's square: up and right lighten it, down and left

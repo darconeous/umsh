@@ -278,7 +278,7 @@ impl<S: ChatStore> Chats<S> {
 
     /// How a repeater that forwarded under `hint` is shown: as the node it
     /// most plausibly is, else by the hint alone.
-    pub(super) fn repeater(&self, hint: RouterHint) -> Option<model::Repeater> {
+    pub fn repeater(&self, hint: RouterHint) -> Option<model::Repeater> {
         let (name, avatar, known) = match self.name_router_hint(hint) {
             Some(kept) => (
                 name(&kept.key, Some(&kept)),
@@ -628,6 +628,39 @@ impl<S: ChatStore> Chats<S> {
             .with_full_source()
             .with_trace()
             .with_mic_size(PING_MIC_SIZE);
+        self.commands.push_back(Command::Ping {
+            peer: kept.key,
+            options,
+        });
+    }
+
+    /// Asks the device node to ping `peer` along `hints`, flooding
+    /// `flood_hops` past the last of them, without holding that route.
+    pub fn ping_along(
+        &mut self,
+        peer: model::PeerId,
+        hints: &[[u8; 2]],
+        flood_hops: u8,
+        now_ms: u64,
+    ) {
+        let Some(kept) = self.saved_peer(peer) else {
+            return;
+        };
+        let route: Vec<RouterHint, { model::MAX_PATH }> =
+            hints.iter().copied().map(RouterHint).collect();
+        // Given even when empty: no route at all would let the MAC send by
+        // the route it holds, and an empty one is direct.
+        let Ok(options) = SendOptions::default()
+            .with_full_source()
+            .with_mic_size(PING_MIC_SIZE)
+            .try_with_source_route(&route)
+        else {
+            return;
+        };
+        self.pinged(kept.key, now_ms);
+        // Last: a source route back-fills a flood budget, and a path that
+        // does not work should say so rather than flood further than asked.
+        let options = options.with_trace().with_route_slack(flood_hops);
         self.commands.push_back(Command::Ping {
             peer: kept.key,
             options,

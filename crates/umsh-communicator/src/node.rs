@@ -25,7 +25,7 @@ use umsh_ux_communicator::model::{
     ContactUri, Details, EventQueue, Forwarding, Heard, Invite, KeyboardSettings, MAX_HEARD,
     MAX_PATH, MeetState, Member, Message, MessageId, NearbyId, Neighbor, Node, NodeEvent,
     PeerDetail, PeerEntry, PeerId, PeerRoute, PeerSummary, PingView, RadioSettings, Reaction,
-    Setting, ShareUri, Shareable, Statistics, WifiReading, WifiSecurity,
+    Repeater, Setting, ShareUri, Shareable, Statistics, WifiReading, WifiSecurity,
 };
 use umsh_ux_communicator::picker::RecentText;
 use umsh_ux_communicator::text::TextHeap;
@@ -208,7 +208,17 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
                 rx,
                 signal,
                 truncated,
-            } => chats.pong(peer, round_trip_ms, &rx, &signal, truncated, now_ms, events),
+                flooded,
+            } => chats.pong(
+                peer,
+                round_trip_ms,
+                &rx,
+                &signal,
+                truncated,
+                flooded,
+                now_ms,
+                events,
+            ),
             Arrival::PingTimeout { peer } => chats.ping_timed_out(peer, now_ms, events),
             Arrival::Route {
                 peer,
@@ -694,8 +704,17 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
         self.wake();
     }
 
+    fn ping_along(&self, peer: PeerId, hints: &[[u8; 2]], flood_hops: u8) {
+        self.with_chats(|chats, now_ms, _, _| chats.ping_along(peer, hints, flood_hops, now_ms));
+        self.wake();
+    }
+
     fn ping_view(&self, peer: PeerId) -> Option<PingView> {
         self.chats.borrow().ping_view(peer)
+    }
+
+    fn repeater(&self, hint: [u8; 2]) -> Option<Repeater> {
+        self.chats.borrow().repeater(RouterHint(hint))
     }
 
     fn load_route(&self, peer: PeerId) {

@@ -2923,6 +2923,52 @@ fn a_route_held_by_hand_counts_down_and_then_is_ordinary() {
     assert_eq!(node.peer_route(peer).unwrap().manual, None);
 }
 
+#[test]
+fn a_ping_along_a_route_goes_by_it_and_holds_nothing() {
+    let sim = device();
+    let (node, clock) = started(&sim);
+    let (robin, peer) = saved_robin(&sim, &node, clock);
+    let along = [RouterHint([0xA1, 0x01]), RouterHint([0xB2, 0x02])];
+    node.ping_along(peer, &[along[0].0, along[1].0], 2);
+    assert!(asks(&node, |c| matches!(
+        c,
+        Command::Ping { peer, options }
+            if *peer == robin
+                && options.source_route.as_deref() == Some(&along[..])
+                && options.route_slack == Some(2)
+                && options.flood_hops == Some(2)
+                && options.trace
+                && options.full_source
+    )));
+    assert_eq!(node.ping_view(peer), Some(PingView::Waiting));
+    // An answer that came only once the route had failed says so.
+    node.arrive(Arrival::Pong {
+        peer: robin,
+        round_trip_ms: 3_800,
+        rx: rx(4),
+        signal: Vec::new(),
+        truncated: false,
+        flooded: true,
+    });
+    let Some(PingView::Reply(reply)) = node.ping_view(peer) else {
+        panic!("no reply");
+    };
+    assert!(reply.flooded);
+
+    // No hints is direct: an empty source route, which keeps the MAC from
+    // sending by the route it holds, and no flood past it.
+    node.ping_along(peer, &[], 0);
+    assert!(asks(&node, |c| matches!(
+        c,
+        Command::Ping { options, .. }
+            if options.source_route.as_deref() == Some(&[][..])
+                && options.flood_hops == Some(0)
+    )));
+    // A ping along a route holds nothing.
+    assert!(!asks(&node, |c| matches!(c, Command::HoldRoute { .. })));
+    assert_eq!(node.peer_route(peer).and_then(|route| route.manual), None);
+}
+
 /// A direct route shows how this device last heard the peer, and a flood
 /// route as many unnamed repeaters as it crosses.
 #[test]
@@ -2980,6 +3026,7 @@ fn a_ping_answer_keeps_its_path_and_how_each_hop_was_heard() {
         rx: heard,
         signal: vec![HopSignal::new(-104, 38), HopSignal::POINT_TO_POINT],
         truncated: false,
+        flooded: false,
     });
     assert!(events(&node).contains(&NodeEvent::PingSettled(peer)));
     let Some(PingView::Reply(reply)) = node.ping_view(peer) else {
@@ -3031,6 +3078,7 @@ fn a_truncated_ping_answer_never_shows_a_whole_path() {
             rx: heard,
             signal: Vec::new(),
             truncated: true,
+            flooded: false,
         });
         let Some(PingView::Reply(reply)) = node.ping_view(peer) else {
             panic!("no reply");

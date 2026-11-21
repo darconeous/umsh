@@ -423,6 +423,10 @@ fn router_hint(address: &str) -> Option<([u8; 2], String<8>)> {
 /// last, and for how long it was held.
 type HeldRoute = (PeerId, Vec<[u8; 2], MAX_PATH>, u8, u32);
 
+/// A ping sent along a route not held: to whom, its hints, and how far it
+/// floods past the last.
+pub type PingAlong = (PeerId, Vec<[u8; 2], MAX_PATH>, u8);
+
 /// How long a route the fixture holds by hand has left: all of it, since
 /// the fixture's time stands still.
 fn held_for(hold_ms: u32) -> String<12> {
@@ -764,6 +768,9 @@ pub struct Store {
     pinged: RefCell<Vec<(PeerId, u64, bool), KEPT>>,
     reset: RefCell<Vec<PeerId, KEPT>>,
     held: RefCell<Vec<HeldRoute, KEPT>>,
+    /// The latest ping sent along a route not held: to whom, its hints,
+    /// and how far it floods past the last.
+    along: RefCell<Option<PingAlong>>,
     aliases: RefCell<Vec<(PeerId, String<32>), KEPT>>,
     forgotten: RefCell<Vec<PeerId, KEPT>>,
     /// The chat of message states' session with forward secrecy ended.
@@ -1017,6 +1024,7 @@ impl Store {
             pinged: RefCell::new(Vec::new()),
             reset: RefCell::new(Vec::new()),
             held: RefCell::new(Vec::new()),
+            along: RefCell::new(None),
             aliases: RefCell::new(Vec::new()),
             forgotten: RefCell::new(Vec::new()),
             secrecy_ended: Cell::new(false),
@@ -1584,6 +1592,13 @@ impl Store {
         (&SENT_CARRIERS[..heard], 0)
     }
 
+    /// The latest ping sent along a route not held: to whom, its hints,
+    /// and how far it floods past the last.
+    #[must_use]
+    pub fn pinged_along(&self) -> Option<PingAlong> {
+        self.along.borrow().clone()
+    }
+
     /// The repeaters the last repeater asked who it is was asked by way
     /// of, in the order they forward.
     #[must_use]
@@ -1616,6 +1631,7 @@ impl Store {
             repeaters,
             unnamed: Some(unnamed),
             legs: legs.iter().copied().collect(),
+            flooded: false,
         })
     }
 
@@ -2619,9 +2635,20 @@ impl Node for Store {
     }
 
     fn ping(&self, peer: PeerId) {
+        *self.along.borrow_mut() = None;
         let mut pinged = self.pinged.borrow_mut();
         pinged.retain(|(p, _, _)| *p != peer);
         _ = pinged.push((peer, self.now.get(), false));
+    }
+
+    fn ping_along(&self, peer: PeerId, hints: &[[u8; 2]], flood_hops: u8) {
+        self.ping(peer);
+        let hints = hints.iter().copied().take(MAX_PATH).collect();
+        *self.along.borrow_mut() = Some((peer, hints, flood_hops));
+    }
+
+    fn repeater(&self, hint: [u8; 2]) -> Option<Repeater> {
+        self.held_repeater(hint)
     }
 
     fn ping_view(&self, peer: PeerId) -> Option<PingView> {

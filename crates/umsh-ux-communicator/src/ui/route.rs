@@ -1,8 +1,8 @@
 //! The route the next message to a saved peer takes: this device, the
 //! repeaters it names, and the peer, then when a send on it was last
-//! acknowledged and Reset route. A route chosen by hand also says how far
-//! it floods past its last repeater and how long it is held, and Clear
-//! manual route takes Reset route's place. With none learned, Ping, which
+//! acknowledged, Edit route, and Reset route. A route chosen by hand also
+//! says how far it floods past its last repeater and how long it is held,
+//! and Clear manual route takes Reset route's place. With none learned, Ping, which
 //! is how one is. The wheel stops on each repeater, which a press opens or
 //! asks who it is; Backspace goes back.
 
@@ -82,6 +82,15 @@ pub fn view(state: &State, id: PeerId, peer: &PeerSummary) -> impl View<Rgb565, 
                 manual.map(|manual| readout(m, flood, &flood_text(manual.flood_hops), ROW)),
                 manual.map(|manual| readout(m, "Held", &manual.left, ROW)),
                 confirmed.map(|confirmed| readout(m, "Confirmed", &confirmed, ROW)),
+                row(
+                    m,
+                    "Edit route",
+                    keys::ROUTE_EDIT,
+                    State::edit_route,
+                    End::Chevron,
+                    false,
+                    ROW,
+                ),
                 held.then(|| {
                     row(
                         m,

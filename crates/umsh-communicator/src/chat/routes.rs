@@ -57,13 +57,15 @@ pub(crate) struct Ping {
 enum Outcome {
     /// An answer came, by way of `hints`, the repeater nearest this device
     /// first, and past them more when `truncated`. `legs` are how each hop
-    /// of it was heard, the hop into this device first.
+    /// of it was heard, the hop into this device first. `flooded` when
+    /// it got through only as a Route Retry.
     Reply {
         round_trip_ms: u64,
         hops: Option<u8>,
         hints: Vec<RouterHint, MAX_PATH>,
         truncated: bool,
         legs: Vec<Leg, { MAX_PATH + 1 }>,
+        flooded: bool,
     },
     NoReply,
 }
@@ -261,7 +263,8 @@ impl<S: ChatStore> Chats<S> {
 
     /// Takes a peer's answer to a ping, heard as `rx` says, and what each
     /// repeater it came by measured, `signal`, the nearest first. A
-    /// `truncated` answer names only the repeaters nearest this device.
+    /// `truncated` answer names only the repeaters nearest this device; a
+    /// `flooded` one got through only as a Route Retry.
     #[allow(clippy::too_many_arguments)]
     pub fn pong(
         &mut self,
@@ -270,6 +273,7 @@ impl<S: ChatStore> Chats<S> {
         rx: &RxSummary,
         signal: &[HopSignal],
         truncated: bool,
+        flooded: bool,
         now_ms: u64,
         events: &mut dyn FnMut(NodeEvent),
     ) {
@@ -291,6 +295,7 @@ impl<S: ChatStore> Chats<S> {
             truncated: truncated || rx.route_hints.len() > MAX_PATH,
             hints,
             legs,
+            flooded,
         };
         self.settle_ping(peer, outcome, now_ms, events);
         // The answer can have taught the device node a route.
@@ -345,6 +350,7 @@ impl<S: ChatStore> Chats<S> {
                 hints,
                 truncated,
                 legs,
+                flooded,
             } => PingView::Reply(PingReply {
                 round_trip_ms: u32::try_from(*round_trip_ms).unwrap_or(u32::MAX),
                 hops: *hops,
@@ -359,6 +365,7 @@ impl<S: ChatStore> Chats<S> {
                     count => Some(count.unwrap_or(0)),
                 },
                 legs: legs.clone(),
+                flooded: *flooded,
             }),
         })
     }

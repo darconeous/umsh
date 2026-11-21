@@ -18,7 +18,9 @@ use umsh_ux_communicator::model::{
     Glance, Node as _, NodeEvent, Notice, Presence, Profile, Reaction, Rule, Section, Shareable, State,
     brightness_level,
 };
-use umsh_ux_communicator::nav::{ChatMenu, DevicePage, MemberFrom, Screen, Unsent, keys};
+use umsh_ux_communicator::nav::{
+    ChatMenu, DevicePage, EditOver, MemberFrom, RouteDraft, Screen, Unsent, keys,
+};
 use umsh_ux_communicator::model::Cue;
 use umsh_ux_communicator::model::WifiStatus;
 use umsh_ux_communicator::model::{LoraChoice, SPREADING_FACTORS, TRANSMIT_LIMITS};
@@ -4512,8 +4514,8 @@ fn a_route_lists_its_repeaters_and_backspace_returns_to_the_peer() {
     let route = shown_route(app.state()).unwrap();
     assert_eq!(route.kind, RouteKind::Source);
     assert_eq!(route.repeaters.len(), 2);
-    // The wheel stops on the repeaters and Reset route, never on this
-    // device or the peer.
+    // The wheel stops on the repeaters, Edit route and Reset route, never
+    // on this device or the peer.
     let mut stops: Vec<_> = focus(app.state()).into_iter().collect();
     for _ in 0..6 {
         run(&mut app, &[Input::Turn(1)]);
@@ -4525,12 +4527,20 @@ fn a_route_lists_its_repeaters_and_backspace_returns_to_the_peer() {
     }
     for key in &stops {
         assert!(
-            [keys::path(0), keys::path(1), keys::ROUTE_RESET, keys::READING].contains(key),
+            [
+                keys::path(0),
+                keys::path(1),
+                keys::ROUTE_EDIT,
+                keys::ROUTE_RESET,
+                keys::READING
+            ]
+            .contains(key),
             "stopped on {key:?}"
         );
     }
     assert!(stops.contains(&keys::path(0)));
     assert!(stops.contains(&keys::path(1)));
+    assert!(stops.contains(&keys::ROUTE_EDIT));
     assert!(stops.contains(&keys::ROUTE_RESET));
     run(&mut app, &[Input::Backspace]);
     assert!(matches!(app.state().screen(), Screen::Peer { .. }));
@@ -4635,6 +4645,214 @@ fn a_direct_route_held_by_hand_is_manual_and_direct() {
     assert_eq!(route_text(&route).as_str(), "Manual \u{B7} Direct");
     run(&mut app, &[Input::Backspace]);
     assert_eq!(peer_detail(app.state()).route.as_deref(), Some("Manual \u{B7} Direct"));
+}
+
+/// The route being chosen on the Route screen shown.
+fn route_draft(state: &State) -> RouteDraft {
+    *state.route_draft().expect("a route being chosen")
+}
+
+/// Opens the editor on the route to `name`, returning the hints of the
+/// route it starts from.
+fn edit_route_to<V, F>(app: &mut App<V, State, F>, name: &str) -> Vec<[u8; 2]>
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    open_route_to(app, name);
+    let hints = shown_route(app.state())
+        .unwrap()
+        .repeaters
+        .iter()
+        .map(|repeater| repeater.hint)
+        .collect();
+    turn_to(app, keys::ROUTE_EDIT);
+    run(app, &[Input::Press]);
+    hints
+}
+
+#[test]
+fn a_route_edited_starts_from_the_route_and_saves_as_held() {
+    let mut app = app!();
+    let learned = edit_route_to(&mut app, "Jo Reyes");
+    assert_eq!(learned.len(), 2);
+    let started = route_draft(app.state());
+    assert_eq!(started.hints(), &learned[..]);
+    assert_eq!(started.flood, 1);
+    assert!(!started.dirty);
+    assert_eq!(focus(app.state()), Some(keys::path(0)));
+
+    // A hop's menu, then Move: the wheel carries it past the next.
+    run(&mut app, &[Input::Press]);
+    assert_eq!(route_draft(app.state()).over, Some(EditOver::Hop(0)));
+    assert_eq!(focus(app.state()), Some(keys::HOP_MOVE));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(route_draft(app.state()).lifted, Some((0, 0)));
+    run(&mut app, &[Input::Turn(1)]);
+    assert_eq!(route_draft(app.state()).hints(), &[learned[1], learned[0]]);
+    assert_eq!(focus(app.state()), Some(keys::path(1)));
+    // Turned on past the last hop, it stays the last.
+    run(&mut app, &[Input::Turn(1)]);
+    assert_eq!(route_draft(app.state()).lifted, Some((1, 0)));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(route_draft(app.state()).lifted, None);
+    assert!(route_draft(app.state()).dirty);
+
+    // Then flood: pressed, turning up floods farther; pressed, it stops.
+    turn_to(&mut app, keys::ROUTE_FLOOD);
+    run(&mut app, &[Input::Press, Input::Turn(-2), Input::Press]);
+    assert_eq!(route_draft(app.state()).flood, 3);
+    run(&mut app, &[Input::Turn(1)]);
+    assert_eq!(route_draft(app.state()).flood, 3);
+    // Hold for steps through its choices, never past the last.
+    turn_to(&mut app, keys::ROUTE_HOLD);
+    run(&mut app, &[Input::Press, Input::Turn(-9), Input::Press]);
+    assert_eq!(route_draft(app.state()).hold_ms(), 24 * 3_600_000);
+
+    turn_to(&mut app, keys::ROUTE_SAVE);
+    run(&mut app, &[Input::Press]);
+    assert!(app.state().route_draft().is_none());
+    assert_eq!(focus(app.state()), Some(keys::ROUTE_EDIT));
+    let route = shown_route(app.state()).unwrap();
+    let held: Vec<[u8; 2]> = route.repeaters.iter().map(|r| r.hint).collect();
+    assert_eq!(held, [learned[1], learned[0]]);
+    let manual = route.manual.as_ref().expect("held");
+    assert_eq!(manual.flood_hops, 3);
+    assert_eq!(manual.left.as_str(), "24 hr left");
+}
+
+#[test]
+fn a_route_with_every_hop_removed_saves_as_direct() {
+    let mut app = app!();
+    edit_route_to(&mut app, "Jo Reyes");
+    for _ in 0..2 {
+        run(&mut app, &[Input::Press]);
+        turn_to(&mut app, keys::HOP_REMOVE);
+        run(&mut app, &[Input::Press]);
+    }
+    assert!(route_draft(app.state()).hints().is_empty());
+    assert_eq!(focus(app.state()), Some(keys::ROUTE_FLOOD));
+    turn_to(&mut app, keys::ROUTE_SAVE);
+    run(&mut app, &[Input::Press]);
+    let route = shown_route(app.state()).unwrap();
+    assert_eq!(route.kind, RouteKind::Direct);
+    assert_eq!(route_text(&route).as_str(), "Manual \u{B7} Direct");
+}
+
+#[test]
+fn a_lifted_hop_goes_back_where_it_was_on_backspace() {
+    let mut app = app!();
+    let learned = edit_route_to(&mut app, "Jo Reyes");
+    run(&mut app, &[Input::Press, Input::Press, Input::Turn(1), Input::Backspace]);
+    let back = route_draft(app.state());
+    assert_eq!(back.hints(), &learned[..]);
+    assert_eq!(back.lifted, None);
+    assert!(!back.dirty);
+    assert_eq!(focus(app.state()), Some(keys::path(0)));
+    // Unchanged, Backspace leaves the editor for the route, asking nothing.
+    run(&mut app, &[Input::Backspace]);
+    assert!(app.state().route_draft().is_none());
+    assert!(shown_route(app.state()).is_some());
+}
+
+#[test]
+fn leaving_a_changed_route_asks_what_to_do_with_it() {
+    let mut app = app!();
+    edit_route_to(&mut app, "Jo Reyes");
+    run(&mut app, &[Input::Press]);
+    turn_to(&mut app, keys::HOP_REMOVE);
+    run(&mut app, &[Input::Press, Input::Backspace]);
+    assert_eq!(route_draft(app.state()).over, Some(EditOver::Leave));
+    assert_eq!(focus(app.state()), Some(keys::LEAVE_SAVE));
+
+    // Keep editing closes the card, the change kept.
+    turn_to(&mut app, keys::LEAVE_KEEP);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(route_draft(app.state()).over, None);
+    assert_eq!(route_draft(app.state()).hints().len(), 1);
+
+    // Discard changes leaves the route as it was.
+    run(&mut app, &[Input::Backspace]);
+    turn_to(&mut app, keys::LEAVE_DISCARD);
+    run(&mut app, &[Input::Press]);
+    assert!(app.state().route_draft().is_none());
+    let route = shown_route(app.state()).unwrap();
+    assert_eq!(route.manual, None);
+    assert_eq!(route.repeaters.len(), 2);
+}
+
+#[test]
+fn ping_along_route_pings_the_route_unsaved() {
+    let store = store();
+    let mut app = app!(store);
+    let learned = edit_route_to(&mut app, "Jo Reyes");
+    run(&mut app, &[Input::Press]);
+    turn_to(&mut app, keys::HOP_REMOVE);
+    run(&mut app, &[Input::Press]);
+    turn_to(&mut app, keys::ROUTE_PING_ALONG);
+    run(&mut app, &[Input::Press]);
+    let Screen::Ping { peer, .. } = app.state().screen().clone() else {
+        panic!("expected the ping");
+    };
+    let (to, hints, flood) = store.pinged_along().expect("pinged along the route");
+    assert_eq!((to, &hints[..], flood), (peer, &learned[1..], 1));
+    assert_eq!(shown_ping(app.state()), Some(PingView::Waiting));
+
+    // Ping again goes along the route being chosen too.
+    let at = store.next_deadline().expect("the answer is due");
+    store.advance(at);
+    input::events(&mut app, at);
+    assert!(matches!(shown_ping(app.state()), Some(PingView::Reply(_))));
+    turn_to(&mut app, keys::PING_AGAIN);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(shown_ping(app.state()), Some(PingView::Waiting));
+    let (_, hints, _) = store.pinged_along().expect("pinged along the route again");
+    assert_eq!(&hints[..], &learned[1..]);
+
+    // Back in the editor, nothing was saved, and the row says how it went.
+    run(&mut app, &[Input::Backspace]);
+    assert!(route_draft(app.state()).pinged);
+    assert_eq!(focus(app.state()), Some(keys::ROUTE_PING_ALONG));
+    assert_eq!(shown_route(app.state()).unwrap().manual, None);
+
+    // Changed, the route is no longer the one pinged.
+    turn_to(&mut app, keys::ROUTE_FLOOD);
+    run(&mut app, &[Input::Press, Input::Turn(-1), Input::Press]);
+    assert!(!route_draft(app.state()).pinged);
+}
+
+#[test]
+fn a_lifted_hop_is_put_down_when_a_row_is_tapped() {
+    let mut app = app!();
+    let learned = edit_route_to(&mut app, "Jo Reyes");
+    run(&mut app, &[Input::Press, Input::Press, Input::Turn(1)]);
+    // A tap reaches Then flood without the press that puts the hop down.
+    app.state_mut().press_flood();
+    let tapped = route_draft(app.state());
+    assert_eq!(tapped.lifted, None);
+    assert_eq!(tapped.hints(), &[learned[1], learned[0]]);
+    assert!(tapped.dirty);
+    assert_eq!(tapped.adjusting, Some(umsh_ux_communicator::nav::Adjust::Flood));
+}
+
+#[test]
+fn a_peer_forgotten_while_their_route_is_edited_closes_it() {
+    let mut app = app!();
+    edit_route_to(&mut app, "Jo Reyes");
+    let Screen::Route { peer, .. } = app.state().screen().clone() else {
+        unreachable!()
+    };
+    // Changed, so that Backspace would ask rather than leave.
+    run(&mut app, &[Input::Press]);
+    turn_to(&mut app, keys::HOP_REMOVE);
+    run(&mut app, &[Input::Press]);
+    assert!(route_draft(app.state()).dirty);
+    app.state().node.forget_peer(peer);
+    input::events(&mut app, tick(0));
+    assert!(app.state().route_draft().is_none());
+    assert_eq!(app.state().screen().peer(), None);
 }
 
 #[test]

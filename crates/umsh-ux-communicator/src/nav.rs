@@ -18,8 +18,8 @@ use crate::model::{
     AUTO_LOCK_CHOICES, BANDWIDTHS, CODING_RATES, ChannelAccess, ChannelEntry, ChatId, ChatKind,
     ChatSummary, Details, Exchange, Found, FoundKind, Invite, KeyboardSettings, LoraChoice,
     MAX_FOUND, MAX_PATH, MAX_REPEATERS, Member, MessageId, NearbyId, PeerDetail, PeerEntry, PeerId,
-    PingView, Profile, RadioSettings, Reaction, Repeater, SPREADING_FACTORS, Section, Shareable,
-    State, TRANSMIT_LIMITS, TRANSMIT_POWER, word_match,
+    PingView, Profile, RadioSettings, Reaction, Repeater, RouteKind, SPREADING_FACTORS, Section,
+    Shareable, State, TRANSMIT_LIMITS, TRANSMIT_POWER, word_match,
 };
 use crate::ui::GammaTest;
 pub use crate::wifi_settings::{NetworkText, PasswordText, WifiPage};
@@ -134,6 +134,20 @@ pub mod keys {
     pub const ROUTE_PING: FocusKey = FocusKey(0x2C00_0001);
     /// The Ping screen's Ping again.
     pub const PING_AGAIN: FocusKey = FocusKey(0x2C00_0002);
+    /// The Route screen's Edit route, and the editor's rows after its
+    /// hops, which are [`path`]'s.
+    pub const ROUTE_EDIT: FocusKey = FocusKey(0x2C00_0003);
+    pub const ROUTE_FLOOD: FocusKey = FocusKey(0x2C00_0004);
+    pub const ROUTE_PING_ALONG: FocusKey = FocusKey(0x2C00_0005);
+    pub const ROUTE_HOLD: FocusKey = FocusKey(0x2C00_0006);
+    pub const ROUTE_SAVE: FocusKey = FocusKey(0x2C00_0007);
+    /// A hop's menu in the editor.
+    pub const HOP_MOVE: FocusKey = FocusKey(0x2C00_0008);
+    pub const HOP_REMOVE: FocusKey = FocusKey(0x2C00_0009);
+    /// What leaving the editor with changes asks.
+    pub const LEAVE_SAVE: FocusKey = FocusKey(0x2C00_000A);
+    pub const LEAVE_DISCARD: FocusKey = FocusKey(0x2C00_000B);
+    pub const LEAVE_KEEP: FocusKey = FocusKey(0x2C00_000C);
     /// A chat's menu, which holding the wheel on its row opens: its peer
     /// or channel, and Delete or Leave; and their confirmation.
     pub const CHAT_SHOW: FocusKey = FocusKey(0x1D00_0000);
@@ -738,9 +752,10 @@ pub enum Screen {
     /// The chats a saved peer's contact can be sent to.
     ShareContact { peer: PeerId, focus: FocusState },
     /// The route the next message to a saved peer takes, as the node holds
-    /// it.
+    /// it; or, while `edit` is one, a route being chosen in its place.
     Route {
         peer: PeerId,
+        edit: Option<RouteDraft>,
         asked: Asked,
         focus: FocusState,
     },
@@ -793,6 +808,131 @@ pub enum Screen {
 const _: () = assert!(size_of::<Screen>() <= 1016);
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(size_of::<Screen>() <= 1192);
+
+/// How long a route chosen by hand can be held, in milliseconds, and
+/// which of them a new one starts at.
+pub const HOLD_CHOICES: [u32; 5] = [
+    30 * 60_000,
+    60 * 60_000,
+    4 * 60 * 60_000,
+    12 * 60 * 60_000,
+    24 * 60 * 60_000,
+];
+const HOLD_DEFAULT: u8 = 1;
+/// The farthest a route chosen by hand floods past its last hop.
+pub const MAX_FLOOD: u8 = 15;
+
+/// A route being chosen by hand: its hops, the repeater nearest this
+/// device first, how far it floods past them, and how long it is to be
+/// held. Nothing reaches the node until it is saved.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RouteDraft {
+    hints: [[u8; 2]; MAX_PATH],
+    len: u8,
+    pub flood: u8,
+    /// Which of [`HOLD_CHOICES`].
+    pub hold: u8,
+    /// The hop being moved: where it is now, and where it was.
+    pub lifted: Option<(u8, u8)>,
+    /// The value turning changes.
+    pub adjusting: Option<Adjust>,
+    /// What is open over the editor.
+    pub over: Option<EditOver>,
+    /// It differs from what it started as.
+    pub dirty: bool,
+    /// A ping went along it as it stands, and its row says how it went.
+    pub pinged: bool,
+}
+
+/// A value of a route being chosen that turning changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Adjust {
+    Flood,
+    Hold,
+}
+
+/// What is open over the route editor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditOver {
+    /// A hop's menu: Move and Remove.
+    Hop(u8),
+    /// Leaving with changes: Save, Discard changes, or Keep editing.
+    Leave,
+}
+
+impl RouteDraft {
+    /// A draft of `hints`, flooding `flood` past them.
+    #[must_use]
+    pub fn new(hints: &[[u8; 2]], flood: u8) -> Self {
+        let mut draft = Self {
+            hints: [[0; 2]; MAX_PATH],
+            len: 0,
+            flood: flood.min(MAX_FLOOD),
+            hold: HOLD_DEFAULT,
+            lifted: None,
+            adjusting: None,
+            over: None,
+            dirty: false,
+            pinged: false,
+        };
+        for &hint in hints.iter().take(MAX_PATH) {
+            draft.hints[usize::from(draft.len)] = hint;
+            draft.len += 1;
+        }
+        draft
+    }
+
+    /// Its hops, the one nearest this device first.
+    #[must_use]
+    pub fn hints(&self) -> &[[u8; 2]] {
+        &self.hints[..usize::from(self.len)]
+    }
+
+    /// How long it is to be held, in milliseconds.
+    #[must_use]
+    pub fn hold_ms(&self) -> u32 {
+        HOLD_CHOICES[usize::from(self.hold).min(HOLD_CHOICES.len() - 1)]
+    }
+
+    /// Puts a lifted hop down where it is, returning where that is.
+    fn put_down(&mut self) -> Option<u8> {
+        let (now, from) = self.lifted.take()?;
+        if now != from {
+            self.changed();
+        }
+        Some(now)
+    }
+
+    /// It changed: what was pinged along it no longer is it.
+    fn changed(&mut self) {
+        self.dirty = true;
+        self.pinged = false;
+    }
+
+    /// Takes the hop at `index` out.
+    fn remove(&mut self, index: usize) {
+        let len = usize::from(self.len);
+        if index >= len {
+            return;
+        }
+        self.hints.copy_within(index + 1..len, index);
+        self.len -= 1;
+        self.changed();
+    }
+
+    /// Moves the hop at `from` to `to`, the others closing up around it.
+    fn shift(&mut self, from: usize, to: usize) {
+        let len = usize::from(self.len);
+        if from >= len || to >= len || from == to {
+            return;
+        }
+        if from < to {
+            self.hints[from..=to].rotate_left(1);
+        } else {
+            self.hints[to..=from].rotate_right(1);
+        }
+    }
+}
 
 impl Screen {
     /// The Chats screen, its list focused.
@@ -1503,6 +1643,7 @@ impl State {
         self.node.load_route(peer);
         _ = self.screens.push(Screen::Route {
             peer,
+            edit: None,
             asked: Asked::new(),
             focus: FocusState::new(),
         });
@@ -1515,6 +1656,268 @@ impl State {
         }
     }
 
+    /// The route being chosen on the Route screen shown.
+    #[must_use]
+    pub fn route_draft(&self) -> Option<&RouteDraft> {
+        match self.screens.last() {
+            Some(Screen::Route {
+                edit: Some(draft), ..
+            }) => Some(draft),
+            _ => None,
+        }
+    }
+
+    fn route_draft_mut(&mut self) -> Option<(&mut RouteDraft, &mut FocusState)> {
+        match self.screens.last_mut() {
+            Some(Screen::Route {
+                edit: Some(draft),
+                focus,
+                ..
+            }) => Some((draft, focus)),
+            _ => None,
+        }
+    }
+
+    /// Turns the Route screen shown into its editor, starting from the
+    /// route shown: its repeaters when it names them, else none, and how
+    /// far it floods past them when it was chosen by hand.
+    pub fn edit_route(&mut self) {
+        let Some(&Screen::Route {
+            peer, edit: None, ..
+        }) = self.screens.last()
+        else {
+            return;
+        };
+        let route = self.node.peer_route(peer);
+        let hints: heapless::Vec<[u8; 2], MAX_PATH> = match &route {
+            Some(route) if route.kind == RouteKind::Source => {
+                route.repeaters.iter().map(|r| r.hint).collect()
+            }
+            _ => heapless::Vec::new(),
+        };
+        let flood = route
+            .as_ref()
+            .and_then(|route| route.manual.as_ref())
+            .map_or(u8::from(!hints.is_empty()), |manual| manual.flood_hops);
+        if let Some(Screen::Route { edit, focus, .. }) = self.screens.last_mut() {
+            *edit = Some(RouteDraft::new(&hints, flood));
+            focus.request(if hints.is_empty() {
+                keys::ROUTE_FLOOD
+            } else {
+                keys::path(0)
+            });
+        }
+    }
+
+    /// A hop of the route being chosen was pressed: a lifted one is put
+    /// down where it is, and any other opens its menu.
+    pub fn press_hop(&mut self, index: usize) {
+        let Some((draft, focus)) = self.route_draft_mut() else {
+            return;
+        };
+        if let Some(now) = draft.put_down() {
+            focus.request(keys::path(usize::from(now)));
+            return;
+        }
+        if index < draft.hints().len() {
+            draft.adjusting = None;
+            draft.over = Some(EditOver::Hop(index as u8));
+            focus.request(keys::HOP_MOVE);
+        }
+    }
+
+    /// The hop whose menu is open is lifted: turning carries it.
+    pub fn move_hop(&mut self) {
+        let Some((draft, focus)) = self.route_draft_mut() else {
+            return;
+        };
+        if let Some(EditOver::Hop(index)) = draft.over.take() {
+            draft.lifted = Some((index, index));
+            focus.request(keys::path(usize::from(index)));
+        }
+    }
+
+    /// The hop whose menu is open is taken out of the route.
+    pub fn remove_hop(&mut self) {
+        let Some((draft, focus)) = self.route_draft_mut() else {
+            return;
+        };
+        if let Some(EditOver::Hop(index)) = draft.over.take() {
+            let index = usize::from(index);
+            draft.remove(index);
+            let left = draft.hints().len();
+            focus.request(if left == 0 {
+                keys::ROUTE_FLOOD
+            } else {
+                keys::path(index.min(left - 1))
+            });
+        }
+    }
+
+    /// Closes what is open over the editor, back to what opened it.
+    pub fn close_route_over(&mut self) {
+        let Some((draft, focus)) = self.route_draft_mut() else {
+            return;
+        };
+        match draft.over.take() {
+            Some(EditOver::Hop(index)) => focus.request(keys::path(usize::from(index))),
+            Some(EditOver::Leave) => focus.request(keys::ROUTE_SAVE),
+            None => {}
+        }
+    }
+
+    /// Then flood was pressed: turning starts or stops changing it.
+    pub fn press_flood(&mut self) {
+        self.press_adjust(Adjust::Flood);
+    }
+
+    /// Hold for was pressed: turning starts or stops changing it.
+    pub fn press_hold(&mut self) {
+        self.press_adjust(Adjust::Hold);
+    }
+
+    fn press_adjust(&mut self, what: Adjust) {
+        if let Some((draft, _)) = self.route_draft_mut() {
+            // A tap can reach the row with a hop still lifted.
+            draft.put_down();
+            draft.adjusting = if draft.adjusting == Some(what) {
+                None
+            } else {
+                Some(what)
+            };
+        }
+    }
+
+    /// Which value of the route being chosen turning changes: it was
+    /// pressed, and is still focused.
+    #[must_use]
+    pub fn adjusting_route(&self) -> Option<Adjust> {
+        let Some(Screen::Route {
+            edit: Some(draft),
+            focus,
+            ..
+        }) = self.screens.last()
+        else {
+            return None;
+        };
+        let key = match draft.adjusting? {
+            Adjust::Flood => keys::ROUTE_FLOOD,
+            Adjust::Hold => keys::ROUTE_HOLD,
+        };
+        draft.adjusting.filter(|_| focus.current() == Some(key))
+    }
+
+    /// The wheel turned `detents` in the route editor: carries a lifted
+    /// hop, turned down toward the peer, or changes the value being
+    /// changed, turned up for more. Returns whether it did either.
+    pub fn turn_route_edit(&mut self, detents: i8) -> bool {
+        let adjusting = self.adjusting_route();
+        let Some((draft, focus)) = self.route_draft_mut() else {
+            return false;
+        };
+        if let Some((now, from)) = draft.lifted {
+            let last = draft.hints().len().saturating_sub(1);
+            let to = (usize::from(now) as isize + isize::from(detents)).clamp(0, last as isize);
+            let to = to as usize;
+            draft.shift(usize::from(now), to);
+            draft.lifted = Some((to as u8, from));
+            focus.request(keys::path(to));
+            return true;
+        }
+        let up = i16::from(detents.saturating_neg());
+        match adjusting {
+            Some(Adjust::Flood) => {
+                let flood = (i16::from(draft.flood) + up).clamp(0, i16::from(MAX_FLOOD)) as u8;
+                if flood != draft.flood {
+                    draft.flood = flood;
+                    draft.changed();
+                }
+                true
+            }
+            Some(Adjust::Hold) => {
+                let last = HOLD_CHOICES.len() as i16 - 1;
+                let hold = (i16::from(draft.hold) + up).clamp(0, last) as u8;
+                if hold != draft.hold {
+                    draft.hold = hold;
+                    draft.dirty = true;
+                }
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Backspace in the route editor: closes what is open over it, puts a
+    /// lifted hop back where it was, stops a value changing, asks what to
+    /// do with changes, or else leaves the editor for the route.
+    pub fn route_edit_back(&mut self) {
+        let Some((draft, focus)) = self.route_draft_mut() else {
+            return;
+        };
+        if draft.over.is_some() {
+            self.close_route_over();
+        } else if let Some((now, from)) = draft.lifted.take() {
+            draft.shift(usize::from(now), usize::from(from));
+            focus.request(keys::path(usize::from(from)));
+        } else if draft.adjusting.is_some() {
+            draft.adjusting = None;
+        } else if draft.dirty {
+            draft.over = Some(EditOver::Leave);
+            focus.request(keys::LEAVE_SAVE);
+        } else {
+            self.discard_route();
+        }
+    }
+
+    /// Leaves the route editor without saving.
+    pub fn discard_route(&mut self) {
+        if let Some(Screen::Route { edit, focus, .. }) = self.screens.last_mut()
+            && edit.take().is_some()
+        {
+            focus.request(keys::ROUTE_EDIT);
+        }
+    }
+
+    /// Holds the route being chosen and leaves the editor.
+    pub fn save_route(&mut self) {
+        if let Some((draft, _)) = self.route_draft_mut() {
+            draft.put_down();
+        }
+        let Some(&Screen::Route {
+            peer,
+            edit: Some(draft),
+            ..
+        }) = self.screens.last()
+        else {
+            return;
+        };
+        self.node
+            .hold_route(peer, draft.hints(), draft.flood, draft.hold_ms());
+        self.discard_route();
+    }
+
+    /// Pings the peer along the route being chosen, unsaved, and shows how
+    /// it goes.
+    pub fn ping_along(&mut self) {
+        if let Some((draft, _)) = self.route_draft_mut() {
+            draft.put_down();
+        }
+        let Some(&Screen::Route {
+            peer,
+            edit: Some(draft),
+            ..
+        }) = self.screens.last()
+        else {
+            return;
+        };
+        if let Some((draft, _)) = self.route_draft_mut() {
+            draft.adjusting = None;
+            draft.pinged = true;
+        }
+        self.node.ping_along(peer, draft.hints(), draft.flood);
+        self.show_ping(peer);
+    }
+
     /// Pings the saved peer shown, or whose route is shown, and shows how
     /// it goes.
     pub fn open_ping(&mut self) {
@@ -1522,6 +1925,11 @@ impl State {
             return;
         };
         self.node.ping(peer);
+        self.show_ping(peer);
+    }
+
+    /// Shows the ping to `peer` just sent.
+    fn show_ping(&mut self, peer: PeerId) {
         _ = self.screens.push(Screen::Ping {
             peer,
             sent_at: self.uptime,
@@ -1537,6 +1945,13 @@ impl State {
     pub fn ping_again(&mut self) {
         let uptime = self.uptime;
         let node = self.node;
+        // Opened from the route editor, it pings along the route there.
+        let along = match self.screens.len().checked_sub(2).map(|i| &self.screens[i]) {
+            Some(&Screen::Route {
+                edit: Some(draft), ..
+            }) => Some(draft),
+            _ => None,
+        };
         let Some(Screen::Ping {
             peer,
             sent_at,
@@ -1568,7 +1983,10 @@ impl State {
         );
         asked.clear();
         *sent_at = uptime;
-        node.ping(*peer);
+        match along {
+            Some(draft) => node.ping_along(*peer, draft.hints(), draft.flood),
+            None => node.ping(*peer),
+        }
     }
 
     /// How long the ping shown has been waiting for an answer.
@@ -1640,9 +2058,10 @@ impl State {
             .peer_at(index)
             .or_else(|| self.node.peer_at(self.node.peer_count().checked_sub(1)?))
             .map_or(keys::ADD_PEER, keys::peer);
-        // Its screens close, from its route or a ping on down.
+        // Its screens close, from its route or a ping on down, any route
+        // being chosen with them.
         let mut left = false;
-        while self.screen().peer() == Some(peer) && self.back() {
+        while self.screen().peer() == Some(peer) && self.leave() {
             left = true;
         }
         if left {
@@ -3339,9 +3758,23 @@ impl State {
         }
     }
 
-    /// Returns to the screen before this one, focused where it was left.
-    /// Returns `false` on the Chats screen, which nothing comes before.
+    /// Backspace, or the header's way back: returns to the screen before
+    /// this one, focused where it was left, or, in the route editor, steps
+    /// back within it. Returns `false` on the Chats screen, which nothing
+    /// comes before.
     pub fn back(&mut self) -> bool {
+        // The route editor goes back to the route before leaving it.
+        if self.route_draft().is_some() {
+            self.route_edit_back();
+            return true;
+        }
+        self.leave()
+    }
+
+    /// Closes the screen shown, whatever is under way on it, for the one
+    /// before, focused where it was left. Returns `false` on the Chats
+    /// screen, which nothing comes before.
+    fn leave(&mut self) -> bool {
         if self.screens.len() < 2 {
             return false;
         }
