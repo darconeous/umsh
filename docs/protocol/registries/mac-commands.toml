@@ -55,6 +55,18 @@ uep = 6
 anchor = "no-op"
 
 [[value]]
+value = 10
+name = "Peer Repeaters Request"
+uep = 16
+anchor = "peer-repeaters-request"
+
+[[value]]
+value = 11
+name = "Peer Repeaters Response"
+uep = 16
+anchor = "peer-repeaters-response"
+
+[[value]]
 value = 12
 name = "Verify Frame"
 uep = 7

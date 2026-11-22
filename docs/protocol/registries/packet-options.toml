@@ -32,6 +32,12 @@ uep = 13
 anchor = "route-retry"
 
 [[value]]
+value = 7
+name = "Trace"
+uep = 16
+anchor = "trace"
+
+[[value]]
 value = 8
 name = "Ack MIC"
 uep = 7
