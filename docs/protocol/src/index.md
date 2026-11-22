@@ -21,20 +21,19 @@ it. **Source** names the chapters of the legacy specification
 | [0008](uep-0008.md) | Groups | Standards | Experimental | 0003 0005 0007 | Group keys, named and simple private groups, sender attribution, group traffic, answering multicast requests | `multicast-channels`, `limitations` |
 | [0009](uep-0009.md) | Perfect Forward Secrecy Sessions | Standards | Experimental | 0004 0005 0006 0007 | Handshake, session traffic, linkability, session lifetime, retired sessions, PFS Session commands (6–8) | `security`, `mac-commands` |
 | [0010](uep-0010.md) | Node Identity | Standards | Experimental | 0003 0004 0005 0006 0007 0008 | Identity payload, roles, capability bitmap, identity options, location format, signatures, Identity Request (1) | `node-identity`, `mac-commands` |
-| [0011](uep-0011.md) | UMSH over LoRa | Standards | Experimental | 0005 | Channel parameters, sync word, modulation, framing and MTU, `T_frame`, demodulation floor, duty cycle | `channel-access`, `ulcp-radio` |
-| [0012](uep-0012.md) | Channel Access | Standards | Experimental | 0005 0007 0011 | Channel sensing, backoff, immediate acknowledgment, acknowledgment protection interval | `channel-access` |
-| 0013 | Flood Routing | Standards | Planned | 0006 0007 0010 0012 | Routing invariants, duplicate suppression, forwarding procedure, flood hop count forwarding, flood contention window, forwarding confirmation, overheard acknowledgments, route failure recovery, Route Retry (option 6), acknowledgment pacing. ULCP: `PROP_MAC_REPEATER_MODE`, `PROP_MAC_REPEATER_STATE`, forwarding statistics (4838–4840) | `repeater-operation`, `routing-overview`, `channel-access`, `security`, `packet-options`, `packet-structure`, `mac-commands`, `ulcp-device`, `ulcp-radio` |
-| 0014 | Signal-Quality Filtering | Standards | Planned | 0013 | Minimum RSSI and Minimum SNR (options 5/9). ULCP: `PROP_MAC_REPEATER_MIN_RSSI`, `PROP_MAC_REPEATER_MIN_SNR` | `packet-options`, `routing-overview`, `ulcp-device` |
-| 0015 | Region Scoping | Standards | Planned | 0010 0013 | Region Code (option 11), Supported Regions (identity option 4). ULCP: `PROP_MAC_REPEATER_REGIONS`, `PROP_MAC_REPEATER_DEFAULT_REGION` | `packet-options`, `node-identity`, `routing-overview`, `ulcp-device` |
-| 0016 | Amateur Radio Operation | Standards | Planned | 0005 0013 | Operating modes, locally originated packets, Operator Callsign and Station Callsign (options 4/15) | `amateur-radio`, `packet-options` |
-| 0017 | Beacons and Advertisements | Standards | Planned | 0010 0013 | Beacons, advertisements, announcing on a schedule. ULCP: `PROP_ADVERT_INTERVAL`, `PROP_BEACON_INTERVAL`, `PROP_STARTUP_BEACON`, `CMD_ANNOUNCE` | `beacons`, `ulcp-device` |
-| 0018 | Source Routing and Path Discovery | Standards | Planned | 0006 0013 0017 | Source Route (option 3), Trace (option 7), path discovery, route learning, scoping flood hops to a known route, the flood hop count on source-routed hops, routing acknowledgments by `FHOPS_ACC`, Peer Repeaters (10/11). ULCP: `PROP_MAC_REPEATERS_HEARD` | `beacons`, `packet-options`, `packet-structure`, `routing-overview`, `mac-commands`, `ulcp-radio` |
-| 0019 | Adaptive Forwarding | Standards | Planned | 0010 0013 0018 | Forwarding where no other forwarder is heard: source-routed and flood hops, giving way, engagement, battery, states, identity, contention window | `repeater-operation`, `channel-access` |
-| 0020 | URI Formats | Standards | Planned | 0004 0008 | Node, group, and `coap-umsh` URIs | `uri-formats` |
-| 0021 | Text Messages | Standards | Planned | 0007 0008 0020 | Message type, sender handle, regarding, editing, colors, padding, message body, group invitations, test messages | `app-text-messages` |
-| 0022 | Message Sequencing and Repair | Standards | Planned | 0021 | Message sequence, ordering, gaps, automatic repair, sequence reset, group resend | `app-text-messages` |
-| 0023 | Default Groups | Standards | Planned | 0008 0021 0022 | `public` and `EMERGENCY`. ULCP: `PROP_TEST_MESSAGE_ALERTS` | `multicast-channels`, `ulcp-device` |
-| 0024 | Contact Exchange | Standards | Planned | 0004 0010 0020 | Session keys, Meet payloads, code and color, exchange, nearby, transmit power, linking a name to a key, security considerations | `app-meet`, `security-considerations` |
+| [0011](uep-0011.md) | UMSH over LoRa | Standards | Experimental | 0005 | Channel parameters, sync word, modulation, framing and MTU, `T_frame`, demodulation floor, duty cycle, channel sensing, backoff, immediate acknowledgment, acknowledgment protection interval | `channel-access`, `ulcp-radio` |
+| 0012 | Flood Routing | Standards | Planned | 0006 0007 0010 0011 | Routing invariants, duplicate suppression, forwarding procedure, flood hop count forwarding, flood contention window, forwarding confirmation, overheard acknowledgments, route failure recovery, Route Retry (option 6), acknowledgment pacing. ULCP: `PROP_MAC_REPEATER_MODE`, `PROP_MAC_REPEATER_STATE`, forwarding statistics (4838–4840) | `repeater-operation`, `routing-overview`, `channel-access`, `security`, `packet-options`, `packet-structure`, `mac-commands`, `ulcp-device`, `ulcp-radio` |
+| 0013 | Signal-Quality Filtering | Standards | Planned | 0012 | Minimum RSSI and Minimum SNR (options 5/9). ULCP: `PROP_MAC_REPEATER_MIN_RSSI`, `PROP_MAC_REPEATER_MIN_SNR` | `packet-options`, `routing-overview`, `ulcp-device` |
+| 0014 | Region Scoping | Standards | Planned | 0010 0012 | Region Code (option 11), Supported Regions (identity option 4). ULCP: `PROP_MAC_REPEATER_REGIONS`, `PROP_MAC_REPEATER_DEFAULT_REGION` | `packet-options`, `node-identity`, `routing-overview`, `ulcp-device` |
+| 0015 | Amateur Radio Operation | Standards | Planned | 0005 0012 | Operating modes, locally originated packets, Operator Callsign and Station Callsign (options 4/15) | `amateur-radio`, `packet-options` |
+| 0016 | Beacons and Advertisements | Standards | Planned | 0010 0012 | Beacons, advertisements, announcing on a schedule. ULCP: `PROP_ADVERT_INTERVAL`, `PROP_BEACON_INTERVAL`, `PROP_STARTUP_BEACON`, `CMD_ANNOUNCE` | `beacons`, `ulcp-device` |
+| 0017 | Source Routing and Path Discovery | Standards | Planned | 0006 0012 0016 | Source Route (option 3), Trace (option 7), path discovery, route learning, scoping flood hops to a known route, the flood hop count on source-routed hops, routing acknowledgments by `FHOPS_ACC`, Peer Repeaters (10/11). ULCP: `PROP_MAC_REPEATERS_HEARD` | `beacons`, `packet-options`, `packet-structure`, `routing-overview`, `mac-commands`, `ulcp-radio` |
+| 0018 | Adaptive Forwarding | Standards | Planned | 0010 0012 0017 | Forwarding where no other forwarder is heard: source-routed and flood hops, giving way, engagement, battery, states, identity, contention window | `repeater-operation`, `channel-access` |
+| 0019 | URI Formats | Standards | Planned | 0004 0008 | Node, group, and `coap-umsh` URIs | `uri-formats` |
+| 0020 | Text Messages | Standards | Planned | 0007 0008 0019 | Message type, sender handle, regarding, editing, colors, padding, message body, group invitations, test messages | `app-text-messages` |
+| 0021 | Message Sequencing and Repair | Standards | Planned | 0020 | Message sequence, ordering, gaps, automatic repair, sequence reset, group resend | `app-text-messages` |
+| 0022 | Default Groups | Standards | Planned | 0008 0020 0021 | `public` and `EMERGENCY`. ULCP: `PROP_TEST_MESSAGE_ALERTS` | `multicast-channels`, `ulcp-device` |
+| 0023 | Contact Exchange | Standards | Planned | 0004 0010 0019 | Session keys, Meet payloads, code and color, exchange, nearby, transmit power, linking a name to a key, security considerations | `app-meet`, `security-considerations` |
 
 ## Proposals {#proposals}
 
@@ -50,17 +49,17 @@ then, a requirement on one is shown by its title.
 | ULCP: Device Node | Standards | 0007 0008 0010, ULCP: Core, ULCP: Saved State | The device identity; `PROP_DEV_KEY`, `PROP_DEV_PRIVATE_KEY`, `PROP_DEV_NAME`, `PROP_DEV_PEERS`, `PROP_DEV_CHANNEL_KEYS`; the identity it advertises: `PROP_IDENT`, `PROP_IDENT_ROLE`, `PROP_IDENT_MOBILE`, `PROP_IDENT_LOCATION`, `PROP_IDENT_ALTITUDE`, `PROP_IDENT_CONTACT` | `ulcp-device` |
 | ULCP: Radio Control | Standards | 0011, ULCP: Core | Radio properties (32–44, 4820–4822), `CAP_PHY_LORA`, `CAP_PHY_DUTY_LIMIT`, `CAP_STATS`, radio statistics (4832–4837, 4850, 4851) | `ulcp-radio` |
 | Signal Reports | Standards | 0006 0011 | Signal Report Request and Response (2/3) | `mac-commands` |
-| MeshCore Forwarding | Standards | 0013 0015 | Forwarding MeshCore traffic. ULCP: `PROP_MESHCORE_FORWARDING_ENABLED`, `PROP_MESHCORE_REGION_POLICY`, `PROP_MESHCORE_REGIONS`, MeshCore statistics (4841–4844) | `ulcp-device`, `ulcp-radio` |
+| MeshCore Forwarding | Standards | 0012 0014 | Forwarding MeshCore traffic. ULCP: `PROP_MESHCORE_FORWARDING_ENABLED`, `PROP_MESHCORE_REGION_POLICY`, `PROP_MESHCORE_REGIONS`, MeshCore statistics (4841–4844) | `ulcp-device`, `ulcp-radio` |
 | ULCP: Wi-Fi | Standards | ULCP: Core, ULCP: Saved State | Station and access point properties (4880–4887, 4912–4915), choosing a network, sharing the radio | `ulcp-wifi` |
 | ULCP: IP Connectivity | Standards | ULCP: Wi-Fi | IPv4 and IPv6 state and configuration, DNS (4896–4903) | `ulcp-ip` |
-| UMSH over IP Multicast | Standards | 0008 0012 0013, ULCP: IP Connectivity | Transport, echoes, datagram format, discovery, ingress limit, channel access for nodes with a LoRa radio. ULCP: IP multicast properties and counters, virtual radios | `ip-multicast`, `ulcp-ip-multicast` |
-| Chat Rooms | Standards | 0021 | Room actions, login and logout, fetching messages and users, admin commands, message distribution, room updates | `app-chat-rooms` |
+| UMSH over IP Multicast | Standards | 0008 0011 0012, ULCP: IP Connectivity | Transport, echoes, datagram format, discovery, ingress limit, channel access for nodes with a LoRa radio. ULCP: IP multicast properties and counters, virtual radios | `ip-multicast`, `ulcp-ip-multicast` |
+| Chat Rooms | Standards | 0020 | Room actions, login and logout, fetching messages and users, admin commands, message distribution, room updates | `app-chat-rooms` |
 | Identity Export Format | Standards | 0007 0008 0010 | Envelope, key derivation, sections, restore procedure, QR part framing | `identity-export` |
 | ULCP: Frame Transport | Standards | 0011, ULCP: Core, ULCP: Radio Control | `STR_PHY_RAW`, `CMD_STR_SEND`, `CMD_STR_RECV`, send and receive metadata, `PROP_MAC_PROMISCUOUS` | `ulcp-transport`, `ulcp-host` |
-| ULCP: Tethered Host Services | Standards | 0008 0009 0017 0021, ULCP: Device Node, ULCP: Frame Transport | The tethered host identity, host keys (96–98), receive filtering, acknowledgment delegation, inbound queueing and `CMD_QUEUE_DRAIN`, receipt cues, muting, standing down, host replacement, host identity heard elsewhere, host drop statistics (4852/4853) | `ulcp-host`, `ulcp-core`, `ulcp-radio` |
+| ULCP: Tethered Host Services | Standards | 0008 0009 0016 0020, ULCP: Device Node, ULCP: Frame Transport | The tethered host identity, host keys (96–98), receive filtering, acknowledgment delegation, inbound queueing and `CMD_QUEUE_DRAIN`, receipt cues, muting, standing down, host replacement, host identity heard elsewhere, host drop statistics (4852/4853) | `ulcp-host`, `ulcp-core`, `ulcp-radio` |
 | Node Management | Standards | 0005, ULCP: Core, ULCP: Device Node, ULCP: Tethered Host Services | Payload types 8/9, exchanges, multi-property requests, resets, DFU entry, at-most-once processing, cursors, authorization. ULCP: `PROP_DEV_ADMINS`, `CAP_ADMIN`, cursor and authorization status codes | `app-node-management`, `payload-format`, `ulcp-core` |
 | ULCP: Node Messaging | Standards | ULCP: Device Node, ULCP: Frame Transport, Node Management | `PROP_NODE_MSG_LISTEN`, `PROP_NODE_MSG_TYPES`, `PROP_NODE_MSG_MTU`, `STR_NODE_MSG`, receiving, sending text | `ulcp-node-messaging` |
-| Internet Bridging | Standards | 0013, ULCP: IP Connectivity, UMSH over IP Multicast, ULCP: Frame Transport, ULCP: Tethered Host Services | Bridge model, tunnel transport, radio attachment, integrated clients, host and LAN interfaces, relay procedure, traffic limits, acknowledgments across a bridge. ULCP: bridge client properties, `PROP_MAC_BACKHAUL` | `internet-bridging`, `ulcp-bridge`, `ulcp-host` |
+| Internet Bridging | Standards | 0012, ULCP: IP Connectivity, UMSH over IP Multicast, ULCP: Frame Transport, ULCP: Tethered Host Services | Bridge model, tunnel transport, radio attachment, integrated clients, host and LAN interfaces, relay procedure, traffic limits, acknowledgments across a bridge. ULCP: bridge client properties, `PROP_MAC_BACKHAUL` | `internet-bridging`, `ulcp-bridge`, `ulcp-host` |
 | ULCP: I2C Bus Access | Standards | Node Management | `PROP_I2C_BUSES`, `PROP_I2C_DEVICES`, transfers, scans, sharing the bus, the Node Management binding | `ulcp-i2c` |
 | ULCP: Battery Reporting | Standards | ULCP: Core | `PROP_BATTERY`, battery diagnostics (4944–4958) | `ulcp-device` |
 | ULCP: Time and Time Zone | Standards | ULCP: Core | `PROP_TIME`, `PROP_TZ_RULE`, `PROP_TIME_24H` | `ulcp-device` |
@@ -91,9 +90,9 @@ once its UEP is:
 | [Capability Bits](registries/capability-bits.md) | 0010 |
 | [Identity Options](registries/identity-options.md) | 0010 |
 | [Identity Request Options](registries/identity-request-options.md) | 0010 |
-| Text Message Options | 0021 |
+| Text Message Options | 0020 |
 | Chat Room Actions | Chat Rooms |
-| Contact Exchange Messages | 0024 |
+| Contact Exchange Messages | 0023 |
 | Identity Export Sections | Identity Export Format |
 | Node Management Options | Node Management |
 | ULCP Commands | ULCP: Core |
@@ -155,15 +154,15 @@ These moves resolve them:
 2. MAC command encoding, Echo, and No-Op form UEP-0006, ahead of UEP-0007,
    because counter resynchronization may probe with an Echo Request.
 3. Acknowledgment pacing, and how a re-acknowledgment is routed after a Route
-   Retry, move from `security` into UEP-0013, which defines the
+   Retry, move from `security` into UEP-0012, which defines the
    forwarding-confirmation window pacing is measured against.
-4. The `public` and `EMERGENCY` groups move into UEP-0023, after the text
+4. The `public` and `EMERGENCY` groups move into UEP-0022, after the text
    message UEPs their rules cite.
 5. The flood contention window and the give-way rule move from
-   `channel-access` into UEP-0013, and `T_frame` moves into UEP-0011.
+   `channel-access` into UEP-0012, and `T_frame` moves into UEP-0011.
 6. `repeater-operation`'s statements about IP multicast groups and bridges move
    into UMSH over IP Multicast and Internet Bridging, and its remark on route
-   learning into UEP-0018.
+   learning into UEP-0017.
 7. `ulcp-core`'s host replacement and standing-down material moves into
    ULCP: Tethered Host Services, and its Node Management material
    (`PROP_DEV_ADMINS`, `CAP_ADMIN`, the cursor and authorization status codes,
@@ -172,7 +171,7 @@ These moves resolve them:
 8. `ulcp-saved-state` stops listing other subsystems' properties; each UEP
    states the state class of the properties it defines.
 9. `node-identity`'s remark that an advertisement need not carry an embedded
-   signature moves into UEP-0017.
+   signature moves into UEP-0016.
 10. The option record encoding and end marker move from `packet-structure`
     into UEP-0003, since identity, text message, and chat room payloads use
     them too. Finding the end of a packet's options block stays in UEP-0005.
@@ -184,7 +183,7 @@ These moves resolve them:
 13. `ulcp-core`'s packed unsigned integer encoding moves into UEP-0003, since
     payload types use it too.
 14. The rule that an Echo Response is traced like its request moves from
-    `mac-commands` into UEP-0018, and No-Op's Route Retry into UEP-0013.
+    `mac-commands` into UEP-0017, and No-Op's Route Retry into UEP-0012.
 15. The group ID and group hint derivations move from
     `packet-types` and `security` into UEP-0007, which derives the group keys
     from them.
@@ -192,24 +191,24 @@ These moves resolve them:
     passes an authenticated duplicate to the host to suppress, moves into
     ULCP: Tethered Host Services.
 17. Percent-decoding a group name taken from a URI moves from
-    `multicast-channels` into UEP-0020.
+    `multicast-channels` into UEP-0019.
 18. `mac-commands`' Identity Request rules that rest on routing move into
-    UEP-0018: a solicitation whose Source Route option is not empty goes
+    UEP-0017: a solicitation whose Source Route option is not empty goes
     unanswered, the answer is source-routed along the request's trace, and
     the answer carries a Trace option of its own.
 19. `node-identity`'s rule that only an identity heard directly from its
-    node places it one hop away moves into UEP-0013, and the rule that an
-    advertisement carries its source address in full into UEP-0017.
-20. Supported Regions, identity option 4, moves into UEP-0015.
+    node places it one hop away moves into UEP-0012, and the rule that an
+    advertisement carries its source address in full into UEP-0016.
+20. Supported Regions, identity option 4, moves into UEP-0014.
 21. The demodulation floor moves from `channel-access`'s contention window
     into UEP-0011, since signal-quality filtering uses it too.
 22. `channel-access`'s rule that a forwarder holds back by `D_ack` moves into
-    UEP-0013, and the exception for a packet with source-route hops still
-    pending into UEP-0018. UEP-0012 defines `D_ack` and the immediate
+    UEP-0012, and the exception for a packet with source-route hops still
+    pending into UEP-0017. UEP-0011 defines `D_ack` and the immediate
     acknowledgment it protects.
 23. `mac-commands`' allowance for a repeater to decline to forward a
-    broadcast Identity Request moves into UEP-0013, and `channel-access`'s
-    adaptive-forwarder contention window into UEP-0019.
+    broadcast Identity Request moves into UEP-0012, and `channel-access`'s
+    adaptive-forwarder contention window into UEP-0018.
 24. A location's longitude of +180° now falls in the last cell, as +90°
     latitude does, rather than wrapping to the first. The code already
     encodes it so.
