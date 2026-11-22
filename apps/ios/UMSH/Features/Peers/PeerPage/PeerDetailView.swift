@@ -605,16 +605,14 @@ struct PeerDetailView: View {
         case .neighbors:
             PeerRepeatersScreen(peer: peer, actions: actions, browsing: peerBrowsing)
         case .manage:
-            if let management = actions.manageDevice {
+            if let manageDevice = actions.manageDevice {
                 // A node that does not advertise as a repeater has no
                 // Neighbors tile, and may still answer its administrators.
                 ManageDeviceScreen(
-                    peer: peer,
-                    management: management(peer),
                     browsing: peerBrowsing,
                     neighbors: actions.loadPeerRepeaters == nil ? nil
                         : AnyView(PeerRepeatersScreen(peer: peer, actions: actions, browsing: peerBrowsing))
-                )
+                ) { [peer] in try await manageDevice(peer) }
             }
         }
     }

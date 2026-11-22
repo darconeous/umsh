@@ -49,6 +49,17 @@ pub struct MobileAppPingReplyRecord {
     pub lqi: Option<u8>,
     /// Only the ping's Route Retry was answered: the route it held failed.
     pub via_route_retry: bool,
+    /// Repeaters the reply crossed that `route_hints` does not name:
+    /// `None` when the hop count is unknown.
+    #[uniffi(default)]
+    pub unnamed_hops: Option<u8>,
+}
+
+/// Repeaters a reply crossed beyond those its route names: a hop count of
+/// one is the peer itself.
+pub(super) fn unnamed_hops(hop_count: Option<u8>, named: usize) -> Option<u8> {
+    let named = u8::try_from(named).unwrap_or(u8::MAX);
+    hop_count.map(|hops| hops.saturating_sub(1).saturating_sub(named))
 }
 
 impl Worker {
@@ -119,11 +130,13 @@ impl Worker {
         match event.outcome {
             MobileMeshPingOutcome::Reply => {
                 self.answered(&address);
+                let route_hints = rendered_hints(&event.route_hints);
                 Ok(MobileAppPingResult::Reply {
                     reply: MobileAppPingReplyRecord {
                         round_trip_ms: event.round_trip_milliseconds,
                         hop_count: event.hop_count,
-                        route_hints: rendered_hints(&event.route_hints),
+                        unnamed_hops: unnamed_hops(event.hop_count, route_hints.len()),
+                        route_hints,
                         trace_signal: event.trace_signal,
                         rssi_dbm: event.rssi_dbm,
                         snr_centibels: event.snr_centibels,

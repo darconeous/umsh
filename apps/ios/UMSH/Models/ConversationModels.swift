@@ -15,7 +15,7 @@ struct PeerSummary: Identifiable, Hashable, Sendable {
     /// received for this peer.
     var advertisedIdentity: MeshNodeIdentity? = nil
     /// Whether the MAC authenticated the frame that delivered
-    /// `advertisedIdentity`. See `advertisedIdentityIsAttributable`.
+    /// `advertisedIdentity`, as stored.
     var advertisedIdentityAuthenticated: Bool = false
     /// When this phone heard `advertisedIdentity` off the air. `nil` for an
     /// imported bundle, whose arrival says nothing about how current it is.
@@ -35,6 +35,21 @@ struct PeerSummary: Identifiable, Hashable, Sendable {
     /// Whether a one-shot watch is armed: the next thing that moves
     /// `lastHeard` also raises a notification and clears this.
     var notifyWhenHeard: Bool = false
+    /// Whether this node plausibly forwards other nodes' traffic, by the
+    /// core's rule. An advertisement is the node's own claim, not proof.
+    /// `false` for a summary built here rather than read from the core.
+    var isLikelyRepeater: Bool = false
+    /// Whether the advertised claims may be attributed to this peer at all:
+    /// signed and valid, or unsigned in a frame the MAC authenticated. A
+    /// claim nothing authenticated may be anyone's.
+    var advertisedIdentityIsAttributable: Bool = false
+    /// What this phone actually knows about whether the node repeats, which
+    /// tells a node known not to forward from one never heard at all.
+    var repeaterEvidence: MobileRepeaterEvidence = .unknown
+    /// This node's own two-byte router hint, rendered by the core: what a
+    /// repeater carrying its traffic would put on the wire. `nil` for a
+    /// summary built here rather than read from the core.
+    var routerHint: MeshRouterHint? = nil
 
     var displayName: String {
         alias ?? advertisedName ?? (isUlcpDevice ? "Companion radio" : identity.hint.text)
@@ -48,15 +63,6 @@ struct PeerSummary: Identifiable, Hashable, Sendable {
     var role: PeerRole {
         guard let advertisedIdentity else { return storedRole }
         return PeerRole(roleCode: advertisedIdentity.roleCode)
-    }
-
-    /// Whether this node plausibly forwards other nodes' traffic, as its
-    /// advertisement says by the core's shared rule; without one, by the
-    /// role stored for it—a repeater, or a bridge, which is a node with its
-    /// repeater enabled. An advertisement is the node's own claim, not proof.
-    var isLikelyRepeater: Bool {
-        if let advertisedIdentity { return advertisedIdentity.forwards }
-        return storedRole == .repeater || storedRole == .bridge
     }
 
     /// Whether this node says it exchanges text messages: the chat role, or
@@ -85,43 +91,6 @@ struct PeerSummary: Identifiable, Hashable, Sendable {
     /// The outline this node's avatar is drawn in.
     var avatarShape: PeerAvatarShape {
         PeerAvatarShape(role: role, capabilities: advertisedIdentity?.capabilityBits)
-    }
-
-    /// What this phone actually knows about whether the node repeats.
-    ///
-    /// `isLikelyRepeater` answers `false` identically for a node we know to be
-    /// a tracker and a node we have only ever seen as a hint in someone else's
-    /// trace. Those are different states, and a decision that treats them the
-    /// same gets one of them wrong. `role` already falls back to `storedRole`
-    /// and `.unknown` already names an absence rather than a choice, so the
-    /// third value is there for the asking.
-    var repeaterEvidence: RepeaterEvidence {
-        if isLikelyRepeater { return .yes }
-        return role == .unknown ? .unknown : .no
-    }
-
-    /// This node's own two-byte router hint—the leading bytes of its key,
-    /// which is what a repeater carrying its traffic would put on the wire.
-    /// `nil` only for a hint too short to take one from.
-    var routerHintBytes: Data? {
-        let bytes = identity.hint.bytes.prefix(2)
-        return bytes.count == 2 ? Data(bytes) : nil
-    }
-
-    /// Whether the advertised claims may be attributed to this peer at all.
-    ///
-    /// Something has to have authenticated them: either the bundle's own
-    /// signature verifies against the key, or the MAC authenticated the frame
-    /// that carried it. A broadcast advertisement has no MIC and must
-    /// therefore be signed; an Identity Request reply is a MIC-authenticated
-    /// unicast that deliberately carries no signature. A signature that is
-    /// present and fails is never trusted, however the bundle arrived.
-    var advertisedIdentityIsAttributable: Bool {
-        switch advertisedIdentity?.signature {
-        case .valid: true
-        case .unsigned: advertisedIdentityAuthenticated
-        case .invalid, nil: false
-        }
     }
 
     /// Whether this node answers to a search query, across the names a user
@@ -347,6 +316,9 @@ struct ChannelConversationSummary: Identifiable, Hashable, Sendable {
     var createdAtMilliseconds: Int64 = 0
     /// See ``DirectConversationSummary/messageRevision``.
     var messageRevision: Int = 0
+    /// Nothing may go out here until the user agrees to `EMERGENCY`'s
+    /// warning.
+    var needsEmergencyAgreement = false
 }
 
 /// One row of the conversations list, whichever kind it is. The list mixes
@@ -513,8 +485,9 @@ struct ChatMessageSummary: Identifiable, Hashable, Sendable {
     /// The repeaters heard carrying an outbound message, once it is sent.
     var repeats: MessageRepeats? = nil
 
-    /// The reaction this user has on this message, if any. What the picker
-    /// shows as chosen, and what tapping the same emoji again withdraws.
+    /// The reaction this user has on this message, if any: what the picker
+    /// shows as chosen. Whether a tap withdraws it is the core's to decide
+    /// when it sends.
     var myReaction: MessageReaction? { reactions.first(where: \.isMine) }
 
     /// A short label for a member known only by their hint.
@@ -528,16 +501,11 @@ struct ChatMessageSummary: Identifiable, Hashable, Sendable {
     }
 
     /// Until when this message, one of ours not deleted, may be edited or
-    /// resent as itself, as the core reports it; nil for any other.
+    /// resent as itself, as the core reports it; nil for any other. Past
+    /// it, ``actions`` is out of date and the row is read again.
     var reviseUntilMilliseconds: Int64? = nil
-
-    /// Whether in-place revision is still offered for this message. Beyond
-    /// it a failed message can only go out again as a new one, and editing
-    /// is not offered at all.
-    var isWithinReviseWindow: Bool {
-        guard let reviseUntilMilliseconds else { return false }
-        return Date.now.storeMilliseconds <= reviseUntilMilliseconds
-    }
+    /// What the row offers, as the core decided when it was read.
+    var actions = MessageActions()
 
     /// How the core names this message in a command.
     var reference: MobileStoredChatMessageRefRecord {
@@ -554,6 +522,21 @@ struct ChatMessageSummary: Identifiable, Hashable, Sendable {
     /// One of ours that never went out where its peer could read it, as
     /// opposed to one that went out and drew no acknowledgment.
     var isUndelivered: Bool { isOutbound && deliveryState == .undelivered }
+}
+
+/// What may be done to one message, as the core would take it when the
+/// message was read. Copying, details and the original text are always
+/// offered and are not here.
+struct MessageActions: Hashable, Sendable {
+    var edit = false
+    var delete = false
+    /// How a resend would first go; nil when it cannot be resent. One
+    /// offered in place may still go as new: the resend's answer says which.
+    var resend: MobileAppResent?
+    var react = false
+    var reply = false
+    /// A gap the session may be asked to fill.
+    var requestMissing = false
 }
 
 /// A reply's quote of the message it answers, as that message reads now.
@@ -704,8 +687,9 @@ struct ChatMessageActions: Sendable {
     var delete: @Sendable (ConversationListItem, ChatMessageSummary) async throws -> Void = { _, _ in
         throw MobileAppError.NotRunning
     }
-    /// React to a message, or with nil withdraw this phone's reaction.
-    var react: @Sendable (ConversationListItem, ChatMessageSummary, MobileReaction?) async throws -> Void = { _, _, _ in
+    /// React to a message with this reaction, or withdraw it if it is
+    /// already this phone's, as the core finds the message when it sends.
+    var toggleReaction: @Sendable (ConversationListItem, ChatMessageSummary, MobileReaction) async throws -> Void = { _, _, _ in
         throw MobileAppError.NotRunning
     }
     /// Put a failed message back on the air, under forward secrecy or not,
@@ -759,12 +743,9 @@ struct ChannelConversationActions: Sendable {
     /// tab carries, reachable from the conversation it actually affects.
     /// Unread counts are unaffected—muting silences banners, not the channel.
     let setNotifications: @Sendable (ChannelSummary, Bool) async throws -> Void
-    /// Whether the core holds the user's agreement to the warning before
-    /// sending on `EMERGENCY`.
-    let emergencyCertified: @MainActor @Sendable () -> Bool
-    /// Agree to that warning. The core keeps the agreement until the
-    /// identity changes or the app next launches. Throws when the core does
-    /// not take it.
+    /// Agree to the warning before sending on `EMERGENCY`. The core keeps the
+    /// agreement until the identity changes or the app next launches. Throws
+    /// when the core does not take it.
     let certifyEmergency: @MainActor @Sendable () throws -> Void
 
     static let unavailable = ChannelConversationActions(
@@ -773,7 +754,6 @@ struct ChannelConversationActions: Sendable {
         delete: { _ in },
         requestMemberIdentity: { _, _ in },
         setNotifications: { _, _ in },
-        emergencyCertified: { false },
         certifyEmergency: { throw MobileAppError.NotRunning }
     )
 }
@@ -798,6 +778,9 @@ struct PeerPingReply: Equatable, Sendable {
     /// The reply answered the ping's Route Retry: the first attempt, or
     /// its acknowledgment, was lost along the route it took.
     let viaRouteRetry: Bool
+    /// Repeaters the reply crossed that `routeHints` does not name, as the
+    /// core counts them; `nil` when the hop count is unknown.
+    let unnamedHops: UInt8?
 }
 
 /// What this phone's MAC has learned about how to reach a peer. It is the
@@ -840,6 +823,9 @@ struct PeerRoute: Equatable, Sendable {
     var lastAcknowledged: Date? = nil
     /// The best path learned while the route was held.
     var candidate: Candidate? = nil
+    /// Where an ask for identities near the peer can be steered, as the core
+    /// decides it; `nil` when there is no honest way.
+    var discoveryVantage: DiscoveryVantage? = nil
 
     /// A path learned while a manual route was held.
     struct Candidate: Equatable, Sendable {
@@ -847,6 +833,18 @@ struct PeerRoute: Equatable, Sendable {
         /// Repeaters it names, in send order.
         let hints: [MeshRouterHint]
         let hopCount: UInt8?
+    }
+
+    /// Where an ask for identities can be steered to reach the peer's
+    /// neighborhood.
+    struct DiscoveryVantage: Equatable, Sendable {
+        /// Router hints to steer through, in send order. Never empty.
+        let repeaters: [MeshRouterHint]
+        /// The ask ends at the peer; otherwise at the last of `repeaters`.
+        let landsAtPeer: Bool
+        /// What the peer's own advertisement said, so the copy can hedge as
+        /// much as the routing did.
+        let evidence: MobileRepeaterEvidence
     }
 
     var isHeld: Bool { holdUntil != nil }
@@ -877,12 +875,6 @@ struct PeerRoute: Equatable, Sendable {
 struct ManualPath: Equatable, Sendable {
     var hops: [MeshRouterHint]
     var floodHops: UInt8
-
-    /// The flood allowance a new path starts with: the one hop of slack a
-    /// learned route earns when its far end is in doubt.
-    static let standardFloodHops: UInt8 = 1
-    /// The most flood hops a frame can carry.
-    static let maximumFloodHops: UInt8 = 15
 }
 
 /// How long a manual path is held before a learned path may replace it.
@@ -913,24 +905,15 @@ enum ManualPathHold: CaseIterable, Identifiable, Hashable, Sendable {
     }
 }
 
-/// How sure this phone is that a node forwards other nodes' traffic.
-enum RepeaterEvidence: Equatable, Sendable {
-    /// It advertised the repeater role or capability.
-    case yes
-    /// No identity has been heard for it, so there is nothing to go on.
-    case unknown
-    /// It advertised something else.
-    case no
-}
-
 /// Where an Identity Request is asked from.
 ///
 /// `nil`—no vantage—is this phone's own neighborhood: the zero-hop
 /// broadcast only direct neighbors hear. A vantage steers the same ask down a
 /// route instead, so the nodes that answer are the ones in radio range of
 /// wherever it lands, which is the only way to discover nodes this phone
-/// cannot hear. A flood-routed ask is not an option: nothing narrows how many
-/// nodes would answer it.
+/// cannot hear. Where it may be steered is the core's to decide
+/// (`PeerRoute.discoveryVantage`); this carries that choice, with the peer it
+/// was made for, to the Discover sheet.
 struct SolicitVantage: Hashable, Sendable {
     let peerName: String
     let peerAddress: String
@@ -946,50 +929,17 @@ struct SolicitVantage: Hashable, Sendable {
     /// What was known about the peer when the vantage was built. Carried so the
     /// copy can hedge exactly as much as the routing did: aiming at a peer whose
     /// role was never heard is a guess, and reads as one.
-    let evidence: RepeaterEvidence
+    let evidence: MobileRepeaterEvidence
 
     var landsAtPeer: Bool { landingRepeater == nil }
 
-    /// Derive the vantage for asking near `peer`, or `nil` when there is no
+    /// The vantage for asking near `peer`, or `nil` when the core found no
     /// honest way to steer an ask there.
-    ///
-    /// A cached route excludes its endpoints, so the route *to* a peer stops
-    /// at the last repeater before it. Landing *at* the peer means appending the
-    /// peer's own hint, which is only safe when we have positive evidence it
-    /// repeats: the choice is asymmetric. Not appending when the peer does
-    /// repeat lands the ask one hop short, which is still useful. Appending
-    /// when it does not kills the ask outright—the repeater before it looks
-    /// for a next hop that will never forward. So append only on evidence, and
-    /// let the copy carry the uncertainty rather than the route.
-    init?(peer: PeerSummary, route: PeerRoute?) {
-        guard let route, let peerHint = peer.routerHintBytes else { return nil }
-        let evidence = peer.repeaterEvidence
-        self.evidence = evidence
-
-        switch route.kind {
-        case .source where !route.hints.isEmpty:
-            let learned = route.hints
-            if evidence == .yes {
-                repeaters = learned.map(\.bytes) + [peerHint]
-                landingRepeater = nil
-            } else {
-                repeaters = learned.map(\.bytes)
-                landingRepeater = learned.last
-            }
-        case .direct, .source:
-            // Heard directly, so the route names no repeaters. Asking *through*
-            // this node is exactly how to reach what sits behind it—the
-            // bench case worth having—but only if it forwards at all. When
-            // we know it does not, a plain nearby ask already covers it.
-            guard evidence != .no else { return nil }
-            repeaters = [peerHint]
-            landingRepeater = nil
-        case .flood, .unknown, .unavailable:
-            // A flood route counts its hops, it does not name the repeaters
-            // they crossed, so there is nothing to steer with.
-            return nil
-        }
-
+    init?(peer: PeerSummary, vantage: PeerRoute.DiscoveryVantage?) {
+        guard let vantage, let last = vantage.repeaters.last else { return nil }
+        repeaters = vantage.repeaters.map(\.bytes)
+        landingRepeater = vantage.landsAtPeer ? nil : last
+        evidence = vantage.evidence
         peerName = peer.displayName
         peerAddress = peer.identity.canonicalAddress
     }
@@ -1214,13 +1164,19 @@ struct PeerActions {
     var deletePeer: ((PeerSummary) async throws -> Void)? = nil
     /// Delete the node and its conversation history in one transaction.
     var deletePeerAndConversation: ((PeerSummary) async throws -> Void)? = nil
-    /// The way to read and change this node's settings, chosen per peer:
-    /// the companion radio is managed over its own link, everything else
-    /// across the mesh. Nil only where no backend could exist at all.
-    var manageDevice: ((PeerSummary) -> DeviceManagementBackend)? = nil
-    /// The attached companion radio, managed over its own link whether or
-    /// not it has an identity of its own to be a peer under.
-    var manageCompanion: (() -> DeviceManagementBackend)? = nil
+    /// Open this node's settings: the companion radio over its own link,
+    /// everything else across the mesh. Nil only where no core could
+    /// manage anything at all.
+    var manageDevice: (@MainActor (PeerSummary) async throws -> ManageDeviceModel)? = nil
+    /// Open the attached companion radio's settings over its own link,
+    /// whether or not it has an identity of its own to be a peer under.
+    /// Takes what to call it until it says.
+    var manageCompanion: (@MainActor (String) async throws -> ManageDeviceModel)? = nil
+    /// Open the settings of the bench device an administrative session's
+    /// driver is attached to, with this phone's key on that device.
+    var manageAdministered: (
+        @MainActor (MobileRadioDriver, Data?, PeerSummary) async throws -> ManageDeviceModel
+    )? = nil
 
     /// No app services wired up—used by previews and by any sheet built
     /// before the mesh session exists.

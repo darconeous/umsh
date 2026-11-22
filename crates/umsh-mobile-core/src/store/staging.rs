@@ -73,6 +73,13 @@ pub struct MobileStagedChatMessageRecord {
     /// Taken back by its sender: a tombstone, with nothing left to say.
     #[uniffi(default)]
     pub is_deleted: bool,
+    /// The wire ID it went under, which names it to the other side.
+    #[uniffi(default)]
+    pub wire_id: Option<u8>,
+    /// Its stream's epoch, for one of ours; `None` for one that arrived,
+    /// whose epoch only the session that heard it knew.
+    #[uniffi(default)]
+    pub epoch: Option<u16>,
 }
 
 #[uniffi::export]
@@ -80,6 +87,11 @@ impl MobileAppStore {
     /// Write one staged transcript exactly as described, reactions
     /// included, in one transaction. A row already at a staged handle is
     /// replaced.
+    ///
+    /// When messages of ours carry a wire ID and an epoch, the
+    /// conversation's outbound stream is set to continue after the newest
+    /// of them, unless it already has a place: a stream the user advanced
+    /// is never rewound.
     ///
     /// Separate from `seed_generated_messages` because the two answer
     /// different questions: that one wants volume and does not care what
@@ -102,9 +114,9 @@ impl MobileAppStore {
                         rx_rssi_dbm, rx_snr_cb, rx_lqi, rx_hop_count, rx_route_hints,
                         rx_source_authenticated,
                         is_reaction, regarding_target_session_id, regarding_target_handle,
-                        regarding_handle, regarding_wire_id
+                        regarding_handle, regarding_wire_id, wire_id, epoch
                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, ?12, ?13, ?14,
-                        ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
+                        ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
                 )?;
                 let row = StagedRow {
                     owner_identity_id: &owner_identity_id,
@@ -133,6 +145,7 @@ impl MobileAppStore {
                         message.reception.as_ref(),
                         false,
                         message.regarding.as_ref(),
+                        (message.wire_id, message.epoch),
                     )?;
                     let about = MobileStagedChatRegarding::Message {
                         handle: message.handle,
@@ -156,10 +169,37 @@ impl MobileAppStore {
                             None,
                             true,
                             Some(&about),
+                            (None, None),
                         )?;
                         reaction_handle += 1;
                     }
                 }
+            }
+            // The newest of ours, by when it was written, then by handle.
+            let newest = messages
+                .iter()
+                .filter(|message| message.outbound)
+                .filter_map(|message| {
+                    Some((
+                        (message.created_at_ms, message.handle),
+                        message.wire_id?,
+                        message.epoch?,
+                    ))
+                })
+                .max_by_key(|(order, _, _)| *order);
+            if let Some(((created_at_ms, _), wire_id, epoch)) = newest {
+                transaction.execute(
+                    "INSERT OR IGNORE INTO chat_stream_checkpoint (
+                        owner_identity_id, conversation_address, next_id, epoch, updated_at_ms
+                    ) VALUES (?, ?, ?, ?, ?)",
+                    params![
+                        owner_identity_id,
+                        conversation_address,
+                        wire_id.wrapping_add(1),
+                        epoch,
+                        created_at_ms
+                    ],
+                )?;
             }
             Ok(())
         })
@@ -207,7 +247,9 @@ impl MobileAppStore {
             offsets.push(offset);
         }
         let start = now_ms - offsets.last().copied().unwrap_or(0);
-        let session_id = format!("9{}", now_ms.rem_euclid(1_000_000));
+        // Not a number, so no engine session can be taken to have written
+        // them: they carry no wire ID either, so nothing can name them.
+        let session_id = format!("generated-{}", now_ms.rem_euclid(1_000_000));
 
         self.write(|transaction| {
             {
@@ -265,6 +307,7 @@ impl StagedRow<'_> {
         reception: Option<&MobileStoredChatReceptionRecord>,
         is_reaction: bool,
         regarding: Option<&MobileStagedChatRegarding>,
+        (wire_id, epoch): (Option<u8>, Option<u16>),
     ) -> Result<(), MobileStoreError> {
         // A resolved reference names its target the way a live handle
         // would; a missing one keeps only wire coordinates, which is what
@@ -298,6 +341,8 @@ impl StagedRow<'_> {
             target,
             target,
             missing.then_some(0),
+            wire_id,
+            epoch,
         ])?;
         Ok(())
     }

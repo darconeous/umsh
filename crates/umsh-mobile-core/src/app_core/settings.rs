@@ -10,6 +10,7 @@ use std::rc::Rc;
 
 use tokio::task::JoinHandle;
 
+use super::limits::bounded_interval;
 use super::records::MobileAppLifecycle;
 use super::worker::Worker;
 use crate::mobile_mesh::MobileMeshSharedLocationRecord;
@@ -17,9 +18,10 @@ use crate::mobile_mesh::MobileMeshSharedLocationRecord;
 /// The user's preferences the core acts on.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct MobileAppPolicyRecord {
-    /// Seconds between scheduled advertisements; 0 is off.
+    /// Seconds between scheduled advertisements; 0 is off. Any other is
+    /// held to `mobile_limits()`' announcement bounds.
     pub advert_interval_seconds: u32,
-    /// Seconds between scheduled beacons; 0 is off.
+    /// Seconds between scheduled beacons; 0 is off. Held likewise.
     pub beacon_interval_seconds: u32,
     /// Whether this phone answers nearby nodes' identity requests.
     pub discoverable: bool,
@@ -90,6 +92,8 @@ impl Worker {
         let policy = MobileAppPolicyRecord {
             flood_hops: policy.flood_hops.min(umsh_mac::MAX_FLOOD_HOPS),
             beacon_flood_hops: policy.beacon_flood_hops.min(umsh_mac::MAX_FLOOD_HOPS),
+            advert_interval_seconds: bounded_interval(policy.advert_interval_seconds),
+            beacon_interval_seconds: bounded_interval(policy.beacon_interval_seconds),
             ..policy
         };
         let previous = self.settings.borrow_mut().policy.replace(policy.clone());

@@ -26,33 +26,10 @@ final class NoRadioConnection: RadioConnection, Sendable {
     func claimForCurrentIdentity() async throws { throw RadioConnectionError.radioNotFound }
     func factoryReset() async throws { throw RadioConnectionError.radioNotFound }
     func reboot() async throws { throw RadioConnectionError.radioNotFound }
-    func enterDfu(mode: UlcpDfuMode) async throws { throw RadioConnectionError.radioNotFound }
-    func announce(_ request: MobileAnnouncementRecord) async throws {
-        throw RadioConnectionError.radioNotFound
-    }
-    func clearBluetoothBonds() async throws { throw RadioConnectionError.radioNotFound }
-    func setAlert(_ state: RadioAlertState) async throws { throw RadioConnectionError.radioNotFound }
     func refresh() async throws -> RadioSnapshot { throw RadioConnectionError.radioNotFound }
     func refreshPositioning() async throws -> RadioSnapshot {
         throw RadioConnectionError.radioNotFound
     }
-    func addDevicePeer(_ publicKey: Data) async throws { throw DevicePeerError.radioUnavailable }
-    func removeDevicePeer(_ publicKey: Data) async throws { throw DevicePeerError.radioUnavailable }
-    func addDeviceAdmin(_ publicKey: Data) async throws { throw DevicePeerError.radioUnavailable }
-    func removeDeviceAdmin(_ publicKey: Data) async throws { throw DevicePeerError.radioUnavailable }
-    func addDeviceWifiNetwork(_ item: Data) async throws { throw RemoteManagementError.unavailable }
-    func removeDeviceWifiNetwork(ssid: Data) async throws { throw RemoteManagementError.unavailable }
-    func fetchCompanionProperties(
-        _ propertyIDs: [UInt32]
-    ) async throws -> [MobileMeshManagementAnswerRecord] {
-        throw RemoteManagementError.unavailable
-    }
-    func writeCompanionProperties(
-        _ writes: [MobileMeshPropertyWriteRecord]
-    ) async throws -> [MobileMeshManagementAnswerRecord] {
-        throw RemoteManagementError.unavailable
-    }
-    func saveCompanionDevice() async throws { throw RemoteManagementError.unavailable }
     func disconnect() async {}
     func forget() async {}
 }

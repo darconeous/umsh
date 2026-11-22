@@ -11,7 +11,7 @@ import OSLog
 /// permission.
 @MainActor
 enum LanRadioRegistration {
-    private static let logger = Logger(subsystem: "com.voria.umsh.app", category: "lan-radio")
+    private static let logger = Logger(subsystem: "com.voria.umsh.ios", category: "lan-radio")
 
     static let providerBundleIdentifier = "com.voria.umsh.app.lan-radio"
 

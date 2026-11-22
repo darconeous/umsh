@@ -332,6 +332,8 @@ fn inbound(handle: u32, body: &str, minutes_ago: i64) -> MobileStagedChatMessage
         reactions: Vec::new(),
         regarding: None,
         is_deleted: false,
+        wire_id: None,
+        epoch: None,
     }
 }
 

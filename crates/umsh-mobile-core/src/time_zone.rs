@@ -141,6 +141,14 @@ pub fn fixed_offset_rule(minutes_east: i16) -> String {
     }
 }
 
+/// The rule for the phone's own zone: the zone's, from the system's
+/// database, else a fixed rule for the offset the phone keeps now.
+/// `identifier` and `minutes_east` are the phone's current zone.
+#[uniffi::export]
+pub fn phone_zone_rule(identifier: String, minutes_east: i16) -> String {
+    zone_rule(identifier).unwrap_or_else(|| fixed_offset_rule(minutes_east))
+}
+
 /// The offset `rule` keeps at `unix_seconds`, in minutes east of UTC.
 #[uniffi::export]
 pub fn rule_offset_min(rule: String, unix_seconds: i64) -> Option<i16> {
@@ -305,5 +313,24 @@ mod tests {
         }
         let rule = zone_rule("America/Los_Angeles".to_owned()).unwrap();
         assert_eq!(rule, "PST8PDT,M3.2.0,M11.1.0");
+        // The phone's zone is the database's rule, whatever its offset.
+        assert_eq!(
+            phone_zone_rule("America/Los_Angeles".to_owned(), 60),
+            "PST8PDT,M3.2.0,M11.1.0"
+        );
+    }
+
+    /// The phone's zone is the database's rule for its identifier, else a
+    /// fixed rule for its current offset.
+    #[test]
+    fn the_phone_zone_falls_back_to_its_offset() {
+        assert_eq!(
+            phone_zone_rule("Nowhere/Atlantis".to_owned(), -420),
+            "<-07>7"
+        );
+        assert_eq!(phone_zone_rule(String::new(), 330), "<+0530>-5:30");
+        assert_eq!(phone_zone_rule(String::new(), 0), "UTC0");
+        assert!(device_accepts(&phone_zone_rule(String::new(), 14 * 60)));
+        assert!(device_accepts(&phone_zone_rule(String::new(), -12 * 60)));
     }
 }

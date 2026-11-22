@@ -1,8 +1,16 @@
 import Foundation
 
+/// A vault that holds nothing, for a core that never runs an identity.
+final class EmptySecretVault: SecretVault, @unchecked Sendable {
+    func load(account: String) throws -> Data? { nil }
+    func store(account: String, secret: Data) throws {}
+    func delete(account: String) throws {}
+    func deleteAll() throws {}
+}
+
 @main
 struct MobileCoreSmokeTest {
-    static func main() throws {
+    static func main() async throws {
         precondition(mobileApiVersion() > 0)
         precondition(ulcpMaxDevPeers() > 0)
 
@@ -91,7 +99,7 @@ struct MobileCoreSmokeTest {
         let inspectionProperties = try ulcpInspectionProperties(
             capabilities: Data([8])
         )
-        precondition(inspectionProperties == [3, 32, 35, 37, 44])
+        precondition(inspectionProperties == [3, 32, 35, 37, 44, 2, 4])
         let frequency = withUnsafeBytes(of: UInt32(915_000).littleEndian) { Data($0) }
         let sync = try inspectUlcpSync(responses: [
             UlcpPropertyFrameRecord(
@@ -232,6 +240,52 @@ struct MobileCoreSmokeTest {
             _ = try ulcpDirtyWrites(desired: bridge, dirtyPropertyIds: [bridgeIds.bridgePort])
             preconditionFailure("A zero bridge port was accepted")
         } catch { /* The device's port constraint also applies before writing. */ }
+
+        // A radio-less core manages nothing across the mesh without an owner.
+        let coreRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("umsh-mobile-core-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: coreRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: coreRoot) }
+        let core = try MobileAppCore(
+            store: MobileAppStore.open(path: coreRoot.appendingPathComponent("app.sqlite").path),
+            vault: EmptySecretVault(),
+            config: MobileAppConfigRecord(
+                counterDirectory: coreRoot.appendingPathComponent("counters").path,
+                platformModel: 0
+            )
+        )
+        let managed = try MobileIdentity.unlock(secretKey: Data(repeating: 0x22, count: 32))
+            .publicIdentity().canonicalAddress
+        do {
+            _ = try await core.manageDevice(address: managed, usesBluetooth: false)
+            preconditionFailure("A mesh device was managed with no owner")
+        } catch MobileAppError.NoOwner {
+            // Expected: across the mesh, a device is managed for an owner.
+        }
+        await core.stop()
+        let choices = ulcpRadioChoices()
+        precondition(choices.spreadingFactors.first == 5 && choices.spreadingFactors.last == 12)
+        precondition(choices.dutyCycleLimits.first == UInt16.max)
+        let plan = wifiJoinPlan(offered: nil)
+        precondition(plan.choices == Data([3, 2, 4, 1, 0]) && plan.initial == 3)
+
+        // Device setup's free functions load; a draft needs a driver.
+        precondition(phoneZoneRule(identifier: "", minutesEast: 0) == "UTC0")
+        for goal in [MobileSetupGoal.tracker, .repeater] {
+            switch goal {
+            case .tracker, .repeater: break
+            }
+        }
+        for parameter in [
+            MobileSetupRadioParameter.frequency, .transmitPower, .bandwidth,
+            .spreadingFactor, .codingRate, .dutyLimit,
+        ] {
+            switch parameter {
+            case .frequency, .transmitPower, .bandwidth, .spreadingFactor, .codingRate,
+                .dutyLimit:
+                break
+            }
+        }
 
         print("Swift successfully called umsh-mobile-core")
     }

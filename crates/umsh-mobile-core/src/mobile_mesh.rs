@@ -3988,7 +3988,6 @@ impl<M: MacBackend> ManagementJob<M> {
 /// the same decoders. Refusals drop out here: they are answers *about* a
 /// property rather than values of one, and the event still carries them
 /// for a caller that needs to know which.
-#[uniffi::export]
 pub fn ulcp_records_from_answers(
     answers: Vec<MobileMeshManagementAnswerRecord>,
 ) -> Vec<UlcpPropertyFrameRecord> {
@@ -5096,8 +5095,9 @@ async fn run_worker(
                                     .map_err(|_| MobileMeshError::SendFailed)
                             }
                             .await;
+                            // The ask went; only its counters were not saved.
                             let result = if result.is_ok() && !persist_counters().await {
-                                Err(MobileMeshError::SendFailed)
+                                Err(MobileMeshError::CounterPersistenceFailed)
                             } else {
                                 result
                             };

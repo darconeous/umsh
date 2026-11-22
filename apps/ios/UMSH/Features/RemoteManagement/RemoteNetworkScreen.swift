@@ -11,10 +11,9 @@ import UMSHMobileCore
 /// its absence here is the device not having it rather than refusing it.
 struct RemoteNetworkScreen: View {
     let model: ManageDeviceModel
-    @State private var edits = Edits()
+    @State private var draft: MobileNetworkDraft?
 
     private var reading: RemoteCategoryReading? { model.readings[.network] }
-    private var problems: [UInt32: String] { model.writeRefusals[.network] ?? [:] }
 
     private var hasV4: Bool { reading?.propertyIDs.contains(ulcpProperties.ipv4State) == true }
     private var hasV6: Bool { reading?.propertyIDs.contains(ulcpProperties.ipv6State) == true }
@@ -23,52 +22,71 @@ struct RemoteNetworkScreen: View {
     }
 
     var body: some View {
+        let review = model.review(draft)
+        let problems = RemoteRowProblems(refusals: model.writeRefusals[.network] ?? [:], review: review)
         Form {
-            if hasLocal { localSection }
-            if hasV4 {
-                v4StatusSection
-                v4ConfigurationSection
-            }
-            if hasV6 {
-                v6StatusSection
-                v6ConfigurationSection
-            }
-            if hasV4 || hasV6 {
-                dnsSection
-                resolverSection
+            if let draft = Binding($draft) {
+                if hasLocal { localSection(draft, problems: problems) }
+                if hasV4 {
+                    v4StatusSection
+                    configurationSection(
+                        method: draft.v4Method,
+                        address: draft.v4Address,
+                        prefix: draft.v4Prefix,
+                        gateway: draft.v4Gateway,
+                        problem: problems[draft.wrappedValue.v4Method.propertyId],
+                        footer: "Leave the router blank for a network with no way out of it. A static address the network does not own leaves the device unreachable."
+                    )
+                }
+                if hasV6 {
+                    v6StatusSection
+                    configurationSection(
+                        method: draft.v6Method,
+                        address: draft.v6Address,
+                        prefix: draft.v6Prefix,
+                        gateway: draft.v6Gateway,
+                        problem: problems[draft.wrappedValue.v6Method.propertyId],
+                        footer: "A static IPv6 address does not stop the device from also taking one the network advertises. The router may be a link-local address."
+                    )
+                }
+                if hasV4 || hasV6 {
+                    dnsSection(draft.dns, problem: problems[draft.wrappedValue.dns.propertyId])
+                    resolverSection
+                }
+            } else {
+                RemoteDraftPending(reading: reading, isBusy: model.isBusy)
             }
         }
         .remoteCategoryChrome(
             model: model,
             category: .network,
             title: "Network",
-            apply: { await apply() },
-            hasEdits: !edits.dirty.isEmpty,
-            applyWarning: applyWarning
+            apply: { await model.applyAndRebuild($draft) },
+            review: review,
+            applyWarning: applyWarning(review)
         )
-        .onChange(of: reading?.asOf) { edits = Edits(reading, preserving: edits) }
-        .onAppear { if edits.isEmpty { edits = Edits(reading) } }
+        .draft($draft, from: model, revision: reading?.revision)
     }
 
     // MARK: - Local network
 
     @ViewBuilder
-    private var localSection: some View {
+    private func localSection(
+        _ draft: Binding<MobileNetworkDraft>,
+        problems: RemoteRowProblems
+    ) -> some View {
         Section {
             RemoteValueRow("Status", value: lanStateText(reading?.properties.lanBearerState))
             RemoteTextField(
                 "Group",
-                text: $edits.group.edited.replacingNil(with: ""),
-                isKnown: edits.group.isKnown,
-                problem: problems[ulcpProperties.lanBearerGroup],
+                field: draft.group,
+                problem: problems[draft.wrappedValue.group.propertyId],
                 placeholder: "Default"
             )
         } header: {
             Text("Local Network")
         } footer: {
-            if edits.group.isDirty, lanGroupEdit(edits.group.value) == nil {
-                Text(lanGroupInvalid).foregroundStyle(.red)
-            } else if !hasV4 {
+            if !hasV4 {
                 RemoteReadingFooter(reading: reading, isBusy: model.isBusy)
             }
         }
@@ -102,41 +120,36 @@ struct RemoteNetworkScreen: View {
         }
     }
 
+    /// How one family gets its address, and the address itself when the
+    /// operator states it.
     @ViewBuilder
-    private var v4ConfigurationSection: some View {
+    private func configurationSection(
+        method: Binding<MobileChoiceField>,
+        address: Binding<MobileTextField>,
+        prefix: Binding<MobileOptionalIntegerField>,
+        gateway: Binding<MobileTextField>,
+        problem: String?,
+        footer: LocalizedStringKey
+    ) -> some View {
+        let isStatic = method.wrappedValue.value == Self.staticMethod
         Section {
-            RemotePicker(
+            RemoteChoiceField(
                 "How to get an address",
-                selection: $edits.v4Method.edited,
-                problem: problems[edits.v4Config.property]
+                field: method,
+                problem: problem
             ) {
                 ForEach(ipMethods, id: \.code) { method in
-                    Text(method.name).tag(UInt8?.some(method.code))
+                    Text(method.name).choiceTag(method.code)
                 }
             }
-            if edits.v4Method.value == 2 {
-                RemoteTextField(
-                    "Address",
-                    text: $edits.v4Address,
-                    isKnown: edits.v4Method.isKnown
-                )
-                RemoteNumberField(
-                    "Prefix length",
-                    unit: "bits",
-                    text: $edits.v4Prefix,
-                    isKnown: edits.v4Method.isKnown
-                )
-                RemoteTextField(
-                    "Router",
-                    text: $edits.v4Gateway,
-                    isKnown: edits.v4Method.isKnown
-                )
+            if isStatic {
+                RemoteTextField("Address", field: address)
+                RemoteOptionalIntegerField("Prefix length", unit: "bits", field: prefix)
+                RemoteTextField("Router", field: gateway)
             }
         } footer: {
-            if edits.v4Method.value == 2 {
-                Text(
-                    "Leave the router blank for a network with no way out of it. A static address the network does not own leaves the device unreachable."
-                )
+            if isStatic {
+                Text(footer)
             }
         }
     }
@@ -168,44 +181,8 @@ struct RemoteNetworkScreen: View {
         reading?.properties.ipv6Addresses ?? []
     }
 
-    @ViewBuilder
-    private var v6ConfigurationSection: some View {
-        Section {
-            RemotePicker(
-                "How to get an address",
-                selection: $edits.v6Method.edited,
-                problem: problems[edits.v6Config.property]
-            ) {
-                ForEach(ipMethods, id: \.code) { method in
-                    Text(method.name).tag(UInt8?.some(method.code))
-                }
-            }
-            if edits.v6Method.value == 2 {
-                RemoteTextField(
-                    "Address",
-                    text: $edits.v6Address,
-                    isKnown: edits.v6Method.isKnown
-                )
-                RemoteNumberField(
-                    "Prefix length",
-                    unit: "bits",
-                    text: $edits.v6Prefix,
-                    isKnown: edits.v6Method.isKnown
-                )
-                RemoteTextField(
-                    "Router",
-                    text: $edits.v6Gateway,
-                    isKnown: edits.v6Method.isKnown
-                )
-            }
-        } footer: {
-            if edits.v6Method.value == 2 {
-                Text(
-                    "A static IPv6 address does not stop the device from also taking one the network advertises. The router may be a link-local address."
-                )
-            }
-        }
-    }
+    /// The `IPVx_CONFIG` method that states its own address.
+    private static let staticMethod: Int64 = 2
 
     /// Automatic first, because it is what all but a handful of devices
     /// should be on.
@@ -216,29 +193,27 @@ struct RemoteNetworkScreen: View {
     // MARK: - DNS
 
     @ViewBuilder
-    private var dnsSection: some View {
+    private func dnsSection(_ dns: Binding<MobileTextListField>, problem: String?) -> some View {
         Section {
-            if !edits.dns.isKnown {
-                RemoteValueRow("Resolvers", value: "Not read")
+            if !dns.wrappedValue.known {
+                RemoteNotRead(title: "Resolvers")
             } else {
-                ForEach(Array(edits.dnsText.enumerated()), id: \.offset) { index, _ in
-                    HStack {
-                        TextField(
-                            "Address",
-                            text: Binding(
-                                get: { edits.dnsText[index] },
-                                set: { edits.dnsText[index] = $0 }
-                            )
+                ForEach(Array(dns.wrappedValue.value.indices), id: \.self) { index in
+                    TextField(
+                        "Address",
+                        text: Binding(
+                            get: { dns.wrappedValue.value.indices.contains(index) ? dns.wrappedValue.value[index] : "" },
+                            set: { if dns.wrappedValue.value.indices.contains(index) { dns.wrappedValue.value[index] = $0 } }
                         )
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    }
+                    )
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
                 }
-                .onDelete { edits.dnsText.remove(atOffsets: $0) }
-                Button("Add Resolver") { edits.dnsText.append("") }
+                .onDelete { dns.wrappedValue.value.remove(atOffsets: $0) }
+                Button("Add Resolver") { dns.wrappedValue.value.append("") }
             }
         } header: {
-            RemoteFieldTitle("DNS", problem: problems[edits.dns.property])
+            RemoteFieldTitle("DNS", problem: problem)
         } footer: {
             Text(
                 "Resolvers the device is told to use. Leave the list empty to use only what the network offers."
@@ -272,220 +247,26 @@ struct RemoteNetworkScreen: View {
     /// A wrong static address strands a device as surely as switching its
     /// link off, and over the mesh there is nobody standing next to it to
     /// put it right.
-    private var applyWarning: (title: String, message: String)? {
-        guard model.link == .mesh, edits.changesStaticAddressing else { return nil }
+    private func applyWarning(_ review: MobileDraftReviewRecord?) -> (title: String, message: String)? {
+        guard review?.warning == .changesStaticAddressing else { return nil }
         return (
-            title: "Change Addressing",
-            message: """
-                If the address you have set is not one this device's network \
-                will route, nothing reaches it over that network until \
-                someone changes it back from the device itself.
-                """
+            title: String(
+                localized: "Change Addressing",
+                comment: "Confirmation title and button: apply a static IP address to a managed device."
+            ),
+            message: String(
+                localized: """
+                    If the address you have set is not one this device's network \
+                    will route, nothing reaches it over that network until \
+                    someone changes it back from the device itself.
+                    """,
+                comment: "Confirmation message before applying a static IP address to a managed device."
+            )
         )
-    }
-
-    private func apply() async {
-        if await model.apply(.network, desired: edits.desired, dirty: edits.dirty) {
-            edits = Edits(model.readings[.network])
-        }
-    }
-
-    // MARK: - Edits
-
-    /// The three writable settings on this screen, held as the text an
-    /// operator typed until it parses.
-    ///
-    /// Addresses are kept as text rather than as parsed octets so that a
-    /// half-typed address is a half-typed address rather than an edit. A
-    /// field that does not parse contributes nothing, exactly as a
-    /// half-typed number does everywhere else here.
-    private struct Edits {
-        var v4Method = RemoteField<UInt8>(0, nil)
-        var v6Method = RemoteField<UInt8>(0, nil)
-        var v4Config = RemoteField<UlcpIpConfigRecord>(0, nil)
-        var v6Config = RemoteField<UlcpIpConfigRecord>(0, nil)
-        var dns = RemoteField<[Data]>(0, nil)
-        var group = RemoteField<String>(0, nil)
-        var v4Address = ""
-        var v4Prefix = ""
-        var v4Gateway = ""
-        var v6Address = ""
-        var v6Prefix = ""
-        var v6Gateway = ""
-        var dnsText: [String] = []
-        var isEmpty = true
-        var held = UlcpDevicePropertiesRecord.empty
-
-        init() {}
-
-        init(_ reading: RemoteCategoryReading?) {
-            let id = ulcpProperties
-            held = reading?.properties ?? UlcpDevicePropertiesRecord.empty
-            v4Config = RemoteField(id.ipv4Config, held.ipv4Config)
-            v6Config = RemoteField(id.ipv6Config, held.ipv6Config)
-            v4Method = RemoteField(id.ipv4Config, held.ipv4Config?.method)
-            v6Method = RemoteField(id.ipv6Config, held.ipv6Config?.method)
-            dns = RemoteField(id.ipDns, held.ipDns)
-            group = RemoteField(id.lanBearerGroup, held.lanBearerGroup)
-            if let config = held.ipv4Config {
-                v4Address = config.address.isEmpty ? "" : ipText(config.address)
-                v4Prefix = config.address.isEmpty ? "" : "\(config.prefix)"
-                v4Gateway = config.gateway.isEmpty || config.gateway.allSatisfy { $0 == 0 }
-                    ? "" : ipText(config.gateway)
-            }
-            if let config = held.ipv6Config {
-                v6Address = config.address.isEmpty ? "" : ipText(config.address)
-                v6Prefix = config.address.isEmpty ? "" : "\(config.prefix)"
-                v6Gateway = config.gateway.isEmpty || config.gateway.allSatisfy { $0 == 0 }
-                    ? "" : ipText(config.gateway)
-            }
-            dnsText = (held.ipDns ?? []).map(ipText)
-            isEmpty = reading == nil
-        }
-
-        init(_ reading: RemoteCategoryReading?, preserving old: Edits) {
-            let fresh = Edits(reading)
-            self = fresh
-            guard !old.isEmpty else { return }
-            v4Method = v4Method.preserving(old.v4Method)
-            v6Method = v6Method.preserving(old.v6Method)
-            group = group.preserving(old.group)
-            if old.v4Edited(against: fresh) {
-                (v4Address, v4Prefix, v4Gateway) = (old.v4Address, old.v4Prefix, old.v4Gateway)
-            }
-            if old.v6Edited(against: fresh) {
-                (v6Address, v6Prefix, v6Gateway) = (old.v6Address, old.v6Prefix, old.v6Gateway)
-            }
-            if old.dnsText != fresh.dnsText, old.dns.isKnown { dnsText = old.dnsText }
-        }
-
-        private func v4Edited(against fresh: Edits) -> Bool {
-            (v4Address, v4Prefix, v4Gateway) != (fresh.v4Address, fresh.v4Prefix, fresh.v4Gateway)
-        }
-
-        private func v6Edited(against fresh: Edits) -> Bool {
-            (v6Address, v6Prefix, v6Gateway) != (fresh.v6Address, fresh.v6Prefix, fresh.v6Gateway)
-        }
-
-        /// Whether Apply would move either family onto a static address it
-        /// is not already on.
-        var changesStaticAddressing: Bool {
-            (v4Config.isDirty && desiredV4?.method == 2)
-                || (v6Config.isDirty && desiredV6?.method == 2)
-        }
-
-        /// The IPv4 configuration as typed, or nil where it does not yet
-        /// amount to one.
-        var desiredV4: UlcpIpConfigRecord? {
-            configuration(
-                method: v4Method,
-                address: v4Address,
-                prefix: v4Prefix,
-                gateway: v4Gateway,
-                width: 4,
-                held: held.ipv4Config
-            )
-        }
-
-        var desiredV6: UlcpIpConfigRecord? {
-            configuration(
-                method: v6Method,
-                address: v6Address,
-                prefix: v6Prefix,
-                gateway: v6Gateway,
-                width: 16,
-                held: held.ipv6Config
-            )
-        }
-
-        /// One family's configuration, built from what was typed.
-        ///
-        /// Every field has to parse before any of them counts: a
-        /// configuration assembled from a good address and a half-typed
-        /// prefix is a configuration nobody asked for. Under Automatic and
-        /// Off the address fields are not part of the value at all, which
-        /// is what the empty forms in the chapter mean.
-        private func configuration(
-            method: RemoteField<UInt8>,
-            address: String,
-            prefix: String,
-            gateway: String,
-            width: Int,
-            held: UlcpIpConfigRecord?
-        ) -> UlcpIpConfigRecord? {
-            guard let chosen = method.value else { return nil }
-            guard chosen == 2 else {
-                return UlcpIpConfigRecord(
-                    method: chosen,
-                    address: Data(),
-                    prefix: 0,
-                    gateway: Data()
-                )
-            }
-            guard let parsed = ipOctets(address), parsed.count == width,
-                  let bits = UInt8(prefix), Int(bits) <= width * 8
-            else { return held }
-            let router: Data
-            if gateway.isEmpty {
-                router = Data(repeating: 0, count: width)
-            } else if let parsedGateway = ipOctets(gateway), parsedGateway.count == width {
-                router = parsedGateway
-            } else {
-                return held
-            }
-            return UlcpIpConfigRecord(
-                method: chosen,
-                address: parsed,
-                prefix: bits,
-                gateway: router
-            )
-        }
-
-        /// The resolver list as typed, dropping the blank row an operator
-        /// is still filling in.
-        var desiredDns: [Data]? {
-            guard dns.isKnown else { return nil }
-            var resolvers: [Data] = []
-            for text in dnsText where !text.isEmpty {
-                guard let octets = ipOctets(text) else { return dns.reported }
-                resolvers.append(octets)
-            }
-            return resolvers
-        }
-
-        var dirty: Set<UInt32> {
-            var dirty: Set<UInt32> = []
-            if let desired = desiredV4, desired != v4Config.reported {
-                dirty.insert(v4Config.property)
-            }
-            if let desired = desiredV6, desired != v6Config.reported {
-                dirty.insert(v6Config.property)
-            }
-            if let desired = desiredDns, desired != dns.reported {
-                dirty.insert(dns.property)
-            }
-            // A group that does not parse yet is not an edit.
-            if group.isDirty, lanGroupEdit(group.value) != nil {
-                dirty.insert(group.property)
-            }
-            return dirty
-        }
-
-        var desired: UlcpDevicePropertiesRecord {
-            var desired = held
-            desired.ipv4Config = desiredV4 ?? held.ipv4Config
-            desired.ipv6Config = desiredV6 ?? held.ipv6Config
-            desired.ipDns = desiredDns ?? held.ipDns
-            // A cleared field hands the group back to the device's default.
-            if group.isDirty, let edit = lanGroupEdit(group.value) {
-                desired.lanBearerGroup = edit
-            }
-            return desired
-        }
     }
 }
 
-// MARK: - Showing and reading addresses
+// MARK: - Showing addresses
 
 /// What one `IP_*` family state is called.
 func ipStateText(_ code: UInt8?) -> String {
@@ -513,17 +294,4 @@ func ipText(_ octets: Data) -> String {
         return "\(address)"
     }
     return octets.map { String(format: "%02x", $0) }.joined()
-}
-
-/// An address typed by an operator, as octets, or nil where it is not one
-/// yet.
-///
-/// Parsed with the system's parsers for the same reason: what the phone
-/// accepts here and what it accepts anywhere else should be the same set
-/// of strings.
-func ipOctets(_ text: String) -> Data? {
-    let trimmed = text.trimmingCharacters(in: .whitespaces)
-    if let address = IPv4Address(trimmed) { return address.rawValue }
-    if let address = IPv6Address(trimmed) { return address.rawValue }
-    return nil
 }

@@ -41,8 +41,6 @@
     <string name="reason_unreachable">Couldn\'t reach the device.</string>
     <!-- Managing a node: its reply did not decode. -->
     <string name="reason_unreadable">The device\'s answer couldn\'t be read. Its firmware may be newer than this app.</string>
-    <!-- Managing a node: it refused. The placeholder is a protocol status name, not translated. -->
-    <string name="reason_refused">The device refused the request: <xliff:g id="status" example="UNSUPPORTED">%1$s</xliff:g>.</string>
     <!-- A request the person stopped. -->
     <string name="reason_cancelled">The operation was canceled.</string>
     <!-- The phone's radio could not transmit a request. -->

@@ -773,6 +773,7 @@ version = "0.30.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2e99fb7a497b1e3339bc746195567ed8d3e24945ecd636e3619d20b9de9e9149"
 dependencies = [
+ "cc",
  "pkg-config",
  "vcpkg",
 ]
@@ -1538,8 +1539,11 @@ name = "umsh-mobile-core"
 version = "0.1.0"
 dependencies = [
  "embedded-hal-async",
+ "libc",
+ "log",
  "lwuri",
  "rand",
+ "rusqlite",
  "tokio",
  "umsh-core",
  "umsh-crypto",
@@ -1604,6 +1608,7 @@ version = "0.1.0"
 dependencies = [
  "heapless 0.8.0",
  "umsh-core",
+ "umsh-grapheme",
  "umsh-mac",
  "umsh-node",
 ]

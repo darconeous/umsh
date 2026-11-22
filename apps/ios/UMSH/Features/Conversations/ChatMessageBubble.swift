@@ -245,9 +245,9 @@ struct ChatMessageBubble: View, @MainActor Equatable {
     var onResend: (() -> Void)?
     var onShowDetails: (() -> Void)?
     var onShowSender: (() -> Void)?
-    /// React with a palette glyph, or withdraw by passing the one already
-    /// chosen. The picker marks the current choice, so the same tap that
-    /// selects also unselects.
+    /// Toggle a palette glyph: the core adds it, or withdraws it when it is
+    /// already ours. The picker marks the current choice, so the same tap
+    /// that selects also unselects.
     var onReact: ((String) -> Void)?
     /// Start a reply to this message. Absent where there is nothing a reply
     /// could name.
@@ -541,7 +541,7 @@ struct ChatMessageBubble: View, @MainActor Equatable {
             // The words match what confirming will do: a recent failure
             // retries in place, an old one goes out as a new message.
             Button(
-                message.isWithinReviseWindow ? "Try Again" : "Resend",
+                message.actions.resend == .inPlace ? "Try Again" : "Resend",
                 systemImage: "arrow.clockwise",
                 action: onResend
             )

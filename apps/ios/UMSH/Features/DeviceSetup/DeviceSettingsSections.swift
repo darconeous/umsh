@@ -17,7 +17,7 @@ import UMSHMobileCore
 struct LinkNoticesSection: View {
     /// Non-nil once the link has failed, holding what to say about it.
     let connectionProblem: String?
-    let unreadableSettings: [String]
+    let unreadable: [MobileSetupUnreadable]
 
     var body: some View {
         if let connectionProblem {
@@ -29,12 +29,15 @@ struct LinkNoticesSection: View {
             }
         }
 
-        if !unreadableSettings.isEmpty {
+        if !unreadable.isEmpty {
             Section {
                 Label("Some settings could not be read", systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
+                ForEach(unreadable, id: \.self) { setting in
+                    Text(setting.title)
+                }
             } footer: {
-                Text("This device did not report \(unreadableSettings.formatted(.list(type: .and))). Those settings are not shown here and are set to this sheet's values when you apply changes, because the device accepts its configuration whole. Everything else works normally.")
+                Text("These are not shown and are left as they are when you apply.", comment: "Device setup: footer under the settings the device did not report.")
             }
         }
     }
@@ -46,13 +49,15 @@ struct LinkNoticesSection: View {
 /// Not a warning: none of it stops the device being set up, and dressing a
 /// hardware fact as a problem would send the operator looking for a fault.
 struct SetupNoteSection: View {
-    let note: String
+    let notes: [MobileSetupNote]
 
     var body: some View {
         Section {
-            Text(note)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+            ForEach(notes, id: \.self) { note in
+                Text(note.text)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 }
@@ -87,15 +92,19 @@ struct ForeignRadioSection: View {
 /// showing a value says nothing about what the value is, and a header reading
 /// "Device" said even less. `Required` is not decoration—a device that
 /// accepts a name will not accept an empty one, and an empty field is what
-/// keeps Apply disabled.
+/// keeps Apply disabled. A name the device cannot take says why under the
+/// label.
 struct DeviceNameSection: View {
     @Binding var name: String
+    let problem: String?
 
     var body: some View {
         Section {
-            LabeledContent("Name") {
+            LabeledContent {
                 TextField("Required", text: $name)
                     .multilineTextAlignment(.trailing)
+            } label: {
+                RemoteFieldTitle("Name", problem: problem)
             }
         } footer: {
             Text("The device name is public and may be visible in Bluetooth discovery.")
@@ -108,12 +117,20 @@ struct DeviceNameSection: View {
 /// The whole PHY profile named at once, for an operator who knows which mesh
 /// they are joining rather than which spreading factor it uses.
 struct RadioPresetSection: View {
-    @Binding var presetIdentifier: String
+    /// The vetted preset the radio fields spell out; `nil` is custom.
+    let presetID: String?
+    let adopt: (String) -> Void
 
     var body: some View {
         Section {
-            Picker("Radio profile", selection: $presetIdentifier) {
-                Text("Custom / manual").tag("custom")
+            Picker("Radio profile", selection: Binding(
+                get: { presetID ?? Self.custom },
+                set: { chosen in
+                    guard chosen != Self.custom else { return }
+                    adopt(chosen)
+                }
+            )) {
+                Text("Custom / manual").tag(Self.custom)
                 ForEach(RadioPreset.vetted) { preset in
                     Text(preset.name).tag(preset.id)
                 }
@@ -124,60 +141,25 @@ struct RadioPresetSection: View {
             Text("A preset sets every radio parameter below. Choose the one your local mesh uses; nodes with different PHY settings cannot hear each other.")
         }
     }
+
+    /// The picker's row for parameters no vetted preset spells out.
+    private static let custom = "custom"
 }
 
-/// Every radio parameter, one control each.
-struct RadioSection: View {
-    @Binding var enabled: Bool
-    @Binding var frequencyKHz: String
-    @Binding var transmitPowerDBm: String
-    let showsLoRa: Bool
-    @Binding var bandwidthHz: UInt32
-    @Binding var spreadingFactor: UInt8
-    @Binding var codingRate: UInt8
-    let showsDutyCycleLimit: Bool
-    let dutyCycleOptions: [(value: UInt16, label: String)]
-    @Binding var dutyCycleLimit: UInt16
+/// A picker's rows over a list the core offers: each offered value, then
+/// the value the field holds when it is not one of them, which the picker
+/// must still show or the next pick would silently rewrite it.
+struct ChoiceListRows: View {
+    let list: MobileChoiceList?
+    let label: (Int64) -> String
 
     var body: some View {
-        Section {
-            Toggle("Radio enabled", isOn: $enabled)
-            LabeledContent("Frequency") {
-                SettingsNumberInput(title: "Frequency", unit: "kHz", text: $frequencyKHz, accessibilityName: "Frequency in kilohertz")
-            }
-            .labeledContentStyle(SettingsFieldStyle())
-            LabeledContent("Transmit power") {
-                SettingsNumberInput(title: "Transmit power", unit: "dBm", text: $transmitPowerDBm, signed: true)
-            }
-            .labeledContentStyle(SettingsFieldStyle())
-            if showsLoRa {
-                Picker("Bandwidth", selection: $bandwidthHz) {
-                    ForEach(ulcpSupportedBandwidthsHz(), id: \.self) { hertz in
-                        Text(RadioValuePresentation.bandwidth(hertz)).tag(hertz)
-                    }
-                }
-                Picker("Spreading factor", selection: $spreadingFactor) {
-                    ForEach(UInt8(5)...UInt8(12), id: \.self) { value in
-                        Text("SF\(value)").tag(value)
-                    }
-                }
-                Picker("Coding rate", selection: $codingRate) {
-                    ForEach(UInt8(5)...UInt8(8), id: \.self) { value in
-                        Text("4/\(value)").tag(value)
-                    }
-                }
-            }
-            if showsDutyCycleLimit {
-                Picker("Transmit limit", selection: $dutyCycleLimit) {
-                    ForEach(dutyCycleOptions, id: \.value) { option in
-                        Text(option.label).tag(option.value)
-                    }
-                }
-            }
-        } header: {
-            Text("Radio")
-        } footer: {
-            Text("Changing PHY settings can leave this device unable to reach peers on a different configuration.")
+        ForEach(list?.offered ?? [], id: \.self) { value in
+            Text(verbatim: label(value)).choiceTag(value)
+        }
+        if let other = list?.other {
+            Text("Custom (\(label(other)))", comment: "A picker row for a value the device holds that is not one of the offered choices. The placeholder is that value.")
+                .choiceTag(other)
         }
     }
 }
@@ -190,7 +172,7 @@ struct RadioSection: View {
 /// transmit power onto a mast-mounted repeater is something the operator can
 /// see and correct.
 struct RadioProfileSection: View {
-    let resolution: ResolvedRadioProfile
+    let profile: MobileSetupProfile
     /// False only while a required choice is outstanding.
     let chosen: Bool
     /// The vetted profile the radio fields currently spell out, if any.
@@ -205,12 +187,16 @@ struct RadioProfileSection: View {
                 destination()
             } label: {
                 LabeledContent("Radio profile") {
-                    if needsChoice {
+                    if profile.needsChoice(chosen: chosen) {
                         Text("Choose").foregroundStyle(.orange)
                     } else {
                         VStack(alignment: .trailing, spacing: 2) {
-                            Text(presetName ?? "Custom")
-                            Text(summary)
+                            if let presetName {
+                                Text(verbatim: presetName)
+                            } else {
+                                Text("Custom", comment: "Device setup: the radio profile is not one of the vetted presets.")
+                            }
+                            Text(verbatim: summary)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -220,61 +206,102 @@ struct RadioProfileSection: View {
         } header: {
             Text("Radio")
         } footer: {
-            Text(footer)
-        }
-    }
-
-    private var needsChoice: Bool { resolution.requiresChoice && !chosen }
-
-    private var footer: String {
-        let warning = " Nodes on different profiles cannot hear each other."
-        switch resolution {
-        case let .copied(_, source, _):
-            let from = source.map { "Copied from \($0)." } ?? "Copied from this phone's radio."
-            return from + warning
-        case let .mustChoose(reason):
-            guard needsChoice else { return "Set for this device." + warning }
-            return reason.text + " Choose the profile your local mesh uses before continuing."
-        case let .leftAsFound(reason):
-            return reason.text
-                + " This device is left on the profile it already had."
-                + warning
+            Text(profile.footer(chosen: chosen))
         }
     }
 }
 
-extension ResolvedRadioProfile.MissingReason {
-    var text: String {
-        switch self {
-        case .noCompanion:
-            "This phone has no companion radio to copy a profile from."
-        case .companionHasNoModemProfile:
-            "This phone's radio did not report its modem settings, so there was nothing to copy."
+/// The radio fields as one line of numbers, for the radio-profile row.
+enum RadioProfileSummary {
+    static func text(_ radio: MobileRadioDraft, showsModem: Bool, locale: Locale = .current) -> String {
+        let frequency = Measurement(value: Double(radio.frequencyKhz.value) / 1_000, unit: UnitFrequency.megahertz)
+            .formatted(
+                .measurement(
+                    width: .abbreviated,
+                    usage: .asProvided,
+                    numberFormatStyle: .number.precision(.fractionLength(0...3)).grouping(.never)
+                )
+                .locale(locale)
+            )
+        let power = SignalPresentation.powerText(Int(radio.transmitPowerDbm.value), locale: locale)
+        guard showsModem,
+              let hertz = radio.bandwidth.value,
+              let factor = radio.spreadingFactor.value,
+              let rate = radio.codingRate.value
+        else {
+            return String(
+                localized: "\(frequency) · \(power)",
+                locale: locale,
+                comment: "Device setup: a radio profile as one line. The placeholders are the frequency and the transmit power, each with its unit."
+            )
         }
+        let bandwidth = RadioValuePresentation.bandwidth(UInt32(clamping: hertz))
+        return String(
+            localized: "\(frequency) · \(bandwidth) BW · SF\(factor) · 4/\(rate) · \(power)",
+            locale: locale,
+            comment: "Device setup: a radio profile as one line: frequency, bandwidth, spreading factor, coding rate, and transmit power, each figure with its unit. BW is bandwidth, SF the spreading factor."
+        )
     }
 }
 
 /// Everything behind the radio-profile row, on its own screen.
 struct RadioProfileEditorView: View {
-    @Bindable var draft: DeviceConfigDraft
+    @Bindable var model: DeviceSetupModel
 
     var body: some View {
+        let setup = model.snapshot
+        let choices = model.review?.choices
+        let radio = model.draft.radio
         Form {
-            if draft.showsPresets {
-                RadioPresetSection(presetIdentifier: $draft.presetIdentifier)
+            if setup.showsPresets {
+                RadioPresetSection(presetID: model.review?.presetId, adopt: model.adoptPreset)
             }
-            RadioSection(
-                enabled: $draft.radioEnabled,
-                frequencyKHz: $draft.frequencyKHz,
-                transmitPowerDBm: $draft.transmitPowerDBm,
-                showsLoRa: draft.showsLoRa,
-                bandwidthHz: $draft.bandwidthHz,
-                spreadingFactor: $draft.spreadingFactor,
-                codingRate: $draft.codingRate,
-                showsDutyCycleLimit: draft.showsDutyCycleLimit,
-                dutyCycleOptions: draft.dutyCycleOptions,
-                dutyCycleLimit: $draft.dutyCycleLimit
-            )
+            Section {
+                RemoteToggleField("Radio enabled", field: $model.draft.radio.enabled)
+                RemoteIntegerField(
+                    "Frequency",
+                    unit: "kHz",
+                    field: model.radioNumber(.frequency, \.frequencyKhz),
+                    problem: model.problem(for: radio.frequencyKhz.propertyId)
+                )
+                RemoteIntegerField(
+                    "Transmit power",
+                    unit: "dBm",
+                    field: model.radioNumber(.transmitPower, \.transmitPowerDbm),
+                    signed: true,
+                    problem: model.problem(for: radio.transmitPowerDbm.propertyId)
+                )
+                if setup.showsModem {
+                    RemoteChoiceField("Bandwidth", field: model.radioChoice(.bandwidth, \.bandwidth)) {
+                        ChoiceListRows(list: choices?.bandwidthsHz) {
+                            RadioValuePresentation.bandwidth(UInt32(clamping: $0))
+                        }
+                    }
+                    RemoteChoiceField("Spreading factor", field: model.radioChoice(.spreadingFactor, \.spreadingFactor)) {
+                        ChoiceListRows(list: choices?.spreadingFactors) {
+                            String(localized: "SF\($0)", comment: "A LoRa spreading factor, such as SF9. SF is the usual abbreviation.")
+                        }
+                    }
+                    RemoteChoiceField("Coding rate", field: model.radioChoice(.codingRate, \.codingRate)) {
+                        ChoiceListRows(list: choices?.codingRates) {
+                            String(localized: "4/\($0)", comment: "A LoRa coding rate, such as 4/5.")
+                        }
+                    }
+                }
+                if setup.showsDutyLimit {
+                    RemoteChoiceField("Transmit limit", field: model.radioChoice(.dutyLimit, \.dutyLimit)) {
+                        ChoiceListRows(list: choices?.dutyLimits) { limit in
+                            limit == Int64(UInt16.max)
+                                ? String(localized: "Disabled", comment: "A transmit limit of none.")
+                                : formattedDutyCycle(UInt16(clamping: limit))
+                        }
+                    }
+                }
+            } header: {
+                Text("Radio")
+            } footer: {
+                Text("Changing PHY settings can leave this device unable to reach peers on a different configuration.")
+            }
         }
         .navigationTitle("Radio Profile")
         .navigationBarTitleDisplayMode(.inline)
@@ -315,7 +342,8 @@ struct DiscoverabilitySection: View {
 struct PositioningSection: View {
     @Binding var enabled: Bool
     @Binding var identUpdate: Bool
-    @Binding var identPrecision: UInt8
+    @Binding var identPrecision: Int64?
+    let precisions: MobileChoiceList?
     @Binding var timeTrust: Bool
 
     var body: some View {
@@ -324,34 +352,35 @@ struct PositioningSection: View {
             Toggle("Share location in identity", isOn: $identUpdate)
             if identUpdate {
                 Picker("Shared precision", selection: $identPrecision) {
-                    ForEach(UInt8(1)...UInt8(7), id: \.self) { precision in
-                        Text(precisionLabel(precision)).tag(precision)
-                    }
+                    ChoiceListRows(list: precisions) { precisionLabel($0) }
                 }
             }
             Toggle("Trust receiver time", isOn: $timeTrust)
         } header: {
             Text("Positioning")
         } footer: {
-            Text(footer)
+            VStack(alignment: .leading, spacing: 4) {
+                if enabled {
+                    Text("The receiver is usually the largest continuous load on a battery-powered node.")
+                } else {
+                    Text("The receiver is powered down to the lowest state this board can reach.")
+                }
+                if identUpdate {
+                    Text("Nodes that can read this device's identity are told a \(precisionLabel(identPrecision)) area it is inside—never a more precise position than that.", comment: "Device setup: positioning footer. The placeholder is a cell size such as 611 m.")
+                } else {
+                    Text("The device does not put its location in the identity it advertises.")
+                }
+                if timeTrust {
+                    Text("Fixes set the device's clock.")
+                } else {
+                    Text("Fixes never touch the clock, so a hand-set time is safe from a jammed or spoofed sky. Positions are unaffected.")
+                }
+            }
         }
     }
 
-    private var footer: String {
-        var footer = enabled
-            ? "The receiver is usually the largest continuous load on a battery-powered node."
-            : "The receiver is powered down to the lowest state this board can reach."
-        footer += identUpdate
-            ? " Nodes that can read this device's identity are told a \(precisionLabel(identPrecision)) area it is inside—never a more precise position than that."
-            : " The device does not put its location in the identity it advertises."
-        footer += timeTrust
-            ? " Fixes set the device's clock."
-            : " Fixes never touch the clock, so a hand-set time is safe from a jammed or spoofed sky. Positions are unaffected."
-        return footer
-    }
-
-    private func precisionLabel(_ precision: UInt8) -> String {
-        LocationPresentation.precisionLabel(precisionBytes: precision)
+    private func precisionLabel(_ precision: Int64?) -> String {
+        LocationPresentation.precisionLabel(precisionBytes: UInt8(clamping: precision ?? 0))
     }
 }
 
@@ -359,54 +388,69 @@ struct PositioningSection: View {
 
 /// What the device says about itself unasked, on its own schedule.
 struct AnnouncementsSection: View {
-    @Binding var beaconIntervalSeconds: UInt32
-    @Binding var advertIntervalSeconds: UInt32
+    @Binding var beaconInterval: Int64?
+    let beaconChoices: MobileChoiceList?
+    @Binding var advertInterval: Int64?
+    let advertChoices: MobileChoiceList?
     @Binding var startupBeacon: Bool
 
     var body: some View {
         Section {
-            Picker("Beacon", selection: $beaconIntervalSeconds) {
-                ForEach(beaconIntervalChoices, id: \.self) { seconds in
-                    Text(formattedAnnouncementInterval(seconds)).tag(seconds)
-                }
+            Picker("Beacon", selection: $beaconInterval) {
+                ChoiceListRows(list: beaconChoices, label: Self.intervalLabel)
             }
-            Picker("Identity", selection: $advertIntervalSeconds) {
-                ForEach(advertisementIntervalChoices, id: \.self) { seconds in
-                    Text(formattedAnnouncementInterval(seconds)).tag(seconds)
-                }
+            Picker("Identity", selection: $advertInterval) {
+                ChoiceListRows(list: advertChoices, label: Self.intervalLabel)
             }
             Toggle("Beacon at startup", isOn: $startupBeacon)
         } header: {
             Text("Announcements")
         } footer: {
-            Text(footer)
+            VStack(alignment: .leading, spacing: 4) {
+                if (beaconInterval ?? 0) > 0 {
+                    Text("A beacon carries no payload and collects the path back to this device as it travels, so it publishes a route for very little airtime.")
+                } else {
+                    Text("The device sends no beacons, so nothing refreshes the mesh's route back to it.")
+                }
+                if (advertInterval ?? 0) > 0 {
+                    Text("An identity announcement carries this device's name, role, and capabilities, and reaches only the nodes that can hear it directly.")
+                } else {
+                    Text("The device announces its identity only when asked.")
+                }
+                if (beaconInterval ?? 0) > 0 || (advertInterval ?? 0) > 0 {
+                    Text("Each interval is a minimum: periods run a little longer at random, so devices on the same schedule do not all transmit at once.")
+                }
+            }
         }
     }
 
-    private var footer: String {
-        var footer = beaconIntervalSeconds > 0
-            ? "A beacon carries no payload and collects the path back to this device as it travels, so it publishes a route for very little airtime."
-            : "The device sends no beacons, so nothing refreshes the mesh's route back to it."
-        footer += advertIntervalSeconds > 0
-            ? " An identity announcement carries this device's name, role, and capabilities, and reaches only the nodes that can hear it directly."
-            : " The device announces its identity only when asked."
-        if beaconIntervalSeconds > 0 || advertIntervalSeconds > 0 {
-            footer += " Each interval is a minimum: periods run a little longer at random, so devices on the same schedule do not all transmit at once."
-        }
-        return footer
+    private static func intervalLabel(_ seconds: Int64) -> String {
+        formattedAnnouncementInterval(UInt32(clamping: seconds))
     }
 }
 
 // MARK: - Apply status
 
-/// How the last write went, at the foot of the form.
+/// How the last apply went, at the foot of the form, and what keeps the next
+/// one from being allowed.
 struct ApplyStatusSection: View {
-    let problem: String?
+    let result: MobileSetupResult?
+    /// Settings holding a value the device cannot take that have no box of
+    /// their own to say so under.
+    let unshownProblems: [MobileSetupSetting]
     let applied: Bool
 
     var body: some View {
-        if let problem {
-            Section { Text(problem).foregroundStyle(.red) }
+        if let text = result?.statusText {
+            Section { Text(text).foregroundStyle(.red) }
+        }
+
+        if !unshownProblems.isEmpty {
+            Section {
+                ForEach(unshownProblems, id: \.self) { setting in
+                    Text(setting.cannotBeSet).foregroundStyle(.red)
+                }
+            }
         }
 
         if applied {

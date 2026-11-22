@@ -34,6 +34,9 @@ struct SettingsView: View {
     /// Records a device met during setup as an ordinary peer. Absent when
     /// there is no identity or store to record it against.
     var saveDevicePeer: ((MeshPublicIdentity, String?, PeerRole?) async throws -> Void)? = nil
+    /// What setting up a device asks of the core. Absent when there is no
+    /// core to ask.
+    var deviceSetupServices: DeviceSetupServices? = nil
     /// Whether a node address is already in this phone's Peers list.
     var isPeerSaved: (String) -> Bool = { _ in false }
     /// Handed to every peer sheet reachable from Settings so those sheets
@@ -192,6 +195,17 @@ struct SettingsView: View {
                 problem: regionService?.unavailableMessage
             )
 
+            Section {
+                NavigationLink {
+                    DiagnosticsView(radio: radioSnapshot)
+                } label: {
+                    Text("Diagnostics", comment: "Settings row: opens the page with this launch's log and the app's and radio's versions.")
+                }
+                .accessibilityIdentifier("settings.diagnostics")
+            } header: {
+                Text("App", comment: "Settings section header: about this app itself, not the mesh or a radio.")
+            }
+
             #if DEBUG
             Section("Interface") {
                 NavigationLink("Component Gallery") { ComponentGalleryView() }
@@ -331,10 +345,7 @@ struct SettingsView: View {
                 hostIdentity: identity?.publicIdentity,
                 companionIdentifier: radioSnapshot.localIdentifier,
                 companionName: radioSnapshot.name,
-                companionProfile: CompanionRadioProfile(
-                    radioSnapshot.provisioning,
-                    name: radioSnapshot.name
-                ),
+                services: deviceSetupServices,
                 saveDevicePeer: saveDevicePeer,
                 isPeerSaved: isPeerSaved,
                 peerActions: peerActions
@@ -376,21 +387,42 @@ struct IdentityDetailView: View {
     @AppStorage("phone.advertIntervalSeconds") private var phoneAdvertInterval = 0
     @AppStorage("phone.beaconIntervalSeconds") private var phoneBeaconInterval = 0
     @AppStorage("phone.shareLocation") private var phoneSharesLocation = false
-    @AppStorage("phone.locationPrecision") private var phoneLocationPrecision = 5
+    /// Optional, so an unset key reads the core's starting value rather than
+    /// a literal copy of it; the computed values below fill it in.
+    @AppStorage("phone.locationPrecision") private var storedLocationPrecision: Int?
     /// How far what this phone sends may travel, in repeater hops. The
     /// runtime reads the same keys and hands them to the mesh session.
-    @AppStorage("phone.floodHops") private var phoneFloodHops = Self.recommendedFloodHops
-    @AppStorage("phone.beaconFloodHops") private var phoneBeaconFloodHops = Self.recommendedBeaconFloodHops
+    @AppStorage("phone.floodHops") private var storedFloodHops: Int?
+    @AppStorage("phone.beaconFloodHops") private var storedBeaconFloodHops: Int?
+    private let limits = CoreLimits.current
+
+    private var phoneLocationPrecision: Int {
+        get { Int(CoreLimits.locationPrecision(stored: storedLocationPrecision)) }
+        nonmutating set { storedLocationPrecision = newValue }
+    }
+
+    private var phoneFloodHops: Int {
+        get { Int(CoreLimits.floodHops(stored: storedFloodHops)) }
+        nonmutating set { storedFloodHops = newValue }
+    }
+
+    private var phoneBeaconFloodHops: Int {
+        get { Int(CoreLimits.beaconFloodHops(stored: storedBeaconFloodHops)) }
+        nonmutating set { storedBeaconFloodHops = newValue }
+    }
+
     /// Past these, the picker asks for confirmation.
-    static let recommendedFloodHops = 10
-    static let recommendedBeaconFloodHops = 5
+    private var recommendedFloodHops: Int { Int(limits.recommendedFloodHops) }
+    private var recommendedBeaconFloodHops: Int { Int(limits.recommendedBeaconFloodHops) }
     /// A reach just picked past its recommended ceiling, held until the
     /// user confirms or the picker is put back.
     @State private var reachWarning: ReachWarning?
 
     private struct ReachWarning {
         let isBeacon: Bool
-        let previous: Int
+        /// The stored value before the pick; nil keeps following the
+        /// core's recommended reach.
+        let previous: Int?
     }
 
     var body: some View {
@@ -466,18 +498,25 @@ struct IdentityDetailView: View {
             }
 
             Section {
-                Picker("Messages and requests", selection: $phoneFloodHops) {
-                    ForEach(1...15, id: \.self) { hops in
+                Picker("Messages and requests", selection: Binding(
+                    get: { phoneFloodHops },
+                    set: { phoneFloodHops = $0 }
+                )) {
+                    ForEach(1...Int(limits.maxFloodHops), id: \.self) { hops in
                         Text("^[\(hops) hop](inflect: true)").tag(hops)
                     }
                 }
-                .onChange(of: phoneFloodHops) { previous, current in
-                    if current > Self.recommendedFloodHops, previous <= Self.recommendedFloodHops {
+                .onChange(of: storedFloodHops) { previous, _ in
+                    let before = Int(CoreLimits.floodHops(stored: previous))
+                    if phoneFloodHops > recommendedFloodHops, before <= recommendedFloodHops {
                         reachWarning = ReachWarning(isBeacon: false, previous: previous)
                     }
                 }
-                Picker("Beacon", selection: $phoneBeaconFloodHops) {
-                    ForEach(0...15, id: \.self) { hops in
+                Picker("Beacon", selection: Binding(
+                    get: { phoneBeaconFloodHops },
+                    set: { phoneBeaconFloodHops = $0 }
+                )) {
+                    ForEach(0...Int(limits.maxFloodHops), id: \.self) { hops in
                         if hops == 0 {
                             Text("Direct neighbors only").tag(hops)
                         } else {
@@ -485,9 +524,10 @@ struct IdentityDetailView: View {
                         }
                     }
                 }
-                .onChange(of: phoneBeaconFloodHops) { previous, current in
-                    if current > Self.recommendedBeaconFloodHops,
-                       previous <= Self.recommendedBeaconFloodHops {
+                .onChange(of: storedBeaconFloodHops) { previous, _ in
+                    let before = Int(CoreLimits.beaconFloodHops(stored: previous))
+                    if phoneBeaconFloodHops > recommendedBeaconFloodHops,
+                       before <= recommendedBeaconFloodHops {
                         reachWarning = ReachWarning(isBeacon: true, previous: previous)
                     }
                 }
@@ -500,8 +540,11 @@ struct IdentityDetailView: View {
             Section {
                 Toggle("Share location in identity", isOn: $phoneSharesLocation)
                 if phoneSharesLocation {
-                    Picker("Shared precision", selection: $phoneLocationPrecision) {
-                        ForEach(1...7, id: \.self) { precision in
+                    Picker("Shared precision", selection: Binding(
+                        get: { phoneLocationPrecision },
+                        set: { phoneLocationPrecision = $0 }
+                    )) {
+                        ForEach(Int(limits.minLocationPrecision)...Int(limits.maxLocationPrecision), id: \.self) { precision in
                             Text(precisionLabel(UInt8(precision))).tag(precision)
                         }
                     }
@@ -542,16 +585,16 @@ struct IdentityDetailView: View {
         ) { warning in
             Button("Cancel", role: .cancel) {
                 if warning.isBeacon {
-                    phoneBeaconFloodHops = warning.previous
+                    storedBeaconFloodHops = warning.previous
                 } else {
-                    phoneFloodHops = warning.previous
+                    storedFloodHops = warning.previous
                 }
             }
             Button("Continue") {}
         } message: { warning in
             Text(warning.isBeacon
-                 ? "Setting a beacon reach larger than \(Self.recommendedBeaconFloodHops) hops is not recommended. Are you sure you want to do this?"
-                 : "Setting a default flood hop count larger than \(Self.recommendedFloodHops) is not recommended. Are you sure you want to do this?")
+                 ? "Setting a beacon reach larger than \(recommendedBeaconFloodHops) hops is not recommended. Are you sure you want to do this?"
+                 : "Setting a default flood hop count larger than \(recommendedFloodHops) is not recommended. Are you sure you want to do this?")
         }
         .task {
             nameDraft = advertisedName
@@ -711,10 +754,16 @@ struct RadioDetailView: View {
     @State private var confirmsHostReplacement = false
     @State private var confirmsForget = false
     @State private var confirmsFactoryReset = false
-    /// Why the last restart or factory reset could not be sent. One slot
-    /// for both: only one of them is ever in flight, and the alert says
+    /// The last restart or factory reset that could not be sent. One slot
+    /// for both: only one of them is ever in flight, and the title says
     /// which it was.
-    @State private var radioActionProblem: String?
+    @State private var failure: FailureNotice?
+    /// Both commands fail the same way: the radio link did not carry them.
+    /// Fixed rather than the core's reason, since these are link errors, not
+    /// the core's.
+    private static var radioActionUnsent: String {
+        String(localized: "The request did not reach the radio.", comment: "Why a radio restart or factory reset was not sent.")
+    }
     @State private var confirmsReboot = false
     @State private var showsRadioPicker = false
     @State private var radioAccessories = RadioAccessories.shared
@@ -821,12 +870,13 @@ struct RadioDetailView: View {
                 if let manageCompanion = peerActions.manageCompanion,
                    snapshot.provisioning != nil, canEditConfiguration {
                     NavigationLink {
-                        ManageDeviceScreen(
-                            companionAddress: snapshot.deviceIdentity?.canonicalAddress,
-                            name: snapshot.name ?? "Radio",
-                            management: manageCompanion(),
-                            browsing: companionBrowsing
+                        let name = snapshot.name ?? String(
+                            localized: "Radio",
+                            comment: "What to call the attached radio before it reports a name."
                         )
+                        ManageDeviceScreen(browsing: companionBrowsing) {
+                            try await manageCompanion(name)
+                        }
                     } label: {
                         Label("Manage Device", systemImage: "slider.horizontal.3")
                     }
@@ -918,7 +968,10 @@ struct RadioDetailView: View {
                     do {
                         try await reboot()
                     } catch {
-                        radioActionProblem = "The restart could not be sent. Make sure the radio is still connected, then try again."
+                        failure = FailureNotice(
+                            title: String(localized: "Restart Not Sent", comment: "Alert title: the radio was not asked to restart."),
+                            message: Self.radioActionUnsent
+                        )
                     }
                 }
             }
@@ -937,7 +990,10 @@ struct RadioDetailView: View {
                         try await factoryReset()
                         dismiss()
                     } catch {
-                        radioActionProblem = "The factory reset could not be sent. Make sure the radio is still connected, then try again."
+                        failure = FailureNotice(
+                            title: String(localized: "Factory Reset Not Sent", comment: "Alert title: the radio was not asked to factory reset."),
+                            message: Self.radioActionUnsent
+                        )
                     }
                 }
             }
@@ -945,17 +1001,7 @@ struct RadioDetailView: View {
         } message: {
             Text("Permanently erases the radio's saved settings, its device identity, and every Bluetooth pairing, then reboots it to a blank factory state. This cannot be undone—you will need to set the radio up again from scratch.")
         }
-        .alert(
-            "Factory Reset Failed",
-            isPresented: Binding(
-                get: { radioActionProblem != nil },
-                set: { if !$0 { radioActionProblem = nil } }
-            )
-        ) {
-            Button("OK", role: .cancel) { radioActionProblem = nil }
-        } message: {
-            Text(radioActionProblem ?? "")
-        }
+        .failureAlert($failure)
         .sheet(isPresented: $showsRadioPicker, onDismiss: { Task { await stopDiscovery() } }) {
             NavigationStack {
                 RadioPickerView(

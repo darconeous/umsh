@@ -83,13 +83,12 @@ impl Worker {
         for state in update.states {
             self.radio_state(Some(state));
         }
-        if !update.pushed_properties.is_empty() || update.pushed_properties_dropped > 0 {
-            self.shared.publish(|_| MobileAppChangesRecord {
-                property_pushes: update.pushed_properties,
-                property_pushes_dropped: update.pushed_properties_dropped,
-                ..MobileAppChangesRecord::default()
-            });
-        }
+        // Each device managed over this radio takes its pushes in order.
+        self.managed_pushes(
+            &driver,
+            &update.pushed_properties,
+            update.pushed_properties_dropped,
+        );
     }
 
     /// One state the driver passed through, or `None` when the core no
@@ -200,12 +199,7 @@ impl Worker {
         };
         // A broadcast must carry a valid signature; an unsigned bundle is
         // trusted only when the frame that brought it was authenticated.
-        let trusted = match identity.signature {
-            IdentitySignatureState::Valid => true,
-            IdentitySignatureState::Unsigned => advertisement.source_authenticated,
-            IdentitySignatureState::Invalid => false,
-        };
-        if !trusted {
+        if !super::mapping::attributable(identity.signature, advertisement.source_authenticated) {
             return;
         }
         let now_ms = self.clock.now_ms();

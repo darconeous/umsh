@@ -13,125 +13,111 @@ extension UlcpDevicePropertiesRecord {
     static let empty = inspectUlcpProperties(responses: [])
 }
 
-/// The properties one management screen is about, and what is known of them.
+/// One category's reading as the screens look it up: the core's record,
+/// with its lists turned into the dictionaries a view indexes by property.
 ///
-/// Held per category rather than per device because that is the unit that
-/// goes on the air: a screen asks for its own handful and nothing else.
-///
-/// The octets are the truth here and the decoded record is derived from
-/// them, so a write's echoes fold in as a dictionary merge—no field of
-/// the record needs its own rule for what a partial update means.
+/// Built once per published reading. Everything here is the core's; this
+/// only changes its shape.
 struct RemoteCategoryReading {
+    let record: MobileCategoryReadingRecord
     /// What each property last came back as, verbatim.
-    private(set) var values: [UInt32: Data] = [:]
-    /// Each sample keeps its own date: a setting echo must not restart an
-    /// older clock or uptime reading at the echo's arrival time.
-    private(set) var receivedAt: [UInt32: Date] = [:]
+    let values: [UInt32: Data]
+    /// Each sample's own instant: a setting's echo does not redate an older
+    /// clock or uptime reading.
+    let receivedAt: [UInt32: Date]
+    /// Each property's read state, by property.
+    let states: [UInt32: MobilePropertyState]
+
+    init(_ record: MobileCategoryReadingRecord) {
+        self.record = record
+        values = Dictionary(
+            record.values.map { ($0.propertyId, $0.value) },
+            uniquingKeysWith: { _, last in last }
+        )
+        receivedAt = Dictionary(
+            record.values.map { ($0.propertyId, Self.instant($0.receivedAtMs)) },
+            uniquingKeysWith: { _, last in last }
+        )
+        states = Dictionary(
+            record.states.map { ($0.propertyId, $0.state) },
+            uniquingKeysWith: { _, last in last }
+        )
+    }
+
     /// What those octets mean.
-    private(set) var properties = UlcpDevicePropertiesRecord.empty
+    var properties: UlcpDevicePropertiesRecord { record.properties }
     /// The properties this category covers on this device, in ask order.
-    var propertyIDs: [UInt32] = []
-    /// Properties the device refused, which is how it says it does not
-    /// implement one its capabilities implied.
-    var refused: Set<UInt32> = []
-    /// Keep individual error codes: an acquisition failure is not an
-    /// unsupported diagnostic and must remain visible and retryable.
-    var statuses: [UInt32: UInt32] = [:]
-    /// Transport failures are distinct from property refusals and malformed values.
-    var failures: [UInt32: String] = [:]
-    /// A failed metadata replacement must not discard usable labels.
-    private(set) var invalidTemperatureNames = false
-    /// Battery pushes update the summary independently of explicit reads
-    /// of the diagnostics, so they must not make old diagnostics look fresh.
-    private(set) var batteryDiagnosticsAsOf: Date?
+    var propertyIDs: [UInt32] { record.propertyIds }
     /// When the values on screen were learned. `nil` means nothing has been
     /// read, so the fields have nothing to prefill from.
-    private(set) var asOf: Date?
-    /// Whether any of it came off the air this session, as opposed to out of
-    /// the cache. A refreshed screen stops dating what it shows.
-    private(set) var isFresh = false
+    var asOf: Date? { record.asOfMs.map(Self.instant) }
+    /// Whether any of it came off the air this session, as opposed to out
+    /// of the cache.
+    var isFresh: Bool { record.isFresh }
+    /// Raised whenever the reading changes.
+    var revision: UInt64 { record.revision }
+    var batteryDiagnosticsAsOf: Date? { record.batteryDiagnosticsAsOfMs.map(Self.instant) }
+    var temperatures: MobileTemperatureSummaryRecord? { record.temperatures }
 
-    /// Whether the device actually answered for this property.
-    ///
-    /// The three outcomes a screen has to tell apart: answered, refused,
-    /// and never asked. Absence in ``properties`` covers the last two
-    /// together, which is not enough—a refusal is the device saying it
-    /// does not have the property, and that is the signal for leaving its
-    /// controls out rather than showing them empty.
+    /// Whether the device actually answered for this property: covered by
+    /// the category and not refused on the last read.
     func answered(_ property: UInt32) -> Bool {
-        propertyIDs.contains(property) && !refused.contains(property)
+        record.answered.contains(property)
     }
 
-    /// Keep names within this management session while acquiring new readings.
-    static func sensorRefresh(previous: Self?, properties: [UInt32]) -> Self {
-        var reading = Self()
-        reading.propertyIDs = properties
-        let names = ulcpProperties.temperatureNames
-        if properties.contains(names), previous?.properties.temperatureNames != nil,
-           let bytes = previous?.values[names], let date = previous?.receivedAt[names] {
-            reading.absorb([names: bytes], at: date, fromAir: false)
-        }
-        return reading
+    /// The property's read state; `notRead` for one the category does not
+    /// cover.
+    func state(_ property: UInt32) -> MobilePropertyState {
+        states[property] ?? .notRead
     }
 
-    var needsTemperatureNames: Bool {
-        (properties.temperatures?.count ?? 0) > (properties.temperatureNames?.count ?? 0)
-    }
-
-    /// Every measurement in one request, with the labels until they are known.
-    /// Once names are known, the names-only group is conditional on the
-    /// preceding measurement count.
-    var sensorRefreshRequests: [[UInt32]] {
-        let names = ulcpProperties.temperatureNames
-        guard propertyIDs.contains(names), properties.temperatureNames != nil else {
-            return [propertyIDs]
-        }
-        return [propertyIDs.filter { $0 != names }, [names]]
-    }
-
-    /// Publish a valid replacement atomically. An incomplete reply cannot erase
-    /// labels already known; a growing partial inventory can still add labels.
-    mutating func absorbTemperatureNames(_ bytes: Data, at date: Date) {
-        let decoded = inspectUlcpProperties(responses: [
-            ulcpPropertyRecord(propertyId: ulcpProperties.temperatureNames, value: bytes)
-        ]).temperatureNames
-        guard let decoded, decoded.count >= (properties.temperatureNames?.count ?? 0) else {
-            invalidTemperatureNames = true
-            return
-        }
-        invalidTemperatureNames = false
-        absorb([ulcpProperties.temperatureNames: bytes], at: date, fromAir: true)
-    }
-
-    /// Take in values the device reported, from a read or from a write's
-    /// echoes, and redecode around them.
-    mutating func absorb(
-        _ reported: [UInt32: Data], at instant: Date, fromAir: Bool,
-        sampleDates: [UInt32: Date] = [:]
-    ) {
-        if reported.keys.contains(where: {
-            (ulcpProperties.batteryCurrent...ulcpProperties.batteryGaugeOperationStatus)
-                .contains($0)
-        }) {
-            batteryDiagnosticsAsOf = instant
-        }
-        for property in reported.keys {
-            receivedAt[property] = sampleDates[property] ?? instant
-        }
-        values.merge(reported) { _, reported in reported }
-        properties = inspectUlcpProperties(
-            responses: values.map { ulcpPropertyRecord(propertyId: $0.key, value: $0.value) }
-        )
-        asOf = instant
-        isFresh = isFresh || fromAir
+    private static func instant(_ milliseconds: Int64) -> Date {
+        Date(timeIntervalSince1970: TimeInterval(milliseconds) / 1_000)
     }
 }
 
-/// Sensor inventories are connection-local, and measurements are always read fresh.
-func isPersistentManagedProperty(_ property: UInt32) -> Bool {
-    ![ulcpProperties.illuminance, ulcpProperties.temperatures,
-      ulcpProperties.temperatureNames, ulcpProperties.wifiScanResults,
-      ulcpProperties.wifiRssi].contains(property)
+/// Why a property shows no value, for a read-only row. `nil` when it has
+/// one to show.
+enum PropertyStateText {
+    static func text(_ state: MobilePropertyState) -> String? {
+        switch state {
+        case .present:
+            nil
+        case .notRead:
+            notRead
+        case .empty:
+            unavailable
+        case .invalid:
+            invalid
+        case let .refused(refusal):
+            failed(status: refusal.status)
+        case .noResponse, .failed:
+            failed(status: nil)
+        }
+    }
+
+    static func failed(status: UInt32?) -> String {
+        if let status {
+            String(
+                localized: "Read failed (\(ulcpStatusName(status: status)))",
+                comment: "Managing a node: a value could not be read. The placeholder is a protocol status name, not translated."
+            )
+        } else {
+            String(localized: "Read failed", comment: "Managing a node: a value could not be read.")
+        }
+    }
+
+    static var notRead: String {
+        String(localized: "Not read", comment: "Managing a node: a value nobody has asked the device for yet.")
+    }
+
+    static var invalid: String {
+        String(localized: "Invalid reading", comment: "Managing a node: a value it reported could not be decoded.")
+    }
+
+    static var unavailable: String {
+        String(localized: "Unavailable", comment: "Managing a node: the device holds no value for this sensor right now.")
+    }
 }
 
 struct RemoteTemperatureRow: Identifiable {
@@ -140,6 +126,8 @@ struct RemoteTemperatureRow: Identifiable {
     let value: String
 }
 
+/// The temperature section's rows and notes, worded from the core's
+/// summary.
 struct RemoteTemperaturePresentation {
     let rows: [RemoteTemperatureRow]
     let problem: String?
@@ -147,55 +135,52 @@ struct RemoteTemperaturePresentation {
     let sampledAt: Date?
 
     init(reading: RemoteCategoryReading?, locale: Locale = .autoupdatingCurrent) {
-        let id = ulcpProperties
-        let readings = reading?.properties.temperatures
-        let names = reading?.properties.temperatureNames
-        sampledAt = reading?.receivedAt[id.temperatures]
-        let metadataFailed = reading?.failures[id.temperatureNames] != nil
-            || reading?.refused.contains(id.temperatureNames) == true
-        let malformedNames = reading?.invalidTemperatureNames == true
-            || (reading?.values[id.temperatureNames] != nil && names == nil)
-        let shortNames = readings.map { names == nil || (names?.count ?? 0) < $0.count } ?? false
-        if metadataFailed {
-            problem = "Sensor names could not be read."
-        } else if malformedNames || shortNames {
-            problem = "Sensor names are invalid or incomplete."
-        } else {
-            problem = nil
+        let summary = reading?.temperatures
+        sampledAt = summary?.sampledAtMs.map {
+            Date(timeIntervalSince1970: TimeInterval($0) / 1_000)
         }
-        let labels = names
-        let failure: String?
-        if let status = reading?.statuses[id.temperatures] {
-            failure = "Read failed (\(ulcpStatusName(status: status)))"
-        } else if reading?.failures[id.temperatures] != nil
-                    || reading?.refused.contains(id.temperatures) == true {
-            failure = "Read failed"
-        } else if reading?.values[id.temperatures] != nil && readings == nil {
-            failure = "Invalid reading"
-        } else {
-            failure = nil
+        problem = switch summary?.names {
+        case .unreadable?:
+            String(localized: "Sensor names could not be read.", comment: "Managing a node: its temperature sensor names were refused or not answered.")
+        case .incomplete?:
+            String(localized: "Sensor names are invalid or incomplete.", comment: "Managing a node: its temperature sensor names did not decode, or name fewer sensors than it measures.")
+        case .known?, nil:
+            nil
         }
-        let count = max(readings?.count ?? 0, labels?.count ?? 0)
-        rows = (0..<count).map { index in
+        let failure = summary?.failure.flatMap(PropertyStateText.text)
+        rows = (summary?.rows ?? []).map { row in
             let value: String
             if let failure {
                 value = failure
-            } else if let readings, index < readings.count {
-                value = readings[index].map { Self.format($0, locale: locale) } ?? "Unavailable"
             } else {
-                value = "Not read"
+                switch row.value {
+                case let .reading(tenthsKelvin):
+                    value = Self.format(tenthsKelvin, locale: locale)
+                case .unavailable:
+                    value = PropertyStateText.unavailable
+                case .notRead:
+                    value = PropertyStateText.notRead
+                }
             }
             return RemoteTemperatureRow(
-                id: index,
-                name: labels.flatMap { index < $0.count ? $0[index] : nil } ?? "Temperature \(index + 1)",
+                id: Int(row.index),
+                name: row.name ?? String(
+                    localized: "Temperature \(Int(row.index) + 1)",
+                    comment: "Managing a node: a temperature sensor the device gave no name. The placeholder is its position in the list."
+                ),
                 value: value
             )
         }
-        state = count == 0 ? (failure ?? (readings != nil ? "No temperature sensors" : "Not read")) : nil
+        if rows.isEmpty {
+            state = failure ?? (reading?.properties.temperatures != nil
+                ? String(localized: "No temperature sensors", comment: "Managing a node: it reported an empty list of temperature sensors.")
+                : PropertyStateText.notRead)
+        } else {
+            state = nil
+        }
     }
 
     static func format(_ tenthsKelvin: UInt16, locale: Locale = .autoupdatingCurrent) -> String {
-        guard tenthsKelvin != .max else { return "Unavailable" }
         let kelvin = Measurement(value: Double(tenthsKelvin) / 10, unit: UnitTemperature.kelvin)
         let unit = UnitTemperature(forLocale: locale)
         func formatted(_ unit: UnitTemperature) -> String {
@@ -206,6 +191,11 @@ struct RemoteTemperaturePresentation {
             )
         }
         let preferred = formatted(unit)
-        return unit == .celsius ? preferred : "\(preferred) (\(formatted(.celsius)))"
+        guard unit != .celsius else { return preferred }
+        let celsius = formatted(.celsius)
+        return String(
+            localized: "\(preferred) (\(celsius))",
+            comment: "A temperature in the locale's unit, then in degrees Celsius. Both placeholders are formatted temperatures."
+        )
     }
 }

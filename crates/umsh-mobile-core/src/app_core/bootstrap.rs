@@ -10,9 +10,9 @@ use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use super::worker::Worker;
+use crate::MobileStoredNodeRecord;
 use crate::mobile_mesh::{MobileMeshExplicitPath, MobilePeerRegistrationRecord};
 use crate::store::{MobileStoreError, MobileStoredChannelKind, MobileStoredChannelRecord};
-use crate::{IdentitySignatureState, MobileStoredNodeRecord};
 
 /// The channels every identity starts on, written the way the protocol
 /// names them. Only the canonical form reaches the key, so the casing is
@@ -249,12 +249,8 @@ pub(super) fn advertises_mobile(node: &MobileStoredNodeRecord) -> bool {
     else {
         return false;
     };
-    let attributable = match identity.signature {
-        IdentitySignatureState::Valid => true,
-        IdentitySignatureState::Unsigned => node.advertisement_authenticated,
-        IdentitySignatureState::Invalid => false,
-    };
-    attributable && identity.capability_bits & umsh_node::NodeCapabilities::MOBILE.bits() != 0
+    super::mapping::attributable(identity.signature, node.advertisement_authenticated)
+        && identity.capability_bits & umsh_node::NodeCapabilities::MOBILE.bits() != 0
 }
 
 /// A random version 4 UUID, uppercase, as the vault's accounts are named.

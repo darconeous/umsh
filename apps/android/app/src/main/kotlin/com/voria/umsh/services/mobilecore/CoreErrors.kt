@@ -33,9 +33,7 @@ object CoreErrors {
     fun reason(error: MobileAppException): ReasonText = when (error) {
         is MobileAppException.Store -> ReasonText(R.string.reason_store)
         is MobileAppException.InvalidInput -> ReasonText(R.string.reason_invalid_input)
-        is MobileAppException.InvalidRequest,
-        is MobileAppException.OperationReused,
-        -> ReasonText(R.string.reason_invalid_request)
+        is MobileAppException.InvalidRequest -> ReasonText(R.string.reason_invalid_request)
         is MobileAppException.NotFound -> ReasonText(R.string.reason_not_found)
         is MobileAppException.ChannelTableFull -> ReasonText(R.string.reason_channel_table_full)
         is MobileAppException.NoOwner,
@@ -50,7 +48,6 @@ object CoreErrors {
         is MobileAppException.NotThisPhone -> ReasonText(R.string.reason_not_this_phone)
         is MobileAppException.NoAnswer -> ReasonText(R.string.reason_no_answer)
         is MobileAppException.Unreachable -> ReasonText(R.string.reason_unreachable)
-        is MobileAppException.Refused -> ReasonText(R.string.reason_refused, listOf(ulcpStatusName(error.status)))
         is MobileAppException.Unreadable -> ReasonText(R.string.reason_unreadable)
         is MobileAppException.Cancelled -> ReasonText(R.string.reason_cancelled)
         is MobileAppException.SendFailed -> ReasonText(R.string.reason_send_failed)

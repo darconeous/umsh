@@ -300,3 +300,94 @@ async fn a_channel_whose_key_cannot_be_kept_is_not_joined() {
     );
     assert!(store.channels(OWNER.into()).unwrap().is_empty());
 }
+
+/// A sender's stream: whether it is ours, and the sender's hint and
+/// address.
+type Stream = (bool, Option<Vec<u8>>, Option<String>);
+
+#[tokio::test]
+async fn every_staged_message_goes_under_a_wire_id_its_stream_could_have_given() {
+    let (_directory, store, _vault) = seeded(NOW_MS).await;
+    let state = snapshot(&store);
+    let direct = state.direct.len();
+    let mut checked = 0;
+    // Direct conversations' transcripts come first.
+    for (index, transcript) in state.transcripts.iter().enumerate() {
+        // Each sender's stream: ours, the peer's, or one member's.
+        let mut streams: std::collections::HashMap<Stream, Vec<u8>> =
+            std::collections::HashMap::new();
+        for message in transcript {
+            let wire_id = message.wire_id.expect("every staged message has a wire ID");
+            assert_eq!(
+                message.epoch,
+                message.outbound.then_some(0),
+                "ours in epoch 0, theirs in none"
+            );
+            if index < direct {
+                assert_eq!(message.sender_hint, None, "a direct row names no hint");
+                for reaction in &message.reactions {
+                    assert_eq!(reaction.sender_hint, None);
+                }
+            }
+            for reaction in &message.reactions {
+                assert_eq!((reaction.wire_id, reaction.epoch), (None, None));
+            }
+            streams
+                .entry((
+                    message.outbound,
+                    message.sender_hint.clone(),
+                    message.sender_address.clone(),
+                ))
+                .or_default()
+                .push(wire_id);
+            checked += 1;
+        }
+        for (stream, ids) in streams {
+            assert!(ids.len() <= 128, "{stream:?} outgrows a peer's window");
+            // Oldest first, ending at 255, none repeated.
+            let expected: Vec<u8> = (256 - ids.len()..256).map(|id| id as u8).collect();
+            assert_eq!(ids, expected, "{stream:?}");
+        }
+    }
+    assert!(checked > 0);
+}
+
+#[tokio::test]
+async fn each_staged_conversation_of_ours_continues_its_stream_at_zero() {
+    let (_directory, store, _vault) = seeded(NOW_MS).await;
+    let state = snapshot(&store);
+    let addresses = state
+        .direct
+        .iter()
+        .map(|conversation| conversation.node.public_address.clone())
+        .chain(
+            state
+                .group
+                .iter()
+                .map(|conversation| conversation.conversation_address.clone()),
+        );
+    let mut with_ours: Vec<String> = addresses
+        .zip(&state.transcripts)
+        .filter(|(_, transcript)| transcript.iter().any(|message| message.outbound))
+        .map(|(address, _)| address)
+        .collect();
+    with_ours.sort();
+    let mut streams: Vec<(String, u8, u16)> = store
+        .chat_checkpoints(OWNER.into())
+        .unwrap()
+        .into_iter()
+        .map(|checkpoint| {
+            (
+                checkpoint.conversation_address,
+                checkpoint.next_id,
+                checkpoint.epoch,
+            )
+        })
+        .collect();
+    streams.sort();
+    let expected: Vec<(String, u8, u16)> = with_ours
+        .into_iter()
+        .map(|address| (address, 0, 0))
+        .collect();
+    assert_eq!(streams, expected);
+}

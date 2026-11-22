@@ -152,14 +152,6 @@ struct PersistenceSmokeTest {
         precondition(!messages.contains { $0.isGapPlaceholder })
         precondition(messages.contains { $0.isUnavailable })
 
-        // The management card's stamp goes to the nearest millisecond on its
-        // way into the core. Rows already stored were written so.
-        let card = MobileStoredManagementCardRecord(StoredManagementCard(
-            capabilities: Data([1, 2]), deviceVersion: "1.1", deviceModel: "T1000",
-            deviceName: "Ridge", fetchedAt: at(42.0006)
-        ))
-        precondition(card.fetchedAtMs == 1_780_000_042_001)
-
         // Staged transcripts.
         try stage("friend", session: "staging-smoke", [
             MobileStagedChatMessageRecord(

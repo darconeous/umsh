@@ -207,6 +207,10 @@ impl MeshOutboundListener for OutboundWake {
 pub struct MobileRadioDriver {
     inputs: std_mpsc::Sender<Input>,
     shared: Arc<Shared>,
+    /// Attached without reading the radio whole: what it reported is only
+    /// what a screen asked for, so nothing may treat it as the whole
+    /// configuration.
+    pub(crate) lazy_inspection: bool,
 }
 
 impl Drop for MobileRadioDriver {
@@ -221,7 +225,7 @@ impl MobileRadioDriver {
     /// its state with `transport_changed` and `link_ready`.
     #[uniffi::constructor]
     pub fn new(link: Arc<dyn RadioLink>) -> Result<Arc<Self>, MobileRadioError> {
-        Self::start(link, MobileUlcpSession::new())
+        Self::start(link, MobileUlcpSession::new(), false)
     }
 
     /// A driver for a radio this phone administers but does not tether to.
@@ -239,7 +243,7 @@ impl MobileRadioDriver {
         } else {
             MobileUlcpSession::administrative()
         };
-        Self::start(link, session)
+        Self::start(link, session, lazy_inspection)
     }
 
     /// Register the listener told of new updates. If one is already
@@ -437,6 +441,20 @@ impl MobileRadioDriver {
             .transpose()
             .map_err(|_| MobileRadioError::InvalidArgument)?;
         self.send(Event::HostKey(host_key))
+    }
+
+    /// [`Self::configure_device`], leaving out what `unreadable` names as
+    /// well as what the session now finds unreadable: an app core's setup
+    /// writes only what it planned against the read it was built on.
+    pub(crate) async fn core_configure_device(
+        &self,
+        configuration: UlcpDeviceConfigRecord,
+        unreadable: Vec<u32>,
+    ) -> Result<(), MobileRadioError> {
+        self.configuration(Box::new(move |session| {
+            session.configure_device_as_read(configuration, &unreadable)
+        }))
+        .await
     }
 
     pub(crate) async fn core_use_mesh_session(
@@ -737,6 +755,7 @@ impl MobileRadioDriver {
     fn start(
         link: Arc<dyn RadioLink>,
         session: Arc<MobileUlcpSession>,
+        lazy_inspection: bool,
     ) -> Result<Arc<Self>, MobileRadioError> {
         let (inputs, input_rx) = std_mpsc::channel();
         let core = DriverCore::new(session);
@@ -758,7 +777,11 @@ impl MobileRadioDriver {
             .name("umsh-radio-driver".to_owned())
             .spawn(move || runner.run(input_rx))
             .map_err(|_| MobileRadioError::Stopped)?;
-        Ok(Arc::new(Self { inputs, shared }))
+        Ok(Arc::new(Self {
+            inputs,
+            shared,
+            lazy_inspection,
+        }))
     }
 
     fn post(&self, event: Event) {

@@ -213,15 +213,14 @@ async fn radio_commands_say_why_there_is_no_radio() {
             .map(|error| { matches!(error, MobileAppError::InvalidInput { .. }) }),
         Some(true)
     );
-    let operation = super::MobileOperation::new();
+    let device = core.core.manage_device(peer, false).await.unwrap();
     assert_eq!(
-        core.core.remote_save(operation.clone(), peer.clone()).await,
-        Err(MobileAppError::NoRadio)
+        device.refresh_card().await,
+        Ok(crate::MobileManagementOutcome::Failed {
+            problem: crate::MobileManagementProblem::NoRadio
+        })
     );
-    assert_eq!(
-        core.core.remote_save(operation, peer).await,
-        Err(MobileAppError::OperationReused)
-    );
+    device.release();
     assert_eq!(
         core.core.advertise_identity().await,
         Err(MobileAppError::NoRadio)
@@ -395,7 +394,8 @@ async fn an_advert_goes_once_its_interval_and_scatter_have_passed() {
     });
     core.core
         .set_policy(super::MobileAppPolicyRecord {
-            advert_interval_seconds: 60,
+            // The shortest interval the core runs.
+            advert_interval_seconds: 20 * 60,
             beacon_interval_seconds: 0,
             discoverable: true,
             flood_hops: 1,
@@ -410,13 +410,13 @@ async fn an_advert_goes_once_its_interval_and_scatter_have_passed() {
     transmitted();
 
     // Short of the interval: nothing.
-    core.clock.advance(59_000);
+    core.clock.advance(1_199_000);
     core.core.resumed();
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(transmitted(), 0);
 
     // Past the interval and the most scatter allows (a quarter): sent.
-    core.clock.advance(16_001);
+    core.clock.advance(301_001);
     core.core.resumed();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     while transmitted() == 0 {
@@ -629,4 +629,81 @@ async fn a_name_kept_before_the_identity_has_a_row_is_the_one_the_start_pushes()
     std::fs::remove_file(core.counter_directory()).unwrap();
     core.start(3).await;
     assert_eq!(pushed_names(&hooks), ["Summit Camp"]);
+}
+
+// --- An erase during a start. ---
+
+fn starts_announced(hooks: &TestHooks) -> usize {
+    hooks
+        .starts_announced
+        .load(std::sync::atomic::Ordering::Relaxed)
+}
+
+#[tokio::test]
+async fn an_erase_while_starting_waits_and_then_runs() {
+    let (core, hooks) = gated();
+    let starting = start_held(&core, 3).await;
+    let app = core.core.clone();
+    let erasing = tokio::spawn(async move { app.erase(false).await });
+    still_waiting(&[&erasing]).await;
+    assert_eq!(core.lifecycle(), MobileAppLifecycle::Starting);
+
+    hooks.start_gate.as_ref().unwrap().add_permits(1);
+    starting.await.unwrap().unwrap();
+    erasing.await.unwrap().unwrap();
+    assert_eq!(core.lifecycle(), MobileAppLifecycle::Idle);
+    assert!(core.vault.accounts().is_empty());
+    assert!(!core.counter_directory().exists());
+    assert_eq!(core.core.state(true), Err(MobileAppError::NoOwner));
+    // The start it waited on put nothing on the air.
+    assert_eq!(starts_announced(&hooks), 0);
+
+    // A start nobody waits on does.
+    hooks.start_gate.as_ref().unwrap().add_permits(1);
+    core.start(4).await;
+    assert_eq!(starts_announced(&hooks), 1);
+}
+
+#[tokio::test]
+async fn an_erase_while_a_start_fails_runs_from_failed() {
+    let (core, hooks) = gated();
+    // A file where the counter directory goes.
+    std::fs::write(core.counter_directory(), b"in the way").unwrap();
+    let starting = start_held(&core, 3).await;
+    let app = core.core.clone();
+    let erasing = tokio::spawn(async move { app.erase(false).await });
+    still_waiting(&[&erasing]).await;
+
+    hooks.start_gate.as_ref().unwrap().add_permits(1);
+    assert_eq!(
+        starting.await.unwrap(),
+        Err(MobileAppError::StartFailed {
+            reason: MobileAppStartFailure::Session
+        })
+    );
+    // It ran: the file in the way is not a directory it can remove, which
+    // only an erase that ran reports.
+    assert_eq!(
+        erasing.await.unwrap(),
+        Err(MobileAppError::CountersNotRemoved)
+    );
+    assert_eq!(core.lifecycle(), MobileAppLifecycle::Idle);
+    assert_eq!(starts_announced(&hooks), 0);
+}
+
+#[tokio::test]
+async fn an_erase_queued_behind_a_stop_finds_the_core_stopped() {
+    let (core, hooks) = gated();
+    let starting = start_held(&core, 3).await;
+    let app = core.core.clone();
+    let stopping = tokio::spawn(async move { app.stop().await });
+    still_waiting(&[&stopping]).await;
+    let app = core.core.clone();
+    let erasing = tokio::spawn(async move { app.erase(false).await });
+    still_waiting(&[&erasing]).await;
+
+    hooks.start_gate.as_ref().unwrap().add_permits(1);
+    starting.await.unwrap().unwrap();
+    stopping.await.unwrap();
+    assert_eq!(erasing.await.unwrap(), Err(MobileAppError::Stopped));
 }

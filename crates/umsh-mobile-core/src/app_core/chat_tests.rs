@@ -11,7 +11,8 @@ use super::test_support::{Core, NOW_MS, identity};
 use super::worker::TestHooks;
 use super::{
     MobileAppChangesRecord, MobileAppChatRequest, MobileAppError, MobileAppResent,
-    MobileAppStartFailure, MobilePositionRecord, MobileReaction, Options,
+    MobileAppStartFailure, MobileMessageActionsRecord, MobilePositionRecord, MobileReaction,
+    Options,
 };
 use crate::mobile_chat::MobileChatPresence;
 use crate::radio_driver::{MobileRadioPhase, MobileRadioStateRecord};
@@ -117,6 +118,7 @@ struct Row {
     wire_id: Option<u8>,
     epoch: Option<u16>,
     presence: i64,
+    deleted: bool,
 }
 
 impl Default for Row {
@@ -131,6 +133,7 @@ impl Default for Row {
             wire_id: Some(9),
             epoch: Some(0),
             presence: 0,
+            deleted: false,
         }
     }
 }
@@ -149,8 +152,8 @@ impl Row {
             .execute(
                 "INSERT INTO chat_message (owner_identity_id, session_id, handle,
                     conversation_address, direction, body, created_at_ms,
-                    delivery_state, wire_id, epoch, presence)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    delivery_state, wire_id, epoch, presence, deleted)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rusqlite::params![
                     owner,
                     self.session_id,
@@ -163,6 +166,7 @@ impl Row {
                     self.wire_id,
                     self.epoch,
                     self.presence,
+                    self.deleted,
                 ],
             )
             .unwrap();
@@ -1219,6 +1223,569 @@ async fn transcript_messages_carry_their_reactions_and_revise_window() {
         .find(|message| !message.stored.outbound)
         .unwrap();
     assert_eq!(theirs.revise_until_ms, None);
+}
+
+// --- What a row offers, and that the core takes exactly that. ---
+
+/// What the core offers for a row, read as a transcript reads it.
+fn actions_of(
+    core: &Core,
+    address: &str,
+    message: &MobileStoredChatMessageRefRecord,
+) -> MobileMessageActionsRecord {
+    core.core
+        .transcript_newest(address.to_owned(), 500)
+        .unwrap()
+        .messages
+        .into_iter()
+        .find(|row| &row.stored.reference == message)
+        .unwrap()
+        .actions
+}
+
+fn actions(
+    edit: bool,
+    delete: bool,
+    resend: Option<MobileAppResent>,
+    react: bool,
+    reply: bool,
+    request_missing: bool,
+) -> MobileMessageActionsRecord {
+    MobileMessageActionsRecord {
+        edit,
+        delete,
+        resend,
+        react,
+        reply,
+        request_missing,
+    }
+}
+
+#[tokio::test]
+async fn the_revise_window_takes_its_last_instant() {
+    let (core, owner, peer) = running().await;
+    let written = NOW_MS - REVISE_WINDOW_MS;
+    let delivered = Row {
+        handle: 1,
+        created_at_ms: written,
+        delivery_state: Some("acknowledged"),
+        ..Row::default()
+    }
+    .insert(&core, &owner, &peer);
+    let failed = Row {
+        handle: 2,
+        created_at_ms: written,
+        ..Row::default()
+    }
+    .insert(&core, &owner, &peer);
+    assert!(actions_of(&core, &peer, &delivered).edit);
+    assert_eq!(
+        actions_of(&core, &peer, &failed).resend,
+        Some(MobileAppResent::InPlace)
+    );
+    core.clock.set_wall(NOW_MS + 1);
+    let after = actions_of(&core, &peer, &delivered);
+    assert!(!after.edit && after.delete);
+    assert_eq!(
+        actions_of(&core, &peer, &failed).resend,
+        Some(MobileAppResent::AsNew)
+    );
+}
+
+/// `offered` holds exactly when the core did not refuse the row.
+fn takes(offered: bool, answer: &Result<(), MobileAppError>, what: &str) {
+    if offered {
+        assert_ne!(answer, &Err(MobileAppError::InvalidRequest), "{what}");
+    } else {
+        assert_eq!(answer, &Err(MobileAppError::InvalidRequest), "{what}");
+    }
+}
+
+#[tokio::test]
+async fn what_a_row_offers_is_what_the_core_takes() {
+    use MobileAppResent::{AsNew, InPlace};
+    let (core, owner, peer) = running().await;
+    attached(&core).await;
+    let delivered = Row {
+        delivery_state: Some("acknowledged"),
+        ..Row::default()
+    };
+    let theirs = Row {
+        outbound: false,
+        delivery_state: None,
+        epoch: None,
+        ..Row::default()
+    };
+    let fixtures = [
+        (
+            "ours, delivered",
+            delivered.clone(),
+            actions(true, true, None, true, true, false),
+        ),
+        (
+            "ours, failed",
+            Row::default(),
+            actions(true, true, Some(InPlace), false, false, false),
+        ),
+        (
+            "ours, failed with no wire ID",
+            Row {
+                wire_id: None,
+                ..Row::default()
+            },
+            actions(true, true, Some(AsNew), false, false, false),
+        ),
+        (
+            "ours, past the window",
+            Row {
+                created_at_ms: NOW_MS - REVISE_WINDOW_MS - 1,
+                ..delivered.clone()
+            },
+            actions(false, true, None, true, true, false),
+        ),
+        (
+            "ours, deleted",
+            Row {
+                deleted: true,
+                ..delivered.clone()
+            },
+            actions(false, false, None, false, false, false),
+        ),
+        (
+            "ours, failed and deleted",
+            Row {
+                deleted: true,
+                ..Row::default()
+            },
+            actions(false, false, None, false, false, false),
+        ),
+        (
+            "theirs",
+            theirs.clone(),
+            actions(false, false, None, true, true, false),
+        ),
+        (
+            "theirs, staged with nothing to name it by",
+            Row {
+                session_id: "staging-direct",
+                wire_id: None,
+                ..theirs.clone()
+            },
+            actions(false, false, None, false, true, false),
+        ),
+        (
+            "a gap",
+            Row {
+                presence: 3,
+                ..theirs.clone()
+            },
+            actions(false, false, None, false, false, true),
+        ),
+        (
+            "a gap being asked for",
+            Row {
+                presence: 1,
+                ..theirs.clone()
+            },
+            actions(false, false, None, false, false, false),
+        ),
+        (
+            "a gap given up on",
+            Row {
+                presence: 2,
+                ..theirs.clone()
+            },
+            actions(false, false, None, false, false, false),
+        ),
+    ];
+    for (index, (name, row, expected)) in fixtures.into_iter().enumerate() {
+        // One copy per command, so no command sees another's work.
+        let base = (index as u32 + 1) * 10;
+        let [edit, delete, resend, react, reply, gap] = std::array::from_fn(|copy| {
+            Row {
+                handle: base + copy as u32,
+                ..row.clone()
+            }
+            .insert(&core, &owner, &peer)
+        });
+        let offered = actions_of(&core, &peer, &edit);
+        assert_eq!(offered, expected, "{name}");
+
+        let answer = core
+            .core
+            .send_chat(
+                peer.clone(),
+                MobileAppChatRequest::Edit {
+                    message: edit,
+                    text: "Changed words".into(),
+                },
+                None,
+            )
+            .await;
+        takes(offered.edit, &answer, &format!("{name}: edit"));
+        let answer = core
+            .core
+            .send_chat(
+                peer.clone(),
+                MobileAppChatRequest::Delete { message: delete },
+                None,
+            )
+            .await;
+        takes(offered.delete, &answer, &format!("{name}: delete"));
+        let answer = core
+            .core
+            .resend(peer.clone(), resend, false)
+            .await
+            .map(|_| ());
+        takes(
+            offered.resend.is_some(),
+            &answer,
+            &format!("{name}: resend"),
+        );
+        for request in [
+            MobileAppChatRequest::React {
+                message: react.clone(),
+                reaction: Some(MobileReaction::Heart),
+            },
+            MobileAppChatRequest::ToggleReaction {
+                message: react.clone(),
+                reaction: MobileReaction::Heart,
+            },
+        ] {
+            let answer = core.core.send_chat(peer.clone(), request, None).await;
+            takes(offered.react, &answer, &format!("{name}: react"));
+        }
+
+        // A reply always goes; one the row does not offer goes as text.
+        let body = format!("Reply to {name}");
+        core.core
+            .send_chat(
+                peer.clone(),
+                MobileAppChatRequest::Reply {
+                    target: reply,
+                    text: body.clone(),
+                    forward_secret: None,
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        if !offered.reply {
+            assert!(
+                messages(&core, &owner, &peer)
+                    .iter()
+                    .any(|message| message.body == body && !message.is_reply),
+                "{name}: reply"
+            );
+        }
+
+        // A row that is not an idle gap is passed over.
+        let before = stored(&core, &owner, &peer, &gap).unwrap().presence;
+        core.core
+            .request_missing(peer.clone(), vec![gap.clone()])
+            .await
+            .unwrap();
+        let after = stored(&core, &owner, &peer, &gap).unwrap().presence;
+        assert_eq!(after != before, offered.request_missing, "{name}: gap");
+    }
+}
+
+#[tokio::test]
+async fn an_edit_that_changes_nothing_is_refused() {
+    let (core, owner, peer) = running().await;
+    attached(&core).await;
+    let ours = Row {
+        delivery_state: Some("acknowledged"),
+        ..Row::default()
+    }
+    .insert(&core, &owner, &peer);
+    let edit = |message: &MobileStoredChatMessageRefRecord, text: &str| {
+        core.core.send_chat(
+            peer.clone(),
+            MobileAppChatRequest::Edit {
+                message: message.clone(),
+                text: text.to_owned(),
+            },
+            None,
+        )
+    };
+    for unchanged in ["Trailhead at noon", "  Trailhead at noon "] {
+        assert_eq!(
+            edit(&ours, unchanged).await,
+            Err(MobileAppError::InvalidRequest),
+            "{unchanged:?}"
+        );
+    }
+    assert_ne!(
+        edit(&ours, "Trailhead at one").await,
+        Err(MobileAppError::InvalidRequest)
+    );
+    // A status body kept with its leading space is compared as stored.
+    let status = Row {
+        handle: 2,
+        body: " waves",
+        delivery_state: Some("acknowledged"),
+        ..Row::default()
+    }
+    .insert(&core, &owner, &peer);
+    assert_ne!(
+        edit(&status, "waves").await,
+        Err(MobileAppError::InvalidRequest)
+    );
+}
+
+#[tokio::test]
+async fn generated_rows_offer_nothing_to_name_them_by() {
+    let (core, owner, peer) = running().await;
+    attached(&core).await;
+    core.core.generate_messages(peer.clone(), 6).await.unwrap();
+    let rows = messages(&core, &owner, &peer);
+    let ours = rows
+        .iter()
+        .find(|row| row.outbound)
+        .unwrap()
+        .reference
+        .clone();
+    let theirs = rows
+        .iter()
+        .find(|row| !row.outbound)
+        .unwrap()
+        .reference
+        .clone();
+    for message in [&ours, &theirs] {
+        let offered = actions_of(&core, &peer, message);
+        assert!(!offered.edit && !offered.delete && !offered.react);
+    }
+    for request in [
+        MobileAppChatRequest::React {
+            message: theirs.clone(),
+            reaction: Some(MobileReaction::Heart),
+        },
+        MobileAppChatRequest::Edit {
+            message: ours.clone(),
+            text: "Changed words".into(),
+        },
+        MobileAppChatRequest::Delete { message: ours },
+    ] {
+        assert_eq!(
+            core.core.send_chat(peer.clone(), request, None).await,
+            Err(MobileAppError::InvalidRequest)
+        );
+    }
+}
+
+// --- The reaction toggle. ---
+
+fn toggle(
+    message: &MobileStoredChatMessageRefRecord,
+    reaction: MobileReaction,
+) -> MobileAppChatRequest {
+    MobileAppChatRequest::ToggleReaction {
+        message: message.clone(),
+        reaction,
+    }
+}
+
+/// This phone's reaction on a row, as the transcript folds it.
+fn our_reaction(
+    core: &Core,
+    owner: &str,
+    address: &str,
+    message: &MobileStoredChatMessageRefRecord,
+) -> Option<String> {
+    core.store
+        .chat_message_with_reactions(owner, address, message)
+        .unwrap()
+        .unwrap()
+        .reactions
+        .into_iter()
+        .find(|reaction| reaction.outbound)
+        .map(|reaction| reaction.body)
+}
+
+/// Every reaction this phone sent, oldest first: a withdrawal is empty.
+fn reactions_sent(core: &Core) -> Vec<String> {
+    let connection = rusqlite::Connection::open(core.directory.path().join("app.sqlite")).unwrap();
+    let mut statement = connection
+        .prepare(
+            "SELECT body FROM chat_message WHERE is_reaction = 1 AND direction = 1
+            ORDER BY created_at_ms, rowid",
+        )
+        .unwrap();
+    statement
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect()
+}
+
+/// A message of ours, sent through the session so it can be named, and
+/// delivered: with nothing to carry it, the pipeline failed it.
+async fn sent(core: &Core, owner: &str, peer: &str) -> MobileStoredChatMessageRefRecord {
+    core.core
+        .send_chat(peer.to_owned(), typed("Trailhead at noon"), None)
+        .await
+        .unwrap();
+    let message = messages(core, owner, peer)
+        .into_iter()
+        .find(|message| message.outbound)
+        .unwrap()
+        .reference;
+    rusqlite::Connection::open(core.directory.path().join("app.sqlite"))
+        .unwrap()
+        .execute(
+            "UPDATE chat_message SET delivery_state = 'acknowledged'
+            WHERE session_id = ? AND handle = ?",
+            rusqlite::params![message.session_id, message.handle],
+        )
+        .unwrap();
+    message
+}
+
+#[tokio::test]
+async fn a_toggle_adds_withdraws_and_replaces() {
+    let (core, owner, peer) = running().await;
+    attached(&core).await;
+    let message = sent(&core, &owner, &peer).await;
+    let send = async |reaction| {
+        core.core
+            .send_chat(peer.clone(), toggle(&message, reaction), None)
+            .await
+            .unwrap();
+        our_reaction(&core, &owner, &peer, &message)
+    };
+    assert_eq!(send(MobileReaction::Heart).await.as_deref(), Some("<3"));
+    assert_eq!(send(MobileReaction::Heart).await, None, "the same kind");
+    assert_eq!(send(MobileReaction::Heart).await.as_deref(), Some("<3"));
+    let red_heart = MobileReaction::Other {
+        cluster: "\u{2764}\u{fe0f}".into(),
+    };
+    assert_eq!(send(red_heart).await, None, "another spelling");
+    assert_eq!(send(MobileReaction::Heart).await.as_deref(), Some("<3"));
+    assert_eq!(
+        send(MobileReaction::ThumbsUp).await.as_deref(),
+        Some("+1"),
+        "another kind"
+    );
+    assert_eq!(reactions_sent(&core), ["<3", "", "<3", "", "<3", "+1"]);
+}
+
+#[tokio::test]
+async fn a_failed_reaction_of_ours_is_withdrawn_by_its_toggle() {
+    let (core, owner, peer) = running().await;
+    attached(&core).await;
+    let message = sent(&core, &owner, &peer).await;
+    rusqlite::Connection::open(core.directory.path().join("app.sqlite"))
+        .unwrap()
+        .execute(
+            "INSERT INTO chat_message (owner_identity_id, session_id, handle,
+                conversation_address, direction, body, created_at_ms, delivery_state,
+                is_reaction, regarding_target_session_id, regarding_target_handle)
+            VALUES (?, 'earlier', 1, ?, 1, '<3', ?, 'failed', 1, ?, ?)",
+            rusqlite::params![owner, peer, NOW_MS - 1, message.session_id, message.handle],
+        )
+        .unwrap();
+    assert_eq!(
+        our_reaction(&core, &owner, &peer, &message).as_deref(),
+        Some("<3")
+    );
+    core.core
+        .send_chat(peer.clone(), toggle(&message, MobileReaction::Heart), None)
+        .await
+        .unwrap();
+    assert_eq!(our_reaction(&core, &owner, &peer, &message), None);
+    assert_eq!(reactions_sent(&core), ["<3", ""]);
+}
+
+#[tokio::test]
+async fn toggles_sent_together_each_read_the_one_before() {
+    let (core, owner, peer) = running().await;
+    attached(&core).await;
+    let message = sent(&core, &owner, &peer).await;
+    let (first, second) = tokio::join!(
+        core.core
+            .send_chat(peer.clone(), toggle(&message, MobileReaction::Heart), None),
+        core.core
+            .send_chat(peer.clone(), toggle(&message, MobileReaction::Heart), None),
+    );
+    first.unwrap();
+    second.unwrap();
+    assert_eq!(reactions_sent(&core), ["<3", ""], "added, then withdrawn");
+    assert_eq!(our_reaction(&core, &owner, &peer, &message), None);
+}
+
+#[tokio::test]
+async fn a_toggle_with_nothing_to_send_is_refused() {
+    let (core, owner, peer) = running().await;
+    attached(&core).await;
+    let message = sent(&core, &owner, &peer).await;
+    assert_eq!(
+        core.core
+            .send_chat(
+                peer.clone(),
+                toggle(
+                    &message,
+                    MobileReaction::Other {
+                        cluster: " ".into()
+                    }
+                ),
+                None
+            )
+            .await,
+        Err(MobileAppError::InvalidRequest)
+    );
+    assert_eq!(
+        core.core
+            .send_chat(
+                peer,
+                toggle(&message, MobileReaction::Heart),
+                Some("draft".into())
+            )
+            .await,
+        Err(MobileAppError::InvalidRequest),
+        "a toggle carries no draft"
+    );
+}
+
+// --- Whether a conversation needs EMERGENCY's agreement. ---
+
+/// Each listed channel conversation's need for agreement.
+fn needs_agreement(core: &Core) -> Vec<(String, bool)> {
+    core.core
+        .state(true)
+        .unwrap()
+        .channel_conversations
+        .into_iter()
+        .map(|conversation| {
+            (
+                conversation.conversation_address,
+                conversation.needs_emergency_agreement,
+            )
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn emergency_s_conversation_says_it_needs_agreement_until_given() {
+    let (core, owner, _) = running().await;
+    let emergency = emergency(&core, &owner).await;
+    let public = named_address("public");
+    let expect = |needed: bool| {
+        let mut needs = needs_agreement(&core);
+        needs.sort();
+        let mut expected = vec![(emergency.clone(), needed), (public.clone(), false)];
+        expected.sort();
+        assert_eq!(needs, expected);
+    };
+    expect(true);
+    core.core.poll_changes();
+    core.core.certify_emergency().unwrap();
+    assert!(core.core.poll_changes().conversations_changed);
+    expect(false);
+    // Another owner, and back: the agreement was the first's.
+    core.core.set_owner(None).unwrap();
+    core.core.set_owner(Some(owner)).unwrap();
+    expect(true);
 }
 
 // --- Links to a well-known channel's key. ---

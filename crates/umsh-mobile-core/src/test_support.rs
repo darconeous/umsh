@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
 use umsh_ulcp::hdlc;
+use umsh_ulcp_device::SessionConfig;
 use umsh_ulcp_simdev::soft::{SoftDevice, SoftPlatform};
 use umsh_ulcp_simdev::{DutyLedger, SimulatedPlatform, full_config};
 
@@ -27,11 +28,15 @@ pub(crate) struct DeviceLink {
 
 impl DeviceLink {
     pub(crate) fn new() -> Arc<Self> {
-        let duty = Box::leak(Box::new(DutyLedger::new()));
+        Self::with_config(full_config(Box::leak(Box::new(DutyLedger::new())), None))
+    }
+
+    /// A link to a soft device offering what `config` offers.
+    pub(crate) fn with_config(config: SessionConfig) -> Arc<Self> {
         let mut platform = SimulatedPlatform::new();
         platform.store_identity(Some(&[1; 32])).unwrap();
         Arc::new(Self {
-            device: Mutex::new(SoftDevice::new(full_config(duty, None), platform)),
+            device: Mutex::new(SoftDevice::new(config, platform)),
             decoder: Mutex::new(hdlc::Decoder::new()),
             driver: OnceLock::new(),
             attached: Mutex::new(0),
@@ -110,6 +115,41 @@ pub(crate) fn linked_driver() -> (Arc<DeviceLink>, Arc<MobileRadioDriver>) {
     link.device.lock().unwrap().attach();
     link.deliver();
     driver.link_ready(true);
+    (link, driver)
+}
+
+/// An administrative driver linked to a soft device of its own: a device
+/// this phone manages without tethering to it.
+pub(crate) fn administrative_linked_driver() -> (Arc<DeviceLink>, Arc<MobileRadioDriver>) {
+    administrative_driver(DeviceLink::new(), true)
+}
+
+/// An administrative driver that read the whole device when it attached,
+/// as a setup needs, over a soft device offering what `config` offers.
+pub(crate) fn administrative_whole_driver(
+    config: SessionConfig,
+) -> (Arc<DeviceLink>, Arc<MobileRadioDriver>) {
+    administrative_driver(DeviceLink::with_config(config), false)
+}
+
+fn administrative_driver(
+    link: Arc<DeviceLink>,
+    lazy_inspection: bool,
+) -> (Arc<DeviceLink>, Arc<MobileRadioDriver>) {
+    let driver = MobileRadioDriver::administrative(link.clone(), lazy_inspection).unwrap();
+    link.driver.set(Arc::downgrade(&driver)).unwrap();
+    driver.transport_changed(MobileRadioTransportStateRecord {
+        phase: MobileRadioTransportPhase::Connecting,
+        name: Some("Device link".to_owned()),
+        link_id: Some("administered".to_owned()),
+        problem: None,
+    });
+    link.device.lock().unwrap().attach();
+    link.deliver();
+    driver.link_ready(true);
+    eventually("the administered device attached", || {
+        driver.state().phase == MobileRadioPhase::Attached
+    });
     (link, driver)
 }
 

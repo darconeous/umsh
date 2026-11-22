@@ -32,11 +32,13 @@ struct RemoteReadingFooter: View {
         if isBusy {
             Text("Asking \(subject)…")
         } else if let asOf {
-            Text(
-                isFresh
-                    ? "Read from \(subject) just now."
-                    : "Last read \(asOf.formatted(.relative(presentation: .named)))."
-            )
+            if isFresh {
+                Text("Read from \(subject) just now.")
+            } else {
+                AgeLabel(since: asOf) { age in
+                    Text("Last read \(age).", comment: "When a device's settings were last read. The placeholder is an age, such as 5 min. ago.")
+                }
+            }
         } else {
             Text("Nothing read yet. Tap Refresh to ask \(subject).")
         }
@@ -68,10 +70,10 @@ struct ManagementStatusBar: View {
             bar {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.red)
-                Text(verbatim: problem)
+                Text(verbatim: ManagementProblemText.text(for: problem))
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Button {
-                    model.problem = nil
+                    model.dismissProblem()
                 } label: {
                     Image(systemName: "xmark")
                 }

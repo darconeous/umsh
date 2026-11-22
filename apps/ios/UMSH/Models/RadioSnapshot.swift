@@ -515,26 +515,37 @@ struct RadioProvisioningSummary: Equatable, Sendable {
     /// The advertisement policy. Present exactly when `supportsAdvert`
     /// and the radio reported the whole of it.
     var advert: UlcpAdvertSettingsRecord? = nil
+    /// `PROP_PROTOCOL_VERSION`, as the session checked it.
+    var protocolVersion: UlcpProtocolVersionRecord? = nil
+    /// Every capability code the radio listed, in its order.
+    var capabilities: [UInt32] = []
+    /// `PROP_DEV_VERSION`: the firmware, as the radio names it. Absent when
+    /// it would not say and in a lazy session.
+    var deviceVersion: String? = nil
+    /// `PROP_DEV_MODEL`: the hardware, when the radio names it.
+    var deviceModel: String? = nil
 }
 
-/// The intervals the settings UI offers, in seconds, with 0 meaning off.
+/// The intervals the settings UI offers, in seconds, with 0 meaning off,
+/// for this phone and for its devices alike.
 ///
 /// A short list of round periods rather than a free number field: the
-/// choice is how much of the mesh's airtime this radio claims, and an
-/// operator picks that from sensible options rather than typing seconds.
-/// Every entry sits inside the protocol's accepted range—20 minutes to
-/// 24 hours—so the picker cannot compose a policy the radio refuses.
-let advertisementIntervalChoices: [UInt32] = [0, 3600, 4 * 3600, 12 * 3600, 24 * 3600]
-let beaconIntervalChoices: [UInt32] = [0, 1200, 1800, 3600, 4 * 3600]
+/// choice is how much of the mesh's airtime a node claims, and an operator
+/// picks that from sensible options rather than typing seconds. The core
+/// supplies the lists, each inside the range a device accepts. Read from
+/// the bindings directly, not through `CoreLimits`, so this file still
+/// compiles alone against them.
+let advertisementIntervalChoices: [UInt32] = mobileLimits().advertIntervalChoicesS
+let beaconIntervalChoices: [UInt32] = mobileLimits().beaconIntervalChoicesS
 
 /// An interval as "Every 4 hours", or "Off" for zero.
-func formattedAnnouncementInterval(_ seconds: UInt32) -> String {
-    guard seconds > 0 else { return "Off" }
-    let formatter = DateComponentsFormatter()
-    formatter.allowedUnits = [.hour, .minute]
-    formatter.unitsStyle = .full
-    let spelled = formatter.string(from: TimeInterval(seconds)) ?? "\(seconds) seconds"
-    return "Every \(spelled)"
+func formattedAnnouncementInterval(_ seconds: UInt32, locale: Locale = .current) -> String {
+    guard seconds > 0 else {
+        return String(localized: "Off", locale: locale, comment: "An announcement interval of zero.")
+    }
+    let spelled = Duration.seconds(seconds)
+        .formatted(.units(allowed: [.hours, .minutes], width: .wide).locale(locale))
+    return String(localized: "Every \(spelled)", locale: locale, comment: "An announcement interval. The placeholder is a duration, such as 4 hours or 20 minutes.")
 }
 
 /// How long a device has been up, at the same two-unit scale the clock
@@ -544,9 +555,10 @@ func formattedUptime(_ seconds: UInt32) -> String {
         .formatted(.units(allowed: [.days, .hours, .minutes, .seconds], maximumUnitCount: 2))
 }
 
-/// The transmit-duty limits the settings UI offers, as fractions of
-/// `UInt16.max`, with the maximum meaning no limit at all.
-let dutyCycleLimitChoices: [UInt16] = [UInt16.max, 13_107, 6_553, 655, 65]
+/// The radio parameters the settings screens offer: spreading factors,
+/// coding rates, bandwidths, and transmit-duty limits as fractions of
+/// `UInt16.max`, the maximum meaning no limit at all.
+let radioChoices = ulcpRadioChoices()
 
 /// A duty limit or usage figure as a percentage, carrying enough digits to
 /// tell the small limits apart.
@@ -571,8 +583,7 @@ var phoneUTCOffsetMinutes: Int16 {
 /// This iPhone's time zone as a device takes it: the zone's own rule,
 /// daylight saving and all, or failing that the offset in effect now.
 var phoneTimeZoneRule: String {
-    zoneRule(identifier: TimeZone.current.identifier)
-        ?? fixedOffsetRule(minutesEast: phoneUTCOffsetMinutes)
+    phoneZoneRule(identifier: TimeZone.current.identifier, minutesEast: phoneUTCOffsetMinutes)
 }
 
 /// A zone rule as what it reads at `date`: "PDT (UTC−07:00)", or just the

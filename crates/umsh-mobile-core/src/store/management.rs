@@ -21,7 +21,7 @@ use super::{MobileAppStore, MobileStoreError};
 /// version change only when it is reflashed, its hardware never, and its name
 /// rarely. Holding them means a later open of a device's settings puts
 /// nothing on the air at all. Instants are Unix milliseconds.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MobileStoredManagementCardRecord {
     /// `PROP_CAPS` verbatim, planned against without asking the device
     /// again.
@@ -41,13 +41,12 @@ pub struct MobileStoredManagementCardRecord {
 /// by the ULCP decoders rather than here, so a value cached by one build
 /// reads the same in the next. The instant (Unix milliseconds) is what lets
 /// a screen date a reading rather than present it as current.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MobileStoredCachedPropertyRecord {
     pub value: Vec<u8>,
     pub fetched_at_ms: i64,
 }
 
-#[uniffi::export]
 impl MobileAppStore {
     /// What a device last said it is, if this phone has ever asked.
     pub fn management_card(

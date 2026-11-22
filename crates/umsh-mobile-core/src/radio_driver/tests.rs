@@ -1635,6 +1635,62 @@ fn an_administered_radio_is_left_as_it_is_found() {
 }
 
 #[test]
+fn an_administered_radio_takes_a_whole_configuration() {
+    // Setup's configuration pass, which no other test drives through the
+    // driver: validated, written with the radio down, saved.
+    let mut bench = Bench::administrative();
+    bench.connect(true);
+    let reported = bench.state().provisioning.clone().unwrap();
+    let configuration = crate::UlcpDeviceConfigRecord {
+        radio: UlcpRadioSettingsRecord {
+            device_name: Some("Pika".to_owned()),
+            phy_enabled: true,
+            frequency_khz: 915_000,
+            ..transmitter_settings(&bench)
+        },
+        ident_role: Some(3),
+        ident_mobile: reported.supports_ident.then_some(true),
+        dev_discoverable: reported.dev_discoverable,
+        repeater: reported.repeater.clone(),
+        meshcore: reported.meshcore.clone(),
+        tz_rule: reported.supports_time.then(|| "UTC0".to_owned()),
+        time_24h: reported.time_24h,
+        gnss: reported.gnss,
+        advert: reported
+            .advert
+            .map(|advert| crate::ulcp::UlcpAdvertSettingsRecord {
+                advert_interval_seconds: 0,
+                ..advert
+            }),
+    };
+    let mut configured = bench.command(|reply| Command::Configure {
+        call: Box::new(move |session| session.configure_device(configuration)),
+        reply,
+    });
+    assert_eq!(bench.deliver_until(&mut configured), Some(Ok(())));
+    let refreshed = bench.refresh(RefreshKind::Full);
+    let state = outcome(refreshed).unwrap().unwrap();
+    let provisioning = state.provisioning.unwrap();
+    assert_eq!(provisioning.device_name.as_deref(), Some("Pika"));
+    assert!(provisioning.phy_enabled);
+    assert_eq!(provisioning.frequency_khz, 915_000);
+    assert_eq!(provisioning.ident_role, Some(3));
+    assert_eq!(provisioning.ident_mobile, Some(true));
+    assert_eq!(provisioning.tz_rule.as_deref(), Some("UTC0"));
+    assert_eq!(
+        provisioning
+            .advert
+            .map(|advert| advert.advert_interval_seconds),
+        Some(0)
+    );
+    assert_eq!(
+        provisioning.saved,
+        Some(crate::ulcp::SavedSnapshotRecord::Current),
+        "saved"
+    );
+}
+
+#[test]
 fn an_administered_radio_holding_this_phones_key_keeps_its_transmitter_off() {
     // Claimed as the phone's own, then switched off by hand.
     let mut bench = Bench::attached();

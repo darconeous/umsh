@@ -138,7 +138,6 @@ pub struct UlcpMeshCoreSettingsRecord {
 /// would refuse.
 ///
 /// Case is kept, since MeshCore derives region keys case-sensitively.
-#[uniffi::export]
 pub fn ulcp_meshcore_region_name(input: String) -> Option<String> {
     let name = input.trim();
     let name = name.strip_prefix('#').unwrap_or(name);
@@ -157,7 +156,6 @@ fn valid_meshcore_region_name(name: &str) -> bool {
 /// MeshCore reserves the 0x00 and 0xFF first-octet prefixes, and a device
 /// whose `PROP_DEV_KEY` starts with either refuses to enable forwarding.
 /// Anything that is not a 32-octet key is not a reason to say no here.
-#[uniffi::export]
 pub fn ulcp_meshcore_identity_allowed(dev_key: Vec<u8>) -> bool {
     match dev_key.as_slice() {
         [first, ..] if dev_key.len() == items::PUBLIC_KEY_LEN => meshcore_identity_allowed(*first),
@@ -453,6 +451,31 @@ pub struct UlcpSyncRecord {
     /// are absent above, they are left out of configuration writes, and
     /// nothing about them can be verified after a save.
     pub unreadable_properties: Vec<u32>,
+    /// `PROP_PROTOCOL_VERSION`'s major and minor, as the session checked
+    /// them.
+    #[uniffi(default)]
+    pub protocol_version: Option<UlcpProtocolVersionRecord>,
+    /// Every capability the device listed (`PROP_CAPS`), as codes, in the
+    /// order it listed them.
+    #[uniffi(default)]
+    pub capabilities: Vec<u32>,
+    /// `PROP_DEV_VERSION`: the firmware it runs, as the device says it.
+    /// `None` when it would not say, and in a lazy session, which does
+    /// not ask.
+    #[uniffi(default)]
+    pub device_version: Option<String>,
+    /// `PROP_DEV_MODEL`: its hardware, when it names it. Absent on the
+    /// same terms.
+    #[uniffi(default)]
+    pub device_model: Option<String>,
+}
+
+/// A ULCP protocol version: the major says whether a session can speak to
+/// the device at all, the minor which compatible revision it runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct UlcpProtocolVersionRecord {
+    pub major: u8,
+    pub minor: u8,
 }
 
 /// `PROP_SAVED`: what the radio reports about its stored snapshot.
@@ -1587,18 +1610,7 @@ impl MobileUlcpSession {
         &self,
         configuration: UlcpDeviceConfigRecord,
     ) -> Result<UlcpSessionUpdateRecord, MobileError> {
-        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        state.require_idle_attach()?;
-        let capabilities = DeviceCapabilities::read(&state)?;
-        validate_radio_settings(&configuration.radio, capabilities)?;
-        let device_values = validate_device_settings(&configuration, capabilities)?;
-
-        state.expected.clear();
-        state.configuration_queue =
-            state.writable(configuration_values(configuration.radio, device_values));
-        let mut outbound = Vec::new();
-        state.start_configuration(&mut outbound)?;
-        Ok(state.update(outbound))
+        self.configure_device_as_read(configuration, &[])
     }
 
     /// Apply and persist the time zone and the positioning policy, and
@@ -3285,6 +3297,35 @@ impl MobileUlcpSession {
 }
 
 impl MobileUlcpSession {
+    /// [`Self::configure_device`], also leaving out what `unreadable` names
+    /// as the session itself would leave out an unreadable property.
+    ///
+    /// A caller that filled what an earlier read could not answer with
+    /// placeholders passes that read's unreadable list here, so a
+    /// property that has since become readable is not written with a
+    /// placeholder: the writes stay the ones the caller planned.
+    pub(crate) fn configure_device_as_read(
+        &self,
+        configuration: UlcpDeviceConfigRecord,
+        unreadable: &[u32],
+    ) -> Result<UlcpSessionUpdateRecord, MobileError> {
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        state.require_idle_attach()?;
+        let capabilities = DeviceCapabilities::read(&state)?;
+        validate_radio_settings(&configuration.radio, capabilities)?;
+        let device_values = validate_device_settings(&configuration, capabilities)?;
+
+        state.expected.clear();
+        let values = writable(
+            configuration_values(configuration.radio, device_values),
+            unreadable,
+        );
+        state.configuration_queue = state.writable(values);
+        let mut outbound = Vec::new();
+        state.start_configuration(&mut outbound)?;
+        Ok(state.update(outbound))
+    }
+
     fn with_mode(mode: UlcpAttachMode) -> Self {
         Self {
             inner: Mutex::new(UlcpSessionState {
@@ -4546,6 +4587,10 @@ pub fn ulcp_inspection_properties(capabilities: Vec<u8>) -> Result<Vec<u32>, Mob
         prop::PHY_FREQ,
         prop::PHY_TX_POWER,
         prop::PHY_T_FRAME,
+        // Shown, never relied on: a device that will not say is one that
+        // does not say.
+        prop::DEV_VERSION,
+        prop::DEV_MODEL,
     ];
     if has(cap::PHY_LORA) {
         properties.extend([prop::PHY_LORA_BW, prop::PHY_LORA_SF, prop::PHY_LORA_CR]);
@@ -4804,7 +4849,7 @@ pub fn inspect_ulcp_sync(
     let meshcore_regions = expected.read(
         meshcore_forwarder,
         prop::MESHCORE_REGIONS,
-        decode_region_list,
+        decode_meshcore_region_list,
     );
     let meshcore = (|| {
         Some(UlcpMeshCoreSettingsRecord {
@@ -4936,6 +4981,16 @@ pub fn inspect_ulcp_sync(
         gnss,
         advert,
         unreadable_properties,
+        protocol_version: optional_value(&responses, prop::PROTOCOL_VERSION, |value| match value {
+            [major, minor, ..] => Ok(UlcpProtocolVersionRecord {
+                major: *major,
+                minor: *minor,
+            }),
+            _ => Err(MobileError::InvalidUlcpFrame),
+        }),
+        capabilities,
+        device_version: device_text(&responses, prop::DEV_VERSION),
+        device_model: device_text(&responses, prop::DEV_MODEL),
     })
 }
 
@@ -5217,7 +5272,6 @@ pub fn ulcp_managed_property_ids() -> UlcpManagedPropertyIds {
 ///
 /// Capabilities first, so a device that declines the batch teaches the
 /// crawl to ask one at a time before the rest.
-#[uniffi::export]
 pub fn ulcp_card_properties() -> Vec<u32> {
     vec![
         prop::CAPS,
@@ -5547,19 +5601,13 @@ pub struct UlcpDeviceCardRecord {
 /// rest against. Everything else is absent rather than fatal: a device
 /// that will not name its hardware is a device that does not name its
 /// hardware.
-#[uniffi::export]
 pub fn inspect_ulcp_device_card(
     responses: Vec<UlcpPropertyFrameRecord>,
 ) -> Result<UlcpDeviceCardRecord, MobileError> {
     let raw = property_value(&responses, prop::CAPS)?.to_vec();
     let capabilities = decode_capabilities(&raw);
     let has = |capability| capabilities.contains(&capability);
-    let text = |key| {
-        property_value(&responses, key)
-            .and_then(decode_device_name)
-            .ok()
-            .flatten()
-    };
+    let text = |key| device_text(&responses, key);
 
     Ok(UlcpDeviceCardRecord {
         capabilities: raw,
@@ -5710,7 +5758,6 @@ pub fn ulcp_bridge_server_key(input: String) -> Result<Vec<u8>, MobileError> {
 /// A LAN multicast group, or a unicast peer in its place, as an operator
 /// types it, `GROUP:PORT` or a bare `GROUP` on the default port, in the
 /// form the device reports it.
-#[uniffi::export]
 pub fn ulcp_lan_group(input: String) -> Result<String, MobileError> {
     let group = parse_lan_group(input.trim())?;
     Ok(SocketAddrV4::new(group.address.into(), group.port).to_string())
@@ -5941,7 +5988,6 @@ pub struct UlcpDevicePropertiesRecord {
 /// Precision must be 1 through 7. A coordinate outside its own range is
 /// refused rather than wrapped: a longitude of 200° is a typo, not a
 /// place.
-#[uniffi::export]
 pub fn ulcp_encode_location(
     latitude_deg: f64,
     longitude_deg: f64,
@@ -6738,7 +6784,7 @@ fn decode_region_list(value: &[u8]) -> Result<Vec<String>, MobileError> {
 /// Over-long names are refused here rather than on the air: the device
 /// rejects them outright, and one rejected write abandons everything
 /// after it.
-fn encode_region_list(regions: &[String]) -> Result<Vec<u8>, MobileError> {
+pub(crate) fn encode_region_list(regions: &[String]) -> Result<Vec<u8>, MobileError> {
     let mut value = Vec::new();
     for region in regions {
         if !(1..=items::REGION_STRING_MAX_LEN).contains(&region.len()) {
@@ -6750,6 +6796,21 @@ fn encode_region_list(regions: &[String]) -> Result<Vec<u8>, MobileError> {
         value.extend_from_slice(&item[..len]);
     }
     Ok(value)
+}
+
+/// Split a `PROP_MESHCORE_REGIONS` value into its names, refusing a list
+/// holding any name [`encode_meshcore_region_list`] would refuse: a list
+/// read here is written back whole, so one that would not encode is no
+/// better known than one that would not decode.
+fn decode_meshcore_region_list(value: &[u8]) -> Result<Vec<String>, MobileError> {
+    let regions = decode_region_list(value)?;
+    if !regions
+        .iter()
+        .all(|region| valid_meshcore_region_name(region))
+    {
+        return Err(MobileError::InvalidUlcpFrame);
+    }
+    Ok(regions)
 }
 
 /// Pack MeshCore region names into a `PROP_MESHCORE_REGIONS` value,
@@ -7125,6 +7186,9 @@ fn positioning_values(
     Ok(values)
 }
 
+/// The longest `PROP_DEV_NAME` a device takes, in UTF-8 octets.
+pub(crate) const DEVICE_NAME_MAX_LEN: usize = 64;
+
 fn validate_radio_settings(
     settings: &UlcpRadioSettingsRecord,
     capabilities: DeviceCapabilities,
@@ -7135,7 +7199,7 @@ fn validate_radio_settings(
     if let Some(name) = &settings.device_name
         && (!capabilities.device_name
             || name.is_empty()
-            || name.len() > 64
+            || name.len() > DEVICE_NAME_MAX_LEN
             || name.as_bytes().contains(&0))
     {
         return Err(MobileError::InvalidUlcpFrame);
@@ -7175,6 +7239,17 @@ fn encode_tz_rule(rule: &str) -> Result<Vec<u8>, MobileError> {
         return Err(MobileError::InvalidUlcpFrame);
     }
     Ok(rule.as_bytes().to_vec())
+}
+
+/// Text a device says about itself (its name, firmware or model), or
+/// `None` when it would not say, said nothing, or said it unreadably.
+fn device_text(responses: &[UlcpPropertyFrameRecord], key: u32) -> Option<String> {
+    optional_value(responses, key, |value| {
+        // `DEV_VERSION` and `DEV_MODEL` are STRINGs, sent with their
+        // terminator; a device that leaves it off is read the same.
+        decode_device_name(value.strip_suffix(&[0]).unwrap_or(value))
+    })
+    .flatten()
 }
 
 /// A device name, which is UTF-8 and may be empty—a device that has not
@@ -7283,7 +7358,6 @@ fn encode_resolver_list(resolvers: &[Vec<u8>]) -> Result<Vec<u8>, MobileError> {
 /// keeps the passphrase the device already holds for that SSID and
 /// security, which is how a host changes `auto_join` on a network whose
 /// password it never had.
-#[uniffi::export]
 pub fn ulcp_wifi_network_item(
     ssid: Vec<u8>,
     security: u8,
@@ -7317,7 +7391,6 @@ pub fn ulcp_wifi_network_item(
 ///
 /// The other half of the scan stream: a host that followed the inserts
 /// needs the same reduction a whole-table read gets.
-#[uniffi::export]
 pub fn inspect_ulcp_wifi_scan_result(
     item: Vec<u8>,
 ) -> Result<UlcpWifiScanResultRecord, MobileError> {
@@ -7690,6 +7763,35 @@ pub fn ulcp_supported_bandwidths_hz() -> Vec<u32> {
     umsh_ulcp::profiles::SUPPORTED_BANDWIDTHS_HZ.to_vec()
 }
 
+/// The values a radio editor offers for the settings a device takes from
+/// a short list.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct UlcpRadioChoicesRecord {
+    /// LoRa spreading factors, ascending.
+    pub spreading_factors: Vec<u8>,
+    /// LoRa coding rates, as their denominators, ascending.
+    pub coding_rates: Vec<u8>,
+    /// Transmit duty limits in `PROP_PHY_DUTY_LIMIT` units, the disabled
+    /// value first, then from the loosest limit to the tightest.
+    pub duty_cycle_limits: Vec<u16>,
+    /// LoRa bandwidths in Hz, ascending.
+    pub bandwidths_hz: Vec<u32>,
+}
+
+/// Duty limits offered: none, then 20%, 10%, 1% and 0.1% of the time.
+const DUTY_LIMIT_CHOICES: [u16; 5] = [umsh_ulcp::ids::DUTY_LIMIT_DISABLED, 13_107, 6_553, 655, 65];
+
+/// What a radio editor offers for each setting with a fixed list.
+#[uniffi::export]
+pub fn ulcp_radio_choices() -> UlcpRadioChoicesRecord {
+    UlcpRadioChoicesRecord {
+        spreading_factors: (5..=12).collect(),
+        coding_rates: (5..=8).collect(),
+        duty_cycle_limits: DUTY_LIMIT_CHOICES.to_vec(),
+        bandwidths_hz: ulcp_supported_bandwidths_hz(),
+    }
+}
+
 /// The 2-octet channel identifier a channel's frames carry. `key` has
 /// already been checked to be a channel key.
 fn wire_channel_id(key: &[u8]) -> [u8; items::CHANNEL_ID_LEN] {
@@ -7941,7 +8043,6 @@ pub(crate) fn encode_alert_state(state: UlcpAlertState) -> Result<Vec<u8>, Mobil
 }
 
 /// Validate and reduce a `PROP_ALERT` value.
-#[uniffi::export]
 pub fn inspect_ulcp_alert(value: Vec<u8>) -> Result<UlcpAlertState, MobileError> {
     let (code, consumed) = pui::decode(&value).map_err(|_| MobileError::InvalidUlcpFrame)?;
     if consumed != value.len() {
@@ -8137,6 +8238,25 @@ mod tests {
         }
     }
 
+    #[test]
+    fn device_text_reads_a_string_with_or_without_its_terminator() {
+        let responses = [
+            response(prop::DEV_VERSION, b"fw-2026.11.02\0"),
+            response(prop::DEV_MODEL, b"\0"),
+            response(prop::DEV_NAME, b"Ridge repeater"),
+        ];
+        assert_eq!(
+            device_text(&responses, prop::DEV_VERSION).as_deref(),
+            Some("fw-2026.11.02")
+        );
+        assert_eq!(device_text(&responses, prop::DEV_MODEL), None);
+        assert_eq!(
+            device_text(&responses, prop::DEV_NAME).as_deref(),
+            Some("Ridge repeater")
+        );
+        assert_eq!(device_text(&responses, prop::CAPS), None);
+    }
+
     fn encoded_capabilities(values: &[u32]) -> Vec<u8> {
         let mut encoded = Vec::new();
         for value in values {
@@ -8261,6 +8381,8 @@ mod tests {
             prop::PHY_FREQ => 915_000u32.to_le_bytes().to_vec(),
             prop::PHY_TX_POWER => vec![14],
             prop::PHY_T_FRAME => 1_200u32.to_le_bytes().to_vec(),
+            prop::DEV_VERSION => b"fw-2026.11.02".to_vec(),
+            prop::DEV_MODEL => b"T-Echo".to_vec(),
             prop::SAVED => vec![saved::CURRENT],
             prop::HOST_RX_FILTERS => Vec::new(),
             prop::MAC_REPEATER_MODE => vec![0],
@@ -8684,6 +8806,8 @@ mod tests {
                 prop::PHY_FREQ,
                 prop::PHY_TX_POWER,
                 prop::PHY_T_FRAME,
+                prop::DEV_VERSION,
+                prop::DEV_MODEL,
             ]
         );
         let sync = inspect_ulcp_sync(vec![
@@ -8870,6 +8994,8 @@ mod tests {
                     prop::PHY_FREQ => (property, 915_000u32.to_le_bytes().to_vec()),
                     prop::PHY_TX_POWER => (property, vec![14]),
                     prop::PHY_T_FRAME => (property, 1_200u32.to_le_bytes().to_vec()),
+                    prop::DEV_VERSION => (property, b"fw-2026.11.02".to_vec()),
+                    prop::DEV_MODEL => (property, b"T-Echo".to_vec()),
                     _ => unreachable!(),
                 },
             );
@@ -9038,6 +9164,8 @@ mod tests {
                     prop::PHY_FREQ => (property, 868_100u32.to_le_bytes().to_vec()),
                     prop::PHY_TX_POWER => (property, vec![14]),
                     prop::PHY_T_FRAME => (property, 1_200u32.to_le_bytes().to_vec()),
+                    prop::DEV_VERSION => (property, b"fw-2026.11.02".to_vec()),
+                    prop::DEV_MODEL => (property, b"T-Echo".to_vec()),
                     prop::SAVED => (property, vec![1]),
                     prop::HOST_RX_FILTERS => (property, Vec::new()),
                     _ => unreachable!(),
@@ -9315,6 +9443,45 @@ mod tests {
                 "property {property}"
             );
         }
+    }
+
+    #[test]
+    fn the_sync_record_names_the_radio_s_firmware_model_and_protocol() {
+        let session = MobileUlcpSession::administrative();
+        let begin = session.begin(Some(vec![0xAA; 32])).unwrap();
+        let attached = drive_reads(&session, begin.outbound_frames, |property| match property {
+            prop::HOST_KEY => (property, vec![0xBB; 32]),
+            other => commissionable_value(other),
+        });
+        let sync = attached.snapshot.provisioning.expect("device described");
+        assert_eq!(
+            sync.protocol_version,
+            Some(UlcpProtocolVersionRecord { major: 6, minor: 0 })
+        );
+        assert_eq!(sync.capabilities, commissionable_capabilities());
+        assert_eq!(sync.device_version.as_deref(), Some("fw-2026.11.02"));
+        assert_eq!(sync.device_model.as_deref(), Some("T-Echo"));
+        assert!(sync.unreadable_properties.is_empty());
+    }
+
+    #[test]
+    fn a_radio_that_will_not_name_its_model_withholds_no_setting() {
+        let session = MobileUlcpSession::administrative();
+        let begin = session.begin(Some(vec![0xAA; 32])).unwrap();
+        let attached = drive_reads(&session, begin.outbound_frames, |property| match property {
+            prop::DEV_MODEL => (
+                prop::LAST_STATUS,
+                vec![umsh_ulcp::Status::PROP_NOT_FOUND.0 as u8],
+            ),
+            // Not text: read as nothing said.
+            prop::DEV_VERSION => (property, vec![0xFF, 0xFE]),
+            prop::HOST_KEY => (property, vec![0xBB; 32]),
+            other => commissionable_value(other),
+        });
+        assert_eq!(attached.snapshot.phase, UlcpSessionPhase::Attached);
+        let sync = attached.snapshot.provisioning.expect("device described");
+        assert_eq!((sync.device_version, sync.device_model), (None, None));
+        assert!(sync.unreadable_properties.is_empty());
     }
 
     /// A device that refuses one capability-gated property—firmware
@@ -10076,6 +10243,8 @@ mod tests {
                     prop::PHY_FREQ => (property, 915_000u32.to_le_bytes().to_vec()),
                     prop::PHY_TX_POWER => (property, vec![14]),
                     prop::PHY_T_FRAME => (property, 1_200u32.to_le_bytes().to_vec()),
+                    prop::DEV_VERSION => (property, b"fw-2026.11.02".to_vec()),
+                    prop::DEV_MODEL => (property, b"T-Echo".to_vec()),
                     _ => unreachable!(),
                 },
             );
@@ -10237,6 +10406,8 @@ mod tests {
                     prop::PHY_FREQ => (property, 915_000u32.to_le_bytes().to_vec()),
                     prop::PHY_TX_POWER => (property, vec![14]),
                     prop::PHY_T_FRAME => (property, 1_200u32.to_le_bytes().to_vec()),
+                    prop::DEV_VERSION => (property, b"fw-2026.11.02".to_vec()),
+                    prop::DEV_MODEL => (property, b"T-Echo".to_vec()),
                     prop::PHY_LORA_BW => (property, 125_000u32.to_le_bytes().to_vec()),
                     prop::PHY_LORA_SF => (property, vec![9]),
                     prop::PHY_LORA_CR => (property, vec![5]),
@@ -10338,6 +10509,8 @@ mod tests {
                 prop::PHY_FREQ => (property, 910_525u32.to_le_bytes().to_vec()),
                 prop::PHY_TX_POWER => (property, vec![18]),
                 prop::PHY_T_FRAME => (property, 1_200u32.to_le_bytes().to_vec()),
+                prop::DEV_VERSION => (property, b"fw-2026.11.02".to_vec()),
+                prop::DEV_MODEL => (property, b"T-Echo".to_vec()),
                 prop::PHY_LORA_BW => (property, 62_500u32.to_le_bytes().to_vec()),
                 prop::PHY_LORA_SF => (property, vec![7]),
                 prop::PHY_LORA_CR => (property, vec![5]),
@@ -11699,6 +11872,8 @@ mod tests {
                     prop::PHY_FREQ => (property, 915_000u32.to_le_bytes().to_vec()),
                     prop::PHY_TX_POWER => (property, vec![14]),
                     prop::PHY_T_FRAME => (property, 1_200u32.to_le_bytes().to_vec()),
+                    prop::DEV_VERSION => (property, b"fw-2026.11.02".to_vec()),
+                    prop::DEV_MODEL => (property, b"T-Echo".to_vec()),
                     _ => unreachable!(),
                 },
             );
@@ -11744,6 +11919,8 @@ mod tests {
                     prop::PHY_FREQ => (property, 915_000u32.to_le_bytes().to_vec()),
                     prop::PHY_TX_POWER => (property, vec![14]),
                     prop::PHY_T_FRAME => (property, 1_200u32.to_le_bytes().to_vec()),
+                    prop::DEV_VERSION => (property, b"fw-2026.11.02".to_vec()),
+                    prop::DEV_MODEL => (property, b"T-Echo".to_vec()),
                     _ => unreachable!(),
                 },
             );
@@ -11838,6 +12015,8 @@ mod tests {
                     prop::PHY_FREQ => (property, 915_000u32.to_le_bytes().to_vec()),
                     prop::PHY_TX_POWER => (property, vec![14]),
                     prop::PHY_T_FRAME => (property, 1_200u32.to_le_bytes().to_vec()),
+                    prop::DEV_VERSION => (property, b"fw-2026.11.02".to_vec()),
+                    prop::DEV_MODEL => (property, b"T-Echo".to_vec()),
                     prop::ALERT => (property, vec![0]),
                     _ => unreachable!(),
                 },
@@ -12403,6 +12582,63 @@ mod tests {
     }
 
     #[test]
+    fn what_an_earlier_read_could_not_answer_is_not_written_once_it_can() {
+        // A setup built on a read where the time-trust policy would not
+        // read holds placeholders for the whole positioning group; this
+        // session reads it now, and still writes none of it.
+        let session = MobileUlcpSession::administrative();
+        attach_positioning(&session);
+
+        let configured = session
+            .configure_device_as_read(
+                UlcpDeviceConfigRecord {
+                    radio: UlcpRadioSettingsRecord {
+                        device_name: None,
+                        phy_enabled: true,
+                        frequency_khz: 915_000,
+                        transmit_power_dbm: 14,
+                        bandwidth_hz: None,
+                        spreading_factor: None,
+                        coding_rate_denom: None,
+                        duty_cycle_limit: None,
+                    },
+                    ident_role: None,
+                    ident_mobile: Some(false),
+                    dev_discoverable: Some(true),
+                    repeater: Some(UlcpRepeaterSettingsRecord {
+                        mode: 0,
+                        regions: Vec::new(),
+                        default_region: None,
+                        min_rssi_dbm: None,
+                        min_snr_db: None,
+                    }),
+                    meshcore: None,
+                    tz_rule: Some("UTC0".to_owned()),
+                    time_24h: Some(true),
+                    gnss: Some(UlcpGnssSettingsRecord {
+                        enabled: false,
+                        ident_update: false,
+                        ident_precision: 3,
+                        time_trust: true,
+                    }),
+                    advert: None,
+                },
+                &[prop::GNSS_TIME_TRUST],
+            )
+            .unwrap();
+        let (written, _, _) = drive_configuration(&session, configured.outbound_frames);
+        for placeholder in [
+            prop::GNSS_ENABLED,
+            prop::GNSS_IDENT_UPDATE,
+            prop::GNSS_IDENT_PRECISION,
+            prop::GNSS_TIME_TRUST,
+        ] {
+            assert!(!written.contains_key(&placeholder), "{placeholder}");
+        }
+        assert_eq!(written.get(&prop::TZ_RULE), Some(&b"UTC0".to_vec()));
+    }
+
+    #[test]
     fn a_tethered_phone_changes_positioning_without_restating_the_domain() {
         // The companion case: switching a receiver on must not require
         // saying anything about the radio's role or what it forwards.
@@ -12768,6 +13004,8 @@ mod tests {
                 prop::PHY_FREQ => (property, 915_000u32.to_le_bytes().to_vec()),
                 prop::PHY_TX_POWER => (property, vec![14]),
                 prop::PHY_T_FRAME => (property, 1_200u32.to_le_bytes().to_vec()),
+                prop::DEV_VERSION => (property, b"fw-2026.11.02".to_vec()),
+                prop::DEV_MODEL => (property, b"T-Echo".to_vec()),
                 prop::HOST_RX_FILTERS => (property, Vec::new()),
                 _ => unreachable!(),
             },
@@ -15118,6 +15356,18 @@ mod tests {
             !asked.contains(&prop::MAC_REPEATER_MODE),
             "the device domain is left to be read on demand"
         );
+        // Nor what it calls itself, though what it speaks is known.
+        let sync = update
+            .snapshot
+            .provisioning
+            .clone()
+            .expect("device described");
+        assert_eq!((sync.device_version, sync.device_model), (None, None));
+        assert_eq!(
+            sync.protocol_version,
+            Some(UlcpProtocolVersionRecord { major: 6, minor: 0 })
+        );
+        assert_eq!(sync.capabilities, commissionable_capabilities());
 
         // And reading on demand works.
         let fetch = session

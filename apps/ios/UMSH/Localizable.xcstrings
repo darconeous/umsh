@@ -38,12 +38,23 @@
       }
     },
     "%@ · %@" : {
-      "comment" : "A radio reading: signal strength, then signal-to-noise ratio.\nAn earlier ping: its round trip, then how many hops it took.",
+      "comment" : "A Discover result's subtitle: whether the peer is saved or when it was last heard, then its role.\nA radio reading: signal strength, then signal-to-noise ratio.\nAn earlier ping: its round trip, then how many hops it took.\nDevice setup: a radio profile as one line. The placeholders are the frequency and the transmit power, each with its unit.",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
             "value" : "%1$@ · %2$@"
+          }
+        }
+      }
+    },
+    "%@ · %@ BW · SF%lld · 4/%lld · %@" : {
+      "comment" : "Device setup: a radio profile as one line: frequency, bandwidth, spreading factor, coding rate, and transmit power, each figure with its unit. BW is bandwidth, SF the spreading factor.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ · %2$@ BW · SF%3$lld · 4/%4$lld · %5$@"
           }
         }
       }
@@ -55,6 +66,17 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "%1$@ · within %2$@"
+          }
+        }
+      }
+    },
+    "%@ (%@)" : {
+      "comment" : "A temperature in the locale's unit, then in degrees Celsius. Both placeholders are formatted temperatures.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ (%2$@)"
           }
         }
       }
@@ -74,7 +96,7 @@
       "comment" : "A signal-to-noise ratio, in decibels. The placeholder is a number."
     },
     "%@ dBm" : {
-      "comment" : "Received signal strength, in decibel-milliwatts. The placeholder is a number."
+      "comment" : "A power level, such as a signal strength or a transmit power, in decibel-milliwatts. The placeholder is a number."
     },
     "%@ details" : {
 
@@ -91,6 +113,17 @@
         }
       }
     },
+    "%@ in %@" : {
+      "comment" : "Accessibility label of a number box: its title, then its unit.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ in %2$@"
+          }
+        }
+      }
+    },
     "%@ is on the air" : {
       "comment" : "Notification title: a node the user asked to watch for was just heard. The placeholder is its name."
     },
@@ -99,6 +132,9 @@
     },
     "%@ still holds your identity" : {
       "comment" : "Another radio this phone set up can still acknowledge for it. The placeholder is the radio's name."
+    },
+    "%@—not relayed" : {
+      "comment" : "Device setup: the region a repeater tags untagged traffic with, when it is not one the repeater relays. The placeholder is the region."
     },
     "%@, %@" : {
       "comment" : "VoiceOver: a distance, then which way it lies, such as 4.2 km, northeast.",
@@ -110,9 +146,6 @@
           }
         }
       }
-    },
-    "%d dB" : {
-
     },
     "%d dBm" : {
 
@@ -264,6 +297,9 @@
     "^[%lld hop](inflect: true)" : {
 
     },
+    "4/%lld" : {
+      "comment" : "A LoRa coding rate, such as 4/5."
+    },
     "4/%u" : {
 
     },
@@ -273,7 +309,13 @@
     "7Nq4" : {
 
     },
+    "24-hour clock" : {
+
+    },
     "37.5119" : {
+
+    },
+    "A beacon carries no payload and collects the path back to this device as it travels, so it publishes a route for very little airtime." : {
 
     },
     "A channel is a shared key. Join one by name if it is public, or with an invitation if it is private." : {
@@ -285,14 +327,23 @@
     "A companion radio is what puts this phone on the mesh. Without one you can still look around, but nothing is sent or received." : {
 
     },
+    "A device left on a frequency or modem profile the rest of the mesh is not using cannot be reached to change back." : {
+      "comment" : "Confirmation message before applying new radio settings to a managed device."
+    },
     "A different channel is already called “%@”" : {
 
     },
     "A live view of nodes announcing themselves, and the place to ask them to." : {
 
     },
+    "A mobile node that carries its own identity and does not forward other traffic." : {
+      "comment" : "Device setup goal detail, under \"Set up a tracker\"."
+    },
     "A new random key is generated on this phone. Everyone you share the invitation with becomes a full member: they can read everything sent here and send messages that appear to come from any member." : {
 
+    },
+    "A node that forwards traffic for the mesh, optionally limited to particular routing regions." : {
+      "comment" : "Device setup goal detail, under \"Set up a repeater\"."
     },
     "A preset sets every radio parameter below. Choose the one your local mesh uses; nodes with different PHY settings cannot hear each other." : {
 
@@ -387,7 +438,7 @@
       "comment" : "Brief notice after the address was copied."
     },
     "Administrators" : {
-
+      "comment" : "Device setup: a setting the device did not report. Who may manage it remotely."
     },
     "Advertise Identity" : {
 
@@ -396,7 +447,7 @@
       "comment" : "Row label: when the node last said who it is."
     },
     "Advertised identity" : {
-
+      "comment" : "Device setup: a setting the device did not report. The role and mobility it advertises."
     },
     "Advertisement broadcast" : {
       "comment" : "Shown under Advertise Identity once the advertisement went out."
@@ -412,6 +463,55 @@
     },
     "Alias" : {
 
+    },
+    "All" : {
+      "comment" : "Diagnostics log filter: every line."
+    },
+    "All %lld phones paired with this device will be forgotten. The device then opens a pairing window so someone can pair again." : {
+      "comment" : "Clear Pairings confirmation, device reached some other way than its own Bluetooth: the count of paired phones. Has plural variants.",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "The one phone paired with this device will be forgotten. The device then opens a pairing window so someone can pair again."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "All %lld phones paired with this device will be forgotten. The device then opens a pairing window so someone can pair again."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "All %lld phones paired with this device, including this one, will be forgotten. The device then opens a pairing window so you can pair again." : {
+      "comment" : "Clear Pairings confirmation, over the device's own Bluetooth: the count of paired phones. Has plural variants.",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "This phone, the only one paired with this device, will be forgotten. The device then opens a pairing window so you can pair again."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "All %lld phones paired with this device, including this one, will be forgotten. The device then opens a pairing window so you can pair again."
+                }
+              }
+            }
+          }
+        }
+      }
     },
     "All nodes" : {
 
@@ -432,6 +532,9 @@
 
     },
     "An advertisement carries the device's signed identity; a beacon carries nothing and publishes a path back to it. Either is queued at the device and goes out when its duty limit allows." : {
+
+    },
+    "An identity announcement carries this device's name, role, and capabilities, and reaches only the nodes that can hear it directly." : {
 
     },
     "An identity is already here" : {
@@ -456,7 +559,7 @@
 
     },
     "Announcements" : {
-
+      "comment" : "Device setup: a setting the device did not report. What it announces on its own schedule."
     },
     "Another device on this network is already using that address. Change it below, or switch to Automatic." : {
 
@@ -479,6 +582,9 @@
     "Anyone who scans or receives this becomes a full member of “%@”. They can read everything sent here, send messages that appear to come from any member, and pass the invitation on." : {
 
     },
+    "App" : {
+      "comment" : "Settings section header: about this app itself, not the mesh or a radio."
+    },
     "Apply" : {
 
     },
@@ -497,6 +603,9 @@
     "Ask Again" : {
       "comment" : "VoiceOver label: ask a node for its identity again."
     },
+    "Ask again in %@." : {
+      "comment" : "Footer under Discover's ask while a recent ask holds it back. The placeholder is a duration, such as 40 sec."
+    },
     "Ask Near This Node" : {
       "comment" : "Button: discover the nodes in range of this one."
     },
@@ -507,7 +616,7 @@
       "comment" : "Button: ask the nodes in range of a peer to identify themselves. The placeholder is the peer's name."
     },
     "Asked %@." : {
-
+      "comment" : "When the device was last asked what it is. The placeholder is an age, such as 5 min. ago or just now."
     },
     "Asked through %@." : {
 
@@ -627,6 +736,9 @@
     "BLE DFU" : {
 
     },
+    "Bluetooth enabled" : {
+
+    },
     "Bluetooth is restarting" : {
 
     },
@@ -654,6 +766,9 @@
     "Bridge" : {
       "comment" : "Node role: links the mesh to another network."
     },
+    "Bridge enabled" : {
+
+    },
     "Bridged" : {
       "comment" : "A neighbor heard over a non-radio link, so it has no signal reading.\nA path leg that crossed a non-radio link, so it has no signal reading."
     },
@@ -666,6 +781,9 @@
     "Calls themselves" : {
 
     },
+    "Can't Manage This Device" : {
+      "comment" : "Managing a node: title shown when a device's settings could not be opened."
+    },
     "Cancel" : {
       "comment" : "Button: close the EMERGENCY warning without sending.\nCancels a confirmation.\nLeaves editing without saving.\nStops waiting on a request to a managed node."
     },
@@ -673,7 +791,7 @@
 
     },
     "Capabilities" : {
-      "comment" : "Row label: what a node advertises it can do."
+      "comment" : "Row label: how many optional features the radio says it supports.\nRow label: what a node advertises it can do."
     },
     "Carried the flooded acks" : {
 
@@ -692,6 +810,15 @@
     },
     "Certify and Send" : {
       "comment" : "Button: certify that a message on the EMERGENCY channel is about a genuine emergency, and send it."
+    },
+    "Change a device's settings" : {
+      "comment" : "Device setup choice: open the settings of a device that is already set up."
+    },
+    "Change Addressing" : {
+      "comment" : "Confirmation title and button: apply a static IP address to a managed device."
+    },
+    "Change This Device's Radio" : {
+      "comment" : "Confirmation title and button: apply new radio settings to a managed device."
     },
     "Changes could not be saved." : {
       "comment" : "A write to the phone's database failed."
@@ -858,8 +985,11 @@
     "Confirmed" : {
       "comment" : "Row label: when this route last carried an acknowledgment."
     },
-    "Congrats, you've successfully set up your %@!" : {
-
+    "Congrats, you've successfully set up your repeater!" : {
+      "comment" : "Device setup result: a repeater was set up."
+    },
+    "Congrats, you've successfully set up your tracker!" : {
+      "comment" : "Device setup result: a tracker was set up."
     },
     "Connect a companion radio set up for this phone to announce your identity." : {
 
@@ -885,14 +1015,23 @@
     "Connect Radio" : {
       "comment" : "Button: open the radio's settings to connect one."
     },
+    "Connect to a device that is already set up and edit what it is doing." : {
+      "comment" : "Device setup choice detail, under \"Change a device's settings\"."
+    },
     "Connecting" : {
 
     },
     "Connecting to %@…" : {
+      "comment" : "The placeholder is the device's name."
+    },
+    "Connecting to the device…" : {
 
     },
     "Connection" : {
 
+    },
+    "Connection lost" : {
+      "comment" : "Device setup: the link to the device being set up dropped."
     },
     "Connects automatically when the radio is powered on nearby, even while the app is in the background." : {
 
@@ -912,6 +1051,12 @@
     "Conversations" : {
 
     },
+    "Copied from %@. Nodes on different profiles cannot hear each other." : {
+      "comment" : "Device setup: the radio profile was copied from this phone's radio. The placeholder is that radio's name."
+    },
+    "Copied from this phone's radio. Nodes on different profiles cannot hear each other." : {
+      "comment" : "Device setup: the radio profile was copied from this phone's radio, which has no name."
+    },
     "Copies the address." : {
       "comment" : "VoiceOver hint on the address row."
     },
@@ -926,6 +1071,9 @@
     },
     "Copy Link" : {
       "comment" : "Button: copy a node's identity link."
+    },
+    "Core API" : {
+      "comment" : "Diagnostics row: the version of the app's mesh core interface."
     },
     "Couldn't Erase" : {
       "comment" : "Alert title: erasing this phone's identity did not finish. The message says why."
@@ -951,6 +1099,12 @@
     "Current fix" : {
 
     },
+    "Custom" : {
+      "comment" : "Device setup: the radio profile is not one of the vetted presets."
+    },
+    "Custom (%@)" : {
+      "comment" : "A picker row for a value the device holds that is not one of the offered choices. The placeholder is that value."
+    },
     "Custom / manual" : {
 
     },
@@ -975,8 +1129,8 @@
     "Delete Conversation" : {
 
     },
-    "Delete for everyone" : {
-
+    "Delete for Everyone" : {
+      "comment" : "Button: deletes a sent message from every recipient's transcript, not only this phone's."
     },
     "Delete Peer" : {
       "comment" : "Confirms deleting a node."
@@ -1002,10 +1156,16 @@
     "Details" : {
 
     },
+    "Device" : {
+      "comment" : "Screen title: connecting to a device that advertises no name."
+    },
     "Device identity" : {
 
     },
     "Device may become inaccessible" : {
+
+    },
+    "Device moves around" : {
 
     },
     "Devices" : {
@@ -1019,6 +1179,9 @@
     },
     "DFU Method" : {
 
+    },
+    "Diagnostics" : {
+      "comment" : "Settings row: opens the page with this launch's log and the app's and radio's versions.\nTitle of the page that shows this launch's log and the app's and radio's versions."
     },
     "Diagnostics read" : {
 
@@ -1035,11 +1198,17 @@
     "Direction" : {
 
     },
+    "Disabled" : {
+      "comment" : "A transmit limit of none."
+    },
     "Discard Changes" : {
 
     },
     "Disconnect" : {
 
+    },
+    "Disconnect This Radio" : {
+      "comment" : "Confirmation title and button: turn off Bluetooth on the radio this phone is using."
     },
     "Discover" : {
 
@@ -1051,7 +1220,10 @@
 
     },
     "Discoverability" : {
-
+      "comment" : "Device setup: a setting the device did not report."
+    },
+    "Discoverability can't be set to its current value." : {
+      "comment" : "Device setup: a setting holds a value the device cannot take, so Apply is unavailable."
     },
     "Discoverable" : {
 
@@ -1071,6 +1243,9 @@
     "Distance" : {
       "comment" : "Strip label: how far away the node is. Keep short."
     },
+    "DNS" : {
+
+    },
     "Do not delete the app—that erases the database this build is unable to read. Reinstalling the previous version, or a build that fixes the error below, restores everything." : {
 
     },
@@ -1084,6 +1259,9 @@
 
     },
     "Duty-cycle limit" : {
+
+    },
+    "Each interval is a minimum: periods run a little longer at random, so devices on the same schedule do not all transmit at once." : {
 
     },
     "Earlier" : {
@@ -1110,11 +1288,57 @@
     "Emergencies Only" : {
       "comment" : "Title of the warning shown before the first message sent on the EMERGENCY channel."
     },
+    "End This Session" : {
+      "comment" : "Confirmation title and button: turn off Bluetooth on a device being set up over it."
+    },
+    "Enter a host name or an IP address." : {
+      "comment" : "Managing a node: under the bridge server's host field."
+    },
+    "Enter a limit from %lld to %lld frames per minute." : {
+      "comment" : "Managing a node: under the local network's frame limit. The placeholders are the lowest and highest limit.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Enter a limit from %1$lld to %2$lld frames per minute."
+          }
+        }
+      }
+    },
+    "Enter a multicast group or a peer address, with an optional port." : {
+      "comment" : "Managing a node: under the local network group field."
+    },
+    "Enter a port from %lld to %lld." : {
+      "comment" : "Managing a node: under the bridge server's port field. The placeholders are the lowest and highest port.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Enter a port from %1$lld to %2$lld."
+          }
+        }
+      }
+    },
+    "Enter a prefix length that fits the address." : {
+      "comment" : "Managing a node: under a static IP address's prefix length."
+    },
     "Enter a public channel name, or a umsh:cs: or umsh:ck: invitation. Nothing was joined." : {
       "comment" : "Typed text is neither a channel name nor a channel invitation."
     },
+    "Enter a valid address for each resolver." : {
+      "comment" : "Managing a node: under the list of DNS resolvers."
+    },
+    "Enter a valid address for this network." : {
+      "comment" : "Managing a node: under a static IP address field."
+    },
+    "Enter a valid router address, or leave it empty." : {
+      "comment" : "Managing a node: under a static IP configuration's router field."
+    },
     "Enter a valid UMSH node URI, canonical Base58 address, or 64-digit hexadecimal public key. Nothing was imported." : {
       "comment" : "Importing a peer: what was entered is not a node's address."
+    },
+    "Enter a valid UMSH server identity, or leave it empty to clear it." : {
+      "comment" : "Managing a node: under the bridge server's identity field."
     },
     "Enter Conversation" : {
 
@@ -1127,6 +1351,12 @@
     },
     "Enter Router Hint…" : {
 
+    },
+    "Enter the network's name." : {
+      "comment" : "Adding a Wi-Fi network: no name entered."
+    },
+    "Enter the password." : {
+      "comment" : "Joining a Wi-Fi network: this security mode needs a password."
     },
     "Enter the server's UMSH identity to authenticate it. Wi-Fi and IP must be configured separately." : {
 
@@ -1158,11 +1388,26 @@
     "Erased from this phone only. %@ keeps their copy." : {
       "comment" : "Confirmation message for clearing a conversation. The placeholder is the node's name."
     },
+    "Error" : {
+      "comment" : "Accessibility label of the mark on an error line in the diagnostics log."
+    },
+    "Errors" : {
+      "comment" : "Diagnostics log filter: only error and fault lines."
+    },
+    "Every %@" : {
+      "comment" : "An announcement interval. The placeholder is a duration, such as 4 hours or 20 minutes."
+    },
     "Every channel you have joined already has a conversation." : {
 
     },
     "Every message is signed and identifies its sender. Anything unsigned or unattributed is ignored." : {
       "comment" : "How the EMERGENCY channel works."
+    },
+    "Every phone paired with this device will be forgotten. The device then opens a pairing window so someone can pair again." : {
+      "comment" : "Clear Pairings confirmation, device reached some other way than its own Bluetooth, when the count of paired phones is unknown."
+    },
+    "Every phone paired with this device, including this one, will be forgotten. The device then opens a pairing window so you can pair again." : {
+      "comment" : "Clear Pairings confirmation, over the device's own Bluetooth, when the count of paired phones is unknown."
     },
     "Every sender is identified. Messages that arrive without a full sender key are ignored." : {
       "comment" : "How the Public channel works."
@@ -1185,8 +1430,11 @@
     "Expand" : {
 
     },
-    "Factory Reset Failed" : {
-
+    "Export" : {
+      "comment" : "Button: shares this launch's diagnostics log as a text file."
+    },
+    "Factory Reset Not Sent" : {
+      "comment" : "Alert title: the radio was not asked to factory reset."
     },
     "Factory Reset Radio…" : {
 
@@ -1208,6 +1456,9 @@
     },
     "Favorites" : {
 
+    },
+    "Filled in from where this phone is, using region data %@. Edit them freely—nothing is sent until you apply." : {
+      "comment" : "Device setup: footer after region suggestions were filled in. The placeholder is the region database's version, not translated."
     },
     "Filter" : {
 
@@ -1231,6 +1482,12 @@
 
     },
     "Finish setup to reconnect" : {
+
+    },
+    "Fixes never touch the clock, so a hand-set time is safe from a jammed or spoofed sky. Positions are unaffected." : {
+
+    },
+    "Fixes set the device's clock." : {
 
     },
     "Flood" : {
@@ -1269,16 +1526,25 @@
     "Forward for others" : {
       "comment" : "Picker title: whether a remote device forwards other nodes' traffic."
     },
+    "Forward MeshCore" : {
+
+    },
     "Forward other nodes' traffic" : {
 
     },
     "Forwarding" : {
 
     },
+    "Forwarding policy" : {
+      "comment" : "Device setup: a setting the device did not report. Whether and what it forwards."
+    },
     "Forwarding thresholds" : {
 
     },
     "Frames heard below a threshold are not relayed. Raising them keeps a repeater from amplifying signals too weak to be worth repeating; leaving them off relays everything it can decode." : {
+
+    },
+    "Frames per minute" : {
 
     },
     "Frequency" : {
@@ -1290,11 +1556,34 @@
     "Go back and connect to the device again. Nothing was changed on it." : {
 
     },
+    "Group" : {
+
+    },
     "Heard" : {
       "comment" : "Strip label: when the node was last heard. Keep short."
     },
+    "heard %@" : {
+      "comment" : "When a node was last heard. The placeholder is an age, such as 5 min. ago or just now."
+    },
+    "Heard %@" : {
+      "comment" : "When a node was last heard. The placeholder is an age, such as 5 min. ago or just now."
+    },
+    "Heard %@ · location from %@" : {
+      "comment" : "Map list subtitle. The placeholders are when the node was last heard and when its location was reported, each an age such as 5 min. ago.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Heard %1$@ · location from %2$@"
+          }
+        }
+      }
+    },
     "Heard by %@" : {
 
+    },
+    "heard long ago" : {
+      "comment" : "A repeater heard this neighbor longer ago than it can count."
     },
     "Heard over the air but not saved. Opening a conversation with one works the same way." : {
 
@@ -1338,6 +1627,9 @@
     "Hop count" : {
 
     },
+    "Host" : {
+
+    },
     "Host identity" : {
 
     },
@@ -1348,6 +1640,9 @@
 
     },
     "How This Channel Works" : {
+
+    },
+    "How to get an address" : {
 
     },
     "Identifier" : {
@@ -1370,6 +1665,9 @@
     },
     "Identity Requested" : {
 
+    },
+    "If the address you have set is not one this device's network will route, nothing reaches it over that network until someone changes it back from the device itself." : {
+      "comment" : "Confirmation message before applying a static IP address to a managed device."
     },
     "Ignore" : {
 
@@ -1398,6 +1696,9 @@
     "Internet Server" : {
 
     },
+    "Invalid reading" : {
+      "comment" : "Managing a node: a value it reported could not be decoded."
+    },
     "Invitation Unavailable" : {
       "comment" : "Alert title: a channel's invitation could not be made."
     },
@@ -1413,7 +1714,7 @@
     "It is no longer on this phone." : {
       "comment" : "A peer, channel or conversation was removed while its screen was open."
     },
-    "It saved its settings, but what it read back afterwards is not what it was asked for. Read the device again before relying on this configuration." : {
+    "It saved its settings, but what it read back afterward is not what it was asked for. Read the device again before relying on this configuration." : {
 
     },
     "It was saved but could not go out. It's marked Not Delivered." : {
@@ -1477,10 +1778,13 @@
 
     },
     "Last read %@." : {
-
+      "comment" : "When a device's settings were last read. The placeholder is an age, such as 5 min. ago."
     },
     "Latitude" : {
-
+      "comment" : "Field title: a position's latitude."
+    },
+    "Learned" : {
+      "comment" : "Section header: the path learned while a manual one was held."
     },
     "Leave" : {
 
@@ -1546,6 +1850,9 @@
     "Local Details" : {
 
     },
+    "Local network" : {
+
+    },
     "Local Network" : {
 
     },
@@ -1564,8 +1871,11 @@
     "Locations reported by observed nodes will appear here with their precision and age." : {
 
     },
+    "Log" : {
+      "comment" : "Diagnostics section header: the lines the app logged since it launched."
+    },
     "Longitude" : {
-
+      "comment" : "Field title: a position's longitude."
     },
     "Look Up Channel" : {
 
@@ -1594,6 +1904,9 @@
     "Manage Device" : {
 
     },
+    "Manage this phone's radio from its companion radio screen." : {
+      "comment" : "Device setup: the chosen radio is this phone's own, which is managed elsewhere."
+    },
     "Manual" : {
       "comment" : "Route kind: a path chosen by hand."
     },
@@ -1614,6 +1927,12 @@
     },
     "MeshCore" : {
 
+    },
+    "MeshCore forwarding" : {
+      "comment" : "Device setup: a setting the device did not report. MeshCore is a product name."
+    },
+    "MeshCore forwarding can't be set to its current value." : {
+      "comment" : "Device setup: a setting holds a value the device cannot take, so Apply is unavailable. MeshCore is a product name."
     },
     "Message" : {
       "comment" : "Placeholder in the reply field of a notification. A noun.\nTile: open a conversation with the node. A verb."
@@ -1667,10 +1986,16 @@
     "Minimum quality" : {
 
     },
+    "Minimum RSSI" : {
+
+    },
     "Minimum security" : {
       "comment" : "Picker label: the weakest Wi-Fi security a device accepts."
     },
     "Minimum signal" : {
+
+    },
+    "Minimum SNR" : {
 
     },
     "Minimum: %@" : {
@@ -1679,8 +2004,14 @@
     "Mobile" : {
       "comment" : "Node capability: moves around."
     },
+    "Mobility can't be set to its current value." : {
+      "comment" : "Device setup: a setting holds a value the device cannot take, so Apply is unavailable. Mobility: whether the device says it moves."
+    },
     "Modem profile" : {
 
+    },
+    "Modem settings" : {
+      "comment" : "Device setup: a setting the device did not report. Its bandwidth, spreading factor and coding rate."
     },
     "More" : {
 
@@ -1808,6 +2139,9 @@
     "No known nodes" : {
 
     },
+    "No Log Entries" : {
+      "comment" : "Shown on the Diagnostics page when there are no log lines to show."
+    },
     "No messages yet" : {
 
     },
@@ -1824,7 +2158,7 @@
       "comment" : "VoiceOver label for the X on a ping that got no reply."
     },
     "No radio to send through." : {
-      "comment" : "Managing a node: no companion radio is attached."
+      "comment" : "Managing a node: no radio link is there to carry the request."
     },
     "No recent locations" : {
 
@@ -1845,6 +2179,9 @@
     "No saved nodes. Nodes heard over the air appear in search until you save them." : {
 
     },
+    "No temperature sensors" : {
+      "comment" : "Managing a node: it reported an empty list of temperature sensors."
+    },
     "No—save failed to load" : {
       "comment" : "Saved settings: none could be read"
     },
@@ -1857,11 +2194,17 @@
     "Nodes have reported locations, but none of them pass the current filters." : {
 
     },
+    "Nodes listed here can read and change this device's settings over the mesh. It ignores everyone else, silently." : {
+
+    },
     "Nodes Not Cleared" : {
       "comment" : "Alert title."
     },
     "Nodes that announce themselves appear here while this stays open. This is a live window, not a directory of the mesh." : {
 
+    },
+    "Nodes that can read this device's identity are told a %@ area it is inside—never a more precise position than that." : {
+      "comment" : "Device setup: positioning footer. The placeholder is a cell size such as 611 m."
     },
     "None" : {
 
@@ -1906,7 +2249,7 @@
 
     },
     "Not read" : {
-
+      "comment" : "A setting the device has not reported yet.\nManaging a node: a value nobody has asked the device for yet."
     },
     "Not Resent" : {
       "comment" : "Alert title: an undelivered message was not sent again. The message says why."
@@ -1944,11 +2287,14 @@
     "Notifications off" : {
 
     },
+    "now" : {
+      "comment" : "An age under a minute in a list's time column."
+    },
     "Now" : {
       "comment" : "Row title: what an adaptive forwarder is doing at the moment."
     },
     "Off" : {
-      "comment" : "Flood allowance: the frame does not flood.\nForwarding mode: the device does not forward.\nVoiceOver value of a switch-like control."
+      "comment" : "An announcement interval of zero.\nFlood allowance: the frame does not flood.\nForwarding mode: the device does not forward.\nVoiceOver value of a switch-like control."
     },
     "OK" : {
       "comment" : "Dismisses an alert."
@@ -1975,6 +2321,12 @@
 
     },
     "Original Message" : {
+
+    },
+    "Paired phones" : {
+
+    },
+    "Pairing mode" : {
 
     },
     "Pairing mode lets another phone pair without pressing anything on the device. It closes by itself after a short while, or when a phone pairs. Clearing forgets every paired phone and the pairing PIN." : {
@@ -2025,6 +2377,9 @@
     "Place" : {
 
     },
+    "Port" : {
+
+    },
     "Position" : {
 
     },
@@ -2032,6 +2387,9 @@
 
     },
     "Positioning" : {
+      "comment" : "Device setup: a setting the device did not report. Its GNSS receiver's settings."
+    },
+    "Prefix length" : {
 
     },
     "Preset" : {
@@ -2056,7 +2414,7 @@
 
     },
     "Radio" : {
-      "comment" : "Row label: the companion radio this identity belongs to."
+      "comment" : "Row label: the companion radio this identity belongs to.\nWhat to call the attached radio before it reports a name."
     },
     "Radio disconnected" : {
       "comment" : "A description of a radio problem.",
@@ -2065,11 +2423,17 @@
     "Radio enabled" : {
 
     },
+    "Radio firmware" : {
+      "comment" : "Diagnostics row: the firmware version the companion radio reports."
+    },
     "Radio ID" : {
 
     },
     "Radio identity" : {
 
+    },
+    "Radio model" : {
+      "comment" : "Diagnostics row: the hardware the companion radio reports."
     },
     "Radio profile" : {
 
@@ -2119,6 +2483,12 @@
     "Reaction Not Sent" : {
       "comment" : "Alert title: a reaction to a message did not go out. The message says why."
     },
+    "Read failed" : {
+      "comment" : "Managing a node: a value could not be read."
+    },
+    "Read failed (%@)" : {
+      "comment" : "Managing a node: a value could not be read. The placeholder is a protocol status name, not translated."
+    },
     "Read from %@ just now." : {
 
     },
@@ -2138,6 +2508,9 @@
       "comment" : "Under a message that arrived as an edit of a message this phone never received, shown as a message of its own."
     },
     "Receiver" : {
+
+    },
+    "Receiver enabled" : {
 
     },
     "Reception" : {
@@ -2167,11 +2540,35 @@
     "Region name" : {
 
     },
+    "Region policy" : {
+
+    },
     "Regions" : {
       "comment" : "Row label: the regions a flood route was learned in."
     },
     "Regions for This Place" : {
 
+    },
+    "Rejected: it is too large for the device to hold." : {
+      "comment" : "Managing a node: under a setting it refused."
+    },
+    "Rejected: the device answered %@." : {
+      "comment" : "Managing a node: under a setting it refused. The placeholder is a protocol status name, not translated."
+    },
+    "Rejected: the device does not allow this change." : {
+      "comment" : "Managing a node: under a setting it refused."
+    },
+    "Rejected: the device does not implement this setting." : {
+      "comment" : "Managing a node: under a setting it refused."
+    },
+    "Rejected: the device says it is out of range." : {
+      "comment" : "Managing a node: under a setting it refused."
+    },
+    "Rejected: the device was busy." : {
+      "comment" : "Managing a node: under a setting it refused."
+    },
+    "Rejected: the device's current state does not allow it." : {
+      "comment" : "Managing a node: under a setting it refused."
     },
     "Remove" : {
 
@@ -2245,6 +2642,20 @@
     "Reported" : {
 
     },
+    "Reported by %@" : {
+      "comment" : "Map list subtitle for a node another node reported. The placeholder is the reporter's name."
+    },
+    "Reported by %@ · heard %@" : {
+      "comment" : "Map list subtitle for a node another node reported. The placeholders are the reporter's name and when it last heard the node, such as 5 min. ago.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Reported by %1$@ · heard %2$@"
+          }
+        }
+      }
+    },
     "Reported precision" : {
 
     },
@@ -2295,11 +2706,17 @@
     "Reset Route" : {
       "comment" : "Button: forget the learned route to this node."
     },
+    "Resolvers" : {
+
+    },
     "Resolvers the device is told to use. Leave the list empty to use only what the network offers." : {
 
     },
     "Restart" : {
 
+    },
+    "Restart Not Sent" : {
+      "comment" : "Alert title: the radio was not asked to restart."
     },
     "Restart Radio…" : {
 
@@ -2333,6 +2750,9 @@
     },
     "Route reset" : {
       "comment" : "Brief notice after the learned route was forgotten."
+    },
+    "Router" : {
+
     },
     "Router hint" : {
 
@@ -2368,7 +2788,7 @@
 
     },
     "Saved" : {
-
+      "comment" : "A peer kept in this phone's list."
     },
     "Saved for restart" : {
 
@@ -2391,8 +2811,11 @@
     "Saving is unavailable." : {
       "comment" : "Error when a draft cannot be stored."
     },
-    "Saving it to Peers is how you find this %@ again from the rest of the app." : {
-
+    "Saving it to Peers is how you find this repeater again from the rest of the app." : {
+      "comment" : "Device setup result: footer under Save to Peers, for a repeater."
+    },
+    "Saving it to Peers is how you find this tracker again from the rest of the app." : {
+      "comment" : "Device setup result: footer under Save to Peers, for a tracker."
     },
     "Scan for Networks" : {
 
@@ -2432,6 +2855,12 @@
     },
     "Sensor" : {
       "comment" : "Node role: reports measurements."
+    },
+    "Sensor names are invalid or incomplete." : {
+      "comment" : "Managing a node: its temperature sensor names did not decode, or name fewer sensors than it measures."
+    },
+    "Sensor names could not be read." : {
+      "comment" : "Managing a node: its temperature sensor names were refused or not answered."
     },
     "Sent %lld hops to %@, which answers along with whatever else is in range of it—not of this phone." : {
       "comment" : "Footer under Discover's ask aimed at a peer known to repeat. Has plural variants.",
@@ -2485,6 +2914,12 @@
     "Serial/USB-CDC DFU" : {
 
     },
+    "Server identity" : {
+
+    },
+    "Set for this device. Nodes on different profiles cannot hear each other." : {
+      "comment" : "Device setup: the operator chose a radio profile for the device."
+    },
     "Set From iPhone" : {
 
     },
@@ -2493,6 +2928,18 @@
     },
     "Set up a device…" : {
 
+    },
+    "Set up a repeater" : {
+      "comment" : "Device setup goal: the device will forward traffic for the mesh."
+    },
+    "Set Up a Repeater" : {
+      "comment" : "Screen title: setting a device up as a repeater."
+    },
+    "Set up a tracker" : {
+      "comment" : "Device setup goal: the device will report its position."
+    },
+    "Set Up a Tracker" : {
+      "comment" : "Screen title: setting a device up as a tracker."
     },
     "Set up another device" : {
 
@@ -2503,11 +2950,17 @@
     "Set Up Later" : {
 
     },
+    "Set Up Repeater" : {
+      "comment" : "Button: write the setup sheet's settings to a device being set up as a repeater."
+    },
     "Set up this radio for the current phone identity before asking repeaters." : {
       "comment" : "Why a repeater's neighbors could not be asked for: the radio is not this phone's."
     },
     "Set up this radio for the current phone identity to send messages" : {
       "comment" : "Why the composer cannot send: the connected radio is not set up for this phone."
+    },
+    "Set Up Tracker" : {
+      "comment" : "Button: write the setup sheet's settings to a device being set up as a tracker."
     },
     "Setting a beacon reach larger than %lld hops is not recommended. Are you sure you want to do this?" : {
 
@@ -2523,6 +2976,24 @@
     },
     "Settings" : {
 
+    },
+    "Settings Reported Differently" : {
+      "comment" : "Device setup: headline of the result shown when the device reported a setting back other than what it was asked for."
+    },
+    "Settings the device did accept are running but not saved." : {
+      "comment" : "Managing a node: some values were refused, so nothing was saved."
+    },
+    "Setup did not finish. Check the device's settings before relying on them." : {
+      "comment" : "Device setup: the configuration failed for a reason that does not say what the device holds."
+    },
+    "Setup was stopped after the device saved its settings, so they were not checked. Read it again before relying on them." : {
+      "comment" : "Device setup: the apply was stopped after the device saved and before it was checked."
+    },
+    "Setup was stopped while the device was saving. It may or may not have kept these settings—connect to it again and check." : {
+      "comment" : "Device setup: the apply was stopped during the device's save."
+    },
+    "SF%lld" : {
+      "comment" : "A LoRa spreading factor, such as SF9. SF is the usual abbreviation."
     },
     "SF%u" : {
 
@@ -2546,7 +3017,7 @@
 
     },
     "Show" : {
-
+      "comment" : "Label of a list filter picker: Map, Peers, and the Diagnostics log."
     },
     "Show in Maps…" : {
 
@@ -2665,6 +3136,9 @@
     "System-managed while this radio is saved" : {
 
     },
+    "Tag untagged floods" : {
+
+    },
     "Tag untagged floods with" : {
 
     },
@@ -2676,6 +3150,9 @@
     },
     "Temperature" : {
 
+    },
+    "Temperature %lld" : {
+      "comment" : "Managing a node: a temperature sensor the device gave no name. The placeholder is its position in the list."
     },
     "Temporary session" : {
       "comment" : "Node role: a short-lived identity."
@@ -2692,14 +3169,38 @@
     "That channel name is too long. Use 64 characters or fewer." : {
       "comment" : "A typed channel name is too long."
     },
+    "That device connected but did not report its settings. It may be running firmware this app does not understand." : {
+      "comment" : "Device setup: a device cannot be set up because it reported no settings."
+    },
+    "That is not a password this network's security can use." : {
+      "comment" : "Joining a Wi-Fi network: the password does not fit the chosen security mode."
+    },
     "That is not a region. Use a short code like SJC or WA, a name your mesh has agreed on, or a raw 0xXXXX code." : {
       "comment" : "A channel's region field holds text that names no region."
     },
     "That isn't a valid address." : {
       "comment" : "A node's address did not decode."
     },
+    "That name is too long for a Wi-Fi network." : {
+      "comment" : "Adding a Wi-Fi network: the name is longer than a network name can be."
+    },
+    "That region name is too long. Use up to 24 characters—a short code like SJC or WA, a region name, or 0x followed by four hex digits." : {
+      "comment" : "Managing a repeater: a region typed into its flood region list cannot be used."
+    },
+    "The advertised role can't be set to its current value." : {
+      "comment" : "Device setup: a setting holds a value the device cannot take, so Apply is unavailable."
+    },
+    "The announcement settings can't be set to their current values." : {
+      "comment" : "Device setup: a setting holds a value the device cannot take, so Apply is unavailable."
+    },
     "The app stops reconnecting to this radio and drops it from Bluetooth's standing connections. The radio keeps its own bond until you re-pair; add it again later with \"Find companion radio\"." : {
 
+    },
+    "The app was still reading from the device. Nothing was changed on it." : {
+      "comment" : "Device setup: the settings were not sent because the app was still busy with the device."
+    },
+    "The bandwidth can't be set to its current value." : {
+      "comment" : "Device setup: a setting holds a value the device cannot take, so Apply is unavailable."
     },
     "The channel itself: how to invite someone and how to leave." : {
 
@@ -2712,6 +3213,12 @@
     },
     "The clock could not be set" : {
 
+    },
+    "The clock format can't be set to its current value." : {
+      "comment" : "Device setup: a setting holds a value the device cannot take, so Apply is unavailable. 12- or 24-hour."
+    },
+    "The coding rate can't be set to its current value." : {
+      "comment" : "Device setup: a setting holds a value the device cannot take, so Apply is unavailable."
     },
     "The companion radio could not be enabled automatically" : {
       "comment" : "A message that can be shown to the user when the radio is not enabled.",
@@ -2737,17 +3244,58 @@
     "The database has no regions covering this place." : {
 
     },
+    "The device announces its identity only when asked." : {
+
+    },
+    "The device answered in a form this app does not understand, so it may or may not have kept these settings. Its firmware and this app may be out of step—connect to it again and check." : {
+      "comment" : "Device setup: the device's answer to the save could not be read."
+    },
     "The device can reach these nodes without this phone in the middle." : {
 
     },
-    "The device cannot use %@." : {
-      "comment" : "Editing a saved Wi-Fi network. The placeholder is a security mode, such as WPA3."
+    "The device cannot use %@ on this network." : {
+      "comment" : "Joining or editing a Wi-Fi network. The placeholder is a security mode, such as WPA3."
+    },
+    "The device cannot use %@ on this network. %@ is also offered." : {
+      "comment" : "Joining a Wi-Fi network: the device refused one security mode. The placeholders are security modes, such as WPA3 and WPA2.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The device cannot use %1$@ on this network. %2$@ is also offered."
+          }
+        }
+      }
+    },
+    "The device could not be reached. Check its settings before relying on them." : {
+      "comment" : "Device setup: the device could not be reached during the save; whether anything was sent is unknown."
     },
     "The device did not finish reporting its settings. Go back and connect to it again." : {
 
     },
+    "The device disconnects from its network. If anything it carries depends on that connection, it stops until Wi-Fi is turned back on." : {
+      "comment" : "Confirmation message before turning off a managed device's Wi-Fi."
+    },
+    "The device does not allow this." : {
+      "comment" : "Managing a node: it refused a request."
+    },
+    "The device does not implement this." : {
+      "comment" : "Managing a node: it refused a request."
+    },
+    "The device does not put its location in the identity it advertises." : {
+
+    },
+    "The device does not support these settings. Nothing was changed on it." : {
+      "comment" : "Device setup: the device lacks what the configuration needs, so nothing was sent."
+    },
+    "The device doesn't support this." : {
+      "comment" : "Managing a node: it lacks what the request needs."
+    },
     "The device forgets this network and its password." : {
 
+    },
+    "The device has no room for another network. Forget one first." : {
+      "comment" : "Joining a Wi-Fi network: the device's network list is full."
     },
     "The device holds no IPv6 addresses." : {
 
@@ -2758,8 +3306,8 @@
     "The device name is public and may be visible in Bluetooth discovery." : {
 
     },
-    "The device no longer has this network." : {
-      "comment" : "Editing a saved Wi-Fi network that was removed meanwhile."
+    "The device no longer has it." : {
+      "comment" : "Managing a node: the stored entry the request names is gone."
     },
     "The device power-cycles and keeps everything it has saved. It is off the air until it comes back, and anything relaying through it is too." : {
 
@@ -2773,20 +3321,136 @@
     "The device refused the request: %@." : {
       "comment" : "Managing a node: it refused. The placeholder is a protocol status name, not translated."
     },
-    "The device refused this change: %@." : {
-      "comment" : "Editing a saved Wi-Fi network. The placeholder is a protocol status name."
+    "The device refused the request." : {
+      "comment" : "Managing a node: it refused a request without saying why."
     },
-    "The device reported %@ back differently" : {
-
+    "The device refused this change: %@." : {
+      "comment" : "Editing a saved Wi-Fi network. The placeholder is a protocol status name, not translated."
+    },
+    "The device refused this change." : {
+      "comment" : "Editing a saved Wi-Fi network: the device refused without saying why."
+    },
+    "The device refused this network: %@." : {
+      "comment" : "Joining a Wi-Fi network: the device would not store it. The placeholder is a protocol status name, not translated."
+    },
+    "The device refused this network." : {
+      "comment" : "Joining a Wi-Fi network: the device would not store it, and did not say why."
+    },
+    "The device rejected some changes." : {
+      "comment" : "Managing a node: some values were refused."
+    },
+    "The device rejected these settings. Its previous configuration is still in effect." : {
+      "comment" : "Device setup: the device refused the settings."
+    },
+    "The device rejected this value." : {
+      "comment" : "Managing a node: under a setting it refused without saying why."
+    },
+    "The device reported discoverability back differently." : {
+      "comment" : "Device setup: after saving, the device reported a setting other than what it was asked for."
+    },
+    "The device reported its forwarding policy back differently." : {
+      "comment" : "Device setup: after saving, the device reported a setting other than what it was asked for."
+    },
+    "The device reported its mobility back differently." : {
+      "comment" : "Device setup: after saving, the device reported a setting other than what it was asked for. Mobility: whether it says it moves."
+    },
+    "The device reported its positioning settings back differently." : {
+      "comment" : "Device setup: after saving, the device reported a setting other than what it was asked for."
+    },
+    "The device reported MeshCore forwarding back differently." : {
+      "comment" : "Device setup: after saving, the device reported a setting other than what it was asked for. MeshCore is a product name."
+    },
+    "The device reported the advertised role back differently." : {
+      "comment" : "Device setup: after saving, the device reported a setting other than what it was asked for."
+    },
+    "The device reported the bandwidth back differently." : {
+      "comment" : "Device setup: after saving, the device reported a setting other than what it was asked for."
+    },
+    "The device reported the clock format back differently." : {
+      "comment" : "Device setup: after saving, the device reported a setting other than what it was asked for. 12- or 24-hour."
+    },
+    "The device reported the coding rate back differently." : {
+      "comment" : "Device setup: after saving, the device reported a setting other than what it was asked for."
+    },
+    "The device reported the frequency back differently." : {
+      "comment" : "Device setup: after saving, the device reported a setting other than what it was asked for."
+    },
+    "The device reported the radio switch back differently." : {
+      "comment" : "Device setup: after saving, the device reported a setting other than what it was asked for."
+    },
+    "The device reported the spreading factor back differently." : {
+      "comment" : "Device setup: after saving, the device reported a setting other than what it was asked for."
+    },
+    "The device reported the time zone back differently." : {
+      "comment" : "Device setup: after saving, the device reported a setting other than what it was asked for."
+    },
+    "The device reported the transmit limit back differently." : {
+      "comment" : "Device setup: after saving, the device reported a setting other than what it was asked for."
+    },
+    "The device reported what it announces back differently." : {
+      "comment" : "Device setup: after saving, the device reported a setting other than what it was asked for."
     },
     "The device reports a battery but no readings from it." : {
 
     },
+    "The device saved its settings, but they could not be read back. Read it again before relying on them." : {
+      "comment" : "Device setup: the device saved, and then could not be read to check what it saved."
+    },
+    "The device says a value is out of range." : {
+      "comment" : "Managing a node: it refused a request."
+    },
+    "The device sends no beacons, so nothing refreshes the mesh's route back to it." : {
+
+    },
+    "The device stopped answering while saving. It may or may not have kept these settings—connect to it again and check." : {
+      "comment" : "Device setup: the device went quiet during the save."
+    },
+    "The device took its settings but not the list of who may manage it. Read it again before relying on being able to reach it over the mesh." : {
+      "comment" : "Device setup: the settings were saved, the administrator list was not."
+    },
+    "The device was busy." : {
+      "comment" : "Managing a node: it refused a request."
+    },
+    "The device would not join this network: %@." : {
+      "comment" : "Joining a Wi-Fi network. The placeholder is a protocol status name, not translated."
+    },
+    "The device would not join this network." : {
+      "comment" : "Joining a Wi-Fi network: the device refused to switch to it."
+    },
     "The device would not take that password for this kind of network." : {
-      "comment" : "Editing a saved Wi-Fi network: the device rejected the password."
+      "comment" : "Joining or editing a Wi-Fi network: the device rejected the password."
+    },
+    "The device would not turn Wi-Fi on: %@." : {
+      "comment" : "Joining a Wi-Fi network. The placeholder is a protocol status name, not translated."
+    },
+    "The device would not turn Wi-Fi on." : {
+      "comment" : "Joining a Wi-Fi network: the device refused to switch its station on."
     },
     "The device's answer couldn't be read. Its firmware may be newer than this app." : {
       "comment" : "Managing a node: its reply did not decode."
+    },
+    "The device's current state does not allow this." : {
+      "comment" : "Managing a node: it refused a request."
+    },
+    "The device's list is full." : {
+      "comment" : "Managing a node: a key or network table on the device has no room left."
+    },
+    "The forwarding policy can't be set to its current value." : {
+      "comment" : "Device setup: a setting holds a value the device cannot take, so Apply is unavailable."
+    },
+    "The frequency can't be set to its current value." : {
+      "comment" : "Device setup: a setting holds a value the device cannot take, so Apply is unavailable."
+    },
+    "The list is full (%lld of %lld)—remove one to add another." : {
+      "comment" : "Device setup: administrators footer. Both placeholders are the list's capacity.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The list is full (%1$lld of %2$lld)—remove one to add another."
+          }
+        }
+      }
     },
     "The local identity is unavailable." : {
       "comment" : "Error when a draft cannot be stored because no identity is loaded."
@@ -2809,6 +3473,9 @@
     "The local network radio stopped" : {
       "comment" : "A radio problem when the local network radio stops.",
       "isCommentAutoGenerated" : true
+    },
+    "The log can't be read." : {
+      "comment" : "Shown on the Diagnostics page when the system log store will not open."
     },
     "The message history on this phone is removed. The peer keeps their copy." : {
 
@@ -2837,8 +3504,22 @@
     "The path holds %lld repeaters, the most it can carry." : {
 
     },
+    "The path to %@ is already as long as a path can be, so the ask stops at %@, the last repeater on the way there, and is answered by whatever is in range of it. %@" : {
+      "comment" : "Footer under Discover's ask that stops short of a peer known to repeat because the path to it is at its length limit. The first placeholder is the peer, the second the repeater it stops at, the last a sentence about guessed repeater names.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The path to %1$@ is already as long as a path can be, so the ask stops at %2$@, the last repeater on the way there, and is answered by whatever is in range of it. %3$@"
+          }
+        }
+      }
+    },
     "The phone identity matches this radio. Reading its authoritative provisioning state before enabling traffic." : {
 
+    },
+    "The positioning settings can't be set to their current values." : {
+      "comment" : "Device setup: a setting holds a value the device cannot take, so Apply is unavailable."
     },
     "The previous host's keys, filters, and queued traffic will be erased. The radio's own identity and device settings remain unchanged." : {
 
@@ -2880,10 +3561,6 @@
       "comment" : "A radio problem.",
       "isCommentAutoGenerated" : true
     },
-    "The radio did not answer" : {
-      "comment" : "Error message when the radio doesn't respond.",
-      "isCommentAutoGenerated" : true
-    },
     "The radio did not finish Bluetooth attachment" : {
       "comment" : "A description of a radio problem.",
       "isCommentAutoGenerated" : true
@@ -2907,6 +3584,9 @@
     "The radio has no writable ULCP endpoint" : {
       "comment" : "A radio problem.",
       "isCommentAutoGenerated" : true
+    },
+    "The radio has too many requests waiting." : {
+      "comment" : "Managing a node: the radio's queue of outstanding requests is full."
     },
     "The radio is no longer connected" : {
 
@@ -2934,9 +3614,24 @@
       "comment" : "A radio error.",
       "isCommentAutoGenerated" : true
     },
+    "The radio switch can't be set to its current value." : {
+      "comment" : "Device setup: a setting holds a value the device cannot take, so Apply is unavailable."
+    },
     "The radio's saved settings could not be read and it started with factory defaults. Save again to restore autonomous operation." : {
       "comment" : "Text displayed when the radio's saved settings could not be read and it started with factory defaults.",
       "isCommentAutoGenerated" : true
+    },
+    "The receiver is powered down to the lowest state this board can reach." : {
+
+    },
+    "The receiver is usually the largest continuous load on a battery-powered node." : {
+
+    },
+    "The region database knows of no regions around this phone, so this device forwards traffic from everywhere." : {
+
+    },
+    "The request did not reach the radio." : {
+      "comment" : "Why a radio restart or factory reset was not sent."
     },
     "The saved companion radio is not known to Bluetooth" : {
       "comment" : "A radio is saved but is not known to Bluetooth.",
@@ -2944,6 +3639,15 @@
     },
     "The signature on these details does not verify. Do not rely on them." : {
 
+    },
+    "The spreading factor can't be set to its current value." : {
+      "comment" : "Device setup: a setting holds a value the device cannot take, so Apply is unavailable."
+    },
+    "The time zone can't be set to its current value." : {
+      "comment" : "Device setup: a setting holds a value the device cannot take, so Apply is unavailable."
+    },
+    "The transmit limit can't be set to its current value." : {
+      "comment" : "Device setup: a setting holds a value the device cannot take, so Apply is unavailable."
     },
     "The ULCP session could not start" : {
       "comment" : "A radio error message.",
@@ -2966,6 +3670,9 @@
     "Then flood" : {
       "comment" : "Row label: how far a manual path floods past its last repeater.\nStepper label: how far a manual path floods past its last repeater."
     },
+    "These are not shown and are left as they are when you apply." : {
+      "comment" : "Device setup: footer under the settings the device did not report."
+    },
     "These details are the node's own claims about itself." : {
 
     },
@@ -2977,6 +3684,12 @@
     },
     "This action only enters DFU; it does not install firmware." : {
 
+    },
+    "This app could not send these settings. Nothing was changed on the device." : {
+      "comment" : "Device setup: the app could not build the configuration, so nothing was sent."
+    },
+    "This app couldn't build that request." : {
+      "comment" : "Managing a node: the request could not be encoded."
     },
     "This cannot be undone." : {
 
@@ -2993,14 +3706,35 @@
     "This device can see the networks around it. It cannot join one." : {
 
     },
+    "This device cannot announce itself on a schedule, so nothing would hear from it as it moved. You can still change its settings from \"Change a device's settings\"." : {
+      "comment" : "Device setup: a device cannot be set up as a tracker because it cannot announce itself."
+    },
+    "This device cannot be told a role, so it advertises the one it derives from what it does." : {
+      "comment" : "Device setup note: the device's advertised role cannot be set."
+    },
+    "This device cannot forward other nodes' traffic, so it cannot act as a repeater. Set it up as a tracker instead." : {
+      "comment" : "Device setup: a device cannot be set up as a repeater because it cannot forward."
+    },
     "This device carries only its own traffic." : {
 
     },
-    "This device did not report %@. Those settings are not shown here and are set to this sheet's values when you apply changes, because the device accepts its configuration whole. Everything else works normally." : {
-
+    "This device did not report its modem settings, so it keeps the profile it already had." : {
+      "comment" : "Device setup: no radio profile could be copied, and the device's own is left as it is."
+    },
+    "This device did not report its modem settings. Choose the profile your local mesh uses before continuing." : {
+      "comment" : "Device setup: no radio profile could be copied, and the operator must choose one."
+    },
+    "This device does not carry its own node identity, so it cannot act as a tracker. You can still change its settings from \"Change a device's settings\"." : {
+      "comment" : "Device setup: a device cannot be set up as a tracker because it has no identity of its own."
+    },
+    "This device does not keep a clock, so its time zone is not set." : {
+      "comment" : "Device setup note: the device has no clock."
     },
     "This device forwards only what no repeater carried." : {
 
+    },
+    "This device has no positioning receiver, so it will not report where it is." : {
+      "comment" : "Device setup note: the device has no GNSS receiver."
     },
     "This device has not said what it is yet." : {
 
@@ -3017,6 +3751,9 @@
     "This device will stop normal operation and may remain inaccessible indefinitely. Continue only if someone is ready to complete the firmware update using the selected method." : {
 
     },
+    "This device would not report its forwarding policy, so setting one here would write over whatever it is holding. Open \"Change a device's settings\" to see what it reports." : {
+      "comment" : "Device setup: a device cannot be set up as a repeater because it did not report its forwarding policy."
+    },
     "This firmware does not support the requested DFU mode." : {
       "comment" : "Managing a device: its firmware has no such bootloader mode."
     },
@@ -3025,6 +3762,9 @@
     },
     "This is the same key you already hold. Continuing updates its local details instead of adding a second channel." : {
 
+    },
+    "This is too large for the device to hold." : {
+      "comment" : "Managing a node: it refused a request."
     },
     "This member has not been saved as a peer. Asking invites them to send their current identity." : {
 
@@ -3039,13 +3779,19 @@
 
     },
     "This phone" : {
-      "comment" : "The first node on a drawn path: the phone the user holds."
+      "comment" : "Device setup: this phone's own entry in a device's administrator list.\nThe first node on a drawn path: the phone the user holds."
     },
     "This phone could not find where it is." : {
 
     },
     "This phone could not find where it is. Check that location access for UMSH is on in iOS Settings, or type coordinates instead." : {
 
+    },
+    "This phone has no companion radio to copy a profile from, so this device keeps the profile it already had." : {
+      "comment" : "Device setup: no radio profile could be copied, and the device's own is left as it is."
+    },
+    "This phone has no companion radio to copy a profile from. Choose the profile your local mesh uses before continuing." : {
+      "comment" : "Device setup: no radio profile could be copied, and the operator must choose one."
     },
     "This phone has no evidence %@ repeats, so the ask stops at %@, the last repeater on the way there, and is answered by whatever is in range of it. %@" : {
       "comment" : "Footer under Discover's ask that stops short of a peer. The first placeholder is the peer, the second the repeater it stops at, the last a sentence about guessed repeater names.",
@@ -3067,17 +3813,29 @@
     "This phone's key could not be removed." : {
       "comment" : "Erasing this phone's identity: the Keychain kept its private key, so nothing was erased."
     },
+    "This phone's own node identity is not available, so it cannot list itself." : {
+
+    },
     "This phone's own radio is listed but cannot be set up from here—use the companion radio screen for that. Devices drop out of the list a few seconds after they stop advertising." : {
 
     },
     "This phone's radio" : {
-
+      "comment" : "Device setup scan: a badge on the row for this phone's own radio."
+    },
+    "This phone's radio did not report its modem settings, so this device keeps the profile it already had." : {
+      "comment" : "Device setup: no radio profile could be copied, and the device's own is left as it is."
+    },
+    "This phone's radio did not report its modem settings. Choose the profile your local mesh uses before continuing." : {
+      "comment" : "Device setup: no radio profile could be copied, and the operator must choose one."
     },
     "This phone's routing did not take the path. Check the radio and try again." : {
       "comment" : "Shown when saving a manual path failed."
     },
     "This radio belongs to another host. Replacing it clears that host's keys, filters, and queued traffic." : {
 
+    },
+    "This radio is no longer authorized." : {
+      "comment" : "Device setup: a paired radio chosen from the system picker is no longer available to this app."
     },
     "This radio is not set up for this phone." : {
       "comment" : "Why a ping could not be sent."
@@ -3095,11 +3853,14 @@
       "comment" : "Text displayed in a warning banner at the top of the screen when a radio needs setup.",
       "isCommentAutoGenerated" : true
     },
+    "This value is out of range." : {
+      "comment" : "Managing a node: under a field whose value the device cannot hold."
+    },
     "Time" : {
 
     },
     "Time zone" : {
-
+      "comment" : "Device setup: a setting the device did not report."
     },
     "Time Zone" : {
       "comment" : "A setting that shows the user's time zone.",
@@ -3115,12 +3876,15 @@
 
     },
     "Transmit limit" : {
-
+      "comment" : "Device setup: a setting the device did not report. Its duty-cycle limit."
     },
     "Transmit power" : {
 
     },
     "Trust receiver time" : {
+
+    },
+    "Trust the receiver's clock" : {
 
     },
     "Try again" : {
@@ -3132,8 +3896,20 @@
     "Trying only the saved companion radio. Other nearby radios will not be selected." : {
 
     },
+    "Turn On Pairing Mode" : {
+      "comment" : "Confirmation title and button: open a managed device's Bluetooth pairing window."
+    },
     "Turn this off and apply to place or clear the device's position." : {
 
+    },
+    "Turn Wi-Fi Off" : {
+      "comment" : "Confirmation title and button: turn off a managed device's Wi-Fi."
+    },
+    "Turning Bluetooth off disconnects the device and ends this setup session. The only way back is the controls on the device itself." : {
+      "comment" : "Confirmation message before turning off Bluetooth on a device being set up over it."
+    },
+    "Turning Bluetooth off disconnects the radio this phone is using, and the mesh goes with it. The only way back is the controls on the device itself." : {
+      "comment" : "Confirmation message before turning off Bluetooth on the radio this phone is using."
     },
     "Turning Bluetooth off disconnects this phone. The device keeps its pairings, but you will need another way to reach it to turn Bluetooth back on." : {
 
@@ -3156,6 +3932,9 @@
     "UMSH could not open its local database, so your contacts and conversations cannot be shown and nothing new can be saved." : {
 
     },
+    "UMSH Diagnostics %@" : {
+      "comment" : "File name of an exported diagnostics log, without extension. The placeholder is a date and time, such as 2026-11-21 2204."
+    },
     "UMSH found the key for **%@** on this phone, from an install that is gone. Its messages, contacts, and channels went with it and cannot be recovered." : {
 
     },
@@ -3166,7 +3945,7 @@
       "comment" : "Notification title: a message of ours did not reach this peer or channel."
     },
     "Unavailable" : {
-      "comment" : "Route kind: there is no radio to ask."
+      "comment" : "Managing a node: the device holds no value for this sensor right now.\nRoute kind: there is no radio to ask."
     },
     "Unavailable for this device's identity key." : {
 
@@ -3178,6 +3957,9 @@
       "comment" : "Delivery caption: our message went out, but no acknowledgment came back."
     },
     "Undo" : {
+
+    },
+    "Undo puts back what the device was already holding." : {
 
     },
     "Unfavorite" : {
@@ -3198,6 +3980,12 @@
     "Unknown path" : {
       "comment" : "A stretch of a reply's path that nobody traced or counted."
     },
+    "Unnamed device" : {
+      "comment" : "A nearby device that advertises no name."
+    },
+    "Unrecognized key" : {
+      "comment" : "Device setup: an administrator list entry that is not a node key."
+    },
     "Until" : {
       "comment" : "Row label: when a manual path's hold ends."
     },
@@ -3207,8 +3995,14 @@
     "Update Local Details" : {
 
     },
+    "Update position from GNSS" : {
+
+    },
     "Uptime" : {
 
+    },
+    "Use 1 to 30 characters, not starting with $." : {
+      "comment" : "Managing a repeater: a MeshCore region name typed into its list cannot be used."
     },
     "Use Learned Path" : {
 
@@ -3227,6 +4021,9 @@
     },
     "Validate identity" : {
 
+    },
+    "Versions" : {
+      "comment" : "Diagnostics section header: the app's, core's and radio's versions."
     },
     "View Original" : {
 
@@ -3303,6 +4100,12 @@
     "Where to ask" : {
 
     },
+    "While pairing mode is on, any phone nearby can pair with this device. A phone that pairs can manage it and read everything it holds." : {
+      "comment" : "Confirmation message before opening a managed device's Bluetooth pairing window."
+    },
+    "Wi-Fi enabled" : {
+
+    },
     "Wire ID" : {
 
     },
@@ -3320,6 +4123,9 @@
     },
     "Within %@" : {
       "comment" : "Under a peer's map: the size of the area the location names."
+    },
+    "Without this phone on the list, its settings can only be changed from here, over Bluetooth." : {
+
     },
     "Yes" : {
       "comment" : "Whether the radio has saved settings"

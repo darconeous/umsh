@@ -32,10 +32,8 @@ class CoreErrorsTest {
             MobileAppException.NotThisPhone(),
             MobileAppException.NoAnswer(),
             MobileAppException.Unreachable(),
-            MobileAppException.Refused(2u),
             MobileAppException.Unreadable(),
             MobileAppException.Cancelled(),
-            MobileAppException.OperationReused(),
             MobileAppException.SendFailed(),
             MobileAppException.DfuUnsupported(),
             MobileAppException.DfuRefused(2u),
@@ -68,8 +66,8 @@ class CoreErrorsTest {
 
     @Test
     fun aRefusalNamesItsStatusVerbatim() {
-        val reason = CoreErrors.reason(MobileAppException.Refused(2u))
-        assertEquals(R.string.reason_refused, reason.id)
+        val reason = CoreErrors.reason(MobileAppException.DfuRefused(2u))
+        assertEquals(R.string.reason_dfu_refused, reason.id)
         assertEquals(listOf(ulcpStatusName(2u)), reason.args)
     }
 

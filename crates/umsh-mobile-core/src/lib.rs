@@ -33,18 +33,43 @@ mod ulcp;
 mod virtual_radio;
 
 pub use app_core::{
+    MobileAnnouncementReach, MobileApplyOutcome, MobileApplyResult, MobileApplyWarning,
+    MobileBluetoothDraft, MobileBridgeDraft, MobileCategoryReadingRecord, MobileChoiceField,
+    MobileChoiceList, MobileDeviceSetup, MobileDeviceSetupRecord, MobileDraftDetails,
+    MobileDraftKind, MobileDraftReviewRecord, MobileFieldProblem, MobileFieldProblemRecord,
+    MobileGnssDraft, MobileHeardNetworkRecord, MobileIdentityDraft, MobileIntegerField,
+    MobileKeyEntryRecord, MobileKeyListField, MobileKeyTable, MobileKeyTableRecord,
+    MobileManagedDevice, MobileManagedDeviceRecord, MobileManagementDraft, MobileManagementLink,
+    MobileManagementOutcome, MobileManagementProblem, MobileMeshCoreDraft, MobileNetworkDraft,
+    MobileOfferedCategoryRecord, MobileOptionalIntegerField, MobilePositionField,
+    MobilePropertyRefusalRecord, MobilePropertyState, MobilePropertyStateRecord,
+    MobilePropertyValueRecord, MobileRadioDraft, MobileRefusal, MobileRefusalReason,
+    MobileRegionEntryProblem, MobileRepeaterDraft, MobileSetupApplyOutcome,
+    MobileSetupChoicesRecord, MobileSetupCompanionRecord, MobileSetupDraft, MobileSetupGoal,
+    MobileSetupNote, MobileSetupProfile, MobileSetupProfileGap, MobileSetupRadioParameter,
+    MobileSetupRefusal, MobileSetupResult, MobileSetupReviewRecord, MobileSetupSection,
+    MobileSetupSetting, MobileSetupUnreadable, MobileTemperatureNames, MobileTemperatureRowRecord,
+    MobileTemperatureSummaryRecord, MobileTemperatureValue, MobileTextField, MobileTextListField,
+    MobileTimeDraft, MobileToggleField, MobileWifiDraft, MobileWifiEntryCheckRecord,
+    MobileWifiEntryProblem, MobileWifiJoinPlanRecord, MobileWifiOutcome, MobileWifiRefusal,
+    MobileWifiStep, draft_add_meshcore_region, draft_add_repeater_region, draft_adopt_preset,
+    draft_adopt_regions, draft_clear_position, draft_place, draft_place_from_phone,
+    draft_set_precision, setup_adopt_preset, setup_set_radio_parameter, wifi_edit_plan,
+    wifi_entry_check, wifi_join_plan, wifi_offered_modes,
+};
+pub use app_core::{
     MobileAppChangesRecord, MobileAppChannelConversationRecord, MobileAppChannelPreviewRecord,
     MobileAppChannelRecord, MobileAppChatRequest, MobileAppConfigRecord, MobileAppCore,
-    MobileAppCoreListener, MobileAppDirectConversationRecord, MobileAppError,
-    MobileAppJoinedChannelRecord, MobileAppLearnedPathOffer, MobileAppLifecycle,
+    MobileAppCoreListener, MobileAppDirectConversationRecord, MobileAppDiscoveryVantageRecord,
+    MobileAppError, MobileAppJoinedChannelRecord, MobileAppLearnedPathOffer, MobileAppLifecycle,
     MobileAppMessageRecord, MobileAppMessageRepeaterRecord, MobileAppNeighborReportRecord,
-    MobileAppOperationProgressRecord, MobileAppPeerRecord, MobileAppPingReplyRecord,
-    MobileAppPingResult, MobileAppPolicyRecord, MobileAppPositionReading, MobileAppPreviewRecord,
-    MobileAppRepeaterListingRecord, MobileAppRepeaterNeighborRecord, MobileAppResent,
-    MobileAppRouteCandidateRecord, MobileAppRouteRecord, MobileAppStartFailure,
-    MobileAppStateRecord, MobileAppStatusRecord, MobileAppTranscriptPageRecord,
-    MobileNotificationEventRecord, MobileNotificationReactionRecord, MobileOperation,
-    MobilePositionRecord, MobileReaction, radio_carries_this_phone,
+    MobileAppPeerRecord, MobileAppPingReplyRecord, MobileAppPingResult, MobileAppPolicyRecord,
+    MobileAppPositionReading, MobileAppPreviewRecord, MobileAppRepeaterListingRecord,
+    MobileAppRepeaterNeighborRecord, MobileAppResent, MobileAppRouteCandidateRecord,
+    MobileAppRouteRecord, MobileAppStartFailure, MobileAppStateRecord, MobileAppStatusRecord,
+    MobileAppTranscriptPageRecord, MobileLimitsRecord, MobileMessageActionsRecord,
+    MobileNotificationEventRecord, MobileNotificationReactionRecord, MobilePositionRecord,
+    MobileReaction, MobileRepeaterEvidence, mobile_limits, radio_carries_this_phone,
 };
 pub use counter_store::{CounterStoreError, MobileCounterStore};
 pub use logging::{MobileLogField, MobileLogLevel, MobileLogRecord, MobileLogger, set_logger};
@@ -75,33 +100,37 @@ pub use regions::{
     MobileRegionProposalRecord, MobileRegionRecord,
 };
 pub use secret_vault::{SecretVault, SecretVaultError};
-pub use staging::{MobileStagingAir, MobileStagingAirError, MobileStagingError, seed_staging};
+pub use staging::{
+    MobileStagedDeviceRecord, MobileStagingAir, MobileStagingAirError, MobileStagingError,
+    seed_staging,
+};
 pub use store::{
     MobileAppStore, MobileApplicationRecords, MobileChatChangesRecord,
     MobileChatNotificationRecord, MobilePeerUpsertRecord, MobileStagedChatMessageRecord,
     MobileStagedChatReactionRecord, MobileStagedChatRegarding, MobileStoreError,
-    MobileStoredCachedPropertyRecord, MobileStoredChannelConversationRecord,
-    MobileStoredChannelKind, MobileStoredChannelRecord, MobileStoredChatCursorRecord,
-    MobileStoredChatDeliveryFailureRecord, MobileStoredChatDeliveryState,
-    MobileStoredChatMessagePageRecord, MobileStoredChatMessageRecord,
-    MobileStoredChatMessageRefRecord, MobileStoredChatNotificationTargetRecord,
-    MobileStoredChatQuoteRecord, MobileStoredChatQuotedMessageRecord,
-    MobileStoredChatReactionNotificationTargetRecord, MobileStoredChatReactionRecord,
-    MobileStoredChatReceptionRecord, MobileStoredChatRepeatsRecord, MobileStoredClaimedRadioRecord,
-    MobileStoredConversationPreviewRecord, MobileStoredDirectConversationRecord,
-    MobileStoredManagementCardRecord, MobileStoredManualRouteRecord, MobileStoredNodeKind,
+    MobileStoredChannelConversationRecord, MobileStoredChannelKind, MobileStoredChannelRecord,
+    MobileStoredChatCursorRecord, MobileStoredChatDeliveryFailureRecord,
+    MobileStoredChatDeliveryState, MobileStoredChatMessagePageRecord,
+    MobileStoredChatMessageRecord, MobileStoredChatMessageRefRecord,
+    MobileStoredChatNotificationTargetRecord, MobileStoredChatQuoteRecord,
+    MobileStoredChatQuotedMessageRecord, MobileStoredChatReactionNotificationTargetRecord,
+    MobileStoredChatReactionRecord, MobileStoredChatReceptionRecord, MobileStoredChatRepeatsRecord,
+    MobileStoredClaimedRadioRecord, MobileStoredConversationPreviewRecord,
+    MobileStoredDirectConversationRecord, MobileStoredManualRouteRecord, MobileStoredNodeKind,
     MobileStoredNodeRecord, MobileStoredPeerRepeaterEntryRecord,
     MobileStoredPeerRepeaterListingRecord, MobileStoredPeerRepeaterReportRecord,
     MobileStoredSystemRole, claimed_radio_lapse_ms,
 };
-pub use time_zone::{fixed_offset_rule, rule_abbreviation, rule_offset_min, zone_rule};
+pub use time_zone::{
+    fixed_offset_rule, phone_zone_rule, rule_abbreviation, rule_offset_min, zone_rule,
+};
 pub use ulcp::{
     GattSegmentRecord, MobileGattReassembler, MobileHdlcDecoder, MobileUlcpSession, UlcpAlertState,
     UlcpAttachMode, UlcpBatteryRecord, UlcpChargeState, UlcpDeviceConfigRecord, UlcpDfuMode,
     UlcpFixKind, UlcpGnssRecord, UlcpGnssSettingsRecord, UlcpHostOwnership,
     UlcpIdentPositionRecord, UlcpMeshCoreSettingsRecord, UlcpMismatchedResponseRecord,
-    UlcpOperationErrorRecord, UlcpPropertyFrameRecord, UlcpRadioSettingsRecord,
-    UlcpReceivedFrameRecord, UlcpRepeaterSettingsRecord, UlcpSessionPhase,
+    UlcpOperationErrorRecord, UlcpPropertyFrameRecord, UlcpProtocolVersionRecord,
+    UlcpRadioSettingsRecord, UlcpReceivedFrameRecord, UlcpRepeaterSettingsRecord, UlcpSessionPhase,
     UlcpSessionSnapshotRecord, UlcpSessionUpdateRecord, UlcpSyncRecord, UlcpTimeRecord,
     describe_ulcp_frame, inspect_ulcp_alert, inspect_ulcp_battery, inspect_ulcp_battery_diagnostic,
     inspect_ulcp_device_card, inspect_ulcp_properties, inspect_ulcp_property_frame,
@@ -122,7 +151,7 @@ uniffi::setup_scaffolding!();
 ///
 /// Increment this when a binding-visible operation, record, or error contract
 /// changes incompatibly. It is independent of the UMSH wire version.
-pub const MOBILE_API_VERSION: u16 = 92;
+pub const MOBILE_API_VERSION: u16 = 96;
 
 /// Stable error categories consumed by platform adapters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Error)]
@@ -574,7 +603,6 @@ pub fn derive_channel_id(key: Vec<u8>) -> Result<Vec<u8>, MobileError> {
 /// naming one to a device takes. It is what the channel-key tables report
 /// for each key they hold, what `PROP_HOST_MUTED_CHANNELS` carries, and
 /// what `CMD_ANNOUNCE` names a channel by.
-#[uniffi::export]
 pub fn channel_identifier(key: Vec<u8>) -> Result<Vec<u8>, MobileError> {
     use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
 

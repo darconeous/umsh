@@ -46,7 +46,8 @@ enum RoutePresentation {
             return directWord(locale)
         case .source:
             if route.isDirect { return directWord(locale) }
-            return hopsText(Int(route.hopCount ?? UInt8(route.hints.count + 1)), locale: locale)
+            guard let hops = route.hopCount else { return "—" }
+            return hopsText(Int(hops), locale: locale)
         }
     }
 

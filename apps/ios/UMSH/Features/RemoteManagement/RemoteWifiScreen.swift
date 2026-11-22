@@ -12,13 +12,12 @@ import UMSHMobileCore
 /// grows a station grows the screen.
 struct RemoteWifiScreen: View {
     let model: ManageDeviceModel
-    @State private var edits = Edits()
+    @State private var draft: MobileWifiDraft?
     @State private var joining: WifiJoinTarget?
     @State private var editing: WifiEditTarget?
     @State private var forgetting: Data?
 
     private var reading: RemoteCategoryReading? { model.readings[.wifi] }
-    private var problems: [UInt32: String] { model.writeRefusals[.wifi] ?? [:] }
 
     /// Whether this device can join a network at all, as opposed to only
     /// seeing which ones are there.
@@ -42,9 +41,11 @@ struct RemoteWifiScreen: View {
     private var stationIsOn: Bool { reading?.properties.wifiEnabled == true }
 
     var body: some View {
+        let review = model.review(draft)
+        let problems = RemoteRowProblems(refusals: model.writeRefusals[.wifi] ?? [:], review: review)
         Form {
             if hasStation {
-                stationSection
+                stationSection(problems)
                 connectionSection
                 networksSection
             } else {
@@ -79,25 +80,23 @@ struct RemoteWifiScreen: View {
             model: model,
             category: .wifi,
             title: "Wi-Fi",
-            apply: hasStation ? { await apply() } : nil,
-            hasEdits: !edits.dirty.isEmpty,
-            applyWarning: applyWarning
+            apply: hasStation ? { await model.applyAndRebuild($draft) } : nil,
+            review: review,
+            applyWarning: review?.warning == .disablesWifi ? disableWarning : nil
         )
-        .onChange(of: reading?.asOf) { edits = Edits(reading, preserving: edits) }
-        .onAppear { if edits.isEmpty { edits = Edits(reading) } }
+        .draft($draft, from: model, revision: reading?.revision)
     }
 
     // MARK: - Station
 
-    private var stationSection: some View {
+    private func stationSection(_ problems: RemoteRowProblems) -> some View {
         Section {
-            if edits.enabled.isKnown {
-                Toggle(isOn: $edits.enabled.edited.replacingNil(with: false)) {
-                    RemoteFieldTitle(
-                        "Wi-Fi enabled",
-                        problem: problems[edits.enabled.property]
-                    )
-                }
+            if let draft = Binding($draft) {
+                RemoteToggleField(
+                    "Wi-Fi enabled",
+                    field: draft.enabled,
+                    problem: problems[draft.wrappedValue.enabled.propertyId]
+                )
             } else {
                 RemoteReadOnlyToggle("Wi-Fi enabled", isOn: nil)
             }
@@ -161,7 +160,7 @@ struct RemoteWifiScreen: View {
     private var networksSection: some View {
         Section {
             if reading?.answered(ulcpProperties.wifiNetworks) != true {
-                RemoteValueRow("Networks", value: "Not read")
+                RemoteNotRead(title: "Networks")
             } else if knownNetworks.isEmpty {
                 Text("No networks stored.").foregroundStyle(.secondary)
             } else {
@@ -265,49 +264,26 @@ struct RemoteWifiScreen: View {
                 }
             } else {
                 Button("Scan for Networks") {
-                    Task { await model.scanForNetworks() }
+                    Task { await model.scanNetworks() }
                 }
                 .disabled(model.isBusy)
             }
-            ForEach(heardNetworks) { heard in
+            ForEach(model.heardNetworks, id: \.result.bssid) { heard in
                 scanResultRow(heard)
             }
         } header: {
             Text("Nearby")
         } footer: {
-            if model.scanResults.isEmpty, reading?.properties.wifiScanning != true {
+            if model.heardNetworks.isEmpty, reading?.properties.wifiScanning != true {
                 Text("A scan lists what the device can hear from where it is, which is not what this phone can hear.")
             }
         }
     }
 
-    /// What the scan heard, one row per name, strongest first.
-    ///
-    /// Grouped by SSID because a network on three access points is one
-    /// network to an operator, and the strongest of the three is the one
-    /// the device would join. Nameless results are not grouped: each
-    /// hidden access point stands alone, since nothing says two of them
-    /// are the same network.
-    private var heardNetworks: [HeardNetwork] {
-        var byName: [Data: UlcpWifiScanResultRecord] = [:]
-        var nameless: [UlcpWifiScanResultRecord] = []
-        for result in model.heardNetworks {
-            if result.ssid.isEmpty {
-                nameless.append(result)
-            } else if let seen = byName[result.ssid], seen.rssiDbm >= result.rssiDbm {
-                continue
-            } else {
-                byName[result.ssid] = result
-            }
-        }
-        let known = Set(knownNetworks.map(\.ssid))
-        return (byName.values + nameless)
-            .sorted { $0.rssiDbm > $1.rssiDbm }
-            .map { HeardNetwork(result: $0, isKnown: known.contains($0.ssid)) }
-    }
-
+    /// One line of the nearby list: a network, by its strongest access
+    /// point, and whether the device already knows it.
     @ViewBuilder
-    private func scanResultRow(_ heard: HeardNetwork) -> some View {
+    private func scanResultRow(_ heard: MobileHeardNetworkRecord) -> some View {
         let row = HStack {
             VStack(alignment: .leading, spacing: 2) {
                 WifiNameLabel(ssid: heard.result.ssid)
@@ -338,79 +314,27 @@ struct RemoteWifiScreen: View {
         }
     }
 
-    /// One line of the nearby list: an access point and whether the device
-    /// already knows the network it belongs to.
-    private struct HeardNetwork: Identifiable {
-        let result: UlcpWifiScanResultRecord
-        let isKnown: Bool
-        var id: Data { result.bssid }
-    }
-
     // MARK: - Applying
 
     /// Turning the station off can take a link with it, exactly as the
     /// Bluetooth screen's toggle can—an operator three hops away may be
     /// turning off the connection a bridge is riding on, and nothing on
     /// this phone can tell whether the device has another way home.
-    private var applyWarning: (title: String, message: String)? {
-        guard model.link == .mesh, edits.disablesWifi else { return nil }
-        return (
-            title: "Turn Wi-Fi Off",
-            message: """
-                The device disconnects from its network. If anything it \
-                carries depends on that connection, it stops until Wi-Fi is \
-                turned back on.
-                """
+    private var disableWarning: (title: String, message: String) {
+        (
+            title: String(
+                localized: "Turn Wi-Fi Off",
+                comment: "Confirmation title and button: turn off a managed device's Wi-Fi."
+            ),
+            message: String(
+                localized: """
+                    The device disconnects from its network. If anything it \
+                    carries depends on that connection, it stops until Wi-Fi is \
+                    turned back on.
+                    """,
+                comment: "Confirmation message before turning off a managed device's Wi-Fi."
+            )
         )
-    }
-
-    private func apply() async {
-        if await model.apply(.wifi, desired: edits.desired, dirty: edits.dirty) {
-            edits = Edits(model.readings[.wifi])
-        }
-    }
-
-    /// The one setting on this screen that Apply writes.
-    ///
-    /// Scanning is not one: it is a button, not a field. Neither is the
-    /// network the device is on, which is live and moves by itself, nor
-    /// the network table, which is edited an item at a time because a
-    /// credential can only be sent and never read back.
-    private struct Edits {
-        var enabled = RemoteField<Bool>(0, nil)
-        var isEmpty = true
-        var held = UlcpDevicePropertiesRecord.empty
-
-        init() {}
-
-        init(_ reading: RemoteCategoryReading?) {
-            let id = ulcpProperties
-            held = reading?.properties ?? UlcpDevicePropertiesRecord.empty
-            enabled = RemoteField(id.wifiEnabled, held.wifiEnabled)
-            isEmpty = reading == nil
-        }
-
-        init(_ reading: RemoteCategoryReading?, preserving old: Edits) {
-            self.init(reading)
-            guard !old.isEmpty else { return }
-            enabled = enabled.preserving(old.enabled)
-        }
-
-        /// Whether Apply would switch the station off. Only an edit counts:
-        /// a device already off is not being turned off.
-        var disablesWifi: Bool { enabled.isDirty && enabled.value == false }
-
-        var dirty: Set<UInt32> {
-            var dirty: Set<UInt32> = []
-            if enabled.isDirty { dirty.insert(enabled.property) }
-            return dirty
-        }
-
-        var desired: UlcpDevicePropertiesRecord {
-            var desired = held
-            desired.wifiEnabled = enabled.value
-            return desired
-        }
     }
 }
 
@@ -448,29 +372,11 @@ struct WifiJoinSheet: View {
     @State private var problem: String?
     @State private var isWorking = false
 
-    /// Modes this app can build a credential for, weakest last, which is
-    /// also the order a step-down walks.
-    private static let buildable: [UInt8] = [3, 2, 4, 1, 0]
-
-    /// The modes to offer, in the order an operator reads them.
-    ///
-    /// An access point that advertised its modes narrows the list to what
-    /// it actually offers, so a passphrase is never typed for a mode the
-    /// network does not run. A device that could not tell, and a hidden
-    /// network nobody heard, offer everything.
-    private var choices: [UInt8] {
-        guard let offered = target.offered, offered != 0 else { return Self.buildable }
-        let matching = Self.buildable.filter { offered & (1 << UInt16($0)) != 0 }
-        return matching.isEmpty ? Self.buildable : matching
-    }
-
-    /// Modes the access point offers that this app cannot join, listed so
-    /// an operator is told why their enterprise network is not there
-    /// rather than left looking for it.
-    private var unsupported: [UInt8] {
-        guard let offered = target.offered, offered != 0 else { return [] }
-        return [5, 6, 7, 8].filter { offered & (1 << UInt16($0)) != 0 }
-    }
+    /// The modes to offer, in the order an operator reads them, and the
+    /// ones the network offers that this app cannot set up, listed so an
+    /// operator is told why their enterprise network is not there rather
+    /// than left looking for it.
+    private var plan: MobileWifiJoinPlanRecord { wifiJoinPlan(offered: target.offered) }
 
     /// The SSID this sheet will send: what was typed for a hidden network,
     /// and the heard name otherwise.
@@ -478,10 +384,21 @@ struct WifiJoinSheet: View {
         target.ssid.isEmpty ? Data(name.utf8) : target.ssid
     }
 
-    /// Whether the chosen mode wants a passphrase at all.
-    private var needsCredential: Bool { security == 2 || security == 3 || security == 4 }
+    /// What the core makes of the entry as it stands.
+    private var check: MobileWifiEntryCheckRecord {
+        wifiEntryCheck(
+            ssid: ssid,
+            security: security,
+            hidden: target.hidden,
+            autoJoin: true,
+            credential: Data(credential.utf8),
+            stored: nil
+        )
+    }
 
     var body: some View {
+        let plan = self.plan
+        let check = self.check
         NavigationStack {
             Form {
                 Section {
@@ -493,11 +410,11 @@ struct WifiJoinSheet: View {
                         LabeledContent("Network") { WifiNameLabel(ssid: target.ssid) }
                     }
                     Picker("Minimum security", selection: $security) {
-                        ForEach(choices, id: \.self) { mode in
+                        ForEach(Array(plan.choices), id: \.self) { mode in
                             Text(wifiSecurityName(mode)).tag(mode)
                         }
                     }
-                    if needsCredential {
+                    if check.takesCredential {
                         SecureField("Password", text: $credential)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
@@ -505,11 +422,13 @@ struct WifiJoinSheet: View {
                 } footer: {
                     if let problem {
                         Text(problem).foregroundStyle(.red)
-                    } else if !unsupported.isEmpty {
+                    } else if let entry = check.problem, WifiEntryProblemText.showsWhileTyping(entry) {
+                        Text(WifiEntryProblemText.text(for: entry)).foregroundStyle(.red)
+                    } else if !plan.unsupported.isEmpty {
                         Text(
-                            "This network also offers \(unsupported.map(wifiSecurityName).formatted(.list(type: .and))), which this app cannot set up."
+                            "This network also offers \(plan.unsupported.map(wifiSecurityName).formatted(.list(type: .and))), which this app cannot set up."
                         )
-                    } else if needsCredential {
+                    } else if check.takesCredential {
                         Text("The password is sent to the device and kept there. It is never sent back, so this app cannot show you one you have already stored.")
                     }
                 }
@@ -526,38 +445,12 @@ struct WifiJoinSheet: View {
                         ProgressView()
                     } else {
                         Button("Join") { Task { await submit() } }
-                            .disabled(!isSubmittable)
+                            .disabled(check.problem != nil)
                     }
                 }
             }
-            .onAppear {
-                if let first = choices.first { security = first }
-            }
+            .onAppear { security = plan.initial }
         }
-    }
-
-    /// Whether what has been typed could be a network at all.
-    ///
-    /// The length rules live in the shared encoder rather than here, so
-    /// what this sheet refuses and what the device would refuse are the
-    /// same rules read from the same place. This only asks whether there
-    /// is enough to try.
-    private var isSubmittable: Bool {
-        guard !ssid.isEmpty, ssid.count <= 32 else { return false }
-        // An empty password would be the form that keeps a stored one,
-        // which a network being added does not have.
-        guard !needsCredential || !credential.isEmpty else { return false }
-        return (try? item()) != nil
-    }
-
-    private func item() throws -> Data {
-        try ulcpWifiNetworkItem(
-            ssid: ssid,
-            security: security,
-            hidden: target.hidden,
-            autoJoin: true,
-            credential: Data(credential.utf8)
-        )
     }
 
     /// Send the network, then select it.
@@ -565,54 +458,33 @@ struct WifiJoinSheet: View {
     /// A device that says it does not implement the chosen mode is not a
     /// failure to report: it is a network offering more than the device
     /// can do, and the next weaker mode the access point advertised is
-    /// what an operator would try next. Offering it here keeps them in the
+    /// what an operator would try next. Selecting it here keeps them in the
     /// sheet with what they typed, and keeps the choice theirs rather than
     /// silently joining on weaker security than they asked for.
     private func submit() async {
         problem = nil
-        let encoded: Data
-        do {
-            encoded = try item()
-        } catch {
-            problem = "That is not a password this network's security can use."
-            return
-        }
+        guard check.problem == nil else { return }
         isWorking = true
         defer { isWorking = false }
-        if let status = await model.joinNetwork(item: encoded, ssid: ssid) {
-            problem = joinRefusalText(status)
-            if ulcpStatusName(status: status).hasSuffix("UNIMPLEMENTED"),
-               let weaker = nextWeakerChoice()
-            {
+        let outcome = await model.joinNetwork(
+            ssid: ssid,
+            security: security,
+            hidden: target.hidden,
+            credential: Data(credential.utf8),
+            offered: target.offered
+        )
+        switch outcome {
+        case .done:
+            dismiss()
+        case let .refused(refusal):
+            problem = WifiRefusalText.join(refusal)
+            if case let .securityUnsupported(_, weaker?) = refusal, plan.choices.contains(weaker) {
                 security = weaker
-                problem = """
-                    The device cannot use \(wifiSecurityName(security)). \
-                    Try \(wifiSecurityName(weaker)), which this network also offers.
-                    """
             }
-            return
+        case .cancelled, .skipped, .failed:
+            // The status bar says what failed; the sheet keeps what was typed.
+            break
         }
-        guard model.problem == nil else { return }
-        dismiss()
-    }
-
-    private func nextWeakerChoice() -> UInt8? {
-        guard let position = choices.firstIndex(of: security) else { return nil }
-        return choices.indices.contains(position + 1) ? choices[position + 1] : nil
-    }
-
-    private func joinRefusalText(_ status: UInt32) -> String {
-        let name = ulcpStatusName(status: status)
-        if name.hasSuffix("NOMEM") {
-            return "The device has no room for another network. Forget one first."
-        }
-        if name.hasSuffix("INVALID_ARGUMENT") {
-            return "The device would not take that password for this kind of network."
-        }
-        if name.hasSuffix("UNIMPLEMENTED") {
-            return "The device cannot use \(wifiSecurityName(security))."
-        }
-        return "The device refused this network: \(name)."
     }
 }
 
@@ -655,33 +527,23 @@ struct WifiNetworkEditSheet: View {
 
     /// Modes this app can build an entry for, with the stored one kept in
     /// the list even where it cannot, so the picker always shows the truth.
-    private var choices: [UInt8] {
-        let buildable: [UInt8] = [3, 2, 4, 1, 0]
-        return buildable.contains(network.security) ? buildable : [network.security] + buildable
-    }
+    private var choices: [UInt8] { Array(wifiEditPlan(network: network).choices) }
 
-    private static func takesCredential(_ mode: UInt8) -> Bool {
-        mode == 2 || mode == 3 || mode == 4
-    }
-
-    /// Whether the password the device holds can stay: same mode, one
-    /// that has a password at all.
-    private var keepsCredential: Bool {
-        security == network.security && Self.takesCredential(security)
-    }
-
-    private var isChanged: Bool {
-        security != network.security || hidden != network.hidden
-            || autoJoin != network.autoJoin || !credential.isEmpty
-    }
-
-    private var isSubmittable: Bool {
-        guard isChanged else { return false }
-        if Self.takesCredential(security), !keepsCredential, credential.isEmpty { return false }
-        return (try? item()) != nil
+    /// What the core makes of the edit as it stands: whether the password
+    /// the device holds can stay, and whether anything changed at all.
+    private var check: MobileWifiEntryCheckRecord {
+        wifiEntryCheck(
+            ssid: network.ssid,
+            security: security,
+            hidden: hidden,
+            autoJoin: autoJoin,
+            credential: Data(credential.utf8),
+            stored: network
+        )
     }
 
     var body: some View {
+        let check = self.check
         NavigationStack {
             Form {
                 Section {
@@ -697,10 +559,10 @@ struct WifiNetworkEditSheet: View {
                     } label: {
                         Text("Minimum security", comment: "Picker label: the weakest Wi-Fi security a device accepts.")
                     }
-                    if Self.takesCredential(security) {
+                    if check.takesCredential {
                         SecureField(
                             text: $credential,
-                            prompt: keepsCredential
+                            prompt: check.keepsCredential
                                 ? Text("Unchanged", comment: "Placeholder: an empty Wi-Fi password field keeps the stored one.")
                                 : Text("Required", comment: "Placeholder: a Wi-Fi password that must be entered.")
                         ) {
@@ -713,6 +575,8 @@ struct WifiNetworkEditSheet: View {
                 } footer: {
                     if let refusal {
                         Text(verbatim: refusal).foregroundStyle(.red)
+                    } else if let entry = check.problem, WifiEntryProblemText.showsWhileTyping(entry) {
+                        Text(verbatim: WifiEntryProblemText.text(for: entry)).foregroundStyle(.red)
                     }
                 }
                 Section {
@@ -744,7 +608,7 @@ struct WifiNetworkEditSheet: View {
                         } label: {
                             Text("Save", comment: "Saves an edit.")
                         }
-                        .disabled(!isSubmittable)
+                        .disabled(!check.changed || check.problem != nil)
                         .accessibilityIdentifier("wifi-edit-save")
                     }
                 }
@@ -752,55 +616,28 @@ struct WifiNetworkEditSheet: View {
         }
     }
 
-    /// The entry to send. An empty credential under the stored mode is the
-    /// form the device reads as "keep the password".
-    private func item() throws -> Data {
-        try ulcpWifiNetworkItem(
+    /// Send the edit. An empty credential under the stored mode is the form
+    /// the device reads as "keep the password".
+    private func submit() async {
+        refusal = nil
+        guard check.changed, check.problem == nil else { return }
+        isWorking = true
+        defer { isWorking = false }
+        let outcome = await model.updateNetwork(
             ssid: network.ssid,
             security: security,
             hidden: hidden,
             autoJoin: autoJoin,
             credential: Data(credential.utf8)
         )
-    }
-
-    private func submit() async {
-        refusal = nil
-        guard let encoded = try? item() else { return }
-        isWorking = true
-        defer { isWorking = false }
-        if let status = await model.updateNetwork(item: encoded) {
-            refusal = refusalText(status)
-            return
+        switch outcome {
+        case .done:
+            dismiss()
+        case let .refused(refused):
+            refusal = WifiRefusalText.update(refused)
+        case .cancelled, .skipped, .failed:
+            break
         }
-        guard model.problem == nil else { return }
-        dismiss()
-    }
-
-    private func refusalText(_ status: UInt32) -> String {
-        let name = ulcpStatusName(status: status)
-        if name.hasSuffix("INVALID_ARGUMENT") {
-            return String(
-                localized: "The device would not take that password for this kind of network.",
-                comment: "Editing a saved Wi-Fi network: the device rejected the password."
-            )
-        }
-        if name.hasSuffix("UNIMPLEMENTED") {
-            return String(
-                localized: "The device cannot use \(wifiSecurityName(security)).",
-                comment: "Editing a saved Wi-Fi network. The placeholder is a security mode, such as WPA3."
-            )
-        }
-        if name.hasSuffix("ITEM_NOT_FOUND") {
-            return String(
-                localized: "The device no longer has this network.",
-                comment: "Editing a saved Wi-Fi network that was removed meanwhile."
-            )
-        }
-        return String(
-            localized: "The device refused this change: \(name).",
-            comment: "Editing a saved Wi-Fi network. The placeholder is a protocol status name."
-        )
     }
 }
 
@@ -862,12 +699,8 @@ func wifiSecurityName(_ code: UInt8) -> String {
 /// the device would use. A device that could not tell says so rather than
 /// claiming the network is open, which is what an empty set would read as.
 func wifiOfferedSecurityName(_ modes: UInt16) -> String {
-    guard modes != 0 else { return "Security unknown" }
-    // Strongest first, by the same order the join sheet walks.
-    for mode in [8, 7, 6, 3, 2, 4, 1, 5] where modes & (1 << UInt16(mode)) != 0 {
-        return wifiSecurityName(UInt8(mode))
-    }
-    return "Security unknown"
+    guard let strongest = wifiOfferedModes(offered: modes).first else { return "Security unknown" }
+    return wifiSecurityName(strongest)
 }
 
 /// Why the station is where it is, or nil where there is nothing to say.

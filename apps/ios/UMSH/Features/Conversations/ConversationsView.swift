@@ -462,8 +462,8 @@ private struct ConversationRow: View {
                             .accessibilityLabel("Notifications off")
                     }
                     Spacer()
-                    if let timestamp {
-                        Text(timestamp)
+                    if let sentAt {
+                        AgeText(since: sentAt, style: .compact)
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -489,10 +489,11 @@ private struct ConversationRow: View {
         }
     }
 
-    private var timestamp: String? {
+    /// When the last message was written. Each row keeps its own age
+    /// current, so the list needs no timer of its own.
+    private var sentAt: Date? {
         guard let last = item.lastMessage, last.createdAtMilliseconds > 0 else { return nil }
-        let date = Date(timeIntervalSince1970: Double(last.createdAtMilliseconds) / 1000)
-        return date.formatted(.relative(presentation: .numeric, unitsStyle: .narrow))
+        return Date(timeIntervalSince1970: Double(last.createdAtMilliseconds) / 1000)
     }
 
     private var preview: String {

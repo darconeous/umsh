@@ -37,8 +37,10 @@ struct DeviceScanView: View {
                         } label: {
                             RadioDiscoveryRow(
                                 radio: device,
-                                fallbackName: "Unnamed device",
-                                badge: controller.isCompanion(device) ? "This phone's radio" : nil,
+                                fallbackName: String(localized: "Unnamed device", comment: "A nearby device that advertises no name."),
+                                badge: controller.isCompanion(device)
+                                    ? String(localized: "This phone's radio", comment: "Device setup scan: a badge on the row for this phone's own radio.")
+                                    : nil,
                                 isBusy: controller.busyDevice == device.id
                             )
                         }
@@ -120,7 +122,13 @@ struct DeviceConnectingView: View {
         VStack(spacing: 16) {
             ProgressView()
                 .controlSize(.large)
-            Text("Connecting to \(name ?? "the device")…")
+            Group {
+                if let name {
+                    Text("Connecting to \(name)…", comment: "The placeholder is the device's name.")
+                } else {
+                    Text("Connecting to the device…")
+                }
+            }
                 .font(.headline)
                 .multilineTextAlignment(.center)
             Text("Keep it powered on and nearby. If this is the first time this phone has connected to it, iOS may ask you to pair.")
@@ -130,7 +138,7 @@ struct DeviceConnectingView: View {
         }
         .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .navigationTitle(name ?? "Device")
+        .navigationTitle(name.map { Text(verbatim: $0) } ?? Text("Device", comment: "Screen title: connecting to a device that advertises no name."))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {

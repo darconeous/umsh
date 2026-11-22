@@ -52,9 +52,6 @@ struct ManualPathHopRow: View {
 /// list shows these sections while editing and its route otherwise.
 @MainActor @Observable
 final class ManualPathDraft {
-    /// The most repeaters a source route carries.
-    static let maximumHops = 15
-
     var hops: [ManualPathHop]
     var floodHops: UInt8
     var hold = ManualPathHold.standard
@@ -65,7 +62,7 @@ final class ManualPathDraft {
 
     init(route: PeerRoute?) {
         hops = (route?.hints ?? []).map { ManualPathHop(hint: $0) }
-        floodHops = route?.heldFloodHops ?? ManualPath.standardFloodHops
+        floodHops = route?.heldFloodHops ?? CoreLimits.current.manualPathFloodHops
     }
 
     var path: ManualPath {
@@ -124,7 +121,7 @@ struct ManualPathEditSections: View {
             }
             .onMove { draft.hops.move(fromOffsets: $0, toOffset: $1) }
             .onDelete { draft.hops.remove(atOffsets: $0) }
-            if draft.hops.count < ManualPathDraft.maximumHops {
+            if draft.hops.count < Int(CoreLimits.current.maxRouteHints) {
                 Button {
                     isAddingHop = true
                 } label: {
@@ -138,7 +135,7 @@ struct ManualPathEditSections: View {
                 .deleteDisabled(true)
                 .accessibilityIdentifier("route.edit.addHop")
             }
-            Stepper(value: $draft.floodHops, in: 0...ManualPath.maximumFloodHops) {
+            Stepper(value: $draft.floodHops, in: 0...CoreLimits.current.maxFloodHops) {
                 LabeledContent {
                     Text(verbatim: RoutePresentation.floodText(draft.floodHops))
                 } label: {

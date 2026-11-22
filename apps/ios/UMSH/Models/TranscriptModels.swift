@@ -1,4 +1,5 @@
 import Foundation
+import UMSHMobileCore
 
 /// One loaded slice of a transcript, oldest first—the order it renders in.
 struct TranscriptPage: Equatable, Sendable {
@@ -118,6 +119,10 @@ struct TranscriptWindow: Equatable {
     /// state. Absent while the live edge is unloaded: a mid-history bubble must
     /// not be captioned as the latest thing this phone sent.
     private(set) var lastOutboundID: String?
+    /// The first instant a held row stops offering what it offers now: its
+    /// edit, or a resend in place. Nothing in storage changes then, so the
+    /// window is read again at that instant rather than on a new revision.
+    private(set) var nextActionExpiry: Date?
 
     var hasOlder = false
     var hasNewer = false
@@ -189,6 +194,12 @@ struct TranscriptWindow: Equatable {
         lastOutboundID = hasNewer
             ? nil
             : messages.last { $0.isOutbound && !$0.isDeleted }?.id
+        nextActionExpiry = messages
+            .lazy
+            .filter { $0.actions.edit || $0.actions.resend == .inPlace }
+            .compactMap(\.reviseUntilMilliseconds)
+            .min()
+            .map(Date.init(storeMilliseconds:))
     }
 
     /// What makes two adjacent messages one utterance.

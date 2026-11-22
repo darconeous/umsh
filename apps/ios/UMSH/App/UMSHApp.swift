@@ -66,6 +66,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, ObservableObject {
     #endif
 
     override init() {
+        // The Diagnostics page reads the log from here on.
+        _ = DiagnosticsLog.launchDate
         #if DEBUG
         if AppTestLaunch.isTesting {
             currentMode = .staging
@@ -437,6 +439,7 @@ private struct AppRootHost: View {
                 .id(ObjectIdentifier(delegate.runtime))
                 .environment(\.resetStagedData, { [delegate] in await delegate.resetStagedData() })
                 .environment(\.stagedResetFailed, delegate.stagedResetFailed)
+                .environment(\.stagedAdministeredDevices, delegate.runtime.stagedAdministeredDevices)
         }
         #else
         AppRootView(runtime: delegate.runtime).id(ObjectIdentifier(delegate.runtime))
@@ -451,5 +454,7 @@ extension EnvironmentValues {
     @Entry var resetStagedData: (@MainActor () async -> Void)? = nil
     /// Whether the last erase of the staged store failed.
     @Entry var stagedResetFailed = false
+    /// The staged devices device setup offers, while staging is on.
+    @Entry var stagedAdministeredDevices: StagedAdministeredDevices? = nil
 }
 #endif

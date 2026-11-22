@@ -156,11 +156,9 @@ struct ChannelDetailView: View {
                 LabeledContent("Maximum hops", value: "\(fixed)")
                     .foregroundStyle(.secondary)
             } else {
-                // The remaining-hop budget is a four-bit field, so 15 is the
-                // most the wire can carry.
                 Picker("Maximum hops", selection: $maxFloodHops) {
                     Text("Default").tag(0)
-                    ForEach(1...15, id: \.self) { hops in
+                    ForEach(1...Int(CoreLimits.current.maxFloodHops), id: \.self) { hops in
                         Text("\(hops)").tag(hops)
                     }
                 }

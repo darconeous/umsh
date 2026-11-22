@@ -78,6 +78,9 @@ struct ConversationThreadView: View {
     @State private var resendingMessage: ChatMessageSummary?
     /// The warning before transmitting on `EMERGENCY` is open.
     @State private var showsEmergencyWarning = false
+    /// The user agreed to that warning here, and the core took it. Covers
+    /// the moment before the conversation is read again saying so.
+    @State private var agreedHere = false
     /// What waits on that warning, when it is not the draft.
     @State private var certifiedAction: (() -> Void)?
     /// Why the core did not take the agreement, said once the warning has
@@ -239,12 +242,9 @@ struct ConversationThreadView: View {
                                             : nil,
                                         senderShape: message.senderAddress
                                             .flatMap(knownPeer(address:))?.avatarShape ?? .circle,
-                                        // Editing reaches only the recent
-                                        // past: an edit of an older message
-                                        // has no reference peers still
-                                        // resolve, so it is not offered.
-                                        onEdit: message.isOutbound && !message.isDeleted
-                                            && message.isWithinReviseWindow
+                                        // What a row offers is the core's
+                                        // word, read with the row.
+                                        onEdit: message.actions.edit
                                             ? {
                                                 afterEmergencyCertified {
                                                     editDraft = message.body
@@ -252,11 +252,10 @@ struct ConversationThreadView: View {
                                                 }
                                             }
                                             : nil,
-                                        onDelete: message.isOutbound && !message.isDeleted
+                                        onDelete: message.actions.delete
                                             ? { afterEmergencyCertified { deletingMessage = message } }
                                             : nil,
-                                        onResend: message.isOutbound && !message.isDeleted
-                                            && message.isDeliveryFailed
+                                        onResend: message.actions.resend != nil
                                             ? { afterEmergencyCertified { resendingMessage = message } }
                                             : nil,
                                         onShowDetails: { inspectedMessage = message },
@@ -267,15 +266,12 @@ struct ConversationThreadView: View {
                                                 }
                                             }
                                             : nil,
-                                        // No reacting to one's own failed
-                                        // message: nobody received the thing
-                                        // the reaction would decorate.
-                                        onReact: message.isDeleted || message.isDeliveryFailed
-                                            ? nil
-                                            : { glyph in
+                                        onReact: message.actions.react
+                                            ? { glyph in
                                                 afterEmergencyCertified { react(to: message, with: glyph) }
-                                            },
-                                        onReply: canReply(to: message)
+                                            }
+                                            : nil,
+                                        onReply: message.actions.reply
                                             ? { startReply(to: message) }
                                             : nil,
                                         quoteName: message.reply.flatMap(quoteName(for:)),
@@ -292,7 +288,7 @@ struct ConversationThreadView: View {
                                     .modifier(
                                         ReplySwipe(
                                             isOutbound: message.isOutbound,
-                                            onReply: canReply(to: message)
+                                            onReply: message.actions.reply
                                                 ? { startReply(to: message) }
                                                 : nil
                                         )
@@ -315,7 +311,7 @@ struct ConversationThreadView: View {
                                     GapPlaceholderBubble(
                                         count: messages.count,
                                         reservesAvatarGutter: isChannel,
-                                        onRequest: messages.first?.isGapIdle == true
+                                        onRequest: messages.first?.actions.requestMissing == true
                                             ? { afterEmergencyCertified { requestMissing(messages) } }
                                             : nil
                                     )
@@ -498,6 +494,28 @@ struct ConversationThreadView: View {
         // a peer heard, another conversation's traffic, this one being marked
         // read—costs nothing.
         .task(id: conversation.messageRevision) { await refreshTranscript() }
+        // An edit or resend window closing changes what a row offers but
+        // nothing in storage, so no revision brings it: read again just
+        // past it. The continuous clock keeps counting while the phone
+        // sleeps.
+        .task(id: transcript.nextActionExpiry) {
+            guard let expiry = transcript.nextActionExpiry else { return }
+            let wait = max(0, expiry.timeIntervalSinceNow) + 0.001
+            do {
+                try await Task.sleep(for: .seconds(wait), clock: .continuous)
+            } catch {
+                return
+            }
+            await refreshTranscript(force: true)
+        }
+        .onChange(of: transcript.messages) { _, messages in
+            dropUnrepliableReplyTarget(in: messages)
+        }
+        // Needed again after it was not: the agreement was dropped, as an
+        // identity change drops it, so the warning comes back.
+        .onChange(of: channelConversation?.needsEmergencyAgreement) { previous, needs in
+            if previous == false, needs == true { agreedHere = false }
+        }
         // Deliveries are what move a held route's record, so a new revision
         // is when the offer to replace it may have come due.
         .task(id: conversation.messageRevision) { await checkLearnedPathOffer() }
@@ -597,13 +615,14 @@ struct ConversationThreadView: View {
             if let notice = certificationFailure {
                 certificationFailure = nil
                 failure = notice
-            } else if wasSend, !channelActions.emergencyCertified() {
+            } else if wasSend, !agreedHere {
                 dismiss()
             }
         }) {
             EmergencyWarningSheet(sends: certifiedAction == nil) {
                 do {
                     try channelActions.certifyEmergency()
+                    agreedHere = true
                 } catch {
                     certificationFailure = FailureNotice(
                         certifiedAction == nil
@@ -633,11 +652,16 @@ struct ConversationThreadView: View {
             ),
             titleVisibility: .visible
         ) {
-            Button("Delete for everyone", role: .destructive) {
+            Button(role: .destructive) {
                 if let message = deletingMessage {
                     deletingMessage = nil
                     Task { await delete(message) }
                 }
+            } label: {
+                Text(
+                    "Delete for Everyone",
+                    comment: "Button: deletes a sent message from every recipient's transcript, not only this phone's."
+                )
             }
         } message: {
             Text(deleteMessageWarning)
@@ -651,7 +675,7 @@ struct ConversationThreadView: View {
         // secrecy never quietly goes without it: going without is its own
         // choice.
         .confirmationDialog(
-            resendingMessage?.isWithinReviseWindow == false
+            resendingMessage?.actions.resend == .asNew
                 ? String(
                     localized: "Resend This Message?",
                     comment: "Title of the dialog that sends an old undelivered message again as a new one."
@@ -671,7 +695,7 @@ struct ConversationThreadView: View {
                     resendingMessage = nil
                     resend(message, forwardSecret: message.isForwardSecret)
                 } label: {
-                    if message.isWithinReviseWindow {
+                    if message.actions.resend == .inPlace {
                         Text("Try Again", comment: "Button: send a recent undelivered message again.")
                     } else {
                         Text("Resend", comment: "Button: send an old undelivered message again as a new one.")
@@ -782,14 +806,14 @@ struct ConversationThreadView: View {
         .fadingBar(edge: .top, fadeLength: 22)
     }
 
+    /// The core trims the text, and refuses an edit that is empty or
+    /// changes nothing.
     private func edit(_ message: ChatMessageSummary, newBody: String) async {
-        let body = newBody.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !body.isEmpty, body != message.body else { return }
         await $failure.attempt(String(
             localized: "Edit Not Sent",
             comment: "Alert title: an edit of a message did not go out. The message says why."
         )) {
-            try await messageActions.edit(conversation, message, body)
+            try await messageActions.edit(conversation, message, newBody)
         }
     }
 
@@ -843,9 +867,11 @@ struct ConversationThreadView: View {
         }
     }
 
-    /// Whether a transmission here waits for the `EMERGENCY` warning.
+    /// Whether a transmission here waits for the `EMERGENCY` warning: the
+    /// core's word, until the user agrees here and the conversation is read
+    /// again saying so.
     private var needsEmergencyCertification: Bool {
-        channelConversation?.channel.isEmergency == true && !channelActions.emergencyCertified()
+        channelConversation?.needsEmergencyAgreement == true && !agreedHere
     }
 
     /// Run `action` now, or once the user agrees to the `EMERGENCY` warning.
@@ -884,16 +910,16 @@ struct ConversationThreadView: View {
 
     /// A reaction is fire-and-forget from the transcript's point of view: it
     /// adds no row to follow, so nothing scrolls and the reader stays put.
-    /// Picking the reaction already ours takes it back.
+    /// Picking the reaction already ours takes it back; the core decides
+    /// which from the message as it stands, not as this menu was drawn.
     private func react(to message: ChatMessageSummary, with glyph: String) {
         let kind = ReactionEmoji.kind(for: glyph)
-        let reaction: MobileReaction? = message.myReaction?.kind == kind ? nil : kind
         Task {
             await $failure.attempt(String(
                 localized: "Reaction Not Sent",
                 comment: "Alert title: a reaction to a message did not go out. The message says why."
             )) {
-                try await messageActions.react(conversation, message, reaction)
+                try await messageActions.toggleReaction(conversation, message, kind)
             }
         }
     }
@@ -906,14 +932,17 @@ struct ConversationThreadView: View {
     /// messages than the window has slack for. Reading history, the extent is
     /// re-read in place instead, so edits, deletions and delivery changes
     /// appear without the ground moving.
-    private func refreshTranscript() async {
+    ///
+    /// `force` reads again even at the revision already held, for a change
+    /// that moved nothing in storage.
+    private func refreshTranscript(force: Bool = false) async {
         let revision = conversation.messageRevision
-        guard transcript.loadedRevision != revision else { return }
+        guard force || transcript.loadedRevision != revision else { return }
         let address = conversation.conversationAddress
 
         guard transcript.hasLoadedOnce, let oldest = transcript.oldestCursor else {
             let page = await transcriptLoader.newest(address, TranscriptWindow.pageSize)
-            guard !Task.isCancelled else { return }
+            guard isCurrent(revision) else { return }
             // The scroll view is built for the first time around this content,
             // so its bottom anchor opens on the newest message with no scroll
             // command to race the layout of a whole page of bubbles.
@@ -924,7 +953,7 @@ struct ConversationThreadView: View {
 
         if scroll.followsLatestMessage && !transcript.hasNewer {
             let page = await transcriptLoader.newest(address, TranscriptWindow.pageSize)
-            guard !Task.isCancelled else { return }
+            guard isCurrent(revision) else { return }
             transcript.replace(with: page, revision: revision)
             scrollToBottomRequest += 1
             return
@@ -940,8 +969,18 @@ struct ConversationThreadView: View {
             true,
             min(transcript.messages.count + slack, TranscriptWindow.capacity)
         )
-        guard !Task.isCancelled else { return }
+        guard isCurrent(revision) else { return }
         transcript.replace(with: page, revision: revision)
+    }
+
+    /// Whether a page read at `revision` may still be applied.
+    ///
+    /// Two tasks refresh the transcript—one keyed on the revision, one on
+    /// the next action expiry—and a new revision cancels only the first. A
+    /// page read before the revision moved would otherwise land on top of
+    /// the newer one and hold until the next revision.
+    private func isCurrent(_ revision: Int) -> Bool {
+        !Task.isCancelled && revision == conversation.messageRevision
     }
 
     /// Page backward until the content is at least tall enough to scroll.
@@ -1166,11 +1205,15 @@ struct ConversationThreadView: View {
 
     // MARK: Replies
 
-    /// Whether a reply could name this message. One of mine that never went
-    /// out cannot be named to anyone.
-    private func canReply(to message: ChatMessageSummary) -> Bool {
-        !message.isDeleted && !message.isGapPlaceholder && !message.isUnavailable
-            && !message.isDeliveryFailed
+    /// Let go of a reply target that, read again, no longer offers a reply:
+    /// the core would send the draft as plain text, so the composer must not
+    /// show a quote. A target outside the window is kept as it was.
+    private func dropUnrepliableReplyTarget(in messages: [ChatMessageSummary]) {
+        guard let target = replyTarget,
+              let current = messages.first(where: { $0.id == target.id }),
+              !current.actions.reply
+        else { return }
+        withAnimation(UMSHAnimation.accessory) { replyTarget = nil }
     }
 
     private func startReply(to message: ChatMessageSummary) {

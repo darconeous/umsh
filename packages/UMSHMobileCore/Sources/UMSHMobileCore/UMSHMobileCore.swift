@@ -715,7 +715,8 @@ public protocol MobileAppCoreProtocol: AnyObject, Sendable {
      * shuts down, the channel keys and counter reservations go, and with
      * `also_content` the store's content too. Native code erases the
      * identity's secret first, and stops if that fails. Leaves the core
-     * idle, even when a later part fails.
+     * idle, even when a later part fails. A start under way is waited
+     * out.
      */
     func erase(alsoContent: Bool) async throws
 
@@ -894,7 +895,8 @@ public protocol MobileAppCoreProtocol: AnyObject, Sendable {
      * within its revise window and while its frames can still land, or
      * otherwise as a new message that replaces it. `forward_secret` is
      * what the user chose; a channel has none. `InvalidRequest` for a
-     * message that is not failed, or that another resend is sending.
+     * message whose `actions` offer no resend, or that another resend is
+     * sending.
      */
     func resend(address: String, message: MobileStoredChatMessageRefRecord, forwardSecret: Bool) async throws  -> MobileAppResent
 
@@ -906,9 +908,11 @@ public protocol MobileAppCoreProtocol: AnyObject, Sendable {
 
     /**
      * Send into a stored conversation: typed text, a reply, an edit, a
-     * deletion or a reaction. The message is stored before anything goes
-     * on the air, and the send runs to its end whatever becomes of the
-     * caller.
+     * deletion or a reaction. An edit that changes nothing, and an edit,
+     * deletion or reaction its target's `actions` do not offer, is
+     * `InvalidRequest`; a reply to a message that offers none goes as
+     * plain text. The message is stored before anything goes on the air,
+     * and the send runs to its end whatever becomes of the caller.
      *
      * `clear_draft`, with `Typed` and `Reply` only, is the composer's text
      * as submitted: it is stored as the draft first, in every state but
@@ -983,62 +987,54 @@ public protocol MobileAppCoreProtocol: AnyObject, Sendable {
     func setMeetWanted(wanted: Bool) async throws
 
     /**
-     * Ask a device to announce itself now.
+     * Manage the device `driver` is attached to: an administrative driver
+     * native code owns, drains and stops. Nothing is cached.
+     * `phone_node_key` is what native code knows this phone's key to be
+     * on that device. Native code forwards the driver's pushes with
+     * `receive_pushes`, and tears its session down once the device
+     * enters firmware update. A later call for the same driver returns
+     * the same device: the first call's `phone_node_key` and
+     * `uses_bluetooth` stand while any handle holds it.
      */
-    func remoteAnnounce(operation: MobileOperation, address: String, request: MobileAnnouncementRecord) async throws
+    func manageAdministered(driver: MobileRadioDriver, phoneNodeKey: Data?, usesBluetooth: Bool) async throws  -> MobileManagedDevice
 
     /**
-     * Make a device forget every Bluetooth host it was bonded with.
+     * Manage the device at `address`: over the attached radio's own link
+     * when `address` is that radio's device identity, else across the
+     * mesh, which needs an owner. `uses_bluetooth` is the transport's,
+     * which the core does not know; a mesh device ignores it.
      */
-    func remoteClearBonds(operation: MobileOperation, address: String) async throws
+    func manageDevice(address: String, usesBluetooth: Bool) async throws  -> MobileManagedDevice
 
     /**
-     * Put a device into firmware update, confirmed by its status.
+     * Manage the attached radio over its own link. Nothing is cached
+     * when the radio holds no device identity or no owner is set.
      */
-    func remoteEnterDfu(operation: MobileOperation, address: String, mode: UlcpDfuMode) async throws
+    func manageRadio(usesBluetooth: Bool) async throws  -> MobileManagedDevice
 
     /**
-     * Read properties from a device. Every property asked for is
-     * answered, refusals included.
+     * Set up the device `driver` is attached to as `goal`. `driver` is an
+     * administrative driver native code owns, attached with
+     * `lazy_inspection: false`; a lazily attached one is `InvalidRequest`.
+     * Answers even for a device the goal cannot use: the record's
+     * `refusal` says why, and `draft` is `None`.
+     *
+     * Shares the administrative engine `manage_administered` makes for the
+     * same driver: one queue, and the first call's `phone_node_key` and
+     * `uses_bluetooth` stand while any handle holds it; the record's
+     * `phone_node_key` is the engine's. `phone_zone_rule` is the phone's,
+     * from `phone_zone_rule`; a rule no device accepts is `InvalidRequest`.
      */
-    func remoteFetch(operation: MobileOperation, address: String, propertyIds: [UInt32], multiHint: Bool) async throws  -> [MobileMeshManagementAnswerRecord]
+    func setUpDevice(driver: MobileRadioDriver, goal: MobileSetupGoal, companion: MobileSetupCompanionRecord?, phoneNodeKey: Data?, usesBluetooth: Bool, phoneZoneRule: String) async throws  -> MobileDeviceSetup
 
     /**
-     * Restart or wipe a device.
+     * The radio profile a set-up device is put on: this phone's radio's
+     * name and PHY values as it reports them now, or `None` with no
+     * radio or no report. Called once when the setup sheet opens and
+     * handed to every `set_up_device` of that sheet, so a mesh profile
+     * that changes mid-session does not split the devices set up in it.
      */
-    func remoteReset(operation: MobileOperation, address: String, scope: MobileMeshResetScope) async throws
-
-    /**
-     * Keep a device's live configuration across its restarts.
-     */
-    func remoteSave(operation: MobileOperation, address: String) async throws
-
-    /**
-     * Add a node to a device's administrators, or take it out.
-     */
-    func remoteSetAdmin(operation: MobileOperation, address: String, publicKey: Data, present: Bool) async throws
-
-    /**
-     * Start or stop a device's alert. Answers with what the device
-     * reports it is doing now.
-     */
-    func remoteSetAlert(operation: MobileOperation, address: String, state: UlcpAlertState) async throws  -> UlcpAlertState
-
-    /**
-     * Add a peer key to a device's identity, or take it out.
-     */
-    func remoteSetPeer(operation: MobileOperation, address: String, publicKey: Data, present: Bool) async throws
-
-    /**
-     * Add a Wi-Fi network to a device, or take one out by `item`.
-     */
-    func remoteSetWifiNetwork(operation: MobileOperation, address: String, item: Data, present: Bool) async throws
-
-    /**
-     * Write properties on a device, live until a save, in as many rounds
-     * as its answers need. Each answer echoes what the device kept.
-     */
-    func remoteWrite(operation: MobileOperation, address: String, writes: [MobileMeshPropertyWriteRecord]) async throws  -> [MobileMeshManagementAnswerRecord]
+    func setupCompanion() async throws  -> MobileSetupCompanionRecord?
 
     /**
      * Forget the transient peers nothing else holds.
@@ -1071,8 +1067,19 @@ public protocol MobileAppCoreProtocol: AnyObject, Sendable {
      * identities: those with `role`, or with a node hint starting with
      * `node_hint` (2 or 3 bytes). Each hop of `route` is a 2-byte router
      * hint. Answers arrive as peers changes.
+     *
+     * An ask without `node_hint` draws every node in range, so one goes
+     * at most once per `mobile_limits().discovery_cooldown_ms`, whatever
+     * its role or route; one sooner is `InvalidRequest`, and
+     * `discovery_wait_ms` says how long is left.
      */
     func discover(role: UInt8?, nodeHint: Data?, route: [Data]) async throws
+
+    /**
+     * Milliseconds until an unnarrowed `discover` may go; 0 when it may
+     * now.
+     */
+    func discoveryWaitMs() throws  -> UInt64
 
     /**
      * Ask a peer for its identity. The answer arrives as a peers change.
@@ -1139,17 +1146,11 @@ public protocol MobileAppCoreProtocol: AnyObject, Sendable {
      */
     func startConversation(address: String) async throws  -> String
 
-    func cachedProperties(publicAddress: String, propertyIds: [UInt32]) throws  -> [UInt32: MobileStoredCachedPropertyRecord]
-
     /**
      * The radios this phone was host of recently, most recent first.
      * Reading forgets those whose claim has lapsed.
      */
     func claimedRadios() throws  -> [MobileStoredClaimedRadioRecord]
-
-    func forgetManagementCache(publicAddress: String) throws
-
-    func managementCard(publicAddress: String) throws  -> MobileStoredManagementCardRecord?
 
     /**
      * How many messages a conversation holds, reactions not counted.
@@ -1172,13 +1173,6 @@ public protocol MobileAppCoreProtocol: AnyObject, Sendable {
      * channel that has its key and any other channel called the same.
      */
     func previewChannel(input: String) throws  -> MobileAppChannelPreviewRecord
-
-    /**
-     * Cache property values read now.
-     */
-    func saveCachedProperties(publicAddress: String, values: [UInt32: Data]) throws
-
-    func saveManagementCard(publicAddress: String, card: MobileStoredManagementCardRecord) throws
 
     /**
      * Everything the lists show. With `conversations_only`, peers and
@@ -1340,7 +1334,8 @@ open func clearListener()  {try! rustCall() {
      * shuts down, the channel keys and counter reservations go, and with
      * `also_content` the store's content too. Native code erases the
      * identity's secret first, and stops if that fails. Leaves the core
-     * idle, even when a later part fails.
+     * idle, even when a later part fails. A start under way is waited
+     * out.
      */
 open func erase(alsoContent: Bool)async throws   {
     return
@@ -1854,7 +1849,8 @@ open func requestMissing(address: String, messages: [MobileStoredChatMessageRefR
      * within its revise window and while its frames can still land, or
      * otherwise as a new message that replaces it. `forward_secret` is
      * what the user chose; a channel has none. `InvalidRequest` for a
-     * message that is not failed, or that another resend is sending.
+     * message whose `actions` offer no resend, or that another resend is
+     * sending.
      */
 open func resend(address: String, message: MobileStoredChatMessageRefRecord, forwardSecret: Bool)async throws  -> MobileAppResent  {
     return
@@ -1894,9 +1890,11 @@ open func saveDraft(address: String, text: String)async throws   {
 
     /**
      * Send into a stored conversation: typed text, a reply, an edit, a
-     * deletion or a reaction. The message is stored before anything goes
-     * on the air, and the send runs to its end whatever becomes of the
-     * caller.
+     * deletion or a reaction. An edit that changes nothing, and an edit,
+     * deletion or reaction its target's `actions` do not offer, is
+     * `InvalidRequest`; a reply to a message that offers none goes as
+     * plain text. The message is stored before anything goes on the air,
+     * and the send runs to its end whatever becomes of the caller.
      *
      * `clear_draft`, with `Typed` and `Reply` only, is the composer's text
      * as submitted: it is stored as the draft first, in every state but
@@ -2125,213 +2123,121 @@ open func setMeetWanted(wanted: Bool)async throws   {
 }
 
     /**
-     * Ask a device to announce itself now.
+     * Manage the device `driver` is attached to: an administrative driver
+     * native code owns, drains and stops. Nothing is cached.
+     * `phone_node_key` is what native code knows this phone's key to be
+     * on that device. Native code forwards the driver's pushes with
+     * `receive_pushes`, and tears its session down once the device
+     * enters firmware update. A later call for the same driver returns
+     * the same device: the first call's `phone_node_key` and
+     * `uses_bluetooth` stand while any handle holds it.
      */
-open func remoteAnnounce(operation: MobileOperation, address: String, request: MobileAnnouncementRecord)async throws   {
+open func manageAdministered(driver: MobileRadioDriver, phoneNodeKey: Data?, usesBluetooth: Bool)async throws  -> MobileManagedDevice  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_umsh_mobile_core_fn_method_mobileappcore_remote_announce(
-                        self.uniffiCloneHandle(),FfiConverterTypeMobileOperation_lower(operation),FfiConverterString.lower(address),FfiConverterTypeMobileAnnouncementRecord_lower(request)
+                uniffi_umsh_mobile_core_fn_method_mobileappcore_manage_administered(
+                        self.uniffiCloneHandle(),FfiConverterTypeMobileRadioDriver_lower(driver),FfiConverterOptionData.lower(phoneNodeKey),FfiConverterBool.lower(usesBluetooth)
                 )
             },
-            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
-            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
-            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
-            liftFunc: { $0 },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_u64,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_u64,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_u64,
+            liftFunc: FfiConverterTypeMobileManagedDevice_lift,
             errorHandler: FfiConverterTypeMobileAppError_lift
         )
 }
 
     /**
-     * Make a device forget every Bluetooth host it was bonded with.
+     * Manage the device at `address`: over the attached radio's own link
+     * when `address` is that radio's device identity, else across the
+     * mesh, which needs an owner. `uses_bluetooth` is the transport's,
+     * which the core does not know; a mesh device ignores it.
      */
-open func remoteClearBonds(operation: MobileOperation, address: String)async throws   {
+open func manageDevice(address: String, usesBluetooth: Bool)async throws  -> MobileManagedDevice  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_umsh_mobile_core_fn_method_mobileappcore_remote_clear_bonds(
-                        self.uniffiCloneHandle(),FfiConverterTypeMobileOperation_lower(operation),FfiConverterString.lower(address)
+                uniffi_umsh_mobile_core_fn_method_mobileappcore_manage_device(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(address),FfiConverterBool.lower(usesBluetooth)
                 )
             },
-            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
-            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
-            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
-            liftFunc: { $0 },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_u64,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_u64,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_u64,
+            liftFunc: FfiConverterTypeMobileManagedDevice_lift,
             errorHandler: FfiConverterTypeMobileAppError_lift
         )
 }
 
     /**
-     * Put a device into firmware update, confirmed by its status.
+     * Manage the attached radio over its own link. Nothing is cached
+     * when the radio holds no device identity or no owner is set.
      */
-open func remoteEnterDfu(operation: MobileOperation, address: String, mode: UlcpDfuMode)async throws   {
+open func manageRadio(usesBluetooth: Bool)async throws  -> MobileManagedDevice  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_umsh_mobile_core_fn_method_mobileappcore_remote_enter_dfu(
-                        self.uniffiCloneHandle(),FfiConverterTypeMobileOperation_lower(operation),FfiConverterString.lower(address),FfiConverterTypeUlcpDfuMode_lower(mode)
+                uniffi_umsh_mobile_core_fn_method_mobileappcore_manage_radio(
+                        self.uniffiCloneHandle(),FfiConverterBool.lower(usesBluetooth)
                 )
             },
-            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
-            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
-            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
-            liftFunc: { $0 },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_u64,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_u64,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_u64,
+            liftFunc: FfiConverterTypeMobileManagedDevice_lift,
             errorHandler: FfiConverterTypeMobileAppError_lift
         )
 }
 
     /**
-     * Read properties from a device. Every property asked for is
-     * answered, refusals included.
+     * Set up the device `driver` is attached to as `goal`. `driver` is an
+     * administrative driver native code owns, attached with
+     * `lazy_inspection: false`; a lazily attached one is `InvalidRequest`.
+     * Answers even for a device the goal cannot use: the record's
+     * `refusal` says why, and `draft` is `None`.
+     *
+     * Shares the administrative engine `manage_administered` makes for the
+     * same driver: one queue, and the first call's `phone_node_key` and
+     * `uses_bluetooth` stand while any handle holds it; the record's
+     * `phone_node_key` is the engine's. `phone_zone_rule` is the phone's,
+     * from `phone_zone_rule`; a rule no device accepts is `InvalidRequest`.
      */
-open func remoteFetch(operation: MobileOperation, address: String, propertyIds: [UInt32], multiHint: Bool)async throws  -> [MobileMeshManagementAnswerRecord]  {
+open func setUpDevice(driver: MobileRadioDriver, goal: MobileSetupGoal, companion: MobileSetupCompanionRecord?, phoneNodeKey: Data?, usesBluetooth: Bool, phoneZoneRule: String)async throws  -> MobileDeviceSetup  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_umsh_mobile_core_fn_method_mobileappcore_remote_fetch(
-                        self.uniffiCloneHandle(),FfiConverterTypeMobileOperation_lower(operation),FfiConverterString.lower(address),FfiConverterSequenceUInt32.lower(propertyIds),FfiConverterBool.lower(multiHint)
+                uniffi_umsh_mobile_core_fn_method_mobileappcore_set_up_device(
+                        self.uniffiCloneHandle(),FfiConverterTypeMobileRadioDriver_lower(driver),FfiConverterTypeMobileSetupGoal_lower(goal),FfiConverterOptionTypeMobileSetupCompanionRecord.lower(companion),FfiConverterOptionData.lower(phoneNodeKey),FfiConverterBool.lower(usesBluetooth),FfiConverterString.lower(phoneZoneRule)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_u64,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_u64,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_u64,
+            liftFunc: FfiConverterTypeMobileDeviceSetup_lift,
+            errorHandler: FfiConverterTypeMobileAppError_lift
+        )
+}
+
+    /**
+     * The radio profile a set-up device is put on: this phone's radio's
+     * name and PHY values as it reports them now, or `None` with no
+     * radio or no report. Called once when the setup sheet opens and
+     * handed to every `set_up_device` of that sheet, so a mesh profile
+     * that changes mid-session does not split the devices set up in it.
+     */
+open func setupCompanion()async throws  -> MobileSetupCompanionRecord?  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileappcore_setup_companion(
+                        self.uniffiCloneHandle()
                 )
             },
             pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
             completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterSequenceTypeMobileMeshManagementAnswerRecord.lift,
-            errorHandler: FfiConverterTypeMobileAppError_lift
-        )
-}
-
-    /**
-     * Restart or wipe a device.
-     */
-open func remoteReset(operation: MobileOperation, address: String, scope: MobileMeshResetScope)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_umsh_mobile_core_fn_method_mobileappcore_remote_reset(
-                        self.uniffiCloneHandle(),FfiConverterTypeMobileOperation_lower(operation),FfiConverterString.lower(address),FfiConverterTypeMobileMeshResetScope_lower(scope)
-                )
-            },
-            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
-            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
-            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeMobileAppError_lift
-        )
-}
-
-    /**
-     * Keep a device's live configuration across its restarts.
-     */
-open func remoteSave(operation: MobileOperation, address: String)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_umsh_mobile_core_fn_method_mobileappcore_remote_save(
-                        self.uniffiCloneHandle(),FfiConverterTypeMobileOperation_lower(operation),FfiConverterString.lower(address)
-                )
-            },
-            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
-            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
-            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeMobileAppError_lift
-        )
-}
-
-    /**
-     * Add a node to a device's administrators, or take it out.
-     */
-open func remoteSetAdmin(operation: MobileOperation, address: String, publicKey: Data, present: Bool)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_umsh_mobile_core_fn_method_mobileappcore_remote_set_admin(
-                        self.uniffiCloneHandle(),FfiConverterTypeMobileOperation_lower(operation),FfiConverterString.lower(address),FfiConverterData.lower(publicKey),FfiConverterBool.lower(present)
-                )
-            },
-            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
-            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
-            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeMobileAppError_lift
-        )
-}
-
-    /**
-     * Start or stop a device's alert. Answers with what the device
-     * reports it is doing now.
-     */
-open func remoteSetAlert(operation: MobileOperation, address: String, state: UlcpAlertState)async throws  -> UlcpAlertState  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_umsh_mobile_core_fn_method_mobileappcore_remote_set_alert(
-                        self.uniffiCloneHandle(),FfiConverterTypeMobileOperation_lower(operation),FfiConverterString.lower(address),FfiConverterTypeUlcpAlertState_lower(state)
-                )
-            },
-            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeUlcpAlertState_lift,
-            errorHandler: FfiConverterTypeMobileAppError_lift
-        )
-}
-
-    /**
-     * Add a peer key to a device's identity, or take it out.
-     */
-open func remoteSetPeer(operation: MobileOperation, address: String, publicKey: Data, present: Bool)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_umsh_mobile_core_fn_method_mobileappcore_remote_set_peer(
-                        self.uniffiCloneHandle(),FfiConverterTypeMobileOperation_lower(operation),FfiConverterString.lower(address),FfiConverterData.lower(publicKey),FfiConverterBool.lower(present)
-                )
-            },
-            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
-            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
-            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeMobileAppError_lift
-        )
-}
-
-    /**
-     * Add a Wi-Fi network to a device, or take one out by `item`.
-     */
-open func remoteSetWifiNetwork(operation: MobileOperation, address: String, item: Data, present: Bool)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_umsh_mobile_core_fn_method_mobileappcore_remote_set_wifi_network(
-                        self.uniffiCloneHandle(),FfiConverterTypeMobileOperation_lower(operation),FfiConverterString.lower(address),FfiConverterData.lower(item),FfiConverterBool.lower(present)
-                )
-            },
-            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
-            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
-            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeMobileAppError_lift
-        )
-}
-
-    /**
-     * Write properties on a device, live until a save, in as many rounds
-     * as its answers need. Each answer echoes what the device kept.
-     */
-open func remoteWrite(operation: MobileOperation, address: String, writes: [MobileMeshPropertyWriteRecord])async throws  -> [MobileMeshManagementAnswerRecord]  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_umsh_mobile_core_fn_method_mobileappcore_remote_write(
-                        self.uniffiCloneHandle(),FfiConverterTypeMobileOperation_lower(operation),FfiConverterString.lower(address),FfiConverterSequenceTypeMobileMeshPropertyWriteRecord.lower(writes)
-                )
-            },
-            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterSequenceTypeMobileMeshManagementAnswerRecord.lift,
+            liftFunc: FfiConverterOptionTypeMobileSetupCompanionRecord.lift,
             errorHandler: FfiConverterTypeMobileAppError_lift
         )
 }
@@ -2423,6 +2329,11 @@ open func demotePeer(address: String)async throws   {
      * identities: those with `role`, or with a node hint starting with
      * `node_hint` (2 or 3 bytes). Each hop of `route` is a 2-byte router
      * hint. Answers arrive as peers changes.
+     *
+     * An ask without `node_hint` draws every node in range, so one goes
+     * at most once per `mobile_limits().discovery_cooldown_ms`, whatever
+     * its role or route; one sooner is `InvalidRequest`, and
+     * `discovery_wait_ms` says how long is left.
      */
 open func discover(role: UInt8?, nodeHint: Data?, route: [Data])async throws   {
     return
@@ -2438,6 +2349,19 @@ open func discover(role: UInt8?, nodeHint: Data?, route: [Data])async throws   {
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeMobileAppError_lift
         )
+}
+
+    /**
+     * Milliseconds until an unnarrowed `discover` may go; 0 when it may
+     * now.
+     */
+open func discoveryWaitMs()throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeMobileAppError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappcore_discovery_wait_ms(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
 }
 
     /**
@@ -2659,17 +2583,6 @@ open func startConversation(address: String)async throws  -> String  {
         )
 }
 
-open func cachedProperties(publicAddress: String, propertyIds: [UInt32])throws  -> [UInt32: MobileStoredCachedPropertyRecord]  {
-    return try  FfiConverterDictionaryUInt32TypeMobileStoredCachedPropertyRecord.lift(try rustCallWithError(FfiConverterTypeMobileAppError_lift) {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_method_mobileappcore_cached_properties(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(publicAddress),
-        FfiConverterSequenceUInt32.lower(propertyIds),uniffiCallStatus
-    )
-})
-}
-
     /**
      * The radios this phone was host of recently, most recent first.
      * Reading forgets those whose claim has lapsed.
@@ -2679,25 +2592,6 @@ open func claimedRadios()throws  -> [MobileStoredClaimedRadioRecord]  {
         uniffiCallStatus in
     uniffi_umsh_mobile_core_fn_method_mobileappcore_claimed_radios(
             self.uniffiCloneHandle(),uniffiCallStatus
-    )
-})
-}
-
-open func forgetManagementCache(publicAddress: String)throws   {try rustCallWithError(FfiConverterTypeMobileAppError_lift) {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_method_mobileappcore_forget_management_cache(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(publicAddress),uniffiCallStatus
-    )
-}
-}
-
-open func managementCard(publicAddress: String)throws  -> MobileStoredManagementCardRecord?  {
-    return try  FfiConverterOptionTypeMobileStoredManagementCardRecord.lift(try rustCallWithError(FfiConverterTypeMobileAppError_lift) {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_method_mobileappcore_management_card(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(publicAddress),uniffiCallStatus
     )
 })
 }
@@ -2753,29 +2647,6 @@ open func previewChannel(input: String)throws  -> MobileAppChannelPreviewRecord 
         FfiConverterString.lower(input),uniffiCallStatus
     )
 })
-}
-
-    /**
-     * Cache property values read now.
-     */
-open func saveCachedProperties(publicAddress: String, values: [UInt32: Data])throws   {try rustCallWithError(FfiConverterTypeMobileAppError_lift) {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_method_mobileappcore_save_cached_properties(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(publicAddress),
-        FfiConverterDictionaryUInt32Data.lower(values),uniffiCallStatus
-    )
-}
-}
-
-open func saveManagementCard(publicAddress: String, card: MobileStoredManagementCardRecord)throws   {try rustCallWithError(FfiConverterTypeMobileAppError_lift) {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_method_mobileappcore_save_management_card(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(publicAddress),
-        FfiConverterTypeMobileStoredManagementCardRecord_lower(card),uniffiCallStatus
-    )
-}
 }
 
     /**
@@ -3559,47 +3430,6 @@ public protocol MobileAppStoreProtocol: AnyObject, Sendable {
     func updateDraft(ownerIdentityId: String, conversationId: Int64, text: String) throws
 
     /**
-     * What a device was last seen configured as, for the properties asked
-     * for. Absent properties are simply not in the result: never fetched
-     * and refused read the same from here, and a screen shows both as a
-     * field it has nothing to prefill.
-     */
-    func cachedProperties(ownerIdentityId: String, publicAddress: String, propertyIds: [UInt32]) throws  -> [UInt32: MobileStoredCachedPropertyRecord]
-
-    /**
-     * Forget everything cached about a device, so the next open asks it
-     * afresh. The card goes too: a refresh that cannot be trusted to be
-     * about the same firmware is not a refresh.
-     */
-    func forgetManagementCache(ownerIdentityId: String, publicAddress: String) throws
-
-    /**
-     * What a device last said it is, if this phone has ever asked.
-     */
-    func managementCard(ownerIdentityId: String, publicAddress: String) throws  -> MobileStoredManagementCardRecord?
-
-    /**
-     * Record values a device reported—from a read, or from the echo a
-     * write comes back with, which is the freshest statement of what the
-     * device is actually holding. Every value takes `at_ms`. An empty value
-     * is kept as one: a property can be empty.
-     */
-    func saveCachedProperties(ownerIdentityId: String, publicAddress: String, values: [UInt32: Data], atMs: Int64) throws
-
-    /**
-     * Record what a card read found.
-     *
-     * A device running different firmware is a device whose capabilities,
-     * property set, and defaults may all have moved, so everything cached
-     * about the old firmware is dropped in the same transaction. Nothing
-     * about a cached value says which firmware produced it, and a value
-     * that outlives its firmware is worse than no value: it prefills a form
-     * with a plausible reading nobody can date. A first card has nothing to
-     * supersede, so values cached before it stay.
-     */
-    func saveManagementCard(ownerIdentityId: String, publicAddress: String, card: MobileStoredManagementCardRecord) throws
-
-    /**
      * Drop every transient row that nothing else depends on: saved peers,
      * the companion radio, rows on the device identity, rows with a
      * conversation, and rows carrying a pending watch all stay.
@@ -3840,6 +3670,11 @@ public protocol MobileAppStoreProtocol: AnyObject, Sendable {
      * Write one staged transcript exactly as described, reactions
      * included, in one transaction. A row already at a staged handle is
      * replaced.
+     *
+     * When messages of ours carry a wire ID and an epoch, the
+     * conversation's outbound stream is set to continue after the newest
+     * of them, unless it already has a place: a stream the user advanced
+     * is never rewound.
      *
      * Separate from `seed_generated_messages` because the two answer
      * different questions: that one wants volume and does not care what
@@ -4498,93 +4333,6 @@ open func updateDraft(ownerIdentityId: String, conversationId: Int64, text: Stri
 }
 
     /**
-     * What a device was last seen configured as, for the properties asked
-     * for. Absent properties are simply not in the result: never fetched
-     * and refused read the same from here, and a screen shows both as a
-     * field it has nothing to prefill.
-     */
-open func cachedProperties(ownerIdentityId: String, publicAddress: String, propertyIds: [UInt32])throws  -> [UInt32: MobileStoredCachedPropertyRecord]  {
-    return try  FfiConverterDictionaryUInt32TypeMobileStoredCachedPropertyRecord.lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_method_mobileappstore_cached_properties(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(ownerIdentityId),
-        FfiConverterString.lower(publicAddress),
-        FfiConverterSequenceUInt32.lower(propertyIds),uniffiCallStatus
-    )
-})
-}
-
-    /**
-     * Forget everything cached about a device, so the next open asks it
-     * afresh. The card goes too: a refresh that cannot be trusted to be
-     * about the same firmware is not a refresh.
-     */
-open func forgetManagementCache(ownerIdentityId: String, publicAddress: String)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_method_mobileappstore_forget_management_cache(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(ownerIdentityId),
-        FfiConverterString.lower(publicAddress),uniffiCallStatus
-    )
-}
-}
-
-    /**
-     * What a device last said it is, if this phone has ever asked.
-     */
-open func managementCard(ownerIdentityId: String, publicAddress: String)throws  -> MobileStoredManagementCardRecord?  {
-    return try  FfiConverterOptionTypeMobileStoredManagementCardRecord.lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_method_mobileappstore_management_card(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(ownerIdentityId),
-        FfiConverterString.lower(publicAddress),uniffiCallStatus
-    )
-})
-}
-
-    /**
-     * Record values a device reported—from a read, or from the echo a
-     * write comes back with, which is the freshest statement of what the
-     * device is actually holding. Every value takes `at_ms`. An empty value
-     * is kept as one: a property can be empty.
-     */
-open func saveCachedProperties(ownerIdentityId: String, publicAddress: String, values: [UInt32: Data], atMs: Int64)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_method_mobileappstore_save_cached_properties(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(ownerIdentityId),
-        FfiConverterString.lower(publicAddress),
-        FfiConverterDictionaryUInt32Data.lower(values),
-        FfiConverterInt64.lower(atMs),uniffiCallStatus
-    )
-}
-}
-
-    /**
-     * Record what a card read found.
-     *
-     * A device running different firmware is a device whose capabilities,
-     * property set, and defaults may all have moved, so everything cached
-     * about the old firmware is dropped in the same transaction. Nothing
-     * about a cached value says which firmware produced it, and a value
-     * that outlives its firmware is worse than no value: it prefills a form
-     * with a plausible reading nobody can date. A first card has nothing to
-     * supersede, so values cached before it stay.
-     */
-open func saveManagementCard(ownerIdentityId: String, publicAddress: String, card: MobileStoredManagementCardRecord)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_method_mobileappstore_save_management_card(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(ownerIdentityId),
-        FfiConverterString.lower(publicAddress),
-        FfiConverterTypeMobileStoredManagementCardRecord_lower(card),uniffiCallStatus
-    )
-}
-}
-
-    /**
      * Drop every transient row that nothing else depends on: saved peers,
      * the companion radio, rows on the device identity, rows with a
      * conversation, and rows carrying a pending watch all stay.
@@ -5079,6 +4827,11 @@ open func seedGeneratedMessages(ownerIdentityId: String, conversationAddress: St
      * included, in one transaction. A row already at a staged handle is
      * replaced.
      *
+     * When messages of ours carry a wire ID and an epoch, the
+     * conversation's outbound stream is set to continue after the newest
+     * of them, unless it already has a place: a stream the user advanced
+     * is never rewound.
+     *
      * Separate from `seed_generated_messages` because the two answer
      * different questions: that one wants volume and does not care what
      * it says, this one wants a specific conversation to read plausibly in
@@ -5409,6 +5162,295 @@ public func FfiConverterTypeMobileCounterStore_lift(_ handle: UInt64) throws -> 
 #endif
 public func FfiConverterTypeMobileCounterStore_lower(_ value: MobileCounterStore) -> UInt64 {
     return FfiConverterTypeMobileCounterStore.lower(value)
+}
+
+
+
+
+
+
+/**
+ * One device being set up: what it reported, what the goal decided, and
+ * the write that tells it. Released with `release()` or on drop.
+ */
+public protocol MobileDeviceSetupProtocol: AnyObject, Sendable {
+
+    /**
+     * Let `key` manage the device. Idempotent; unchanged on a full list.
+     */
+    func addAdministrator(draft: MobileSetupDraft, key: Data)  -> MobileSetupDraft
+
+    /**
+     * Configure, read back, edit the administrators, set the clock, verify.
+     * `InvalidRequest` while another apply on this setup runs; `Invalid`
+     * (nothing sent) when review would not allow it. Once queued, an
+     * apply runs to its end whatever the caller does: its result reaches
+     * `snapshot()` and `draft()` even if this call's future is dropped.
+     */
+    func apply(draft: MobileSetupDraft) async throws  -> MobileSetupApplyOutcome
+
+    /**
+     * The draft to edit now, or `None` for a refused device: as the goal
+     * built it, then as the last apply left it (its outcome's draft).
+     * Native code keeps its own copy and edits it; this is for a screen
+     * rebuilt from the handle.
+     */
+    func draft()  -> MobileSetupDraft?
+
+    /**
+     * This setup is done; idempotent. Later `review` and `apply` answer
+     * `Stopped`. An apply under way runs to its end; the engine stays
+     * registered until its queue empties.
+     */
+    func release()
+
+    /**
+     * Stop `key` managing the device. This phone's key and the last
+     * entry included.
+     */
+    func removeAdministrator(draft: MobileSetupDraft, key: Data)  -> MobileSetupDraft
+
+    /**
+     * What Apply would do with `draft` now. `Stopped` once released;
+     * `InvalidRequest` for a device the goal refused, which has no draft.
+     */
+    func review(draft: MobileSetupDraft) throws  -> MobileSetupReviewRecord
+
+    /**
+     * Put this phone on the administrator list or take it off. Unchanged
+     * when this phone's key is unknown, or when the list is full and the
+     * phone is not on it.
+     */
+    func setPhoneAdministers(draft: MobileSetupDraft, administers: Bool)  -> MobileSetupDraft
+
+    /**
+     * Everything the sheet shows that is not the draft. Never waits.
+     */
+    func snapshot()  -> MobileDeviceSetupRecord
+
+}
+/**
+ * One device being set up: what it reported, what the goal decided, and
+ * the write that tells it. Released with `release()` or on drop.
+ */
+open class MobileDeviceSetup: MobileDeviceSetupProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_umsh_mobile_core_fn_clone_mobiledevicesetup(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_umsh_mobile_core_fn_free_mobiledevicesetup(handle, $0) }
+    }
+
+
+
+
+    /**
+     * Let `key` manage the device. Idempotent; unchanged on a full list.
+     */
+open func addAdministrator(draft: MobileSetupDraft, key: Data) -> MobileSetupDraft  {
+    return try!  FfiConverterTypeMobileSetupDraft_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobiledevicesetup_add_administrator(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileSetupDraft_lower(draft),
+        FfiConverterData.lower(key),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Configure, read back, edit the administrators, set the clock, verify.
+     * `InvalidRequest` while another apply on this setup runs; `Invalid`
+     * (nothing sent) when review would not allow it. Once queued, an
+     * apply runs to its end whatever the caller does: its result reaches
+     * `snapshot()` and `draft()` even if this call's future is dropped.
+     */
+open func apply(draft: MobileSetupDraft)async throws  -> MobileSetupApplyOutcome  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobiledevicesetup_apply(
+                        self.uniffiCloneHandle(),FfiConverterTypeMobileSetupDraft_lower(draft)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileSetupApplyOutcome_lift,
+            errorHandler: FfiConverterTypeMobileAppError_lift
+        )
+}
+
+    /**
+     * The draft to edit now, or `None` for a refused device: as the goal
+     * built it, then as the last apply left it (its outcome's draft).
+     * Native code keeps its own copy and edits it; this is for a screen
+     * rebuilt from the handle.
+     */
+open func draft() -> MobileSetupDraft?  {
+    return try!  FfiConverterOptionTypeMobileSetupDraft.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobiledevicesetup_draft(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * This setup is done; idempotent. Later `review` and `apply` answer
+     * `Stopped`. An apply under way runs to its end; the engine stays
+     * registered until its queue empties.
+     */
+open func release()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobiledevicesetup_release(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Stop `key` managing the device. This phone's key and the last
+     * entry included.
+     */
+open func removeAdministrator(draft: MobileSetupDraft, key: Data) -> MobileSetupDraft  {
+    return try!  FfiConverterTypeMobileSetupDraft_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobiledevicesetup_remove_administrator(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileSetupDraft_lower(draft),
+        FfiConverterData.lower(key),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * What Apply would do with `draft` now. `Stopped` once released;
+     * `InvalidRequest` for a device the goal refused, which has no draft.
+     */
+open func review(draft: MobileSetupDraft)throws  -> MobileSetupReviewRecord  {
+    return try  FfiConverterTypeMobileSetupReviewRecord_lift(try rustCallWithError(FfiConverterTypeMobileAppError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobiledevicesetup_review(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileSetupDraft_lower(draft),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Put this phone on the administrator list or take it off. Unchanged
+     * when this phone's key is unknown, or when the list is full and the
+     * phone is not on it.
+     */
+open func setPhoneAdministers(draft: MobileSetupDraft, administers: Bool) -> MobileSetupDraft  {
+    return try!  FfiConverterTypeMobileSetupDraft_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobiledevicesetup_set_phone_administers(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileSetupDraft_lower(draft),
+        FfiConverterBool.lower(administers),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Everything the sheet shows that is not the draft. Never waits.
+     */
+open func snapshot() -> MobileDeviceSetupRecord  {
+    return try!  FfiConverterTypeMobileDeviceSetupRecord_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobiledevicesetup_snapshot(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileDeviceSetup: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = MobileDeviceSetup
+
+    public static func lift(_ handle: UInt64) throws -> MobileDeviceSetup {
+        return MobileDeviceSetup(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: MobileDeviceSetup) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileDeviceSetup {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: MobileDeviceSetup, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileDeviceSetup_lift(_ handle: UInt64) throws -> MobileDeviceSetup {
+    return try FfiConverterTypeMobileDeviceSetup.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileDeviceSetup_lower(_ value: MobileDeviceSetup) -> UInt64 {
+    return FfiConverterTypeMobileDeviceSetup.lower(value)
 }
 
 
@@ -6083,6 +6125,862 @@ public func FfiConverterTypeMobileLogger_lift(_ handle: UInt64) throws -> Mobile
 #endif
 public func FfiConverterTypeMobileLogger_lower(_ value: MobileLogger) -> UInt64 {
     return FfiConverterTypeMobileLogger.lower(value)
+}
+
+
+
+
+
+
+/**
+ * One handle on a device being managed: its card, its readings, and what
+ * this phone has asked of it. Made by `MobileAppCore`, run on the core's
+ * worker. Every handle on one device shares one engine: one queue, one
+ * set of readings, one snapshot.
+ *
+ * A call whose future is dropped still runs to its end, which keeps a
+ * write whole; only `cancel` and `release` cancel.
+ */
+public protocol MobileManagedDeviceProtocol: AnyObject, Sendable {
+
+    /**
+     * Ask the device to announce itself now.
+     */
+    func announce(kind: MobileAnnouncementKind, reach: MobileAnnouncementReach) async throws  -> MobileManagementOutcome
+
+    /**
+     * Write what `draft` changes, then save. Judged as `review` judges it,
+     * when called: a field problem writes nothing (`Invalid`), and a draft
+     * with no edits sends nothing (`NothingToApply`). `answered` says to
+     * rebuild the draft from the reading: the device answered the write,
+     * or there was nothing to write.
+     */
+    func apply(draft: MobileManagementDraft) async throws  -> MobileApplyOutcome
+
+    /**
+     * The operator's Cancel: everything queued or running on this
+     * device, reads and writes, whichever handle asked. A request on
+     * the air may still be acted on.
+     */
+    func cancel()
+
+    /**
+     * Forget every host paired with the device.
+     */
+    func clearBluetoothPairings() async throws  -> MobileManagementOutcome
+
+    /**
+     * Leave the current network.
+     */
+    func disconnectNetwork() async throws  -> MobileManagementOutcome
+
+    /**
+     * Clear the problem the status bar shows.
+     */
+    func dismissProblem()
+
+    /**
+     * A draft of `kind` built from the device's reading, or `None` while
+     * there is no reading, the device does not offer its category, or
+     * this handle is released.
+     */
+    func draft(kind: MobileDraftKind)  -> MobileManagementDraft?
+
+    /**
+     * Put the device into firmware update. Once it confirms, nothing
+     * more is asked of it.
+     */
+    func enterDfu(mode: UlcpDfuMode) async throws  -> MobileManagementOutcome
+
+    /**
+     * Return the device to a blank factory state. Offered off the mesh
+     * only; the device's cache goes whatever the outcome.
+     */
+    func factoryReset() async throws  -> MobileManagementOutcome
+
+    /**
+     * Forget a network, and save.
+     */
+    func forgetNetwork(ssid: Data) async throws  -> MobileManagementOutcome
+
+    /**
+     * The engine's id, as `MobileAppChangesRecord.managed_devices` names
+     * it.
+     */
+    func id()  -> UInt64
+
+    /**
+     * Join a network the device knows, now.
+     */
+    func joinKnownNetwork(ssid: Data) async throws  -> MobileManagementOutcome
+
+    /**
+     * Store a network, turn the station on, join the network and save.
+     * `offered` is what a scan heard the network offer, which names the
+     * next mode to try when the device cannot use `security`. Neither the
+     * credential nor anything built from it is logged.
+     */
+    func joinNetwork(ssid: Data, security: UInt8, hidden: Bool, credential: Data, offered: UInt16?) async throws  -> MobileWifiOutcome
+
+    /**
+     * Fill the card in from the cache, and ask the device when there is
+     * none, or off the mesh when it has not been read this lifetime.
+     */
+    func loadCard() async throws  -> MobileManagementOutcome
+
+    /**
+     * Fill a category in from the cache, and off the mesh read it when
+     * it has not been read this lifetime.
+     */
+    func loadCategory(category: UlcpManageCategory) async throws  -> MobileManagementOutcome
+
+    /**
+     * `draft` on the device's current reading: fields the operator left
+     * alone follow the device, edits stand. The same variant comes back;
+     * `InvalidRequest` for one whose category the device does not offer.
+     */
+    func rebase(draft: MobileManagementDraft) throws  -> MobileManagementDraft
+
+    /**
+     * What a driver native code drains (the administrative one) pushed,
+     * with how many pushes it let go of: any lost reads every category
+     * held again. The companion's arrive without this.
+     */
+    func receivePushes(pushes: [UlcpPropertyPushRecord], dropped: UInt64)
+
+    /**
+     * Ask the device what it is.
+     */
+    func refreshCard() async throws  -> MobileManagementOutcome
+
+    /**
+     * Ask the device for one category.
+     */
+    func refreshCategory(category: UlcpManageCategory) async throws  -> MobileManagementOutcome
+
+    /**
+     * This handle is done. When it is the last open one on its device,
+     * the device is relinquished: reads are canceled and refused, writes
+     * run to their end, and it is forgotten once nothing is queued.
+     * Idempotent; dropping a handle does the same, later. Not `close`:
+     * Kotlin's generated objects already have a `close()`, which frees
+     * the handle and so releases it too.
+     */
+    func release()
+
+    /**
+     * Zero the traffic counters the device answered for, unsaved, then
+     * read them again.
+     */
+    func resetCounters() async throws  -> MobileManagementOutcome
+
+    /**
+     * Restart the device, keeping what it saved.
+     */
+    func restart() async throws  -> MobileManagementOutcome
+
+    /**
+     * What Apply would write now, what it cannot, what to confirm first,
+     * and what the editor shows beside its fields. Rebases first, so a
+     * stale draft is judged on the current reading.
+     */
+    func review(draft: MobileManagementDraft) throws  -> MobileDraftReviewRecord
+
+    /**
+     * Ask the device to look for networks; `heard_networks` fills as it
+     * hears them. Across the mesh this returns once the scan ended, or is
+     * no longer followed: a second scan, a cancel or a release ends it.
+     */
+    func scanNetworks() async throws  -> MobileManagementOutcome
+
+    /**
+     * Make the device conspicuous, or stop.
+     */
+    func setAlert(state: UlcpAlertState) async throws  -> MobileManagementOutcome
+
+    /**
+     * Let the device join a network it knows by itself, or not, and save.
+     */
+    func setAutoJoin(ssid: Data, autoJoin: Bool) async throws  -> MobileManagementOutcome
+
+    /**
+     * Set the device's clock to now, unsaved.
+     */
+    func setClockNow() async throws  -> MobileManagementOutcome
+
+    /**
+     * Bring one of the device's key tables to `desired`: what `desired`
+     * changes in the table as it reads now is made to the table as it
+     * reads when the command's turn comes, so edits queued behind one
+     * another all take. This phone's own administrator entry and the last
+     * administrator are never taken out (`Failed { InvalidRequest }`,
+     * nothing sent).
+     */
+    func setKeys(table: MobileKeyTable, desired: [Data]) async throws  -> MobileManagementOutcome
+
+    /**
+     * Everything a screen shows, as last published. Never waits on the
+     * worker.
+     */
+    func snapshot()  -> MobileManagedDeviceRecord
+
+    /**
+     * Replace a network the device knows, and save. An empty credential
+     * under the stored mode keeps the stored one.
+     */
+    func updateNetwork(ssid: Data, security: UInt8, hidden: Bool, autoJoin: Bool, credential: Data) async throws  -> MobileWifiOutcome
+
+}
+/**
+ * One handle on a device being managed: its card, its readings, and what
+ * this phone has asked of it. Made by `MobileAppCore`, run on the core's
+ * worker. Every handle on one device shares one engine: one queue, one
+ * set of readings, one snapshot.
+ *
+ * A call whose future is dropped still runs to its end, which keeps a
+ * write whole; only `cancel` and `release` cancel.
+ */
+open class MobileManagedDevice: MobileManagedDeviceProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_umsh_mobile_core_fn_clone_mobilemanageddevice(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_umsh_mobile_core_fn_free_mobilemanageddevice(handle, $0) }
+    }
+
+
+
+
+    /**
+     * Ask the device to announce itself now.
+     */
+open func announce(kind: MobileAnnouncementKind, reach: MobileAnnouncementReach)async throws  -> MobileManagementOutcome  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemanageddevice_announce(
+                        self.uniffiCloneHandle(),FfiConverterTypeMobileAnnouncementKind_lower(kind),FfiConverterTypeMobileAnnouncementReach_lower(reach)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileManagementOutcome_lift,
+            errorHandler: FfiConverterTypeMobileAppError_lift
+        )
+}
+
+    /**
+     * Write what `draft` changes, then save. Judged as `review` judges it,
+     * when called: a field problem writes nothing (`Invalid`), and a draft
+     * with no edits sends nothing (`NothingToApply`). `answered` says to
+     * rebuild the draft from the reading: the device answered the write,
+     * or there was nothing to write.
+     */
+open func apply(draft: MobileManagementDraft)async throws  -> MobileApplyOutcome  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemanageddevice_apply(
+                        self.uniffiCloneHandle(),FfiConverterTypeMobileManagementDraft_lower(draft)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileApplyOutcome_lift,
+            errorHandler: FfiConverterTypeMobileAppError_lift
+        )
+}
+
+    /**
+     * The operator's Cancel: everything queued or running on this
+     * device, reads and writes, whichever handle asked. A request on
+     * the air may still be acted on.
+     */
+open func cancel()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemanageddevice_cancel(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Forget every host paired with the device.
+     */
+open func clearBluetoothPairings()async throws  -> MobileManagementOutcome  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemanageddevice_clear_bluetooth_pairings(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileManagementOutcome_lift,
+            errorHandler: FfiConverterTypeMobileAppError_lift
+        )
+}
+
+    /**
+     * Leave the current network.
+     */
+open func disconnectNetwork()async throws  -> MobileManagementOutcome  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemanageddevice_disconnect_network(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileManagementOutcome_lift,
+            errorHandler: FfiConverterTypeMobileAppError_lift
+        )
+}
+
+    /**
+     * Clear the problem the status bar shows.
+     */
+open func dismissProblem()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemanageddevice_dismiss_problem(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * A draft of `kind` built from the device's reading, or `None` while
+     * there is no reading, the device does not offer its category, or
+     * this handle is released.
+     */
+open func draft(kind: MobileDraftKind) -> MobileManagementDraft?  {
+    return try!  FfiConverterOptionTypeMobileManagementDraft.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemanageddevice_draft(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileDraftKind_lower(kind),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Put the device into firmware update. Once it confirms, nothing
+     * more is asked of it.
+     */
+open func enterDfu(mode: UlcpDfuMode)async throws  -> MobileManagementOutcome  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemanageddevice_enter_dfu(
+                        self.uniffiCloneHandle(),FfiConverterTypeUlcpDfuMode_lower(mode)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileManagementOutcome_lift,
+            errorHandler: FfiConverterTypeMobileAppError_lift
+        )
+}
+
+    /**
+     * Return the device to a blank factory state. Offered off the mesh
+     * only; the device's cache goes whatever the outcome.
+     */
+open func factoryReset()async throws  -> MobileManagementOutcome  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemanageddevice_factory_reset(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileManagementOutcome_lift,
+            errorHandler: FfiConverterTypeMobileAppError_lift
+        )
+}
+
+    /**
+     * Forget a network, and save.
+     */
+open func forgetNetwork(ssid: Data)async throws  -> MobileManagementOutcome  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemanageddevice_forget_network(
+                        self.uniffiCloneHandle(),FfiConverterData.lower(ssid)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileManagementOutcome_lift,
+            errorHandler: FfiConverterTypeMobileAppError_lift
+        )
+}
+
+    /**
+     * The engine's id, as `MobileAppChangesRecord.managed_devices` names
+     * it.
+     */
+open func id() -> UInt64  {
+    return try!  FfiConverterUInt64.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemanageddevice_id(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Join a network the device knows, now.
+     */
+open func joinKnownNetwork(ssid: Data)async throws  -> MobileManagementOutcome  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemanageddevice_join_known_network(
+                        self.uniffiCloneHandle(),FfiConverterData.lower(ssid)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileManagementOutcome_lift,
+            errorHandler: FfiConverterTypeMobileAppError_lift
+        )
+}
+
+    /**
+     * Store a network, turn the station on, join the network and save.
+     * `offered` is what a scan heard the network offer, which names the
+     * next mode to try when the device cannot use `security`. Neither the
+     * credential nor anything built from it is logged.
+     */
+open func joinNetwork(ssid: Data, security: UInt8, hidden: Bool, credential: Data, offered: UInt16?)async throws  -> MobileWifiOutcome  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemanageddevice_join_network(
+                        self.uniffiCloneHandle(),FfiConverterData.lower(ssid),FfiConverterUInt8.lower(security),FfiConverterBool.lower(hidden),FfiConverterData.lower(credential),FfiConverterOptionUInt16.lower(offered)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileWifiOutcome_lift,
+            errorHandler: FfiConverterTypeMobileAppError_lift
+        )
+}
+
+    /**
+     * Fill the card in from the cache, and ask the device when there is
+     * none, or off the mesh when it has not been read this lifetime.
+     */
+open func loadCard()async throws  -> MobileManagementOutcome  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemanageddevice_load_card(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileManagementOutcome_lift,
+            errorHandler: FfiConverterTypeMobileAppError_lift
+        )
+}
+
+    /**
+     * Fill a category in from the cache, and off the mesh read it when
+     * it has not been read this lifetime.
+     */
+open func loadCategory(category: UlcpManageCategory)async throws  -> MobileManagementOutcome  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemanageddevice_load_category(
+                        self.uniffiCloneHandle(),FfiConverterTypeUlcpManageCategory_lower(category)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileManagementOutcome_lift,
+            errorHandler: FfiConverterTypeMobileAppError_lift
+        )
+}
+
+    /**
+     * `draft` on the device's current reading: fields the operator left
+     * alone follow the device, edits stand. The same variant comes back;
+     * `InvalidRequest` for one whose category the device does not offer.
+     */
+open func rebase(draft: MobileManagementDraft)throws  -> MobileManagementDraft  {
+    return try  FfiConverterTypeMobileManagementDraft_lift(try rustCallWithError(FfiConverterTypeMobileAppError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemanageddevice_rebase(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileManagementDraft_lower(draft),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * What a driver native code drains (the administrative one) pushed,
+     * with how many pushes it let go of: any lost reads every category
+     * held again. The companion's arrive without this.
+     */
+open func receivePushes(pushes: [UlcpPropertyPushRecord], dropped: UInt64)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemanageddevice_receive_pushes(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceTypeUlcpPropertyPushRecord.lower(pushes),
+        FfiConverterUInt64.lower(dropped),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Ask the device what it is.
+     */
+open func refreshCard()async throws  -> MobileManagementOutcome  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemanageddevice_refresh_card(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileManagementOutcome_lift,
+            errorHandler: FfiConverterTypeMobileAppError_lift
+        )
+}
+
+    /**
+     * Ask the device for one category.
+     */
+open func refreshCategory(category: UlcpManageCategory)async throws  -> MobileManagementOutcome  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemanageddevice_refresh_category(
+                        self.uniffiCloneHandle(),FfiConverterTypeUlcpManageCategory_lower(category)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileManagementOutcome_lift,
+            errorHandler: FfiConverterTypeMobileAppError_lift
+        )
+}
+
+    /**
+     * This handle is done. When it is the last open one on its device,
+     * the device is relinquished: reads are canceled and refused, writes
+     * run to their end, and it is forgotten once nothing is queued.
+     * Idempotent; dropping a handle does the same, later. Not `close`:
+     * Kotlin's generated objects already have a `close()`, which frees
+     * the handle and so releases it too.
+     */
+open func release()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemanageddevice_release(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Zero the traffic counters the device answered for, unsaved, then
+     * read them again.
+     */
+open func resetCounters()async throws  -> MobileManagementOutcome  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemanageddevice_reset_counters(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileManagementOutcome_lift,
+            errorHandler: FfiConverterTypeMobileAppError_lift
+        )
+}
+
+    /**
+     * Restart the device, keeping what it saved.
+     */
+open func restart()async throws  -> MobileManagementOutcome  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemanageddevice_restart(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileManagementOutcome_lift,
+            errorHandler: FfiConverterTypeMobileAppError_lift
+        )
+}
+
+    /**
+     * What Apply would write now, what it cannot, what to confirm first,
+     * and what the editor shows beside its fields. Rebases first, so a
+     * stale draft is judged on the current reading.
+     */
+open func review(draft: MobileManagementDraft)throws  -> MobileDraftReviewRecord  {
+    return try  FfiConverterTypeMobileDraftReviewRecord_lift(try rustCallWithError(FfiConverterTypeMobileAppError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemanageddevice_review(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileManagementDraft_lower(draft),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Ask the device to look for networks; `heard_networks` fills as it
+     * hears them. Across the mesh this returns once the scan ended, or is
+     * no longer followed: a second scan, a cancel or a release ends it.
+     */
+open func scanNetworks()async throws  -> MobileManagementOutcome  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemanageddevice_scan_networks(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileManagementOutcome_lift,
+            errorHandler: FfiConverterTypeMobileAppError_lift
+        )
+}
+
+    /**
+     * Make the device conspicuous, or stop.
+     */
+open func setAlert(state: UlcpAlertState)async throws  -> MobileManagementOutcome  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemanageddevice_set_alert(
+                        self.uniffiCloneHandle(),FfiConverterTypeUlcpAlertState_lower(state)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileManagementOutcome_lift,
+            errorHandler: FfiConverterTypeMobileAppError_lift
+        )
+}
+
+    /**
+     * Let the device join a network it knows by itself, or not, and save.
+     */
+open func setAutoJoin(ssid: Data, autoJoin: Bool)async throws  -> MobileManagementOutcome  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemanageddevice_set_auto_join(
+                        self.uniffiCloneHandle(),FfiConverterData.lower(ssid),FfiConverterBool.lower(autoJoin)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileManagementOutcome_lift,
+            errorHandler: FfiConverterTypeMobileAppError_lift
+        )
+}
+
+    /**
+     * Set the device's clock to now, unsaved.
+     */
+open func setClockNow()async throws  -> MobileManagementOutcome  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemanageddevice_set_clock_now(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileManagementOutcome_lift,
+            errorHandler: FfiConverterTypeMobileAppError_lift
+        )
+}
+
+    /**
+     * Bring one of the device's key tables to `desired`: what `desired`
+     * changes in the table as it reads now is made to the table as it
+     * reads when the command's turn comes, so edits queued behind one
+     * another all take. This phone's own administrator entry and the last
+     * administrator are never taken out (`Failed { InvalidRequest }`,
+     * nothing sent).
+     */
+open func setKeys(table: MobileKeyTable, desired: [Data])async throws  -> MobileManagementOutcome  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemanageddevice_set_keys(
+                        self.uniffiCloneHandle(),FfiConverterTypeMobileKeyTable_lower(table),FfiConverterSequenceData.lower(desired)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileManagementOutcome_lift,
+            errorHandler: FfiConverterTypeMobileAppError_lift
+        )
+}
+
+    /**
+     * Everything a screen shows, as last published. Never waits on the
+     * worker.
+     */
+open func snapshot() -> MobileManagedDeviceRecord  {
+    return try!  FfiConverterTypeMobileManagedDeviceRecord_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemanageddevice_snapshot(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Replace a network the device knows, and save. An empty credential
+     * under the stored mode keeps the stored one.
+     */
+open func updateNetwork(ssid: Data, security: UInt8, hidden: Bool, autoJoin: Bool, credential: Data)async throws  -> MobileWifiOutcome  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemanageddevice_update_network(
+                        self.uniffiCloneHandle(),FfiConverterData.lower(ssid),FfiConverterUInt8.lower(security),FfiConverterBool.lower(hidden),FfiConverterBool.lower(autoJoin),FfiConverterData.lower(credential)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileWifiOutcome_lift,
+            errorHandler: FfiConverterTypeMobileAppError_lift
+        )
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileManagedDevice: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = MobileManagedDevice
+
+    public static func lift(_ handle: UInt64) throws -> MobileManagedDevice {
+        return MobileManagedDevice(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: MobileManagedDevice) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileManagedDevice {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: MobileManagedDevice, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileManagedDevice_lift(_ handle: UInt64) throws -> MobileManagedDevice {
+    return try FfiConverterTypeMobileManagedDevice.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileManagedDevice_lower(_ value: MobileManagedDevice) -> UInt64 {
+    return FfiConverterTypeMobileManagedDevice.lower(value)
 }
 
 
@@ -8198,163 +9096,6 @@ public func FfiConverterTypeMobileMeshWakeListener_lower(_ value: MobileMeshWake
 
 
 /**
- * One remote management command, which native code can cancel.
- */
-public protocol MobileOperationProtocol: AnyObject, Sendable {
-
-    /**
-     * Stop the command: one not yet sent never is, and one on the air
-     * fails with `Cancelled` at once. The device may still act on what it
-     * already has.
-     */
-    func cancel()
-
-    /**
-     * What its progress is reported under.
-     */
-    func id()  -> UInt64
-
-}
-/**
- * One remote management command, which native code can cancel.
- */
-open class MobileOperation: MobileOperationProtocol, @unchecked Sendable {
-    fileprivate let handle: UInt64
-
-    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public struct NoHandle {
-        public init() {}
-    }
-
-    // TODO: We'd like this to be `private` but for Swifty reasons,
-    // we can't implement `FfiConverter` without making this `required` and we can't
-    // make it `required` without making it `public`.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    required public init(unsafeFromHandle handle: UInt64) {
-        self.handle = handle
-    }
-
-    // This constructor can be used to instantiate a fake object.
-    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
-    //
-    // - Warning:
-    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public init(noHandle: NoHandle) {
-        self.handle = 0
-    }
-
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_umsh_mobile_core_fn_clone_mobileoperation(self.handle, $0) }
-    }
-public convenience init() {
-    let handle =
-        try! rustCall() {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_constructor_mobileoperation_new(uniffiCallStatus
-    )
-}
-    self.init(unsafeFromHandle: handle)
-}
-
-    deinit {
-        if handle == 0 {
-            // Mock objects have handle=0 don't try to free them
-            return
-        }
-
-        try! rustCall { uniffi_umsh_mobile_core_fn_free_mobileoperation(handle, $0) }
-    }
-
-
-
-
-    /**
-     * Stop the command: one not yet sent never is, and one on the air
-     * fails with `Cancelled` at once. The device may still act on what it
-     * already has.
-     */
-open func cancel()  {try! rustCall() {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_method_mobileoperation_cancel(
-            self.uniffiCloneHandle(),uniffiCallStatus
-    )
-}
-}
-
-    /**
-     * What its progress is reported under.
-     */
-open func id() -> UInt64  {
-    return try!  FfiConverterUInt64.lift(try! rustCall() {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_method_mobileoperation_id(
-            self.uniffiCloneHandle(),uniffiCallStatus
-    )
-})
-}
-
-
-
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeMobileOperation: FfiConverter {
-    typealias FfiType = UInt64
-    typealias SwiftType = MobileOperation
-
-    public static func lift(_ handle: UInt64) throws -> MobileOperation {
-        return MobileOperation(unsafeFromHandle: handle)
-    }
-
-    public static func lower(_ value: MobileOperation) -> UInt64 {
-        return value.uniffiCloneHandle()
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileOperation {
-        let handle: UInt64 = try readInt(&buf)
-        return try lift(handle)
-    }
-
-    public static func write(_ value: MobileOperation, into buf: inout [UInt8]) {
-        writeInt(&buf, lower(value))
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeMobileOperation_lift(_ handle: UInt64) throws -> MobileOperation {
-    return try FfiConverterTypeMobileOperation.lift(handle)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeMobileOperation_lower(_ value: MobileOperation) -> UInt64 {
-    return FfiConverterTypeMobileOperation.lower(value)
-}
-
-
-
-
-
-
-/**
  * The radio driver for one transport.
  */
 public protocol MobileRadioDriverProtocol: AnyObject, Sendable {
@@ -9911,6 +10652,23 @@ public func FfiConverterTypeMobileRegionDatabase_lower(_ value: MobileRegionData
 public protocol MobileStagingAirProtocol: AnyObject, Sendable {
 
     /**
+     * An administrative driver for a fresh copy of the staged device
+     * `link_id` names, attaching as it returns. It holds `host_key`
+     * before the link comes up, as a driver over Bluetooth does.
+     * `lazy_inspection` attaches without reading the device whole
+     * ([`MobileRadioDriver::administrative`]). The device runs for as
+     * long as the driver does, and starts afresh each call.
+     */
+    func administeredDevice(linkId: String, hostKey: Data?, lazyInspection: Bool) throws  -> MobileRadioDriver
+
+    /**
+     * The staged devices beside the phone that
+     * [`administered_device`](Self::administered_device) attaches to, the
+     * one that forwards first.
+     */
+    func administeredDevices()  -> [MobileStagedDeviceRecord]
+
+    /**
      * Bring the staged radio's link up, as a transport connecting to it.
      */
     func connect()
@@ -10060,6 +10818,40 @@ public static func start(stateDir: String, wifiScanOnly: Bool)throws  -> MobileS
 }
 
 
+
+    /**
+     * An administrative driver for a fresh copy of the staged device
+     * `link_id` names, attaching as it returns. It holds `host_key`
+     * before the link comes up, as a driver over Bluetooth does.
+     * `lazy_inspection` attaches without reading the device whole
+     * ([`MobileRadioDriver::administrative`]). The device runs for as
+     * long as the driver does, and starts afresh each call.
+     */
+open func administeredDevice(linkId: String, hostKey: Data?, lazyInspection: Bool)throws  -> MobileRadioDriver  {
+    return try  FfiConverterTypeMobileRadioDriver_lift(try rustCallWithError(FfiConverterTypeMobileStagingAirError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilestagingair_administered_device(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(linkId),
+        FfiConverterOptionData.lower(hostKey),
+        FfiConverterBool.lower(lazyInspection),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * The staged devices beside the phone that
+     * [`administered_device`](Self::administered_device) attaches to, the
+     * one that forwards first.
+     */
+open func administeredDevices() -> [MobileStagedDeviceRecord]  {
+    return try!  FfiConverterSequenceTypeMobileStagedDeviceRecord.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilestagingair_administered_devices(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
 
     /**
      * Bring the staged radio's link up, as a transport connecting to it.
@@ -13532,15 +14324,6 @@ public struct MobileAppChangesRecord: Equatable, Hashable {
      */
     public var radio: MobileRadioStateRecord?
     /**
-     * Properties the radio pushed, oldest first.
-     */
-    public var propertyPushes: [UlcpPropertyPushRecord]
-    /**
-     * Pushes let go of past the newest kept. Nonzero means read the
-     * properties again.
-     */
-    public var propertyPushesDropped: UInt64
-    /**
      * Read the peers again, and the conversation lists too: each direct
      * conversation carries its peer whole.
      */
@@ -13582,10 +14365,6 @@ public struct MobileAppChangesRecord: Equatable, Hashable {
      */
     public var exchangedPeer: String?
     /**
-     * The newest progress of each running operation.
-     */
-    public var operationProgress: [MobileAppOperationProgressRecord]
-    /**
      * Read `claimed_radios()` and `stranded_radios()` again.
      */
     public var claimedRadiosChanged: Bool
@@ -13598,6 +14377,11 @@ public struct MobileAppChangesRecord: Equatable, Hashable {
      * changed.
      */
     public var emergencyCertified: Bool?
+    /**
+     * Managed devices whose snapshot changed, by `MobileManagedDevice`
+     * id. Read `snapshot()` again on the ones held.
+     */
+    public var managedDevices: [UInt64]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -13609,13 +14393,6 @@ public struct MobileAppChangesRecord: Equatable, Hashable {
          * The attached radio's latest state, when it changed. `use_radio`
          * with no radio reports `idle`.
          */radio: MobileRadioStateRecord?,
-        /**
-         * Properties the radio pushed, oldest first.
-         */propertyPushes: [UlcpPropertyPushRecord],
-        /**
-         * Pushes let go of past the newest kept. Nonzero means read the
-         * properties again.
-         */propertyPushesDropped: UInt64,
         /**
          * Read the peers again, and the conversation lists too: each direct
          * conversation carries its peer whole.
@@ -13647,9 +14424,6 @@ public struct MobileAppChangesRecord: Equatable, Hashable {
          * stored. Read the peers first.
          */exchangedPeer: String?,
         /**
-         * The newest progress of each running operation.
-         */operationProgress: [MobileAppOperationProgressRecord],
-        /**
          * Read `claimed_radios()` and `stranded_radios()` again.
          */claimedRadiosChanged: Bool,
         /**
@@ -13658,11 +14432,13 @@ public struct MobileAppChangesRecord: Equatable, Hashable {
         /**
          * Whether the user agreed to `EMERGENCY`'s warning, when that
          * changed.
-         */emergencyCertified: Bool?) {
+         */emergencyCertified: Bool?,
+        /**
+         * Managed devices whose snapshot changed, by `MobileManagedDevice`
+         * id. Read `snapshot()` again on the ones held.
+         */managedDevices: [UInt64] = []) {
         self.lifecycle = lifecycle
         self.radio = radio
-        self.propertyPushes = propertyPushes
-        self.propertyPushesDropped = propertyPushesDropped
         self.peersChanged = peersChanged
         self.channelsChanged = channelsChanged
         self.conversationsChanged = conversationsChanged
@@ -13674,10 +14450,10 @@ public struct MobileAppChangesRecord: Equatable, Hashable {
         self.meetChanged = meetChanged
         self.meet = meet
         self.exchangedPeer = exchangedPeer
-        self.operationProgress = operationProgress
         self.claimedRadiosChanged = claimedRadiosChanged
         self.revokingClaimedRadios = revokingClaimedRadios
         self.emergencyCertified = emergencyCertified
+        self.managedDevices = managedDevices
     }
 
 
@@ -13698,8 +14474,6 @@ public struct FfiConverterTypeMobileAppChangesRecord: FfiConverterRustBuffer {
             try MobileAppChangesRecord(
                 lifecycle: FfiConverterOptionTypeMobileAppLifecycle.read(from: &buf),
                 radio: FfiConverterOptionTypeMobileRadioStateRecord.read(from: &buf),
-                propertyPushes: FfiConverterSequenceTypeUlcpPropertyPushRecord.read(from: &buf),
-                propertyPushesDropped: FfiConverterUInt64.read(from: &buf),
                 peersChanged: FfiConverterBool.read(from: &buf),
                 channelsChanged: FfiConverterBool.read(from: &buf),
                 conversationsChanged: FfiConverterBool.read(from: &buf),
@@ -13711,18 +14485,16 @@ public struct FfiConverterTypeMobileAppChangesRecord: FfiConverterRustBuffer {
                 meetChanged: FfiConverterBool.read(from: &buf),
                 meet: FfiConverterOptionTypeMobileMeetStateRecord.read(from: &buf),
                 exchangedPeer: FfiConverterOptionString.read(from: &buf),
-                operationProgress: FfiConverterSequenceTypeMobileAppOperationProgressRecord.read(from: &buf),
                 claimedRadiosChanged: FfiConverterBool.read(from: &buf),
                 revokingClaimedRadios: FfiConverterOptionBool.read(from: &buf),
-                emergencyCertified: FfiConverterOptionBool.read(from: &buf)
+                emergencyCertified: FfiConverterOptionBool.read(from: &buf),
+                managedDevices: FfiConverterSequenceUInt64.read(from: &buf)
         )
     }
 
     public static func write(_ value: MobileAppChangesRecord, into buf: inout [UInt8]) {
         FfiConverterOptionTypeMobileAppLifecycle.write(value.lifecycle, into: &buf)
         FfiConverterOptionTypeMobileRadioStateRecord.write(value.radio, into: &buf)
-        FfiConverterSequenceTypeUlcpPropertyPushRecord.write(value.propertyPushes, into: &buf)
-        FfiConverterUInt64.write(value.propertyPushesDropped, into: &buf)
         FfiConverterBool.write(value.peersChanged, into: &buf)
         FfiConverterBool.write(value.channelsChanged, into: &buf)
         FfiConverterBool.write(value.conversationsChanged, into: &buf)
@@ -13734,10 +14506,10 @@ public struct FfiConverterTypeMobileAppChangesRecord: FfiConverterRustBuffer {
         FfiConverterBool.write(value.meetChanged, into: &buf)
         FfiConverterOptionTypeMobileMeetStateRecord.write(value.meet, into: &buf)
         FfiConverterOptionString.write(value.exchangedPeer, into: &buf)
-        FfiConverterSequenceTypeMobileAppOperationProgressRecord.write(value.operationProgress, into: &buf)
         FfiConverterBool.write(value.claimedRadiosChanged, into: &buf)
         FfiConverterOptionBool.write(value.revokingClaimedRadios, into: &buf)
         FfiConverterOptionBool.write(value.emergencyCertified, into: &buf)
+        FfiConverterSequenceUInt64.write(value.managedDevices, into: &buf)
     }
 }
 
@@ -13771,10 +14543,19 @@ public struct MobileAppChannelConversationRecord: Equatable, Hashable {
     public var createdAtMs: Int64
     public var lastMessage: MobileAppPreviewRecord?
     public var unreadCount: Int64
+    /**
+     * The channel is `EMERGENCY` and its warning has not been agreed to
+     * under this owner: every transmission here is refused until it is.
+     */
+    public var needsEmergencyAgreement: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: Int64, channel: MobileStoredChannelRecord, conversationAddress: String, draftText: String, lastReadAtMs: Int64, createdAtMs: Int64, lastMessage: MobileAppPreviewRecord?, unreadCount: Int64) {
+    public init(id: Int64, channel: MobileStoredChannelRecord, conversationAddress: String, draftText: String, lastReadAtMs: Int64, createdAtMs: Int64, lastMessage: MobileAppPreviewRecord?, unreadCount: Int64,
+        /**
+         * The channel is `EMERGENCY` and its warning has not been agreed to
+         * under this owner: every transmission here is refused until it is.
+         */needsEmergencyAgreement: Bool = false) {
         self.id = id
         self.channel = channel
         self.conversationAddress = conversationAddress
@@ -13783,6 +14564,7 @@ public struct MobileAppChannelConversationRecord: Equatable, Hashable {
         self.createdAtMs = createdAtMs
         self.lastMessage = lastMessage
         self.unreadCount = unreadCount
+        self.needsEmergencyAgreement = needsEmergencyAgreement
     }
 
 
@@ -13808,7 +14590,8 @@ public struct FfiConverterTypeMobileAppChannelConversationRecord: FfiConverterRu
                 lastReadAtMs: FfiConverterInt64.read(from: &buf),
                 createdAtMs: FfiConverterInt64.read(from: &buf),
                 lastMessage: FfiConverterOptionTypeMobileAppPreviewRecord.read(from: &buf),
-                unreadCount: FfiConverterInt64.read(from: &buf)
+                unreadCount: FfiConverterInt64.read(from: &buf),
+                needsEmergencyAgreement: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -13821,6 +14604,7 @@ public struct FfiConverterTypeMobileAppChannelConversationRecord: FfiConverterRu
         FfiConverterInt64.write(value.createdAtMs, into: &buf)
         FfiConverterOptionTypeMobileAppPreviewRecord.write(value.lastMessage, into: &buf)
         FfiConverterInt64.write(value.unreadCount, into: &buf)
+        FfiConverterBool.write(value.needsEmergencyAgreement, into: &buf)
     }
 }
 
@@ -14131,6 +14915,86 @@ public func FfiConverterTypeMobileAppDirectConversationRecord_lower(_ value: Mob
 
 
 /**
+ * Where an ask for identities can be steered to reach a peer's
+ * neighborhood.
+ */
+public struct MobileAppDiscoveryVantageRecord: Equatable, Hashable {
+    /**
+     * Router hints to steer through, in send order. Never empty.
+     */
+    public var repeaters: [RouterHintRecord]
+    /**
+     * The ask ends at the peer; otherwise at the last of `repeaters`.
+     */
+    public var landsAtPeer: Bool
+    /**
+     * What the peer's own advertisement said; native code hedges by it.
+     */
+    public var evidence: MobileRepeaterEvidence
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Router hints to steer through, in send order. Never empty.
+         */repeaters: [RouterHintRecord],
+        /**
+         * The ask ends at the peer; otherwise at the last of `repeaters`.
+         */landsAtPeer: Bool,
+        /**
+         * What the peer's own advertisement said; native code hedges by it.
+         */evidence: MobileRepeaterEvidence) {
+        self.repeaters = repeaters
+        self.landsAtPeer = landsAtPeer
+        self.evidence = evidence
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileAppDiscoveryVantageRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileAppDiscoveryVantageRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileAppDiscoveryVantageRecord {
+        return
+            try MobileAppDiscoveryVantageRecord(
+                repeaters: FfiConverterSequenceTypeRouterHintRecord.read(from: &buf),
+                landsAtPeer: FfiConverterBool.read(from: &buf),
+                evidence: FfiConverterTypeMobileRepeaterEvidence.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileAppDiscoveryVantageRecord, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeRouterHintRecord.write(value.repeaters, into: &buf)
+        FfiConverterBool.write(value.landsAtPeer, into: &buf)
+        FfiConverterTypeMobileRepeaterEvidence.write(value.evidence, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppDiscoveryVantageRecord_lift(_ buf: RustBuffer) throws -> MobileAppDiscoveryVantageRecord {
+    return try FfiConverterTypeMobileAppDiscoveryVantageRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppDiscoveryVantageRecord_lower(_ value: MobileAppDiscoveryVantageRecord) -> RustBuffer {
+    return FfiConverterTypeMobileAppDiscoveryVantageRecord.lower(value)
+}
+
+
+/**
  * A channel just joined.
  */
 public struct MobileAppJoinedChannelRecord: Equatable, Hashable {
@@ -14220,6 +15084,10 @@ public struct MobileAppMessageRecord: Equatable, Hashable {
      * in place; `None` for any other.
      */
     public var reviseUntilMs: Int64?
+    /**
+     * What the row offers now. Read again once `revise_until_ms` passes.
+     */
+    public var actions: MobileMessageActionsRecord
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -14240,13 +15108,17 @@ public struct MobileAppMessageRecord: Equatable, Hashable {
         /**
          * Until when a message of ours, not deleted, may be edited or resent
          * in place; `None` for any other.
-         */reviseUntilMs: Int64?) {
+         */reviseUntilMs: Int64?,
+        /**
+         * What the row offers now. Read again once `revise_until_ms` passes.
+         */actions: MobileMessageActionsRecord = MobileMessageActionsRecord()) {
         self.stored = stored
         self.senderNodeHint = senderNodeHint
         self.quotedSenderNodeHint = quotedSenderNodeHint
         self.repeaters = repeaters
         self.reactions = reactions
         self.reviseUntilMs = reviseUntilMs
+        self.actions = actions
     }
 
 
@@ -14270,7 +15142,8 @@ public struct FfiConverterTypeMobileAppMessageRecord: FfiConverterRustBuffer {
                 quotedSenderNodeHint: FfiConverterOptionString.read(from: &buf),
                 repeaters: FfiConverterSequenceTypeMobileAppMessageRepeaterRecord.read(from: &buf),
                 reactions: FfiConverterSequenceOptionTypeMobileReaction.read(from: &buf),
-                reviseUntilMs: FfiConverterOptionInt64.read(from: &buf)
+                reviseUntilMs: FfiConverterOptionInt64.read(from: &buf),
+                actions: FfiConverterTypeMobileMessageActionsRecord.read(from: &buf)
         )
     }
 
@@ -14281,6 +15154,7 @@ public struct FfiConverterTypeMobileAppMessageRecord: FfiConverterRustBuffer {
         FfiConverterSequenceTypeMobileAppMessageRepeaterRecord.write(value.repeaters, into: &buf)
         FfiConverterSequenceOptionTypeMobileReaction.write(value.reactions, into: &buf)
         FfiConverterOptionInt64.write(value.reviseUntilMs, into: &buf)
+        FfiConverterTypeMobileMessageActionsRecord.write(value.actions, into: &buf)
     }
 }
 
@@ -14431,75 +15305,6 @@ public func FfiConverterTypeMobileAppNeighborReportRecord_lower(_ value: MobileA
 
 
 /**
- * How far a remote operation has come.
- */
-public struct MobileAppOperationProgressRecord: Equatable, Hashable {
-    /**
-     * The `MobileOperation`'s ID.
-     */
-    public var operation: UInt64
-    /**
-     * Properties still to come, when the operation counts them.
-     */
-    public var remaining: UInt32?
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * The `MobileOperation`'s ID.
-         */operation: UInt64,
-        /**
-         * Properties still to come, when the operation counts them.
-         */remaining: UInt32?) {
-        self.operation = operation
-        self.remaining = remaining
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension MobileAppOperationProgressRecord: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeMobileAppOperationProgressRecord: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileAppOperationProgressRecord {
-        return
-            try MobileAppOperationProgressRecord(
-                operation: FfiConverterUInt64.read(from: &buf),
-                remaining: FfiConverterOptionUInt32.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: MobileAppOperationProgressRecord, into buf: inout [UInt8]) {
-        FfiConverterUInt64.write(value.operation, into: &buf)
-        FfiConverterOptionUInt32.write(value.remaining, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeMobileAppOperationProgressRecord_lift(_ buf: RustBuffer) throws -> MobileAppOperationProgressRecord {
-    return try FfiConverterTypeMobileAppOperationProgressRecord.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeMobileAppOperationProgressRecord_lower(_ value: MobileAppOperationProgressRecord) -> RustBuffer {
-    return FfiConverterTypeMobileAppOperationProgressRecord.lower(value)
-}
-
-
-/**
  * A peer, with its address decoded.
  */
 public struct MobileAppPeerRecord: Equatable, Hashable {
@@ -14513,6 +15318,24 @@ public struct MobileAppPeerRecord: Equatable, Hashable {
      * does not decode.
      */
     public var advertisedIdentity: NodeIdentityRecord?
+    /**
+     * Whether it plausibly forwards: what it advertised when that decodes,
+     * else a stored repeater or bridge.
+     */
+    public var likelyRepeater: Bool
+    /**
+     * Its advertised identity may be attributed to it: signed and valid,
+     * or unsigned in a frame the MAC authenticated. `false` without one.
+     */
+    public var advertisementAttributable: Bool
+    /**
+     * What it advertised says about forwarding, for steering an ask.
+     */
+    public var repeaterEvidence: MobileRepeaterEvidence
+    /**
+     * Its two-byte router hint, rendered.
+     */
+    public var routerHint: RouterHintRecord
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -14523,10 +15346,28 @@ public struct MobileAppPeerRecord: Equatable, Hashable {
         /**
          * The stored advertisement, decoded; `None` when there is none or it
          * does not decode.
-         */advertisedIdentity: NodeIdentityRecord?) {
+         */advertisedIdentity: NodeIdentityRecord?,
+        /**
+         * Whether it plausibly forwards: what it advertised when that decodes,
+         * else a stored repeater or bridge.
+         */likelyRepeater: Bool = false,
+        /**
+         * Its advertised identity may be attributed to it: signed and valid,
+         * or unsigned in a frame the MAC authenticated. `false` without one.
+         */advertisementAttributable: Bool = false,
+        /**
+         * What it advertised says about forwarding, for steering an ask.
+         */repeaterEvidence: MobileRepeaterEvidence,
+        /**
+         * Its two-byte router hint, rendered.
+         */routerHint: RouterHintRecord) {
         self.stored = stored
         self.identity = identity
         self.advertisedIdentity = advertisedIdentity
+        self.likelyRepeater = likelyRepeater
+        self.advertisementAttributable = advertisementAttributable
+        self.repeaterEvidence = repeaterEvidence
+        self.routerHint = routerHint
     }
 
 
@@ -14547,7 +15388,11 @@ public struct FfiConverterTypeMobileAppPeerRecord: FfiConverterRustBuffer {
             try MobileAppPeerRecord(
                 stored: FfiConverterTypeMobileStoredNodeRecord.read(from: &buf),
                 identity: FfiConverterTypePublicIdentityRecord.read(from: &buf),
-                advertisedIdentity: FfiConverterOptionTypeNodeIdentityRecord.read(from: &buf)
+                advertisedIdentity: FfiConverterOptionTypeNodeIdentityRecord.read(from: &buf),
+                likelyRepeater: FfiConverterBool.read(from: &buf),
+                advertisementAttributable: FfiConverterBool.read(from: &buf),
+                repeaterEvidence: FfiConverterTypeMobileRepeaterEvidence.read(from: &buf),
+                routerHint: FfiConverterTypeRouterHintRecord.read(from: &buf)
         )
     }
 
@@ -14555,6 +15400,10 @@ public struct FfiConverterTypeMobileAppPeerRecord: FfiConverterRustBuffer {
         FfiConverterTypeMobileStoredNodeRecord.write(value.stored, into: &buf)
         FfiConverterTypePublicIdentityRecord.write(value.identity, into: &buf)
         FfiConverterOptionTypeNodeIdentityRecord.write(value.advertisedIdentity, into: &buf)
+        FfiConverterBool.write(value.likelyRepeater, into: &buf)
+        FfiConverterBool.write(value.advertisementAttributable, into: &buf)
+        FfiConverterTypeMobileRepeaterEvidence.write(value.repeaterEvidence, into: &buf)
+        FfiConverterTypeRouterHintRecord.write(value.routerHint, into: &buf)
     }
 }
 
@@ -14590,6 +15439,11 @@ public struct MobileAppPingReplyRecord: Equatable, Hashable {
      * Only the ping's Route Retry was answered: the route it held failed.
      */
     public var viaRouteRetry: Bool
+    /**
+     * Repeaters the reply crossed that `route_hints` does not name:
+     * `None` when the hop count is unknown.
+     */
+    public var unnamedHops: UInt8?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -14600,7 +15454,11 @@ public struct MobileAppPingReplyRecord: Equatable, Hashable {
          */routeHints: [RouterHintRecord], traceSignal: [MobileTraceSignalRecord], rssiDbm: Int16?, snrCentibels: Int16?, lqi: UInt8?,
         /**
          * Only the ping's Route Retry was answered: the route it held failed.
-         */viaRouteRetry: Bool) {
+         */viaRouteRetry: Bool,
+        /**
+         * Repeaters the reply crossed that `route_hints` does not name:
+         * `None` when the hop count is unknown.
+         */unnamedHops: UInt8? = nil) {
         self.roundTripMs = roundTripMs
         self.hopCount = hopCount
         self.routeHints = routeHints
@@ -14609,6 +15467,7 @@ public struct MobileAppPingReplyRecord: Equatable, Hashable {
         self.snrCentibels = snrCentibels
         self.lqi = lqi
         self.viaRouteRetry = viaRouteRetry
+        self.unnamedHops = unnamedHops
     }
 
 
@@ -14634,7 +15493,8 @@ public struct FfiConverterTypeMobileAppPingReplyRecord: FfiConverterRustBuffer {
                 rssiDbm: FfiConverterOptionInt16.read(from: &buf),
                 snrCentibels: FfiConverterOptionInt16.read(from: &buf),
                 lqi: FfiConverterOptionUInt8.read(from: &buf),
-                viaRouteRetry: FfiConverterBool.read(from: &buf)
+                viaRouteRetry: FfiConverterBool.read(from: &buf),
+                unnamedHops: FfiConverterOptionUInt8.read(from: &buf)
         )
     }
 
@@ -14647,6 +15507,7 @@ public struct FfiConverterTypeMobileAppPingReplyRecord: FfiConverterRustBuffer {
         FfiConverterOptionInt16.write(value.snrCentibels, into: &buf)
         FfiConverterOptionUInt8.write(value.lqi, into: &buf)
         FfiConverterBool.write(value.viaRouteRetry, into: &buf)
+        FfiConverterOptionUInt8.write(value.unnamedHops, into: &buf)
     }
 }
 
@@ -14671,11 +15532,12 @@ public func FfiConverterTypeMobileAppPingReplyRecord_lower(_ value: MobileAppPin
  */
 public struct MobileAppPolicyRecord: Equatable, Hashable {
     /**
-     * Seconds between scheduled advertisements; 0 is off.
+     * Seconds between scheduled advertisements; 0 is off. Any other is
+     * held to `mobile_limits()`' announcement bounds.
      */
     public var advertIntervalSeconds: UInt32
     /**
-     * Seconds between scheduled beacons; 0 is off.
+     * Seconds between scheduled beacons; 0 is off. Held likewise.
      */
     public var beaconIntervalSeconds: UInt32
     /**
@@ -14705,10 +15567,11 @@ public struct MobileAppPolicyRecord: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * Seconds between scheduled advertisements; 0 is off.
+         * Seconds between scheduled advertisements; 0 is off. Any other is
+         * held to `mobile_limits()`' announcement bounds.
          */advertIntervalSeconds: UInt32,
         /**
-         * Seconds between scheduled beacons; 0 is off.
+         * Seconds between scheduled beacons; 0 is off. Held likewise.
          */beaconIntervalSeconds: UInt32,
         /**
          * Whether this phone answers nearby nodes' identity requests.
@@ -15096,6 +15959,11 @@ public struct MobileAppRouteRecord: Equatable, Hashable {
      * The route the session learned while a path was held.
      */
     public var candidate: MobileAppRouteCandidateRecord?
+    /**
+     * Where an ask for identities near this peer can be steered; `None`
+     * when there is no honest way.
+     */
+    public var discoveryVantage: MobileAppDiscoveryVantageRecord?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -15115,7 +15983,11 @@ public struct MobileAppRouteRecord: Equatable, Hashable {
          */confirmedAgeMs: UInt64?,
         /**
          * The route the session learned while a path was held.
-         */candidate: MobileAppRouteCandidateRecord?) {
+         */candidate: MobileAppRouteCandidateRecord?,
+        /**
+         * Where an ask for identities near this peer can be steered; `None`
+         * when there is no honest way.
+         */discoveryVantage: MobileAppDiscoveryVantageRecord? = nil) {
         self.kind = kind
         self.hints = hints
         self.hopCount = hopCount
@@ -15126,6 +15998,7 @@ public struct MobileAppRouteRecord: Equatable, Hashable {
         self.fallbackAcks = fallbackAcks
         self.confirmedAgeMs = confirmedAgeMs
         self.candidate = candidate
+        self.discoveryVantage = discoveryVantage
     }
 
 
@@ -15153,7 +16026,8 @@ public struct FfiConverterTypeMobileAppRouteRecord: FfiConverterRustBuffer {
                 holdFloodHops: FfiConverterOptionUInt8.read(from: &buf),
                 fallbackAcks: FfiConverterUInt8.read(from: &buf),
                 confirmedAgeMs: FfiConverterOptionUInt64.read(from: &buf),
-                candidate: FfiConverterOptionTypeMobileAppRouteCandidateRecord.read(from: &buf)
+                candidate: FfiConverterOptionTypeMobileAppRouteCandidateRecord.read(from: &buf),
+                discoveryVantage: FfiConverterOptionTypeMobileAppDiscoveryVantageRecord.read(from: &buf)
         )
     }
 
@@ -15168,6 +16042,7 @@ public struct FfiConverterTypeMobileAppRouteRecord: FfiConverterRustBuffer {
         FfiConverterUInt8.write(value.fallbackAcks, into: &buf)
         FfiConverterOptionUInt64.write(value.confirmedAgeMs, into: &buf)
         FfiConverterOptionTypeMobileAppRouteCandidateRecord.write(value.candidate, into: &buf)
+        FfiConverterOptionTypeMobileAppDiscoveryVantageRecord.write(value.discoveryVantage, into: &buf)
     }
 }
 
@@ -15532,6 +16407,402 @@ public func FfiConverterTypeMobileApplicationRecords_lift(_ buf: RustBuffer) thr
 #endif
 public func FfiConverterTypeMobileApplicationRecords_lower(_ value: MobileApplicationRecords) -> RustBuffer {
     return FfiConverterTypeMobileApplicationRecords.lower(value)
+}
+
+
+/**
+ * How an apply ended.
+ */
+public struct MobileApplyOutcome: Equatable, Hashable {
+    /**
+     * Rebuild what was edited from the reading: the device answered the
+     * write, or there was nothing to write.
+     */
+    public var answered: Bool
+    public var result: MobileApplyResult
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Rebuild what was edited from the reading: the device answered the
+         * write, or there was nothing to write.
+         */answered: Bool, result: MobileApplyResult) {
+        self.answered = answered
+        self.result = result
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileApplyOutcome: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileApplyOutcome: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileApplyOutcome {
+        return
+            try MobileApplyOutcome(
+                answered: FfiConverterBool.read(from: &buf),
+                result: FfiConverterTypeMobileApplyResult.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileApplyOutcome, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.answered, into: &buf)
+        FfiConverterTypeMobileApplyResult.write(value.result, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileApplyOutcome_lift(_ buf: RustBuffer) throws -> MobileApplyOutcome {
+    return try FfiConverterTypeMobileApplyOutcome.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileApplyOutcome_lower(_ value: MobileApplyOutcome) -> RustBuffer {
+    return FfiConverterTypeMobileApplyOutcome.lower(value)
+}
+
+
+public struct MobileBluetoothDraft: Equatable, Hashable {
+    public var readingRevision: UInt64
+    public var enabled: MobileToggleField
+    public var pairing: MobileToggleField
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(readingRevision: UInt64, enabled: MobileToggleField, pairing: MobileToggleField) {
+        self.readingRevision = readingRevision
+        self.enabled = enabled
+        self.pairing = pairing
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileBluetoothDraft: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileBluetoothDraft: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileBluetoothDraft {
+        return
+            try MobileBluetoothDraft(
+                readingRevision: FfiConverterUInt64.read(from: &buf),
+                enabled: FfiConverterTypeMobileToggleField.read(from: &buf),
+                pairing: FfiConverterTypeMobileToggleField.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileBluetoothDraft, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.readingRevision, into: &buf)
+        FfiConverterTypeMobileToggleField.write(value.enabled, into: &buf)
+        FfiConverterTypeMobileToggleField.write(value.pairing, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileBluetoothDraft_lift(_ buf: RustBuffer) throws -> MobileBluetoothDraft {
+    return try FfiConverterTypeMobileBluetoothDraft.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileBluetoothDraft_lower(_ value: MobileBluetoothDraft) -> RustBuffer {
+    return FfiConverterTypeMobileBluetoothDraft.lower(value)
+}
+
+
+public struct MobileBridgeDraft: Equatable, Hashable {
+    public var readingRevision: UInt64
+    public var enabled: MobileToggleField
+    public var host: MobileTextField
+    public var port: MobileIntegerField
+    /**
+     * A UMSH address; empty clears it.
+     */
+    public var serverKey: MobileTextField
+    public var localEnabled: MobileToggleField
+    /**
+     * Empty is the device's default.
+     */
+    public var group: MobileTextField
+    /**
+     * Frames per minute; `None` is the device's default.
+     */
+    public var ingressLimit: MobileOptionalIntegerField
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(readingRevision: UInt64, enabled: MobileToggleField, host: MobileTextField, port: MobileIntegerField,
+        /**
+         * A UMSH address; empty clears it.
+         */serverKey: MobileTextField, localEnabled: MobileToggleField,
+        /**
+         * Empty is the device's default.
+         */group: MobileTextField,
+        /**
+         * Frames per minute; `None` is the device's default.
+         */ingressLimit: MobileOptionalIntegerField) {
+        self.readingRevision = readingRevision
+        self.enabled = enabled
+        self.host = host
+        self.port = port
+        self.serverKey = serverKey
+        self.localEnabled = localEnabled
+        self.group = group
+        self.ingressLimit = ingressLimit
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileBridgeDraft: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileBridgeDraft: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileBridgeDraft {
+        return
+            try MobileBridgeDraft(
+                readingRevision: FfiConverterUInt64.read(from: &buf),
+                enabled: FfiConverterTypeMobileToggleField.read(from: &buf),
+                host: FfiConverterTypeMobileTextField.read(from: &buf),
+                port: FfiConverterTypeMobileIntegerField.read(from: &buf),
+                serverKey: FfiConverterTypeMobileTextField.read(from: &buf),
+                localEnabled: FfiConverterTypeMobileToggleField.read(from: &buf),
+                group: FfiConverterTypeMobileTextField.read(from: &buf),
+                ingressLimit: FfiConverterTypeMobileOptionalIntegerField.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileBridgeDraft, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.readingRevision, into: &buf)
+        FfiConverterTypeMobileToggleField.write(value.enabled, into: &buf)
+        FfiConverterTypeMobileTextField.write(value.host, into: &buf)
+        FfiConverterTypeMobileIntegerField.write(value.port, into: &buf)
+        FfiConverterTypeMobileTextField.write(value.serverKey, into: &buf)
+        FfiConverterTypeMobileToggleField.write(value.localEnabled, into: &buf)
+        FfiConverterTypeMobileTextField.write(value.group, into: &buf)
+        FfiConverterTypeMobileOptionalIntegerField.write(value.ingressLimit, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileBridgeDraft_lift(_ buf: RustBuffer) throws -> MobileBridgeDraft {
+    return try FfiConverterTypeMobileBridgeDraft.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileBridgeDraft_lower(_ value: MobileBridgeDraft) -> RustBuffer {
+    return FfiConverterTypeMobileBridgeDraft.lower(value)
+}
+
+
+/**
+ * What is known of one category.
+ */
+public struct MobileCategoryReadingRecord: Equatable, Hashable {
+    public var category: UlcpManageCategory
+    /**
+     * What this category covers on this device, in ask order.
+     */
+    public var propertyIds: [UInt32]
+    /**
+     * `property_ids` minus the properties the last read refused. A
+     * reading built from the cache refused nothing, so it answers every
+     * id, held or not.
+     */
+    public var answered: [UInt32]
+    /**
+     * The octets as the device reported them, each with its own sample
+     * instant.
+     */
+    public var values: [MobilePropertyValueRecord]
+    /**
+     * What those octets mean.
+     */
+    public var properties: UlcpDevicePropertiesRecord
+    /**
+     * Every property's read state, in ask order.
+     */
+    public var states: [MobilePropertyStateRecord]
+    /**
+     * Values the device refused on the last write, by property.
+     */
+    public var refusals: [MobilePropertyRefusalRecord]
+    /**
+     * The sensors' temperatures, classified, when the category covers
+     * them.
+     */
+    public var temperatures: MobileTemperatureSummaryRecord?
+    /**
+     * Reset Counters would zero something: the reading answered for at
+     * least one counter. Always false outside Statistics.
+     */
+    public var canResetCounters: Bool
+    public var batteryDiagnosticsAsOfMs: Int64?
+    /**
+     * When the values were learned; `None` when nothing has been.
+     */
+    public var asOfMs: Int64?
+    /**
+     * Some of it came off the air during this device's lifetime.
+     */
+    public var isFresh: Bool
+    /**
+     * Raised when this reading changes.
+     */
+    public var revision: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(category: UlcpManageCategory,
+        /**
+         * What this category covers on this device, in ask order.
+         */propertyIds: [UInt32],
+        /**
+         * `property_ids` minus the properties the last read refused. A
+         * reading built from the cache refused nothing, so it answers every
+         * id, held or not.
+         */answered: [UInt32],
+        /**
+         * The octets as the device reported them, each with its own sample
+         * instant.
+         */values: [MobilePropertyValueRecord],
+        /**
+         * What those octets mean.
+         */properties: UlcpDevicePropertiesRecord,
+        /**
+         * Every property's read state, in ask order.
+         */states: [MobilePropertyStateRecord],
+        /**
+         * Values the device refused on the last write, by property.
+         */refusals: [MobilePropertyRefusalRecord],
+        /**
+         * The sensors' temperatures, classified, when the category covers
+         * them.
+         */temperatures: MobileTemperatureSummaryRecord?,
+        /**
+         * Reset Counters would zero something: the reading answered for at
+         * least one counter. Always false outside Statistics.
+         */canResetCounters: Bool, batteryDiagnosticsAsOfMs: Int64?,
+        /**
+         * When the values were learned; `None` when nothing has been.
+         */asOfMs: Int64?,
+        /**
+         * Some of it came off the air during this device's lifetime.
+         */isFresh: Bool,
+        /**
+         * Raised when this reading changes.
+         */revision: UInt64) {
+        self.category = category
+        self.propertyIds = propertyIds
+        self.answered = answered
+        self.values = values
+        self.properties = properties
+        self.states = states
+        self.refusals = refusals
+        self.temperatures = temperatures
+        self.canResetCounters = canResetCounters
+        self.batteryDiagnosticsAsOfMs = batteryDiagnosticsAsOfMs
+        self.asOfMs = asOfMs
+        self.isFresh = isFresh
+        self.revision = revision
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileCategoryReadingRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileCategoryReadingRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileCategoryReadingRecord {
+        return
+            try MobileCategoryReadingRecord(
+                category: FfiConverterTypeUlcpManageCategory.read(from: &buf),
+                propertyIds: FfiConverterSequenceUInt32.read(from: &buf),
+                answered: FfiConverterSequenceUInt32.read(from: &buf),
+                values: FfiConverterSequenceTypeMobilePropertyValueRecord.read(from: &buf),
+                properties: FfiConverterTypeUlcpDevicePropertiesRecord.read(from: &buf),
+                states: FfiConverterSequenceTypeMobilePropertyStateRecord.read(from: &buf),
+                refusals: FfiConverterSequenceTypeMobilePropertyRefusalRecord.read(from: &buf),
+                temperatures: FfiConverterOptionTypeMobileTemperatureSummaryRecord.read(from: &buf),
+                canResetCounters: FfiConverterBool.read(from: &buf),
+                batteryDiagnosticsAsOfMs: FfiConverterOptionInt64.read(from: &buf),
+                asOfMs: FfiConverterOptionInt64.read(from: &buf),
+                isFresh: FfiConverterBool.read(from: &buf),
+                revision: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileCategoryReadingRecord, into buf: inout [UInt8]) {
+        FfiConverterTypeUlcpManageCategory.write(value.category, into: &buf)
+        FfiConverterSequenceUInt32.write(value.propertyIds, into: &buf)
+        FfiConverterSequenceUInt32.write(value.answered, into: &buf)
+        FfiConverterSequenceTypeMobilePropertyValueRecord.write(value.values, into: &buf)
+        FfiConverterTypeUlcpDevicePropertiesRecord.write(value.properties, into: &buf)
+        FfiConverterSequenceTypeMobilePropertyStateRecord.write(value.states, into: &buf)
+        FfiConverterSequenceTypeMobilePropertyRefusalRecord.write(value.refusals, into: &buf)
+        FfiConverterOptionTypeMobileTemperatureSummaryRecord.write(value.temperatures, into: &buf)
+        FfiConverterBool.write(value.canResetCounters, into: &buf)
+        FfiConverterOptionInt64.write(value.batteryDiagnosticsAsOfMs, into: &buf)
+        FfiConverterOptionInt64.write(value.asOfMs, into: &buf)
+        FfiConverterBool.write(value.isFresh, into: &buf)
+        FfiConverterUInt64.write(value.revision, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileCategoryReadingRecord_lift(_ buf: RustBuffer) throws -> MobileCategoryReadingRecord {
+    return try FfiConverterTypeMobileCategoryReadingRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileCategoryReadingRecord_lower(_ value: MobileCategoryReadingRecord) -> RustBuffer {
+    return FfiConverterTypeMobileCategoryReadingRecord.lower(value)
 }
 
 
@@ -15980,6 +17251,1120 @@ public func FfiConverterTypeMobileChatRegardingRef_lower(_ value: MobileChatRega
 }
 
 
+/**
+ * A picker. `None` is a real choice where the field has one.
+ */
+public struct MobileChoiceField: Equatable, Hashable {
+    public var propertyId: UInt32
+    public var known: Bool
+    public var reported: Int64?
+    public var value: Int64?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(propertyId: UInt32, known: Bool, reported: Int64?, value: Int64?) {
+        self.propertyId = propertyId
+        self.known = known
+        self.reported = reported
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileChoiceField: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileChoiceField: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChoiceField {
+        return
+            try MobileChoiceField(
+                propertyId: FfiConverterUInt32.read(from: &buf),
+                known: FfiConverterBool.read(from: &buf),
+                reported: FfiConverterOptionInt64.read(from: &buf),
+                value: FfiConverterOptionInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileChoiceField, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.propertyId, into: &buf)
+        FfiConverterBool.write(value.known, into: &buf)
+        FfiConverterOptionInt64.write(value.reported, into: &buf)
+        FfiConverterOptionInt64.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChoiceField_lift(_ buf: RustBuffer) throws -> MobileChoiceField {
+    return try FfiConverterTypeMobileChoiceField.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChoiceField_lower(_ value: MobileChoiceField) -> RustBuffer {
+    return FfiConverterTypeMobileChoiceField.lower(value)
+}
+
+
+/**
+ * A picker's values: those offered, and the field's own value when it is
+ * known and not one of them, which the picker must still show.
+ */
+public struct MobileChoiceList: Equatable, Hashable {
+    public var offered: [Int64]
+    public var other: Int64?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(offered: [Int64], other: Int64?) {
+        self.offered = offered
+        self.other = other
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileChoiceList: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileChoiceList: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChoiceList {
+        return
+            try MobileChoiceList(
+                offered: FfiConverterSequenceInt64.read(from: &buf),
+                other: FfiConverterOptionInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileChoiceList, into buf: inout [UInt8]) {
+        FfiConverterSequenceInt64.write(value.offered, into: &buf)
+        FfiConverterOptionInt64.write(value.other, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChoiceList_lift(_ buf: RustBuffer) throws -> MobileChoiceList {
+    return try FfiConverterTypeMobileChoiceList.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChoiceList_lower(_ value: MobileChoiceList) -> RustBuffer {
+    return FfiConverterTypeMobileChoiceList.lower(value)
+}
+
+
+/**
+ * Everything the setup sheet shows that is not the draft.
+ */
+public struct MobileDeviceSetupRecord: Equatable, Hashable {
+    public var goal: MobileSetupGoal
+    public var refusal: MobileSetupRefusal?
+    /**
+     * Empty for a refused device.
+     */
+    public var sections: [MobileSetupSection]
+    /**
+     * Empty for a refused device.
+     */
+    public var notes: [MobileSetupNote]
+    /**
+     * Empty for a refused device.
+     */
+    public var unreadable: [MobileSetupUnreadable]
+    /**
+     * `None` for a refused device.
+     */
+    public var profile: MobileSetupProfile?
+    /**
+     * The radio-profile editor's gates.
+     */
+    public var showsPresets: Bool
+    public var showsModem: Bool
+    public var showsDutyLimit: Bool
+    /**
+     * The forwarding section proposes regions from the phone's position.
+     */
+    public var suggestsRegionsFromPhone: Bool
+    /**
+     * The engine's: the first caller's on a shared engine.
+     */
+    public var phoneNodeKey: Data?
+    /**
+     * What the device reports now: the attach's record, then each
+     * read-back.
+     */
+    public var reported: UlcpSyncRecord?
+    /**
+     * The role code to file the device under in Peers, from `reported`;
+     * `None` keeps the kind it is already filed under.
+     */
+    public var advertisedRole: UInt8?
+    /**
+     * An apply is under way.
+     */
+    public var applying: Bool
+    /**
+     * How the last apply that got past review ended; `None` before one
+     * and while one runs. The status section words the failures.
+     */
+    public var lastResult: MobileSetupResult?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(goal: MobileSetupGoal, refusal: MobileSetupRefusal?,
+        /**
+         * Empty for a refused device.
+         */sections: [MobileSetupSection],
+        /**
+         * Empty for a refused device.
+         */notes: [MobileSetupNote],
+        /**
+         * Empty for a refused device.
+         */unreadable: [MobileSetupUnreadable],
+        /**
+         * `None` for a refused device.
+         */profile: MobileSetupProfile?,
+        /**
+         * The radio-profile editor's gates.
+         */showsPresets: Bool, showsModem: Bool, showsDutyLimit: Bool,
+        /**
+         * The forwarding section proposes regions from the phone's position.
+         */suggestsRegionsFromPhone: Bool,
+        /**
+         * The engine's: the first caller's on a shared engine.
+         */phoneNodeKey: Data?,
+        /**
+         * What the device reports now: the attach's record, then each
+         * read-back.
+         */reported: UlcpSyncRecord?,
+        /**
+         * The role code to file the device under in Peers, from `reported`;
+         * `None` keeps the kind it is already filed under.
+         */advertisedRole: UInt8?,
+        /**
+         * An apply is under way.
+         */applying: Bool,
+        /**
+         * How the last apply that got past review ended; `None` before one
+         * and while one runs. The status section words the failures.
+         */lastResult: MobileSetupResult?) {
+        self.goal = goal
+        self.refusal = refusal
+        self.sections = sections
+        self.notes = notes
+        self.unreadable = unreadable
+        self.profile = profile
+        self.showsPresets = showsPresets
+        self.showsModem = showsModem
+        self.showsDutyLimit = showsDutyLimit
+        self.suggestsRegionsFromPhone = suggestsRegionsFromPhone
+        self.phoneNodeKey = phoneNodeKey
+        self.reported = reported
+        self.advertisedRole = advertisedRole
+        self.applying = applying
+        self.lastResult = lastResult
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileDeviceSetupRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileDeviceSetupRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileDeviceSetupRecord {
+        return
+            try MobileDeviceSetupRecord(
+                goal: FfiConverterTypeMobileSetupGoal.read(from: &buf),
+                refusal: FfiConverterOptionTypeMobileSetupRefusal.read(from: &buf),
+                sections: FfiConverterSequenceTypeMobileSetupSection.read(from: &buf),
+                notes: FfiConverterSequenceTypeMobileSetupNote.read(from: &buf),
+                unreadable: FfiConverterSequenceTypeMobileSetupUnreadable.read(from: &buf),
+                profile: FfiConverterOptionTypeMobileSetupProfile.read(from: &buf),
+                showsPresets: FfiConverterBool.read(from: &buf),
+                showsModem: FfiConverterBool.read(from: &buf),
+                showsDutyLimit: FfiConverterBool.read(from: &buf),
+                suggestsRegionsFromPhone: FfiConverterBool.read(from: &buf),
+                phoneNodeKey: FfiConverterOptionData.read(from: &buf),
+                reported: FfiConverterOptionTypeUlcpSyncRecord.read(from: &buf),
+                advertisedRole: FfiConverterOptionUInt8.read(from: &buf),
+                applying: FfiConverterBool.read(from: &buf),
+                lastResult: FfiConverterOptionTypeMobileSetupResult.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileDeviceSetupRecord, into buf: inout [UInt8]) {
+        FfiConverterTypeMobileSetupGoal.write(value.goal, into: &buf)
+        FfiConverterOptionTypeMobileSetupRefusal.write(value.refusal, into: &buf)
+        FfiConverterSequenceTypeMobileSetupSection.write(value.sections, into: &buf)
+        FfiConverterSequenceTypeMobileSetupNote.write(value.notes, into: &buf)
+        FfiConverterSequenceTypeMobileSetupUnreadable.write(value.unreadable, into: &buf)
+        FfiConverterOptionTypeMobileSetupProfile.write(value.profile, into: &buf)
+        FfiConverterBool.write(value.showsPresets, into: &buf)
+        FfiConverterBool.write(value.showsModem, into: &buf)
+        FfiConverterBool.write(value.showsDutyLimit, into: &buf)
+        FfiConverterBool.write(value.suggestsRegionsFromPhone, into: &buf)
+        FfiConverterOptionData.write(value.phoneNodeKey, into: &buf)
+        FfiConverterOptionTypeUlcpSyncRecord.write(value.reported, into: &buf)
+        FfiConverterOptionUInt8.write(value.advertisedRole, into: &buf)
+        FfiConverterBool.write(value.applying, into: &buf)
+        FfiConverterOptionTypeMobileSetupResult.write(value.lastResult, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileDeviceSetupRecord_lift(_ buf: RustBuffer) throws -> MobileDeviceSetupRecord {
+    return try FfiConverterTypeMobileDeviceSetupRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileDeviceSetupRecord_lower(_ value: MobileDeviceSetupRecord) -> RustBuffer {
+    return FfiConverterTypeMobileDeviceSetupRecord.lower(value)
+}
+
+
+/**
+ * What a draft would do if applied now.
+ */
+public struct MobileDraftReviewRecord: Equatable, Hashable {
+    /**
+     * What Apply would write, by property, ascending.
+     */
+    public var dirty: [UInt32]
+    /**
+     * Edited fields whose value cannot be applied; they are not in
+     * `dirty`. A field equal to its `reported` is never listed.
+     */
+    public var problems: [MobileFieldProblemRecord]
+    /**
+     * `dirty` is not empty: Apply is offered, and leaving asks first.
+     */
+    public var hasEdits: Bool
+    /**
+     * What to confirm before Apply, on the link the device is on.
+     */
+    public var warning: MobileApplyWarning?
+    public var details: MobileDraftDetails
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * What Apply would write, by property, ascending.
+         */dirty: [UInt32],
+        /**
+         * Edited fields whose value cannot be applied; they are not in
+         * `dirty`. A field equal to its `reported` is never listed.
+         */problems: [MobileFieldProblemRecord],
+        /**
+         * `dirty` is not empty: Apply is offered, and leaving asks first.
+         */hasEdits: Bool,
+        /**
+         * What to confirm before Apply, on the link the device is on.
+         */warning: MobileApplyWarning?, details: MobileDraftDetails) {
+        self.dirty = dirty
+        self.problems = problems
+        self.hasEdits = hasEdits
+        self.warning = warning
+        self.details = details
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileDraftReviewRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileDraftReviewRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileDraftReviewRecord {
+        return
+            try MobileDraftReviewRecord(
+                dirty: FfiConverterSequenceUInt32.read(from: &buf),
+                problems: FfiConverterSequenceTypeMobileFieldProblemRecord.read(from: &buf),
+                hasEdits: FfiConverterBool.read(from: &buf),
+                warning: FfiConverterOptionTypeMobileApplyWarning.read(from: &buf),
+                details: FfiConverterTypeMobileDraftDetails.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileDraftReviewRecord, into buf: inout [UInt8]) {
+        FfiConverterSequenceUInt32.write(value.dirty, into: &buf)
+        FfiConverterSequenceTypeMobileFieldProblemRecord.write(value.problems, into: &buf)
+        FfiConverterBool.write(value.hasEdits, into: &buf)
+        FfiConverterOptionTypeMobileApplyWarning.write(value.warning, into: &buf)
+        FfiConverterTypeMobileDraftDetails.write(value.details, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileDraftReviewRecord_lift(_ buf: RustBuffer) throws -> MobileDraftReviewRecord {
+    return try FfiConverterTypeMobileDraftReviewRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileDraftReviewRecord_lower(_ value: MobileDraftReviewRecord) -> RustBuffer {
+    return FfiConverterTypeMobileDraftReviewRecord.lower(value)
+}
+
+
+/**
+ * A field problem, on the row of the property it would write.
+ */
+public struct MobileFieldProblemRecord: Equatable, Hashable {
+    public var propertyId: UInt32
+    public var problem: MobileFieldProblem
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(propertyId: UInt32, problem: MobileFieldProblem) {
+        self.propertyId = propertyId
+        self.problem = problem
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileFieldProblemRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileFieldProblemRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileFieldProblemRecord {
+        return
+            try MobileFieldProblemRecord(
+                propertyId: FfiConverterUInt32.read(from: &buf),
+                problem: FfiConverterTypeMobileFieldProblem.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileFieldProblemRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.propertyId, into: &buf)
+        FfiConverterTypeMobileFieldProblem.write(value.problem, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileFieldProblemRecord_lift(_ buf: RustBuffer) throws -> MobileFieldProblemRecord {
+    return try FfiConverterTypeMobileFieldProblemRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileFieldProblemRecord_lower(_ value: MobileFieldProblemRecord) -> RustBuffer {
+    return FfiConverterTypeMobileFieldProblemRecord.lower(value)
+}
+
+
+public struct MobileGnssDraft: Equatable, Hashable {
+    public var readingRevision: UInt64
+    public var enabled: MobileToggleField
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(readingRevision: UInt64, enabled: MobileToggleField) {
+        self.readingRevision = readingRevision
+        self.enabled = enabled
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileGnssDraft: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileGnssDraft: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileGnssDraft {
+        return
+            try MobileGnssDraft(
+                readingRevision: FfiConverterUInt64.read(from: &buf),
+                enabled: FfiConverterTypeMobileToggleField.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileGnssDraft, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.readingRevision, into: &buf)
+        FfiConverterTypeMobileToggleField.write(value.enabled, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileGnssDraft_lift(_ buf: RustBuffer) throws -> MobileGnssDraft {
+    return try FfiConverterTypeMobileGnssDraft.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileGnssDraft_lower(_ value: MobileGnssDraft) -> RustBuffer {
+    return FfiConverterTypeMobileGnssDraft.lower(value)
+}
+
+
+/**
+ * One network a scan heard.
+ */
+public struct MobileHeardNetworkRecord: Equatable, Hashable {
+    /**
+     * The strongest result for this network name, or the one nameless
+     * result.
+     */
+    public var result: UlcpWifiScanResultRecord
+    /**
+     * The device already knows this network.
+     */
+    public var isKnown: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The strongest result for this network name, or the one nameless
+         * result.
+         */result: UlcpWifiScanResultRecord,
+        /**
+         * The device already knows this network.
+         */isKnown: Bool) {
+        self.result = result
+        self.isKnown = isKnown
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileHeardNetworkRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileHeardNetworkRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileHeardNetworkRecord {
+        return
+            try MobileHeardNetworkRecord(
+                result: FfiConverterTypeUlcpWifiScanResultRecord.read(from: &buf),
+                isKnown: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileHeardNetworkRecord, into buf: inout [UInt8]) {
+        FfiConverterTypeUlcpWifiScanResultRecord.write(value.result, into: &buf)
+        FfiConverterBool.write(value.isKnown, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileHeardNetworkRecord_lift(_ buf: RustBuffer) throws -> MobileHeardNetworkRecord {
+    return try FfiConverterTypeMobileHeardNetworkRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileHeardNetworkRecord_lower(_ value: MobileHeardNetworkRecord) -> RustBuffer {
+    return FfiConverterTypeMobileHeardNetworkRecord.lower(value)
+}
+
+
+public struct MobileIdentityDraft: Equatable, Hashable {
+    public var readingRevision: UInt64
+    public var name: MobileTextField
+    /**
+     * `None` is a device deriving its own role.
+     */
+    public var role: MobileChoiceField
+    public var mobile: MobileToggleField
+    public var discoverable: MobileToggleField
+    public var position: MobilePositionField
+    /**
+     * `None` is no stated height.
+     */
+    public var altitudeM: MobileOptionalIntegerField
+    public var selfPositions: MobileToggleField
+    public var precision: MobileChoiceField
+    /**
+     * In seconds.
+     */
+    public var advertInterval: MobileChoiceField
+    /**
+     * In seconds.
+     */
+    public var beaconInterval: MobileChoiceField
+    public var startupBeacon: MobileToggleField
+    /**
+     * The precision a hand-placed position is encoded to on a device
+     * with no precision property. Local; never on the air as itself.
+     */
+    public var manualPrecision: UInt8
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(readingRevision: UInt64, name: MobileTextField,
+        /**
+         * `None` is a device deriving its own role.
+         */role: MobileChoiceField, mobile: MobileToggleField, discoverable: MobileToggleField, position: MobilePositionField,
+        /**
+         * `None` is no stated height.
+         */altitudeM: MobileOptionalIntegerField, selfPositions: MobileToggleField, precision: MobileChoiceField,
+        /**
+         * In seconds.
+         */advertInterval: MobileChoiceField,
+        /**
+         * In seconds.
+         */beaconInterval: MobileChoiceField, startupBeacon: MobileToggleField,
+        /**
+         * The precision a hand-placed position is encoded to on a device
+         * with no precision property. Local; never on the air as itself.
+         */manualPrecision: UInt8) {
+        self.readingRevision = readingRevision
+        self.name = name
+        self.role = role
+        self.mobile = mobile
+        self.discoverable = discoverable
+        self.position = position
+        self.altitudeM = altitudeM
+        self.selfPositions = selfPositions
+        self.precision = precision
+        self.advertInterval = advertInterval
+        self.beaconInterval = beaconInterval
+        self.startupBeacon = startupBeacon
+        self.manualPrecision = manualPrecision
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileIdentityDraft: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileIdentityDraft: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileIdentityDraft {
+        return
+            try MobileIdentityDraft(
+                readingRevision: FfiConverterUInt64.read(from: &buf),
+                name: FfiConverterTypeMobileTextField.read(from: &buf),
+                role: FfiConverterTypeMobileChoiceField.read(from: &buf),
+                mobile: FfiConverterTypeMobileToggleField.read(from: &buf),
+                discoverable: FfiConverterTypeMobileToggleField.read(from: &buf),
+                position: FfiConverterTypeMobilePositionField.read(from: &buf),
+                altitudeM: FfiConverterTypeMobileOptionalIntegerField.read(from: &buf),
+                selfPositions: FfiConverterTypeMobileToggleField.read(from: &buf),
+                precision: FfiConverterTypeMobileChoiceField.read(from: &buf),
+                advertInterval: FfiConverterTypeMobileChoiceField.read(from: &buf),
+                beaconInterval: FfiConverterTypeMobileChoiceField.read(from: &buf),
+                startupBeacon: FfiConverterTypeMobileToggleField.read(from: &buf),
+                manualPrecision: FfiConverterUInt8.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileIdentityDraft, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.readingRevision, into: &buf)
+        FfiConverterTypeMobileTextField.write(value.name, into: &buf)
+        FfiConverterTypeMobileChoiceField.write(value.role, into: &buf)
+        FfiConverterTypeMobileToggleField.write(value.mobile, into: &buf)
+        FfiConverterTypeMobileToggleField.write(value.discoverable, into: &buf)
+        FfiConverterTypeMobilePositionField.write(value.position, into: &buf)
+        FfiConverterTypeMobileOptionalIntegerField.write(value.altitudeM, into: &buf)
+        FfiConverterTypeMobileToggleField.write(value.selfPositions, into: &buf)
+        FfiConverterTypeMobileChoiceField.write(value.precision, into: &buf)
+        FfiConverterTypeMobileChoiceField.write(value.advertInterval, into: &buf)
+        FfiConverterTypeMobileChoiceField.write(value.beaconInterval, into: &buf)
+        FfiConverterTypeMobileToggleField.write(value.startupBeacon, into: &buf)
+        FfiConverterUInt8.write(value.manualPrecision, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileIdentityDraft_lift(_ buf: RustBuffer) throws -> MobileIdentityDraft {
+    return try FfiConverterTypeMobileIdentityDraft.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileIdentityDraft_lower(_ value: MobileIdentityDraft) -> RustBuffer {
+    return FfiConverterTypeMobileIdentityDraft.lower(value)
+}
+
+
+/**
+ * A number the operator types; empty text is not a value. An unknown one
+ * holds 0, which is never shown.
+ */
+public struct MobileIntegerField: Equatable, Hashable {
+    public var propertyId: UInt32
+    public var known: Bool
+    public var reported: Int64
+    public var value: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(propertyId: UInt32, known: Bool, reported: Int64, value: Int64) {
+        self.propertyId = propertyId
+        self.known = known
+        self.reported = reported
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileIntegerField: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileIntegerField: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileIntegerField {
+        return
+            try MobileIntegerField(
+                propertyId: FfiConverterUInt32.read(from: &buf),
+                known: FfiConverterBool.read(from: &buf),
+                reported: FfiConverterInt64.read(from: &buf),
+                value: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileIntegerField, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.propertyId, into: &buf)
+        FfiConverterBool.write(value.known, into: &buf)
+        FfiConverterInt64.write(value.reported, into: &buf)
+        FfiConverterInt64.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileIntegerField_lift(_ buf: RustBuffer) throws -> MobileIntegerField {
+    return try FfiConverterTypeMobileIntegerField.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileIntegerField_lower(_ value: MobileIntegerField) -> RustBuffer {
+    return FfiConverterTypeMobileIntegerField.lower(value)
+}
+
+
+public struct MobileKeyEntryRecord: Equatable, Hashable {
+    public var key: Data
+    public var isThisPhone: Bool
+    public var removable: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(key: Data, isThisPhone: Bool, removable: Bool) {
+        self.key = key
+        self.isThisPhone = isThisPhone
+        self.removable = removable
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileKeyEntryRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileKeyEntryRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileKeyEntryRecord {
+        return
+            try MobileKeyEntryRecord(
+                key: FfiConverterData.read(from: &buf),
+                isThisPhone: FfiConverterBool.read(from: &buf),
+                removable: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileKeyEntryRecord, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.key, into: &buf)
+        FfiConverterBool.write(value.isThisPhone, into: &buf)
+        FfiConverterBool.write(value.removable, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileKeyEntryRecord_lift(_ buf: RustBuffer) throws -> MobileKeyEntryRecord {
+    return try FfiConverterTypeMobileKeyEntryRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileKeyEntryRecord_lower(_ value: MobileKeyEntryRecord) -> RustBuffer {
+    return FfiConverterTypeMobileKeyEntryRecord.lower(value)
+}
+
+
+/**
+ * A list of keys: the device's administrators.
+ */
+public struct MobileKeyListField: Equatable, Hashable {
+    public var propertyId: UInt32
+    public var known: Bool
+    public var reported: [Data]
+    public var value: [Data]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(propertyId: UInt32, known: Bool, reported: [Data], value: [Data]) {
+        self.propertyId = propertyId
+        self.known = known
+        self.reported = reported
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileKeyListField: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileKeyListField: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileKeyListField {
+        return
+            try MobileKeyListField(
+                propertyId: FfiConverterUInt32.read(from: &buf),
+                known: FfiConverterBool.read(from: &buf),
+                reported: FfiConverterSequenceData.read(from: &buf),
+                value: FfiConverterSequenceData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileKeyListField, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.propertyId, into: &buf)
+        FfiConverterBool.write(value.known, into: &buf)
+        FfiConverterSequenceData.write(value.reported, into: &buf)
+        FfiConverterSequenceData.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileKeyListField_lift(_ buf: RustBuffer) throws -> MobileKeyListField {
+    return try FfiConverterTypeMobileKeyListField.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileKeyListField_lower(_ value: MobileKeyListField) -> RustBuffer {
+    return FfiConverterTypeMobileKeyListField.lower(value)
+}
+
+
+/**
+ * One of a device's key tables, with what may be taken out.
+ */
+public struct MobileKeyTableRecord: Equatable, Hashable {
+    public var entries: [MobileKeyEntryRecord]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(entries: [MobileKeyEntryRecord]) {
+        self.entries = entries
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileKeyTableRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileKeyTableRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileKeyTableRecord {
+        return
+            try MobileKeyTableRecord(
+                entries: FfiConverterSequenceTypeMobileKeyEntryRecord.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileKeyTableRecord, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeMobileKeyEntryRecord.write(value.entries, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileKeyTableRecord_lift(_ buf: RustBuffer) throws -> MobileKeyTableRecord {
+    return try FfiConverterTypeMobileKeyTableRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileKeyTableRecord_lower(_ value: MobileKeyTableRecord) -> RustBuffer {
+    return FfiConverterTypeMobileKeyTableRecord.lower(value)
+}
+
+
+/**
+ * Bounds and offered choices for this phone's own settings, channels and
+ * manual paths, and the announcement intervals offered for the phone and
+ * its devices alike. Constants: read once.
+ */
+public struct MobileLimitsRecord: Equatable, Hashable {
+    /**
+     * Most repeaters a frame may still cross.
+     */
+    public var maxFloodHops: UInt8
+    /**
+     * The reach a phone starts with; picking past it asks first.
+     */
+    public var recommendedFloodHops: UInt8
+    public var recommendedBeaconFloodHops: UInt8
+    /**
+     * Most repeaters a manual path names.
+     */
+    public var maxRouteHints: UInt8
+    /**
+     * Flood allowance a new manual path starts with.
+     */
+    public var manualPathFloodHops: UInt8
+    public var nodeHintLen: UInt8
+    public var routerHintLen: UInt8
+    /**
+     * Location precision, in bytes of cell code.
+     */
+    public var minLocationPrecision: UInt8
+    public var maxLocationPrecision: UInt8
+    public var defaultLocationPrecision: UInt8
+    /**
+     * Announcement interval bounds, seconds; 0 is off and lies outside
+     * them.
+     */
+    public var minAnnounceIntervalS: UInt32
+    public var maxAnnounceIntervalS: UInt32
+    /**
+     * Intervals offered, seconds, 0 (off) first. Phone and device pickers.
+     */
+    public var advertIntervalChoicesS: [UInt32]
+    public var beaconIntervalChoicesS: [UInt32]
+    /**
+     * Shortest gap between two unnarrowed asks for identities.
+     */
+    public var discoveryCooldownMs: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Most repeaters a frame may still cross.
+         */maxFloodHops: UInt8,
+        /**
+         * The reach a phone starts with; picking past it asks first.
+         */recommendedFloodHops: UInt8, recommendedBeaconFloodHops: UInt8,
+        /**
+         * Most repeaters a manual path names.
+         */maxRouteHints: UInt8,
+        /**
+         * Flood allowance a new manual path starts with.
+         */manualPathFloodHops: UInt8, nodeHintLen: UInt8, routerHintLen: UInt8,
+        /**
+         * Location precision, in bytes of cell code.
+         */minLocationPrecision: UInt8, maxLocationPrecision: UInt8, defaultLocationPrecision: UInt8,
+        /**
+         * Announcement interval bounds, seconds; 0 is off and lies outside
+         * them.
+         */minAnnounceIntervalS: UInt32, maxAnnounceIntervalS: UInt32,
+        /**
+         * Intervals offered, seconds, 0 (off) first. Phone and device pickers.
+         */advertIntervalChoicesS: [UInt32], beaconIntervalChoicesS: [UInt32],
+        /**
+         * Shortest gap between two unnarrowed asks for identities.
+         */discoveryCooldownMs: UInt64) {
+        self.maxFloodHops = maxFloodHops
+        self.recommendedFloodHops = recommendedFloodHops
+        self.recommendedBeaconFloodHops = recommendedBeaconFloodHops
+        self.maxRouteHints = maxRouteHints
+        self.manualPathFloodHops = manualPathFloodHops
+        self.nodeHintLen = nodeHintLen
+        self.routerHintLen = routerHintLen
+        self.minLocationPrecision = minLocationPrecision
+        self.maxLocationPrecision = maxLocationPrecision
+        self.defaultLocationPrecision = defaultLocationPrecision
+        self.minAnnounceIntervalS = minAnnounceIntervalS
+        self.maxAnnounceIntervalS = maxAnnounceIntervalS
+        self.advertIntervalChoicesS = advertIntervalChoicesS
+        self.beaconIntervalChoicesS = beaconIntervalChoicesS
+        self.discoveryCooldownMs = discoveryCooldownMs
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileLimitsRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileLimitsRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileLimitsRecord {
+        return
+            try MobileLimitsRecord(
+                maxFloodHops: FfiConverterUInt8.read(from: &buf),
+                recommendedFloodHops: FfiConverterUInt8.read(from: &buf),
+                recommendedBeaconFloodHops: FfiConverterUInt8.read(from: &buf),
+                maxRouteHints: FfiConverterUInt8.read(from: &buf),
+                manualPathFloodHops: FfiConverterUInt8.read(from: &buf),
+                nodeHintLen: FfiConverterUInt8.read(from: &buf),
+                routerHintLen: FfiConverterUInt8.read(from: &buf),
+                minLocationPrecision: FfiConverterUInt8.read(from: &buf),
+                maxLocationPrecision: FfiConverterUInt8.read(from: &buf),
+                defaultLocationPrecision: FfiConverterUInt8.read(from: &buf),
+                minAnnounceIntervalS: FfiConverterUInt32.read(from: &buf),
+                maxAnnounceIntervalS: FfiConverterUInt32.read(from: &buf),
+                advertIntervalChoicesS: FfiConverterSequenceUInt32.read(from: &buf),
+                beaconIntervalChoicesS: FfiConverterSequenceUInt32.read(from: &buf),
+                discoveryCooldownMs: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileLimitsRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt8.write(value.maxFloodHops, into: &buf)
+        FfiConverterUInt8.write(value.recommendedFloodHops, into: &buf)
+        FfiConverterUInt8.write(value.recommendedBeaconFloodHops, into: &buf)
+        FfiConverterUInt8.write(value.maxRouteHints, into: &buf)
+        FfiConverterUInt8.write(value.manualPathFloodHops, into: &buf)
+        FfiConverterUInt8.write(value.nodeHintLen, into: &buf)
+        FfiConverterUInt8.write(value.routerHintLen, into: &buf)
+        FfiConverterUInt8.write(value.minLocationPrecision, into: &buf)
+        FfiConverterUInt8.write(value.maxLocationPrecision, into: &buf)
+        FfiConverterUInt8.write(value.defaultLocationPrecision, into: &buf)
+        FfiConverterUInt32.write(value.minAnnounceIntervalS, into: &buf)
+        FfiConverterUInt32.write(value.maxAnnounceIntervalS, into: &buf)
+        FfiConverterSequenceUInt32.write(value.advertIntervalChoicesS, into: &buf)
+        FfiConverterSequenceUInt32.write(value.beaconIntervalChoicesS, into: &buf)
+        FfiConverterUInt64.write(value.discoveryCooldownMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileLimitsRecord_lift(_ buf: RustBuffer) throws -> MobileLimitsRecord {
+    return try FfiConverterTypeMobileLimitsRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileLimitsRecord_lower(_ value: MobileLimitsRecord) -> RustBuffer {
+    return FfiConverterTypeMobileLimitsRecord.lower(value)
+}
+
+
 public struct MobileLogField: Equatable, Hashable {
     public var key: String
     public var value: String
@@ -16105,6 +18490,243 @@ public func FfiConverterTypeMobileLogRecord_lift(_ buf: RustBuffer) throws -> Mo
 #endif
 public func FfiConverterTypeMobileLogRecord_lower(_ value: MobileLogRecord) -> RustBuffer {
     return FfiConverterTypeMobileLogRecord.lower(value)
+}
+
+
+/**
+ * Everything a screen shows about one managed device, as last published.
+ */
+public struct MobileManagedDeviceRecord: Equatable, Hashable {
+    /**
+     * Raised by every published change; equal revisions read equal.
+     */
+    public var revision: UInt64
+    public var link: MobileManagementLink
+    public var usesBluetooth: Bool
+    /**
+     * What the cache is keyed by; `None` when nothing is cached for the
+     * device: an administrative link, a radio with no identity, or no
+     * owner to keep a cache for.
+     */
+    public var address: String?
+    public var card: UlcpDeviceCardRecord?
+    public var cardAsOfMs: Int64?
+    /**
+     * The card came off the air during this device's lifetime.
+     */
+    public var cardIsFresh: Bool
+    /**
+     * The categories this device offers, each with the properties it
+     * covers on this card, in a suggested order native code may change.
+     * Empty without a card.
+     */
+    public var categories: [MobileOfferedCategoryRecord]
+    /**
+     * One per category read or loaded this lifetime.
+     */
+    public var readings: [MobileCategoryReadingRecord]
+    public var alert: UlcpAlertState
+    /**
+     * Something asked of the device has not finished.
+     */
+    public var busy: Bool
+    /**
+     * The device confirmed entering firmware update; nothing more is
+     * asked of it.
+     */
+    public var enteredDfu: Bool
+    public var problem: MobileManagementProblem?
+    /**
+     * This phone's node key, as the device would hold it.
+     */
+    public var phoneNodeKey: Data?
+    /**
+     * What a Wi-Fi scan heard, strongest first, one per network name.
+     */
+    public var heardNetworks: [MobileHeardNetworkRecord]
+    /**
+     * A stale or empty reading refreshes itself when loaded.
+     */
+    public var refreshesStaleReadings: Bool
+    public var offersFactoryReset: Bool
+    /**
+     * This phone's position stands for the device's own.
+     */
+    public var phoneStandsForDevice: Bool
+    /**
+     * The device answered for its Wi-Fi station.
+     */
+    public var supportsWifiStation: Bool
+    /**
+     * The device answered for its Bluetooth bonds.
+     */
+    public var supportsBluetoothPairing: Bool
+    /**
+     * The peer-nodes reading's peer table, once read.
+     */
+    public var peers: MobileKeyTableRecord?
+    /**
+     * The peer-nodes reading's administrators, once read.
+     */
+    public var administrators: MobileKeyTableRecord?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Raised by every published change; equal revisions read equal.
+         */revision: UInt64, link: MobileManagementLink, usesBluetooth: Bool,
+        /**
+         * What the cache is keyed by; `None` when nothing is cached for the
+         * device: an administrative link, a radio with no identity, or no
+         * owner to keep a cache for.
+         */address: String?, card: UlcpDeviceCardRecord?, cardAsOfMs: Int64?,
+        /**
+         * The card came off the air during this device's lifetime.
+         */cardIsFresh: Bool,
+        /**
+         * The categories this device offers, each with the properties it
+         * covers on this card, in a suggested order native code may change.
+         * Empty without a card.
+         */categories: [MobileOfferedCategoryRecord],
+        /**
+         * One per category read or loaded this lifetime.
+         */readings: [MobileCategoryReadingRecord], alert: UlcpAlertState,
+        /**
+         * Something asked of the device has not finished.
+         */busy: Bool,
+        /**
+         * The device confirmed entering firmware update; nothing more is
+         * asked of it.
+         */enteredDfu: Bool, problem: MobileManagementProblem?,
+        /**
+         * This phone's node key, as the device would hold it.
+         */phoneNodeKey: Data?,
+        /**
+         * What a Wi-Fi scan heard, strongest first, one per network name.
+         */heardNetworks: [MobileHeardNetworkRecord],
+        /**
+         * A stale or empty reading refreshes itself when loaded.
+         */refreshesStaleReadings: Bool, offersFactoryReset: Bool,
+        /**
+         * This phone's position stands for the device's own.
+         */phoneStandsForDevice: Bool,
+        /**
+         * The device answered for its Wi-Fi station.
+         */supportsWifiStation: Bool,
+        /**
+         * The device answered for its Bluetooth bonds.
+         */supportsBluetoothPairing: Bool,
+        /**
+         * The peer-nodes reading's peer table, once read.
+         */peers: MobileKeyTableRecord?,
+        /**
+         * The peer-nodes reading's administrators, once read.
+         */administrators: MobileKeyTableRecord?) {
+        self.revision = revision
+        self.link = link
+        self.usesBluetooth = usesBluetooth
+        self.address = address
+        self.card = card
+        self.cardAsOfMs = cardAsOfMs
+        self.cardIsFresh = cardIsFresh
+        self.categories = categories
+        self.readings = readings
+        self.alert = alert
+        self.busy = busy
+        self.enteredDfu = enteredDfu
+        self.problem = problem
+        self.phoneNodeKey = phoneNodeKey
+        self.heardNetworks = heardNetworks
+        self.refreshesStaleReadings = refreshesStaleReadings
+        self.offersFactoryReset = offersFactoryReset
+        self.phoneStandsForDevice = phoneStandsForDevice
+        self.supportsWifiStation = supportsWifiStation
+        self.supportsBluetoothPairing = supportsBluetoothPairing
+        self.peers = peers
+        self.administrators = administrators
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileManagedDeviceRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileManagedDeviceRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileManagedDeviceRecord {
+        return
+            try MobileManagedDeviceRecord(
+                revision: FfiConverterUInt64.read(from: &buf),
+                link: FfiConverterTypeMobileManagementLink.read(from: &buf),
+                usesBluetooth: FfiConverterBool.read(from: &buf),
+                address: FfiConverterOptionString.read(from: &buf),
+                card: FfiConverterOptionTypeUlcpDeviceCardRecord.read(from: &buf),
+                cardAsOfMs: FfiConverterOptionInt64.read(from: &buf),
+                cardIsFresh: FfiConverterBool.read(from: &buf),
+                categories: FfiConverterSequenceTypeMobileOfferedCategoryRecord.read(from: &buf),
+                readings: FfiConverterSequenceTypeMobileCategoryReadingRecord.read(from: &buf),
+                alert: FfiConverterTypeUlcpAlertState.read(from: &buf),
+                busy: FfiConverterBool.read(from: &buf),
+                enteredDfu: FfiConverterBool.read(from: &buf),
+                problem: FfiConverterOptionTypeMobileManagementProblem.read(from: &buf),
+                phoneNodeKey: FfiConverterOptionData.read(from: &buf),
+                heardNetworks: FfiConverterSequenceTypeMobileHeardNetworkRecord.read(from: &buf),
+                refreshesStaleReadings: FfiConverterBool.read(from: &buf),
+                offersFactoryReset: FfiConverterBool.read(from: &buf),
+                phoneStandsForDevice: FfiConverterBool.read(from: &buf),
+                supportsWifiStation: FfiConverterBool.read(from: &buf),
+                supportsBluetoothPairing: FfiConverterBool.read(from: &buf),
+                peers: FfiConverterOptionTypeMobileKeyTableRecord.read(from: &buf),
+                administrators: FfiConverterOptionTypeMobileKeyTableRecord.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileManagedDeviceRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.revision, into: &buf)
+        FfiConverterTypeMobileManagementLink.write(value.link, into: &buf)
+        FfiConverterBool.write(value.usesBluetooth, into: &buf)
+        FfiConverterOptionString.write(value.address, into: &buf)
+        FfiConverterOptionTypeUlcpDeviceCardRecord.write(value.card, into: &buf)
+        FfiConverterOptionInt64.write(value.cardAsOfMs, into: &buf)
+        FfiConverterBool.write(value.cardIsFresh, into: &buf)
+        FfiConverterSequenceTypeMobileOfferedCategoryRecord.write(value.categories, into: &buf)
+        FfiConverterSequenceTypeMobileCategoryReadingRecord.write(value.readings, into: &buf)
+        FfiConverterTypeUlcpAlertState.write(value.alert, into: &buf)
+        FfiConverterBool.write(value.busy, into: &buf)
+        FfiConverterBool.write(value.enteredDfu, into: &buf)
+        FfiConverterOptionTypeMobileManagementProblem.write(value.problem, into: &buf)
+        FfiConverterOptionData.write(value.phoneNodeKey, into: &buf)
+        FfiConverterSequenceTypeMobileHeardNetworkRecord.write(value.heardNetworks, into: &buf)
+        FfiConverterBool.write(value.refreshesStaleReadings, into: &buf)
+        FfiConverterBool.write(value.offersFactoryReset, into: &buf)
+        FfiConverterBool.write(value.phoneStandsForDevice, into: &buf)
+        FfiConverterBool.write(value.supportsWifiStation, into: &buf)
+        FfiConverterBool.write(value.supportsBluetoothPairing, into: &buf)
+        FfiConverterOptionTypeMobileKeyTableRecord.write(value.peers, into: &buf)
+        FfiConverterOptionTypeMobileKeyTableRecord.write(value.administrators, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileManagedDeviceRecord_lift(_ buf: RustBuffer) throws -> MobileManagedDeviceRecord {
+    return try FfiConverterTypeMobileManagedDeviceRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileManagedDeviceRecord_lower(_ value: MobileManagedDeviceRecord) -> RustBuffer {
+    return FfiConverterTypeMobileManagedDeviceRecord.lower(value)
 }
 
 
@@ -16462,6 +19084,68 @@ public func FfiConverterTypeMobileMeshAdvertisementRecord_lift(_ buf: RustBuffer
 #endif
 public func FfiConverterTypeMobileMeshAdvertisementRecord_lower(_ value: MobileMeshAdvertisementRecord) -> RustBuffer {
     return FfiConverterTypeMobileMeshAdvertisementRecord.lower(value)
+}
+
+
+public struct MobileMeshCoreDraft: Equatable, Hashable {
+    public var readingRevision: UInt64
+    public var enabled: MobileToggleField
+    public var policy: MobileChoiceField
+    public var regions: MobileTextListField
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(readingRevision: UInt64, enabled: MobileToggleField, policy: MobileChoiceField, regions: MobileTextListField) {
+        self.readingRevision = readingRevision
+        self.enabled = enabled
+        self.policy = policy
+        self.regions = regions
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMeshCoreDraft: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMeshCoreDraft: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMeshCoreDraft {
+        return
+            try MobileMeshCoreDraft(
+                readingRevision: FfiConverterUInt64.read(from: &buf),
+                enabled: FfiConverterTypeMobileToggleField.read(from: &buf),
+                policy: FfiConverterTypeMobileChoiceField.read(from: &buf),
+                regions: FfiConverterTypeMobileTextListField.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileMeshCoreDraft, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.readingRevision, into: &buf)
+        FfiConverterTypeMobileToggleField.write(value.enabled, into: &buf)
+        FfiConverterTypeMobileChoiceField.write(value.policy, into: &buf)
+        FfiConverterTypeMobileTextListField.write(value.regions, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshCoreDraft_lift(_ buf: RustBuffer) throws -> MobileMeshCoreDraft {
+    return try FfiConverterTypeMobileMeshCoreDraft.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshCoreDraft_lower(_ value: MobileMeshCoreDraft) -> RustBuffer {
+    return FfiConverterTypeMobileMeshCoreDraft.lower(value)
 }
 
 
@@ -17820,6 +20504,212 @@ public func FfiConverterTypeMobileMeshSharedLocationRecord_lower(_ value: Mobile
 
 
 /**
+ * What may be done to one message, as the core would take it when it was
+ * read. Copying, details and the original text are always native's.
+ */
+public struct MobileMessageActionsRecord: Equatable, Hashable {
+    public var edit: Bool
+    public var delete: Bool
+    /**
+     * How a resend would first go; `None` when it cannot be resent.
+     * `InPlace` may still end `AsNew`: `resend`'s answer says which.
+     */
+    public var resend: MobileAppResent?
+    public var react: Bool
+    public var reply: Bool
+    /**
+     * A gap the session may be asked to fill.
+     */
+    public var requestMissing: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(edit: Bool = false, delete: Bool = false,
+        /**
+         * How a resend would first go; `None` when it cannot be resent.
+         * `InPlace` may still end `AsNew`: `resend`'s answer says which.
+         */resend: MobileAppResent? = nil, react: Bool = false, reply: Bool = false,
+        /**
+         * A gap the session may be asked to fill.
+         */requestMissing: Bool = false) {
+        self.edit = edit
+        self.delete = delete
+        self.resend = resend
+        self.react = react
+        self.reply = reply
+        self.requestMissing = requestMissing
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMessageActionsRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMessageActionsRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMessageActionsRecord {
+        return
+            try MobileMessageActionsRecord(
+                edit: FfiConverterBool.read(from: &buf),
+                delete: FfiConverterBool.read(from: &buf),
+                resend: FfiConverterOptionTypeMobileAppResent.read(from: &buf),
+                react: FfiConverterBool.read(from: &buf),
+                reply: FfiConverterBool.read(from: &buf),
+                requestMissing: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileMessageActionsRecord, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.edit, into: &buf)
+        FfiConverterBool.write(value.delete, into: &buf)
+        FfiConverterOptionTypeMobileAppResent.write(value.resend, into: &buf)
+        FfiConverterBool.write(value.react, into: &buf)
+        FfiConverterBool.write(value.reply, into: &buf)
+        FfiConverterBool.write(value.requestMissing, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMessageActionsRecord_lift(_ buf: RustBuffer) throws -> MobileMessageActionsRecord {
+    return try FfiConverterTypeMobileMessageActionsRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMessageActionsRecord_lower(_ value: MobileMessageActionsRecord) -> RustBuffer {
+    return FfiConverterTypeMobileMessageActionsRecord.lower(value)
+}
+
+
+/**
+ * Addressing per family. Each family's address, prefix and gateway are
+ * edited as one configuration under its method.
+ */
+public struct MobileNetworkDraft: Equatable, Hashable {
+    public var readingRevision: UInt64
+    public var v4Method: MobileChoiceField
+    public var v4Address: MobileTextField
+    public var v4Prefix: MobileOptionalIntegerField
+    /**
+     * Empty is no default route.
+     */
+    public var v4Gateway: MobileTextField
+    public var v6Method: MobileChoiceField
+    public var v6Address: MobileTextField
+    public var v6Prefix: MobileOptionalIntegerField
+    /**
+     * Empty is no default route.
+     */
+    public var v6Gateway: MobileTextField
+    /**
+     * Resolver addresses; blank rows are dropped.
+     */
+    public var dns: MobileTextListField
+    /**
+     * Empty is the device's default.
+     */
+    public var group: MobileTextField
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(readingRevision: UInt64, v4Method: MobileChoiceField, v4Address: MobileTextField, v4Prefix: MobileOptionalIntegerField,
+        /**
+         * Empty is no default route.
+         */v4Gateway: MobileTextField, v6Method: MobileChoiceField, v6Address: MobileTextField, v6Prefix: MobileOptionalIntegerField,
+        /**
+         * Empty is no default route.
+         */v6Gateway: MobileTextField,
+        /**
+         * Resolver addresses; blank rows are dropped.
+         */dns: MobileTextListField,
+        /**
+         * Empty is the device's default.
+         */group: MobileTextField) {
+        self.readingRevision = readingRevision
+        self.v4Method = v4Method
+        self.v4Address = v4Address
+        self.v4Prefix = v4Prefix
+        self.v4Gateway = v4Gateway
+        self.v6Method = v6Method
+        self.v6Address = v6Address
+        self.v6Prefix = v6Prefix
+        self.v6Gateway = v6Gateway
+        self.dns = dns
+        self.group = group
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileNetworkDraft: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileNetworkDraft: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileNetworkDraft {
+        return
+            try MobileNetworkDraft(
+                readingRevision: FfiConverterUInt64.read(from: &buf),
+                v4Method: FfiConverterTypeMobileChoiceField.read(from: &buf),
+                v4Address: FfiConverterTypeMobileTextField.read(from: &buf),
+                v4Prefix: FfiConverterTypeMobileOptionalIntegerField.read(from: &buf),
+                v4Gateway: FfiConverterTypeMobileTextField.read(from: &buf),
+                v6Method: FfiConverterTypeMobileChoiceField.read(from: &buf),
+                v6Address: FfiConverterTypeMobileTextField.read(from: &buf),
+                v6Prefix: FfiConverterTypeMobileOptionalIntegerField.read(from: &buf),
+                v6Gateway: FfiConverterTypeMobileTextField.read(from: &buf),
+                dns: FfiConverterTypeMobileTextListField.read(from: &buf),
+                group: FfiConverterTypeMobileTextField.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileNetworkDraft, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.readingRevision, into: &buf)
+        FfiConverterTypeMobileChoiceField.write(value.v4Method, into: &buf)
+        FfiConverterTypeMobileTextField.write(value.v4Address, into: &buf)
+        FfiConverterTypeMobileOptionalIntegerField.write(value.v4Prefix, into: &buf)
+        FfiConverterTypeMobileTextField.write(value.v4Gateway, into: &buf)
+        FfiConverterTypeMobileChoiceField.write(value.v6Method, into: &buf)
+        FfiConverterTypeMobileTextField.write(value.v6Address, into: &buf)
+        FfiConverterTypeMobileOptionalIntegerField.write(value.v6Prefix, into: &buf)
+        FfiConverterTypeMobileTextField.write(value.v6Gateway, into: &buf)
+        FfiConverterTypeMobileTextListField.write(value.dns, into: &buf)
+        FfiConverterTypeMobileTextField.write(value.group, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileNetworkDraft_lift(_ buf: RustBuffer) throws -> MobileNetworkDraft {
+    return try FfiConverterTypeMobileNetworkDraft.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileNetworkDraft_lower(_ value: MobileNetworkDraft) -> RustBuffer {
+    return FfiConverterTypeMobileNetworkDraft.lower(value)
+}
+
+
+/**
  * What a reaction was, and what it was on.
  */
 public struct MobileNotificationReactionRecord: Equatable, Hashable {
@@ -17889,6 +20779,130 @@ public func FfiConverterTypeMobileNotificationReactionRecord_lift(_ buf: RustBuf
 #endif
 public func FfiConverterTypeMobileNotificationReactionRecord_lower(_ value: MobileNotificationReactionRecord) -> RustBuffer {
     return FfiConverterTypeMobileNotificationReactionRecord.lower(value)
+}
+
+
+/**
+ * A category this device offers, with the properties it covers.
+ */
+public struct MobileOfferedCategoryRecord: Equatable, Hashable {
+    public var category: UlcpManageCategory
+    public var propertyIds: [UInt32]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(category: UlcpManageCategory, propertyIds: [UInt32]) {
+        self.category = category
+        self.propertyIds = propertyIds
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileOfferedCategoryRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileOfferedCategoryRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileOfferedCategoryRecord {
+        return
+            try MobileOfferedCategoryRecord(
+                category: FfiConverterTypeUlcpManageCategory.read(from: &buf),
+                propertyIds: FfiConverterSequenceUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileOfferedCategoryRecord, into buf: inout [UInt8]) {
+        FfiConverterTypeUlcpManageCategory.write(value.category, into: &buf)
+        FfiConverterSequenceUInt32.write(value.propertyIds, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileOfferedCategoryRecord_lift(_ buf: RustBuffer) throws -> MobileOfferedCategoryRecord {
+    return try FfiConverterTypeMobileOfferedCategoryRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileOfferedCategoryRecord_lower(_ value: MobileOfferedCategoryRecord) -> RustBuffer {
+    return FfiConverterTypeMobileOfferedCategoryRecord.lower(value)
+}
+
+
+/**
+ * A number the operator types where empty text is allowed: a value (no
+ * threshold, the device's default, no stated height), or a gap the core
+ * judges (a static prefix not yet typed).
+ */
+public struct MobileOptionalIntegerField: Equatable, Hashable {
+    public var propertyId: UInt32
+    public var known: Bool
+    public var reported: Int64?
+    public var value: Int64?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(propertyId: UInt32, known: Bool, reported: Int64?, value: Int64?) {
+        self.propertyId = propertyId
+        self.known = known
+        self.reported = reported
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileOptionalIntegerField: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileOptionalIntegerField: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileOptionalIntegerField {
+        return
+            try MobileOptionalIntegerField(
+                propertyId: FfiConverterUInt32.read(from: &buf),
+                known: FfiConverterBool.read(from: &buf),
+                reported: FfiConverterOptionInt64.read(from: &buf),
+                value: FfiConverterOptionInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileOptionalIntegerField, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.propertyId, into: &buf)
+        FfiConverterBool.write(value.known, into: &buf)
+        FfiConverterOptionInt64.write(value.reported, into: &buf)
+        FfiConverterOptionInt64.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileOptionalIntegerField_lift(_ buf: RustBuffer) throws -> MobileOptionalIntegerField {
+    return try FfiConverterTypeMobileOptionalIntegerField.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileOptionalIntegerField_lower(_ value: MobileOptionalIntegerField) -> RustBuffer {
+    return FfiConverterTypeMobileOptionalIntegerField.lower(value)
 }
 
 
@@ -18052,6 +21066,86 @@ public func FfiConverterTypeMobilePeerUpsertRecord_lower(_ value: MobilePeerUpse
 
 
 /**
+ * A position as one field. The reported pair is both `Some` or both
+ * `None` (no position); `reported_location` is the reported location as
+ * the device holds it, which an edit is compared against. Both
+ * coordinates `None` clears the position, and one alone is not an edit.
+ */
+public struct MobilePositionField: Equatable, Hashable {
+    public var propertyId: UInt32
+    public var known: Bool
+    public var reportedLatitude: Double?
+    public var reportedLongitude: Double?
+    public var reportedLocation: Data
+    public var latitude: Double?
+    public var longitude: Double?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(propertyId: UInt32, known: Bool, reportedLatitude: Double?, reportedLongitude: Double?, reportedLocation: Data, latitude: Double?, longitude: Double?) {
+        self.propertyId = propertyId
+        self.known = known
+        self.reportedLatitude = reportedLatitude
+        self.reportedLongitude = reportedLongitude
+        self.reportedLocation = reportedLocation
+        self.latitude = latitude
+        self.longitude = longitude
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobilePositionField: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobilePositionField: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobilePositionField {
+        return
+            try MobilePositionField(
+                propertyId: FfiConverterUInt32.read(from: &buf),
+                known: FfiConverterBool.read(from: &buf),
+                reportedLatitude: FfiConverterOptionDouble.read(from: &buf),
+                reportedLongitude: FfiConverterOptionDouble.read(from: &buf),
+                reportedLocation: FfiConverterData.read(from: &buf),
+                latitude: FfiConverterOptionDouble.read(from: &buf),
+                longitude: FfiConverterOptionDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobilePositionField, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.propertyId, into: &buf)
+        FfiConverterBool.write(value.known, into: &buf)
+        FfiConverterOptionDouble.write(value.reportedLatitude, into: &buf)
+        FfiConverterOptionDouble.write(value.reportedLongitude, into: &buf)
+        FfiConverterData.write(value.reportedLocation, into: &buf)
+        FfiConverterOptionDouble.write(value.latitude, into: &buf)
+        FfiConverterOptionDouble.write(value.longitude, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobilePositionField_lift(_ buf: RustBuffer) throws -> MobilePositionField {
+    return try FfiConverterTypeMobilePositionField.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobilePositionField_lower(_ value: MobilePositionField) -> RustBuffer {
+    return FfiConverterTypeMobilePositionField.lower(value)
+}
+
+
+/**
  * Where the phone is.
  */
 public struct MobilePositionRecord: Equatable, Hashable {
@@ -18115,6 +21209,172 @@ public func FfiConverterTypeMobilePositionRecord_lift(_ buf: RustBuffer) throws 
 #endif
 public func FfiConverterTypeMobilePositionRecord_lower(_ value: MobilePositionRecord) -> RustBuffer {
     return FfiConverterTypeMobilePositionRecord.lower(value)
+}
+
+
+public struct MobilePropertyRefusalRecord: Equatable, Hashable {
+    public var propertyId: UInt32
+    public var refusal: MobileRefusal
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(propertyId: UInt32, refusal: MobileRefusal) {
+        self.propertyId = propertyId
+        self.refusal = refusal
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobilePropertyRefusalRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobilePropertyRefusalRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobilePropertyRefusalRecord {
+        return
+            try MobilePropertyRefusalRecord(
+                propertyId: FfiConverterUInt32.read(from: &buf),
+                refusal: FfiConverterTypeMobileRefusal.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobilePropertyRefusalRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.propertyId, into: &buf)
+        FfiConverterTypeMobileRefusal.write(value.refusal, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobilePropertyRefusalRecord_lift(_ buf: RustBuffer) throws -> MobilePropertyRefusalRecord {
+    return try FfiConverterTypeMobilePropertyRefusalRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobilePropertyRefusalRecord_lower(_ value: MobilePropertyRefusalRecord) -> RustBuffer {
+    return FfiConverterTypeMobilePropertyRefusalRecord.lower(value)
+}
+
+
+public struct MobilePropertyStateRecord: Equatable, Hashable {
+    public var propertyId: UInt32
+    public var state: MobilePropertyState
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(propertyId: UInt32, state: MobilePropertyState) {
+        self.propertyId = propertyId
+        self.state = state
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobilePropertyStateRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobilePropertyStateRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobilePropertyStateRecord {
+        return
+            try MobilePropertyStateRecord(
+                propertyId: FfiConverterUInt32.read(from: &buf),
+                state: FfiConverterTypeMobilePropertyState.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobilePropertyStateRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.propertyId, into: &buf)
+        FfiConverterTypeMobilePropertyState.write(value.state, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobilePropertyStateRecord_lift(_ buf: RustBuffer) throws -> MobilePropertyStateRecord {
+    return try FfiConverterTypeMobilePropertyStateRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobilePropertyStateRecord_lower(_ value: MobilePropertyStateRecord) -> RustBuffer {
+    return FfiConverterTypeMobilePropertyStateRecord.lower(value)
+}
+
+
+public struct MobilePropertyValueRecord: Equatable, Hashable {
+    public var propertyId: UInt32
+    public var value: Data
+    public var receivedAtMs: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(propertyId: UInt32, value: Data, receivedAtMs: Int64) {
+        self.propertyId = propertyId
+        self.value = value
+        self.receivedAtMs = receivedAtMs
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobilePropertyValueRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobilePropertyValueRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobilePropertyValueRecord {
+        return
+            try MobilePropertyValueRecord(
+                propertyId: FfiConverterUInt32.read(from: &buf),
+                value: FfiConverterData.read(from: &buf),
+                receivedAtMs: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobilePropertyValueRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.propertyId, into: &buf)
+        FfiConverterData.write(value.value, into: &buf)
+        FfiConverterInt64.write(value.receivedAtMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobilePropertyValueRecord_lift(_ buf: RustBuffer) throws -> MobilePropertyValueRecord {
+    return try FfiConverterTypeMobilePropertyValueRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobilePropertyValueRecord_lower(_ value: MobilePropertyValueRecord) -> RustBuffer {
+    return FfiConverterTypeMobilePropertyValueRecord.lower(value)
 }
 
 
@@ -18263,6 +21523,96 @@ public func FfiConverterTypeMobileRadioClockRecord_lift(_ buf: RustBuffer) throw
 #endif
 public func FfiConverterTypeMobileRadioClockRecord_lower(_ value: MobileRadioClockRecord) -> RustBuffer {
     return FfiConverterTypeMobileRadioClockRecord.lower(value)
+}
+
+
+public struct MobileRadioDraft: Equatable, Hashable {
+    public var readingRevision: UInt64
+    public var enabled: MobileToggleField
+    public var frequencyKhz: MobileIntegerField
+    public var transmitPowerDbm: MobileIntegerField
+    /**
+     * In hertz.
+     */
+    public var bandwidth: MobileChoiceField
+    public var spreadingFactor: MobileChoiceField
+    /**
+     * The denominator.
+     */
+    public var codingRate: MobileChoiceField
+    public var dutyLimit: MobileChoiceField
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(readingRevision: UInt64, enabled: MobileToggleField, frequencyKhz: MobileIntegerField, transmitPowerDbm: MobileIntegerField,
+        /**
+         * In hertz.
+         */bandwidth: MobileChoiceField, spreadingFactor: MobileChoiceField,
+        /**
+         * The denominator.
+         */codingRate: MobileChoiceField, dutyLimit: MobileChoiceField) {
+        self.readingRevision = readingRevision
+        self.enabled = enabled
+        self.frequencyKhz = frequencyKhz
+        self.transmitPowerDbm = transmitPowerDbm
+        self.bandwidth = bandwidth
+        self.spreadingFactor = spreadingFactor
+        self.codingRate = codingRate
+        self.dutyLimit = dutyLimit
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRadioDraft: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRadioDraft: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRadioDraft {
+        return
+            try MobileRadioDraft(
+                readingRevision: FfiConverterUInt64.read(from: &buf),
+                enabled: FfiConverterTypeMobileToggleField.read(from: &buf),
+                frequencyKhz: FfiConverterTypeMobileIntegerField.read(from: &buf),
+                transmitPowerDbm: FfiConverterTypeMobileIntegerField.read(from: &buf),
+                bandwidth: FfiConverterTypeMobileChoiceField.read(from: &buf),
+                spreadingFactor: FfiConverterTypeMobileChoiceField.read(from: &buf),
+                codingRate: FfiConverterTypeMobileChoiceField.read(from: &buf),
+                dutyLimit: FfiConverterTypeMobileChoiceField.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRadioDraft, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.readingRevision, into: &buf)
+        FfiConverterTypeMobileToggleField.write(value.enabled, into: &buf)
+        FfiConverterTypeMobileIntegerField.write(value.frequencyKhz, into: &buf)
+        FfiConverterTypeMobileIntegerField.write(value.transmitPowerDbm, into: &buf)
+        FfiConverterTypeMobileChoiceField.write(value.bandwidth, into: &buf)
+        FfiConverterTypeMobileChoiceField.write(value.spreadingFactor, into: &buf)
+        FfiConverterTypeMobileChoiceField.write(value.codingRate, into: &buf)
+        FfiConverterTypeMobileChoiceField.write(value.dutyLimit, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRadioDraft_lift(_ buf: RustBuffer) throws -> MobileRadioDraft {
+    return try FfiConverterTypeMobileRadioDraft.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRadioDraft_lower(_ value: MobileRadioDraft) -> RustBuffer {
+    return FfiConverterTypeMobileRadioDraft.lower(value)
 }
 
 
@@ -18609,6 +21959,64 @@ public func FfiConverterTypeMobileRadioTransportStateRecord_lift(_ buf: RustBuff
 #endif
 public func FfiConverterTypeMobileRadioTransportStateRecord_lower(_ value: MobileRadioTransportStateRecord) -> RustBuffer {
     return FfiConverterTypeMobileRadioTransportStateRecord.lower(value)
+}
+
+
+/**
+ * A refusal: what the device's status means, and the status, for its
+ * name.
+ */
+public struct MobileRefusal: Equatable, Hashable {
+    public var reason: MobileRefusalReason
+    public var status: UInt32?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(reason: MobileRefusalReason, status: UInt32?) {
+        self.reason = reason
+        self.status = status
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRefusal: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRefusal: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRefusal {
+        return
+            try MobileRefusal(
+                reason: FfiConverterTypeMobileRefusalReason.read(from: &buf),
+                status: FfiConverterOptionUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRefusal, into buf: inout [UInt8]) {
+        FfiConverterTypeMobileRefusalReason.write(value.reason, into: &buf)
+        FfiConverterOptionUInt32.write(value.status, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRefusal_lift(_ buf: RustBuffer) throws -> MobileRefusal {
+    return try FfiConverterTypeMobileRefusal.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRefusal_lower(_ value: MobileRefusal) -> RustBuffer {
+    return FfiConverterTypeMobileRefusal.lower(value)
 }
 
 
@@ -19243,6 +22651,672 @@ public func FfiConverterTypeMobileRegionRecord_lower(_ value: MobileRegionRecord
 }
 
 
+public struct MobileRepeaterDraft: Equatable, Hashable {
+    public var readingRevision: UInt64
+    public var mode: MobileChoiceField
+    public var regions: MobileTextListField
+    /**
+     * The region floods are tagged with, as a region string; empty
+     * never tags.
+     */
+    public var defaultRegion: MobileTextField
+    /**
+     * `None` is no threshold.
+     */
+    public var minRssi: MobileOptionalIntegerField
+    /**
+     * `None` is no threshold.
+     */
+    public var minSnr: MobileOptionalIntegerField
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(readingRevision: UInt64, mode: MobileChoiceField, regions: MobileTextListField,
+        /**
+         * The region floods are tagged with, as a region string; empty
+         * never tags.
+         */defaultRegion: MobileTextField,
+        /**
+         * `None` is no threshold.
+         */minRssi: MobileOptionalIntegerField,
+        /**
+         * `None` is no threshold.
+         */minSnr: MobileOptionalIntegerField) {
+        self.readingRevision = readingRevision
+        self.mode = mode
+        self.regions = regions
+        self.defaultRegion = defaultRegion
+        self.minRssi = minRssi
+        self.minSnr = minSnr
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRepeaterDraft: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRepeaterDraft: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRepeaterDraft {
+        return
+            try MobileRepeaterDraft(
+                readingRevision: FfiConverterUInt64.read(from: &buf),
+                mode: FfiConverterTypeMobileChoiceField.read(from: &buf),
+                regions: FfiConverterTypeMobileTextListField.read(from: &buf),
+                defaultRegion: FfiConverterTypeMobileTextField.read(from: &buf),
+                minRssi: FfiConverterTypeMobileOptionalIntegerField.read(from: &buf),
+                minSnr: FfiConverterTypeMobileOptionalIntegerField.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRepeaterDraft, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.readingRevision, into: &buf)
+        FfiConverterTypeMobileChoiceField.write(value.mode, into: &buf)
+        FfiConverterTypeMobileTextListField.write(value.regions, into: &buf)
+        FfiConverterTypeMobileTextField.write(value.defaultRegion, into: &buf)
+        FfiConverterTypeMobileOptionalIntegerField.write(value.minRssi, into: &buf)
+        FfiConverterTypeMobileOptionalIntegerField.write(value.minSnr, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRepeaterDraft_lift(_ buf: RustBuffer) throws -> MobileRepeaterDraft {
+    return try FfiConverterTypeMobileRepeaterDraft.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRepeaterDraft_lower(_ value: MobileRepeaterDraft) -> RustBuffer {
+    return FfiConverterTypeMobileRepeaterDraft.lower(value)
+}
+
+
+/**
+ * How an apply ended, and the draft to keep.
+ */
+public struct MobileSetupApplyOutcome: Equatable, Hashable {
+    public var result: MobileSetupResult
+    /**
+     * The one applied, with the transmit power the device reported and
+     * the administrator list it now holds once the device answered; the
+     * one given otherwise.
+     */
+    public var draft: MobileSetupDraft
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(result: MobileSetupResult,
+        /**
+         * The one applied, with the transmit power the device reported and
+         * the administrator list it now holds once the device answered; the
+         * one given otherwise.
+         */draft: MobileSetupDraft) {
+        self.result = result
+        self.draft = draft
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileSetupApplyOutcome: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileSetupApplyOutcome: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileSetupApplyOutcome {
+        return
+            try MobileSetupApplyOutcome(
+                result: FfiConverterTypeMobileSetupResult.read(from: &buf),
+                draft: FfiConverterTypeMobileSetupDraft.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileSetupApplyOutcome, into buf: inout [UInt8]) {
+        FfiConverterTypeMobileSetupResult.write(value.result, into: &buf)
+        FfiConverterTypeMobileSetupDraft.write(value.draft, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSetupApplyOutcome_lift(_ buf: RustBuffer) throws -> MobileSetupApplyOutcome {
+    return try FfiConverterTypeMobileSetupApplyOutcome.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSetupApplyOutcome_lower(_ value: MobileSetupApplyOutcome) -> RustBuffer {
+    return FfiConverterTypeMobileSetupApplyOutcome.lower(value)
+}
+
+
+/**
+ * Every picker's values.
+ */
+public struct MobileSetupChoicesRecord: Equatable, Hashable {
+    public var bandwidthsHz: MobileChoiceList
+    public var spreadingFactors: MobileChoiceList
+    public var codingRates: MobileChoiceList
+    public var dutyLimits: MobileChoiceList
+    public var precisions: MobileChoiceList
+    public var advertIntervalsS: MobileChoiceList
+    public var beaconIntervalsS: MobileChoiceList
+    /**
+     * "Off" (`None`) is always offered besides these.
+     */
+    public var minRssiDbm: MobileChoiceList
+    /**
+     * "Off" (`None`) is always offered besides these.
+     */
+    public var minSnrDb: MobileChoiceList
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(bandwidthsHz: MobileChoiceList, spreadingFactors: MobileChoiceList, codingRates: MobileChoiceList, dutyLimits: MobileChoiceList, precisions: MobileChoiceList, advertIntervalsS: MobileChoiceList, beaconIntervalsS: MobileChoiceList,
+        /**
+         * "Off" (`None`) is always offered besides these.
+         */minRssiDbm: MobileChoiceList,
+        /**
+         * "Off" (`None`) is always offered besides these.
+         */minSnrDb: MobileChoiceList) {
+        self.bandwidthsHz = bandwidthsHz
+        self.spreadingFactors = spreadingFactors
+        self.codingRates = codingRates
+        self.dutyLimits = dutyLimits
+        self.precisions = precisions
+        self.advertIntervalsS = advertIntervalsS
+        self.beaconIntervalsS = beaconIntervalsS
+        self.minRssiDbm = minRssiDbm
+        self.minSnrDb = minSnrDb
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileSetupChoicesRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileSetupChoicesRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileSetupChoicesRecord {
+        return
+            try MobileSetupChoicesRecord(
+                bandwidthsHz: FfiConverterTypeMobileChoiceList.read(from: &buf),
+                spreadingFactors: FfiConverterTypeMobileChoiceList.read(from: &buf),
+                codingRates: FfiConverterTypeMobileChoiceList.read(from: &buf),
+                dutyLimits: FfiConverterTypeMobileChoiceList.read(from: &buf),
+                precisions: FfiConverterTypeMobileChoiceList.read(from: &buf),
+                advertIntervalsS: FfiConverterTypeMobileChoiceList.read(from: &buf),
+                beaconIntervalsS: FfiConverterTypeMobileChoiceList.read(from: &buf),
+                minRssiDbm: FfiConverterTypeMobileChoiceList.read(from: &buf),
+                minSnrDb: FfiConverterTypeMobileChoiceList.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileSetupChoicesRecord, into buf: inout [UInt8]) {
+        FfiConverterTypeMobileChoiceList.write(value.bandwidthsHz, into: &buf)
+        FfiConverterTypeMobileChoiceList.write(value.spreadingFactors, into: &buf)
+        FfiConverterTypeMobileChoiceList.write(value.codingRates, into: &buf)
+        FfiConverterTypeMobileChoiceList.write(value.dutyLimits, into: &buf)
+        FfiConverterTypeMobileChoiceList.write(value.precisions, into: &buf)
+        FfiConverterTypeMobileChoiceList.write(value.advertIntervalsS, into: &buf)
+        FfiConverterTypeMobileChoiceList.write(value.beaconIntervalsS, into: &buf)
+        FfiConverterTypeMobileChoiceList.write(value.minRssiDbm, into: &buf)
+        FfiConverterTypeMobileChoiceList.write(value.minSnrDb, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSetupChoicesRecord_lift(_ buf: RustBuffer) throws -> MobileSetupChoicesRecord {
+    return try FfiConverterTypeMobileSetupChoicesRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSetupChoicesRecord_lower(_ value: MobileSetupChoicesRecord) -> RustBuffer {
+    return FfiConverterTypeMobileSetupChoicesRecord.lower(value)
+}
+
+
+/**
+ * The radio a set-up device is put on, captured when the sheet opens.
+ * Typed values from the core's own radio; native code holds it and
+ * hands it back.
+ */
+public struct MobileSetupCompanionRecord: Equatable, Hashable {
+    /**
+     * That radio's own name, when it has one.
+     */
+    public var name: String?
+    public var frequencyKhz: Int64
+    public var transmitPowerDbm: Int64
+    /**
+     * `None` when the radio did not report it.
+     */
+    public var bandwidthHz: Int64?
+    public var spreadingFactor: Int64?
+    public var codingRate: Int64?
+    public var dutyLimit: Int64?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * That radio's own name, when it has one.
+         */name: String?, frequencyKhz: Int64, transmitPowerDbm: Int64,
+        /**
+         * `None` when the radio did not report it.
+         */bandwidthHz: Int64?, spreadingFactor: Int64?, codingRate: Int64?, dutyLimit: Int64?) {
+        self.name = name
+        self.frequencyKhz = frequencyKhz
+        self.transmitPowerDbm = transmitPowerDbm
+        self.bandwidthHz = bandwidthHz
+        self.spreadingFactor = spreadingFactor
+        self.codingRate = codingRate
+        self.dutyLimit = dutyLimit
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileSetupCompanionRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileSetupCompanionRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileSetupCompanionRecord {
+        return
+            try MobileSetupCompanionRecord(
+                name: FfiConverterOptionString.read(from: &buf),
+                frequencyKhz: FfiConverterInt64.read(from: &buf),
+                transmitPowerDbm: FfiConverterInt64.read(from: &buf),
+                bandwidthHz: FfiConverterOptionInt64.read(from: &buf),
+                spreadingFactor: FfiConverterOptionInt64.read(from: &buf),
+                codingRate: FfiConverterOptionInt64.read(from: &buf),
+                dutyLimit: FfiConverterOptionInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileSetupCompanionRecord, into buf: inout [UInt8]) {
+        FfiConverterOptionString.write(value.name, into: &buf)
+        FfiConverterInt64.write(value.frequencyKhz, into: &buf)
+        FfiConverterInt64.write(value.transmitPowerDbm, into: &buf)
+        FfiConverterOptionInt64.write(value.bandwidthHz, into: &buf)
+        FfiConverterOptionInt64.write(value.spreadingFactor, into: &buf)
+        FfiConverterOptionInt64.write(value.codingRate, into: &buf)
+        FfiConverterOptionInt64.write(value.dutyLimit, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSetupCompanionRecord_lift(_ buf: RustBuffer) throws -> MobileSetupCompanionRecord {
+    return try FfiConverterTypeMobileSetupCompanionRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSetupCompanionRecord_lower(_ value: MobileSetupCompanionRecord) -> RustBuffer {
+    return FfiConverterTypeMobileSetupCompanionRecord.lower(value)
+}
+
+
+/**
+ * What the setup sheet edits. Field records are the management drafts':
+ * `known` and `reported` are the baseline the draft was built on, and
+ * native code never writes them. A field whose setting the device did
+ * not report is unknown, holds a placeholder, and is never written.
+ * Native code receives, copies and mutates a draft, and never constructs
+ * one.
+ */
+public struct MobileSetupDraft: Equatable, Hashable {
+    public var name: MobileTextField
+    /**
+     * `reading_revision` is 0: built on no reading. Write the six
+     * parameters through `setup_set_radio_parameter`, which settles a
+     * pending profile choice; `enabled` directly.
+     */
+    public var radio: MobileRadioDraft
+    public var discoverable: MobileToggleField
+    /**
+     * `reading_revision` is 0. Mode 0 off, 1 on, 2 adaptive; regions
+     * edited through `draft_add_repeater_region` and
+     * `draft_adopt_regions`; the default region as region text, empty
+     * never tags; thresholds `None` for none.
+     */
+    public var repeater: MobileRepeaterDraft
+    public var gnssEnabled: MobileToggleField
+    /**
+     * `PROP_GNSS_IDENT_UPDATE`: fixes refresh the advertised position.
+     */
+    public var sharePosition: MobileToggleField
+    public var precision: MobileChoiceField
+    public var timeTrust: MobileToggleField
+    /**
+     * Seconds; 0 is off.
+     */
+    public var advertInterval: MobileChoiceField
+    /**
+     * Seconds; 0 is off.
+     */
+    public var beaconInterval: MobileChoiceField
+    public var startupBeacon: MobileToggleField
+    public var administrators: MobileKeyListField
+    /**
+     * A pending profile choice was made. Set by `setup_adopt_preset` and
+     * `setup_set_radio_parameter`; native code never writes it.
+     */
+    public var profileSettled: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: MobileTextField,
+        /**
+         * `reading_revision` is 0: built on no reading. Write the six
+         * parameters through `setup_set_radio_parameter`, which settles a
+         * pending profile choice; `enabled` directly.
+         */radio: MobileRadioDraft, discoverable: MobileToggleField,
+        /**
+         * `reading_revision` is 0. Mode 0 off, 1 on, 2 adaptive; regions
+         * edited through `draft_add_repeater_region` and
+         * `draft_adopt_regions`; the default region as region text, empty
+         * never tags; thresholds `None` for none.
+         */repeater: MobileRepeaterDraft, gnssEnabled: MobileToggleField,
+        /**
+         * `PROP_GNSS_IDENT_UPDATE`: fixes refresh the advertised position.
+         */sharePosition: MobileToggleField, precision: MobileChoiceField, timeTrust: MobileToggleField,
+        /**
+         * Seconds; 0 is off.
+         */advertInterval: MobileChoiceField,
+        /**
+         * Seconds; 0 is off.
+         */beaconInterval: MobileChoiceField, startupBeacon: MobileToggleField, administrators: MobileKeyListField,
+        /**
+         * A pending profile choice was made. Set by `setup_adopt_preset` and
+         * `setup_set_radio_parameter`; native code never writes it.
+         */profileSettled: Bool) {
+        self.name = name
+        self.radio = radio
+        self.discoverable = discoverable
+        self.repeater = repeater
+        self.gnssEnabled = gnssEnabled
+        self.sharePosition = sharePosition
+        self.precision = precision
+        self.timeTrust = timeTrust
+        self.advertInterval = advertInterval
+        self.beaconInterval = beaconInterval
+        self.startupBeacon = startupBeacon
+        self.administrators = administrators
+        self.profileSettled = profileSettled
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileSetupDraft: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileSetupDraft: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileSetupDraft {
+        return
+            try MobileSetupDraft(
+                name: FfiConverterTypeMobileTextField.read(from: &buf),
+                radio: FfiConverterTypeMobileRadioDraft.read(from: &buf),
+                discoverable: FfiConverterTypeMobileToggleField.read(from: &buf),
+                repeater: FfiConverterTypeMobileRepeaterDraft.read(from: &buf),
+                gnssEnabled: FfiConverterTypeMobileToggleField.read(from: &buf),
+                sharePosition: FfiConverterTypeMobileToggleField.read(from: &buf),
+                precision: FfiConverterTypeMobileChoiceField.read(from: &buf),
+                timeTrust: FfiConverterTypeMobileToggleField.read(from: &buf),
+                advertInterval: FfiConverterTypeMobileChoiceField.read(from: &buf),
+                beaconInterval: FfiConverterTypeMobileChoiceField.read(from: &buf),
+                startupBeacon: FfiConverterTypeMobileToggleField.read(from: &buf),
+                administrators: FfiConverterTypeMobileKeyListField.read(from: &buf),
+                profileSettled: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileSetupDraft, into buf: inout [UInt8]) {
+        FfiConverterTypeMobileTextField.write(value.name, into: &buf)
+        FfiConverterTypeMobileRadioDraft.write(value.radio, into: &buf)
+        FfiConverterTypeMobileToggleField.write(value.discoverable, into: &buf)
+        FfiConverterTypeMobileRepeaterDraft.write(value.repeater, into: &buf)
+        FfiConverterTypeMobileToggleField.write(value.gnssEnabled, into: &buf)
+        FfiConverterTypeMobileToggleField.write(value.sharePosition, into: &buf)
+        FfiConverterTypeMobileChoiceField.write(value.precision, into: &buf)
+        FfiConverterTypeMobileToggleField.write(value.timeTrust, into: &buf)
+        FfiConverterTypeMobileChoiceField.write(value.advertInterval, into: &buf)
+        FfiConverterTypeMobileChoiceField.write(value.beaconInterval, into: &buf)
+        FfiConverterTypeMobileToggleField.write(value.startupBeacon, into: &buf)
+        FfiConverterTypeMobileKeyListField.write(value.administrators, into: &buf)
+        FfiConverterBool.write(value.profileSettled, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSetupDraft_lift(_ buf: RustBuffer) throws -> MobileSetupDraft {
+    return try FfiConverterTypeMobileSetupDraft.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSetupDraft_lower(_ value: MobileSetupDraft) -> RustBuffer {
+    return FfiConverterTypeMobileSetupDraft.lower(value)
+}
+
+
+/**
+ * What Apply would do with a draft now.
+ */
+public struct MobileSetupReviewRecord: Equatable, Hashable {
+    /**
+     * Every value Apply would write that the device cannot take, by
+     * property, ascending. Judged on every known value, not only edits:
+     * setup writes them all.
+     */
+    public var problems: [MobileFieldProblemRecord]
+    /**
+     * The settings of `problems` that have no box of their own on the
+     * sheet (all but the name, frequency and power), once each, in
+     * `MobileSetupSetting` order.
+     */
+    public var unshownProblems: [MobileSetupSetting]
+    /**
+     * No profile choice is pending.
+     */
+    public var profileChosen: Bool
+    /**
+     * No problem, the profile chosen, no apply under way, not released.
+     * Native code adds its link state.
+     */
+    public var canApply: Bool
+    /**
+     * The device confirmed exactly this draft.
+     */
+    public var applied: Bool
+    /**
+     * The vetted preset the radio fields spell out; `None` is custom.
+     */
+    public var presetId: String?
+    public var choices: MobileSetupChoicesRecord
+    /**
+     * The default-region picker's rows.
+     */
+    public var taggableRegions: [String]
+    /**
+     * The device would tag untagged floods with a region it does not
+     * relay.
+     */
+    public var defaultRegionUnlisted: Bool
+    public var administrators: [MobileKeyEntryRecord]
+    public var phoneAdministers: Bool
+    /**
+     * The "this phone" switch can be moved.
+     */
+    public var phoneSwitchEnabled: Bool
+    public var administratorsFull: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Every value Apply would write that the device cannot take, by
+         * property, ascending. Judged on every known value, not only edits:
+         * setup writes them all.
+         */problems: [MobileFieldProblemRecord],
+        /**
+         * The settings of `problems` that have no box of their own on the
+         * sheet (all but the name, frequency and power), once each, in
+         * `MobileSetupSetting` order.
+         */unshownProblems: [MobileSetupSetting],
+        /**
+         * No profile choice is pending.
+         */profileChosen: Bool,
+        /**
+         * No problem, the profile chosen, no apply under way, not released.
+         * Native code adds its link state.
+         */canApply: Bool,
+        /**
+         * The device confirmed exactly this draft.
+         */applied: Bool,
+        /**
+         * The vetted preset the radio fields spell out; `None` is custom.
+         */presetId: String?, choices: MobileSetupChoicesRecord,
+        /**
+         * The default-region picker's rows.
+         */taggableRegions: [String],
+        /**
+         * The device would tag untagged floods with a region it does not
+         * relay.
+         */defaultRegionUnlisted: Bool, administrators: [MobileKeyEntryRecord], phoneAdministers: Bool,
+        /**
+         * The "this phone" switch can be moved.
+         */phoneSwitchEnabled: Bool, administratorsFull: Bool) {
+        self.problems = problems
+        self.unshownProblems = unshownProblems
+        self.profileChosen = profileChosen
+        self.canApply = canApply
+        self.applied = applied
+        self.presetId = presetId
+        self.choices = choices
+        self.taggableRegions = taggableRegions
+        self.defaultRegionUnlisted = defaultRegionUnlisted
+        self.administrators = administrators
+        self.phoneAdministers = phoneAdministers
+        self.phoneSwitchEnabled = phoneSwitchEnabled
+        self.administratorsFull = administratorsFull
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileSetupReviewRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileSetupReviewRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileSetupReviewRecord {
+        return
+            try MobileSetupReviewRecord(
+                problems: FfiConverterSequenceTypeMobileFieldProblemRecord.read(from: &buf),
+                unshownProblems: FfiConverterSequenceTypeMobileSetupSetting.read(from: &buf),
+                profileChosen: FfiConverterBool.read(from: &buf),
+                canApply: FfiConverterBool.read(from: &buf),
+                applied: FfiConverterBool.read(from: &buf),
+                presetId: FfiConverterOptionString.read(from: &buf),
+                choices: FfiConverterTypeMobileSetupChoicesRecord.read(from: &buf),
+                taggableRegions: FfiConverterSequenceString.read(from: &buf),
+                defaultRegionUnlisted: FfiConverterBool.read(from: &buf),
+                administrators: FfiConverterSequenceTypeMobileKeyEntryRecord.read(from: &buf),
+                phoneAdministers: FfiConverterBool.read(from: &buf),
+                phoneSwitchEnabled: FfiConverterBool.read(from: &buf),
+                administratorsFull: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileSetupReviewRecord, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeMobileFieldProblemRecord.write(value.problems, into: &buf)
+        FfiConverterSequenceTypeMobileSetupSetting.write(value.unshownProblems, into: &buf)
+        FfiConverterBool.write(value.profileChosen, into: &buf)
+        FfiConverterBool.write(value.canApply, into: &buf)
+        FfiConverterBool.write(value.applied, into: &buf)
+        FfiConverterOptionString.write(value.presetId, into: &buf)
+        FfiConverterTypeMobileSetupChoicesRecord.write(value.choices, into: &buf)
+        FfiConverterSequenceString.write(value.taggableRegions, into: &buf)
+        FfiConverterBool.write(value.defaultRegionUnlisted, into: &buf)
+        FfiConverterSequenceTypeMobileKeyEntryRecord.write(value.administrators, into: &buf)
+        FfiConverterBool.write(value.phoneAdministers, into: &buf)
+        FfiConverterBool.write(value.phoneSwitchEnabled, into: &buf)
+        FfiConverterBool.write(value.administratorsFull, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSetupReviewRecord_lift(_ buf: RustBuffer) throws -> MobileSetupReviewRecord {
+    return try FfiConverterTypeMobileSetupReviewRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSetupReviewRecord_lower(_ value: MobileSetupReviewRecord) -> RustBuffer {
+    return FfiConverterTypeMobileSetupReviewRecord.lower(value)
+}
+
+
 /**
  * One message a staged transcript is to contain, stated outright.
  *
@@ -19280,6 +23354,15 @@ public struct MobileStagedChatMessageRecord: Equatable, Hashable {
      * Taken back by its sender: a tombstone, with nothing left to say.
      */
     public var isDeleted: Bool
+    /**
+     * The wire ID it went under, which names it to the other side.
+     */
+    public var wireId: UInt8?
+    /**
+     * Its stream's epoch, for one of ours; `None` for one that arrived,
+     * whose epoch only the session that heard it knew.
+     */
+    public var epoch: UInt16?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -19300,7 +23383,14 @@ public struct MobileStagedChatMessageRecord: Equatable, Hashable {
          */regarding: MobileStagedChatRegarding? = nil,
         /**
          * Taken back by its sender: a tombstone, with nothing left to say.
-         */isDeleted: Bool = false) {
+         */isDeleted: Bool = false,
+        /**
+         * The wire ID it went under, which names it to the other side.
+         */wireId: UInt8? = nil,
+        /**
+         * Its stream's epoch, for one of ours; `None` for one that arrived,
+         * whose epoch only the session that heard it knew.
+         */epoch: UInt16? = nil) {
         self.handle = handle
         self.body = body
         self.outbound = outbound
@@ -19313,6 +23403,8 @@ public struct MobileStagedChatMessageRecord: Equatable, Hashable {
         self.reactions = reactions
         self.regarding = regarding
         self.isDeleted = isDeleted
+        self.wireId = wireId
+        self.epoch = epoch
     }
 
 
@@ -19342,7 +23434,9 @@ public struct FfiConverterTypeMobileStagedChatMessageRecord: FfiConverterRustBuf
                 reception: FfiConverterOptionTypeMobileStoredChatReceptionRecord.read(from: &buf),
                 reactions: FfiConverterSequenceTypeMobileStagedChatReactionRecord.read(from: &buf),
                 regarding: FfiConverterOptionTypeMobileStagedChatRegarding.read(from: &buf),
-                isDeleted: FfiConverterBool.read(from: &buf)
+                isDeleted: FfiConverterBool.read(from: &buf),
+                wireId: FfiConverterOptionUInt8.read(from: &buf),
+                epoch: FfiConverterOptionUInt16.read(from: &buf)
         )
     }
 
@@ -19359,6 +23453,8 @@ public struct FfiConverterTypeMobileStagedChatMessageRecord: FfiConverterRustBuf
         FfiConverterSequenceTypeMobileStagedChatReactionRecord.write(value.reactions, into: &buf)
         FfiConverterOptionTypeMobileStagedChatRegarding.write(value.regarding, into: &buf)
         FfiConverterBool.write(value.isDeleted, into: &buf)
+        FfiConverterOptionUInt8.write(value.wireId, into: &buf)
+        FfiConverterOptionUInt16.write(value.epoch, into: &buf)
     }
 }
 
@@ -19449,22 +23545,29 @@ public func FfiConverterTypeMobileStagedChatReactionRecord_lower(_ value: Mobile
 
 
 /**
- * One property as a device last reported it, and when.
- *
- * The value is the octets that came off the air: what they mean is settled
- * by the ULCP decoders rather than here, so a value cached by one build
- * reads the same in the next. The instant (Unix milliseconds) is what lets
- * a screen date a reading rather than present it as current.
+ * A staged device beside the phone, as device setup lists it.
  */
-public struct MobileStoredCachedPropertyRecord: Equatable, Hashable {
-    public var value: Data
-    public var fetchedAtMs: Int64
+public struct MobileStagedDeviceRecord: Equatable, Hashable {
+    /**
+     * The link identifier its driver's state reports it under.
+     */
+    public var linkId: String
+    /**
+     * What it is called until the phone renames it.
+     */
+    public var name: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(value: Data, fetchedAtMs: Int64) {
-        self.value = value
-        self.fetchedAtMs = fetchedAtMs
+    public init(
+        /**
+         * The link identifier its driver's state reports it under.
+         */linkId: String,
+        /**
+         * What it is called until the phone renames it.
+         */name: String) {
+        self.linkId = linkId
+        self.name = name
     }
 
 
@@ -19473,24 +23576,24 @@ public struct MobileStoredCachedPropertyRecord: Equatable, Hashable {
 }
 
 #if compiler(>=6)
-extension MobileStoredCachedPropertyRecord: Sendable {}
+extension MobileStagedDeviceRecord: Sendable {}
 #endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeMobileStoredCachedPropertyRecord: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStoredCachedPropertyRecord {
+public struct FfiConverterTypeMobileStagedDeviceRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStagedDeviceRecord {
         return
-            try MobileStoredCachedPropertyRecord(
-                value: FfiConverterData.read(from: &buf),
-                fetchedAtMs: FfiConverterInt64.read(from: &buf)
+            try MobileStagedDeviceRecord(
+                linkId: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf)
         )
     }
 
-    public static func write(_ value: MobileStoredCachedPropertyRecord, into buf: inout [UInt8]) {
-        FfiConverterData.write(value.value, into: &buf)
-        FfiConverterInt64.write(value.fetchedAtMs, into: &buf)
+    public static func write(_ value: MobileStagedDeviceRecord, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.linkId, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
     }
 }
 
@@ -19498,15 +23601,15 @@ public struct FfiConverterTypeMobileStoredCachedPropertyRecord: FfiConverterRust
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeMobileStoredCachedPropertyRecord_lift(_ buf: RustBuffer) throws -> MobileStoredCachedPropertyRecord {
-    return try FfiConverterTypeMobileStoredCachedPropertyRecord.lift(buf)
+public func FfiConverterTypeMobileStagedDeviceRecord_lift(_ buf: RustBuffer) throws -> MobileStagedDeviceRecord {
+    return try FfiConverterTypeMobileStagedDeviceRecord.lift(buf)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeMobileStoredCachedPropertyRecord_lower(_ value: MobileStoredCachedPropertyRecord) -> RustBuffer {
-    return FfiConverterTypeMobileStoredCachedPropertyRecord.lower(value)
+public func FfiConverterTypeMobileStagedDeviceRecord_lower(_ value: MobileStagedDeviceRecord) -> RustBuffer {
+    return FfiConverterTypeMobileStagedDeviceRecord.lower(value)
 }
 
 
@@ -21255,98 +25358,6 @@ public func FfiConverterTypeMobileStoredDirectConversationRecord_lower(_ value: 
 
 
 /**
- * What a remote device said it is, kept between openings of its settings.
- *
- * The four things worth learning once: a device's capabilities and firmware
- * version change only when it is reflashed, its hardware never, and its name
- * rarely. Holding them means a later open of a device's settings puts
- * nothing on the air at all. Instants are Unix milliseconds.
- */
-public struct MobileStoredManagementCardRecord: Equatable, Hashable {
-    /**
-     * `PROP_CAPS` verbatim, planned against without asking the device
-     * again.
-     */
-    public var capabilities: Data
-    /**
-     * `PROP_DEV_VERSION`. The key the cached values hang from: different
-     * firmware may hold different properties, so a change here discards
-     * them.
-     */
-    public var deviceVersion: String?
-    public var deviceModel: String?
-    public var deviceName: String?
-    public var fetchedAtMs: Int64
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * `PROP_CAPS` verbatim, planned against without asking the device
-         * again.
-         */capabilities: Data,
-        /**
-         * `PROP_DEV_VERSION`. The key the cached values hang from: different
-         * firmware may hold different properties, so a change here discards
-         * them.
-         */deviceVersion: String?, deviceModel: String?, deviceName: String?, fetchedAtMs: Int64) {
-        self.capabilities = capabilities
-        self.deviceVersion = deviceVersion
-        self.deviceModel = deviceModel
-        self.deviceName = deviceName
-        self.fetchedAtMs = fetchedAtMs
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension MobileStoredManagementCardRecord: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeMobileStoredManagementCardRecord: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStoredManagementCardRecord {
-        return
-            try MobileStoredManagementCardRecord(
-                capabilities: FfiConverterData.read(from: &buf),
-                deviceVersion: FfiConverterOptionString.read(from: &buf),
-                deviceModel: FfiConverterOptionString.read(from: &buf),
-                deviceName: FfiConverterOptionString.read(from: &buf),
-                fetchedAtMs: FfiConverterInt64.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: MobileStoredManagementCardRecord, into buf: inout [UInt8]) {
-        FfiConverterData.write(value.capabilities, into: &buf)
-        FfiConverterOptionString.write(value.deviceVersion, into: &buf)
-        FfiConverterOptionString.write(value.deviceModel, into: &buf)
-        FfiConverterOptionString.write(value.deviceName, into: &buf)
-        FfiConverterInt64.write(value.fetchedAtMs, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeMobileStoredManagementCardRecord_lift(_ buf: RustBuffer) throws -> MobileStoredManagementCardRecord {
-    return try FfiConverterTypeMobileStoredManagementCardRecord.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeMobileStoredManagementCardRecord_lower(_ value: MobileStoredManagementCardRecord) -> RustBuffer {
-    return FfiConverterTypeMobileStoredManagementCardRecord.lower(value)
-}
-
-
-/**
  * A path the person chose for one node, held until `hold_until_ms`.
  *
  * Instants are Unix milliseconds.
@@ -21922,6 +25933,398 @@ public func FfiConverterTypeMobileStoredPeerRepeaterReportRecord_lower(_ value: 
 }
 
 
+public struct MobileTemperatureRowRecord: Equatable, Hashable {
+    public var index: UInt32
+    public var name: String?
+    public var value: MobileTemperatureValue
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(index: UInt32, name: String?, value: MobileTemperatureValue) {
+        self.index = index
+        self.name = name
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileTemperatureRowRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileTemperatureRowRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileTemperatureRowRecord {
+        return
+            try MobileTemperatureRowRecord(
+                index: FfiConverterUInt32.read(from: &buf),
+                name: FfiConverterOptionString.read(from: &buf),
+                value: FfiConverterTypeMobileTemperatureValue.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileTemperatureRowRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.index, into: &buf)
+        FfiConverterOptionString.write(value.name, into: &buf)
+        FfiConverterTypeMobileTemperatureValue.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileTemperatureRowRecord_lift(_ buf: RustBuffer) throws -> MobileTemperatureRowRecord {
+    return try FfiConverterTypeMobileTemperatureRowRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileTemperatureRowRecord_lower(_ value: MobileTemperatureRowRecord) -> RustBuffer {
+    return FfiConverterTypeMobileTemperatureRowRecord.lower(value)
+}
+
+
+/**
+ * The sensors' temperatures, classified for the screen.
+ */
+public struct MobileTemperatureSummaryRecord: Equatable, Hashable {
+    public var rows: [MobileTemperatureRowRecord]
+    /**
+     * Why the readings show no numbers, if they do not.
+     */
+    public var failure: MobilePropertyState?
+    public var names: MobileTemperatureNames
+    public var sampledAtMs: Int64?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(rows: [MobileTemperatureRowRecord],
+        /**
+         * Why the readings show no numbers, if they do not.
+         */failure: MobilePropertyState?, names: MobileTemperatureNames, sampledAtMs: Int64?) {
+        self.rows = rows
+        self.failure = failure
+        self.names = names
+        self.sampledAtMs = sampledAtMs
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileTemperatureSummaryRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileTemperatureSummaryRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileTemperatureSummaryRecord {
+        return
+            try MobileTemperatureSummaryRecord(
+                rows: FfiConverterSequenceTypeMobileTemperatureRowRecord.read(from: &buf),
+                failure: FfiConverterOptionTypeMobilePropertyState.read(from: &buf),
+                names: FfiConverterTypeMobileTemperatureNames.read(from: &buf),
+                sampledAtMs: FfiConverterOptionInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileTemperatureSummaryRecord, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeMobileTemperatureRowRecord.write(value.rows, into: &buf)
+        FfiConverterOptionTypeMobilePropertyState.write(value.failure, into: &buf)
+        FfiConverterTypeMobileTemperatureNames.write(value.names, into: &buf)
+        FfiConverterOptionInt64.write(value.sampledAtMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileTemperatureSummaryRecord_lift(_ buf: RustBuffer) throws -> MobileTemperatureSummaryRecord {
+    return try FfiConverterTypeMobileTemperatureSummaryRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileTemperatureSummaryRecord_lower(_ value: MobileTemperatureSummaryRecord) -> RustBuffer {
+    return FfiConverterTypeMobileTemperatureSummaryRecord.lower(value)
+}
+
+
+/**
+ * Text whose value is text or an identifier: a name, a host, an address.
+ */
+public struct MobileTextField: Equatable, Hashable {
+    public var propertyId: UInt32
+    public var known: Bool
+    public var reported: String
+    public var text: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(propertyId: UInt32, known: Bool, reported: String, text: String) {
+        self.propertyId = propertyId
+        self.known = known
+        self.reported = reported
+        self.text = text
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileTextField: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileTextField: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileTextField {
+        return
+            try MobileTextField(
+                propertyId: FfiConverterUInt32.read(from: &buf),
+                known: FfiConverterBool.read(from: &buf),
+                reported: FfiConverterString.read(from: &buf),
+                text: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileTextField, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.propertyId, into: &buf)
+        FfiConverterBool.write(value.known, into: &buf)
+        FfiConverterString.write(value.reported, into: &buf)
+        FfiConverterString.write(value.text, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileTextField_lift(_ buf: RustBuffer) throws -> MobileTextField {
+    return try FfiConverterTypeMobileTextField.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileTextField_lower(_ value: MobileTextField) -> RustBuffer {
+    return FfiConverterTypeMobileTextField.lower(value)
+}
+
+
+/**
+ * A list of text entries: region names, resolvers.
+ */
+public struct MobileTextListField: Equatable, Hashable {
+    public var propertyId: UInt32
+    public var known: Bool
+    public var reported: [String]
+    public var value: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(propertyId: UInt32, known: Bool, reported: [String], value: [String]) {
+        self.propertyId = propertyId
+        self.known = known
+        self.reported = reported
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileTextListField: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileTextListField: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileTextListField {
+        return
+            try MobileTextListField(
+                propertyId: FfiConverterUInt32.read(from: &buf),
+                known: FfiConverterBool.read(from: &buf),
+                reported: FfiConverterSequenceString.read(from: &buf),
+                value: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileTextListField, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.propertyId, into: &buf)
+        FfiConverterBool.write(value.known, into: &buf)
+        FfiConverterSequenceString.write(value.reported, into: &buf)
+        FfiConverterSequenceString.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileTextListField_lift(_ buf: RustBuffer) throws -> MobileTextListField {
+    return try FfiConverterTypeMobileTextListField.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileTextListField_lower(_ value: MobileTextListField) -> RustBuffer {
+    return FfiConverterTypeMobileTextListField.lower(value)
+}
+
+
+public struct MobileTimeDraft: Equatable, Hashable {
+    public var readingRevision: UInt64
+    /**
+     * A POSIX TZ rule.
+     */
+    public var tzRule: MobileTextField
+    public var time24h: MobileToggleField
+    public var timeTrust: MobileToggleField
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(readingRevision: UInt64,
+        /**
+         * A POSIX TZ rule.
+         */tzRule: MobileTextField, time24h: MobileToggleField, timeTrust: MobileToggleField) {
+        self.readingRevision = readingRevision
+        self.tzRule = tzRule
+        self.time24h = time24h
+        self.timeTrust = timeTrust
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileTimeDraft: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileTimeDraft: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileTimeDraft {
+        return
+            try MobileTimeDraft(
+                readingRevision: FfiConverterUInt64.read(from: &buf),
+                tzRule: FfiConverterTypeMobileTextField.read(from: &buf),
+                time24h: FfiConverterTypeMobileToggleField.read(from: &buf),
+                timeTrust: FfiConverterTypeMobileToggleField.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileTimeDraft, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.readingRevision, into: &buf)
+        FfiConverterTypeMobileTextField.write(value.tzRule, into: &buf)
+        FfiConverterTypeMobileToggleField.write(value.time24h, into: &buf)
+        FfiConverterTypeMobileToggleField.write(value.timeTrust, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileTimeDraft_lift(_ buf: RustBuffer) throws -> MobileTimeDraft {
+    return try FfiConverterTypeMobileTimeDraft.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileTimeDraft_lower(_ value: MobileTimeDraft) -> RustBuffer {
+    return FfiConverterTypeMobileTimeDraft.lower(value)
+}
+
+
+/**
+ * A switch.
+ */
+public struct MobileToggleField: Equatable, Hashable {
+    public var propertyId: UInt32
+    public var known: Bool
+    public var reported: Bool
+    public var value: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(propertyId: UInt32, known: Bool, reported: Bool, value: Bool) {
+        self.propertyId = propertyId
+        self.known = known
+        self.reported = reported
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileToggleField: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileToggleField: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileToggleField {
+        return
+            try MobileToggleField(
+                propertyId: FfiConverterUInt32.read(from: &buf),
+                known: FfiConverterBool.read(from: &buf),
+                reported: FfiConverterBool.read(from: &buf),
+                value: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileToggleField, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.propertyId, into: &buf)
+        FfiConverterBool.write(value.known, into: &buf)
+        FfiConverterBool.write(value.reported, into: &buf)
+        FfiConverterBool.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileToggleField_lift(_ buf: RustBuffer) throws -> MobileToggleField {
+    return try FfiConverterTypeMobileToggleField.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileToggleField_lower(_ value: MobileToggleField) -> RustBuffer {
+    return FfiConverterTypeMobileToggleField.lower(value)
+}
+
+
 /**
  * One repeater's reading of the hop it received a response over. Both
  * fields are absent when the repeater received it over a point-to-point
@@ -22043,6 +26446,228 @@ public func FfiConverterTypeMobileWellKnownChannelRecord_lift(_ buf: RustBuffer)
 #endif
 public func FfiConverterTypeMobileWellKnownChannelRecord_lower(_ value: MobileWellKnownChannelRecord) -> RustBuffer {
     return FfiConverterTypeMobileWellKnownChannelRecord.lower(value)
+}
+
+
+public struct MobileWifiDraft: Equatable, Hashable {
+    public var readingRevision: UInt64
+    public var enabled: MobileToggleField
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(readingRevision: UInt64, enabled: MobileToggleField) {
+        self.readingRevision = readingRevision
+        self.enabled = enabled
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileWifiDraft: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileWifiDraft: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileWifiDraft {
+        return
+            try MobileWifiDraft(
+                readingRevision: FfiConverterUInt64.read(from: &buf),
+                enabled: FfiConverterTypeMobileToggleField.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileWifiDraft, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.readingRevision, into: &buf)
+        FfiConverterTypeMobileToggleField.write(value.enabled, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileWifiDraft_lift(_ buf: RustBuffer) throws -> MobileWifiDraft {
+    return try FfiConverterTypeMobileWifiDraft.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileWifiDraft_lower(_ value: MobileWifiDraft) -> RustBuffer {
+    return FfiConverterTypeMobileWifiDraft.lower(value)
+}
+
+
+/**
+ * What a sheet's entry would send, judged before it is sent.
+ */
+public struct MobileWifiEntryCheckRecord: Equatable, Hashable {
+    /**
+     * The mode takes a credential.
+     */
+    public var takesCredential: Bool
+    /**
+     * An empty credential keeps the stored one.
+     */
+    public var keepsCredential: Bool
+    /**
+     * Something differs from what is stored; always, with nothing stored.
+     */
+    public var changed: Bool
+    /**
+     * Why the entry cannot be sent, if it cannot.
+     */
+    public var problem: MobileWifiEntryProblem?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The mode takes a credential.
+         */takesCredential: Bool,
+        /**
+         * An empty credential keeps the stored one.
+         */keepsCredential: Bool,
+        /**
+         * Something differs from what is stored; always, with nothing stored.
+         */changed: Bool,
+        /**
+         * Why the entry cannot be sent, if it cannot.
+         */problem: MobileWifiEntryProblem?) {
+        self.takesCredential = takesCredential
+        self.keepsCredential = keepsCredential
+        self.changed = changed
+        self.problem = problem
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileWifiEntryCheckRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileWifiEntryCheckRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileWifiEntryCheckRecord {
+        return
+            try MobileWifiEntryCheckRecord(
+                takesCredential: FfiConverterBool.read(from: &buf),
+                keepsCredential: FfiConverterBool.read(from: &buf),
+                changed: FfiConverterBool.read(from: &buf),
+                problem: FfiConverterOptionTypeMobileWifiEntryProblem.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileWifiEntryCheckRecord, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.takesCredential, into: &buf)
+        FfiConverterBool.write(value.keepsCredential, into: &buf)
+        FfiConverterBool.write(value.changed, into: &buf)
+        FfiConverterOptionTypeMobileWifiEntryProblem.write(value.problem, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileWifiEntryCheckRecord_lift(_ buf: RustBuffer) throws -> MobileWifiEntryCheckRecord {
+    return try FfiConverterTypeMobileWifiEntryCheckRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileWifiEntryCheckRecord_lower(_ value: MobileWifiEntryCheckRecord) -> RustBuffer {
+    return FfiConverterTypeMobileWifiEntryCheckRecord.lower(value)
+}
+
+
+/**
+ * The security modes a sheet offers for a network.
+ */
+public struct MobileWifiJoinPlanRecord: Equatable, Hashable {
+    /**
+     * `WIFI_SEC_*` codes, in the order offered; a step-down walks it.
+     */
+    public var choices: Data
+    /**
+     * Modes the network offers that this app cannot set up.
+     */
+    public var unsupported: Data
+    /**
+     * The mode chosen at first.
+     */
+    public var initial: UInt8
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `WIFI_SEC_*` codes, in the order offered; a step-down walks it.
+         */choices: Data,
+        /**
+         * Modes the network offers that this app cannot set up.
+         */unsupported: Data,
+        /**
+         * The mode chosen at first.
+         */initial: UInt8) {
+        self.choices = choices
+        self.unsupported = unsupported
+        self.initial = initial
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileWifiJoinPlanRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileWifiJoinPlanRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileWifiJoinPlanRecord {
+        return
+            try MobileWifiJoinPlanRecord(
+                choices: FfiConverterData.read(from: &buf),
+                unsupported: FfiConverterData.read(from: &buf),
+                initial: FfiConverterUInt8.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileWifiJoinPlanRecord, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.choices, into: &buf)
+        FfiConverterData.write(value.unsupported, into: &buf)
+        FfiConverterUInt8.write(value.initial, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileWifiJoinPlanRecord_lift(_ buf: RustBuffer) throws -> MobileWifiJoinPlanRecord {
+    return try FfiConverterTypeMobileWifiJoinPlanRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileWifiJoinPlanRecord_lower(_ value: MobileWifiJoinPlanRecord) -> RustBuffer {
+    return FfiConverterTypeMobileWifiJoinPlanRecord.lower(value)
 }
 
 
@@ -25680,6 +30305,156 @@ public func FfiConverterTypeUlcpPropertyPushRecord_lower(_ value: UlcpPropertyPu
 
 
 /**
+ * A ULCP protocol version: the major says whether a session can speak to
+ * the device at all, the minor which compatible revision it runs.
+ */
+public struct UlcpProtocolVersionRecord: Equatable, Hashable {
+    public var major: UInt8
+    public var minor: UInt8
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(major: UInt8, minor: UInt8) {
+        self.major = major
+        self.minor = minor
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpProtocolVersionRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpProtocolVersionRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpProtocolVersionRecord {
+        return
+            try UlcpProtocolVersionRecord(
+                major: FfiConverterUInt8.read(from: &buf),
+                minor: FfiConverterUInt8.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UlcpProtocolVersionRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt8.write(value.major, into: &buf)
+        FfiConverterUInt8.write(value.minor, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpProtocolVersionRecord_lift(_ buf: RustBuffer) throws -> UlcpProtocolVersionRecord {
+    return try FfiConverterTypeUlcpProtocolVersionRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpProtocolVersionRecord_lower(_ value: UlcpProtocolVersionRecord) -> RustBuffer {
+    return FfiConverterTypeUlcpProtocolVersionRecord.lower(value)
+}
+
+
+/**
+ * The values a radio editor offers for the settings a device takes from
+ * a short list.
+ */
+public struct UlcpRadioChoicesRecord: Equatable, Hashable {
+    /**
+     * LoRa spreading factors, ascending.
+     */
+    public var spreadingFactors: Data
+    /**
+     * LoRa coding rates, as their denominators, ascending.
+     */
+    public var codingRates: Data
+    /**
+     * Transmit duty limits in `PROP_PHY_DUTY_LIMIT` units, the disabled
+     * value first, then from the loosest limit to the tightest.
+     */
+    public var dutyCycleLimits: [UInt16]
+    /**
+     * LoRa bandwidths in Hz, ascending.
+     */
+    public var bandwidthsHz: [UInt32]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * LoRa spreading factors, ascending.
+         */spreadingFactors: Data,
+        /**
+         * LoRa coding rates, as their denominators, ascending.
+         */codingRates: Data,
+        /**
+         * Transmit duty limits in `PROP_PHY_DUTY_LIMIT` units, the disabled
+         * value first, then from the loosest limit to the tightest.
+         */dutyCycleLimits: [UInt16],
+        /**
+         * LoRa bandwidths in Hz, ascending.
+         */bandwidthsHz: [UInt32]) {
+        self.spreadingFactors = spreadingFactors
+        self.codingRates = codingRates
+        self.dutyCycleLimits = dutyCycleLimits
+        self.bandwidthsHz = bandwidthsHz
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpRadioChoicesRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpRadioChoicesRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpRadioChoicesRecord {
+        return
+            try UlcpRadioChoicesRecord(
+                spreadingFactors: FfiConverterData.read(from: &buf),
+                codingRates: FfiConverterData.read(from: &buf),
+                dutyCycleLimits: FfiConverterSequenceUInt16.read(from: &buf),
+                bandwidthsHz: FfiConverterSequenceUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UlcpRadioChoicesRecord, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.spreadingFactors, into: &buf)
+        FfiConverterData.write(value.codingRates, into: &buf)
+        FfiConverterSequenceUInt16.write(value.dutyCycleLimits, into: &buf)
+        FfiConverterSequenceUInt32.write(value.bandwidthsHz, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpRadioChoicesRecord_lift(_ buf: RustBuffer) throws -> UlcpRadioChoicesRecord {
+    return try FfiConverterTypeUlcpRadioChoicesRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpRadioChoicesRecord_lower(_ value: UlcpRadioChoicesRecord) -> RustBuffer {
+    return FfiConverterTypeUlcpRadioChoicesRecord.lower(value)
+}
+
+
+/**
  * Complete desired live radio configuration. Capability-gated fields must be
  * omitted when the device does not advertise their associated capability.
  */
@@ -26524,6 +31299,27 @@ public struct UlcpSyncRecord: Equatable, Hashable {
      * nothing about them can be verified after a save.
      */
     public var unreadableProperties: [UInt32]
+    /**
+     * `PROP_PROTOCOL_VERSION`'s major and minor, as the session checked
+     * them.
+     */
+    public var protocolVersion: UlcpProtocolVersionRecord?
+    /**
+     * Every capability the device listed (`PROP_CAPS`), as codes, in the
+     * order it listed them.
+     */
+    public var capabilities: [UInt32]
+    /**
+     * `PROP_DEV_VERSION`: the firmware it runs, as the device says it.
+     * `None` when it would not say, and in a lazy session, which does
+     * not ask.
+     */
+    public var deviceVersion: String?
+    /**
+     * `PROP_DEV_MODEL`: its hardware, when it names it. Absent on the
+     * same terms.
+     */
+    public var deviceModel: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -26668,7 +31464,24 @@ public struct UlcpSyncRecord: Equatable, Hashable {
          * unknown setting, not one this phone cannot administer. Their values
          * are absent above, they are left out of configuration writes, and
          * nothing about them can be verified after a save.
-         */unreadableProperties: [UInt32]) {
+         */unreadableProperties: [UInt32],
+        /**
+         * `PROP_PROTOCOL_VERSION`'s major and minor, as the session checked
+         * them.
+         */protocolVersion: UlcpProtocolVersionRecord? = nil,
+        /**
+         * Every capability the device listed (`PROP_CAPS`), as codes, in the
+         * order it listed them.
+         */capabilities: [UInt32] = [],
+        /**
+         * `PROP_DEV_VERSION`: the firmware it runs, as the device says it.
+         * `None` when it would not say, and in a lazy session, which does
+         * not ask.
+         */deviceVersion: String? = nil,
+        /**
+         * `PROP_DEV_MODEL`: its hardware, when it names it. Absent on the
+         * same terms.
+         */deviceModel: String? = nil) {
         self.capabilityCount = capabilityCount
         self.hasHostFiltering = hasHostFiltering
         self.supportsOfflineQueue = supportsOfflineQueue
@@ -26720,6 +31533,10 @@ public struct UlcpSyncRecord: Equatable, Hashable {
         self.gnss = gnss
         self.advert = advert
         self.unreadableProperties = unreadableProperties
+        self.protocolVersion = protocolVersion
+        self.capabilities = capabilities
+        self.deviceVersion = deviceVersion
+        self.deviceModel = deviceModel
     }
 
 
@@ -26788,7 +31605,11 @@ public struct FfiConverterTypeUlcpSyncRecord: FfiConverterRustBuffer {
                 time24h: FfiConverterOptionBool.read(from: &buf),
                 gnss: FfiConverterOptionTypeUlcpGnssSettingsRecord.read(from: &buf),
                 advert: FfiConverterOptionTypeUlcpAdvertSettingsRecord.read(from: &buf),
-                unreadableProperties: FfiConverterSequenceUInt32.read(from: &buf)
+                unreadableProperties: FfiConverterSequenceUInt32.read(from: &buf),
+                protocolVersion: FfiConverterOptionTypeUlcpProtocolVersionRecord.read(from: &buf),
+                capabilities: FfiConverterSequenceUInt32.read(from: &buf),
+                deviceVersion: FfiConverterOptionString.read(from: &buf),
+                deviceModel: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -26844,6 +31665,10 @@ public struct FfiConverterTypeUlcpSyncRecord: FfiConverterRustBuffer {
         FfiConverterOptionTypeUlcpGnssSettingsRecord.write(value.gnss, into: &buf)
         FfiConverterOptionTypeUlcpAdvertSettingsRecord.write(value.advert, into: &buf)
         FfiConverterSequenceUInt32.write(value.unreadableProperties, into: &buf)
+        FfiConverterOptionTypeUlcpProtocolVersionRecord.write(value.protocolVersion, into: &buf)
+        FfiConverterSequenceUInt32.write(value.capabilities, into: &buf)
+        FfiConverterOptionString.write(value.deviceVersion, into: &buf)
+        FfiConverterOptionString.write(value.deviceModel, into: &buf)
     }
 }
 
@@ -27536,6 +32361,81 @@ public func FfiConverterTypeMobileAnnouncementKind_lower(_ value: MobileAnnounce
 
 
 /**
+ * How far an announcement travels.
+ */
+
+public enum MobileAnnouncementReach: Equatable, Hashable {
+
+    /**
+     * The device's own neighbors.
+     */
+    case nearby
+    /**
+     * Flooded across the mesh.
+     */
+    case mesh
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileAnnouncementReach: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileAnnouncementReach: FfiConverterRustBuffer {
+    typealias SwiftType = MobileAnnouncementReach
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileAnnouncementReach {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .nearby
+
+        case 2: return .mesh
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileAnnouncementReach, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .nearby:
+            writeInt(&buf, Int32(1))
+
+
+        case .mesh:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAnnouncementReach_lift(_ buf: RustBuffer) throws -> MobileAnnouncementReach {
+    return try FfiConverterTypeMobileAnnouncementReach.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAnnouncementReach_lower(_ value: MobileAnnouncementReach) -> RustBuffer {
+    return FfiConverterTypeMobileAnnouncementReach.lower(value)
+}
+
+
+
+/**
  * What native code asks to send into a conversation. Text is trimmed;
  * empty text is `InvalidRequest` (a deletion is [`Self::Delete`]).
  */
@@ -27573,6 +32473,12 @@ public enum MobileAppChatRequest: Equatable, Hashable {
      */
     case react(message: MobileStoredChatMessageRefRecord, reaction: MobileReaction?
     )
+    /**
+     * This phone's reaction to either party's message: `reaction`, unless
+     * this phone's stored reaction already reads as it, which withdraws it.
+     */
+    case toggleReaction(message: MobileStoredChatMessageRefRecord, reaction: MobileReaction
+    )
 
 
 
@@ -27607,6 +32513,9 @@ public struct FfiConverterTypeMobileAppChatRequest: FfiConverterRustBuffer {
         )
 
         case 5: return .react(message: try FfiConverterTypeMobileStoredChatMessageRefRecord.read(from: &buf), reaction: try FfiConverterOptionTypeMobileReaction.read(from: &buf)
+        )
+
+        case 6: return .toggleReaction(message: try FfiConverterTypeMobileStoredChatMessageRefRecord.read(from: &buf), reaction: try FfiConverterTypeMobileReaction.read(from: &buf)
         )
 
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -27645,6 +32554,12 @@ public struct FfiConverterTypeMobileAppChatRequest: FfiConverterRustBuffer {
             writeInt(&buf, Int32(5))
             FfiConverterTypeMobileStoredChatMessageRefRecord.write(message, into: &buf)
             FfiConverterOptionTypeMobileReaction.write(reaction, into: &buf)
+
+
+        case let .toggleReaction(message,reaction):
+            writeInt(&buf, Int32(6))
+            FfiConverterTypeMobileStoredChatMessageRefRecord.write(message, into: &buf)
+            FfiConverterTypeMobileReaction.write(reaction, into: &buf)
 
         }
     }
@@ -27688,7 +32603,9 @@ enum MobileAppError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError
     /**
      * The request cannot be made as asked: a key of the wrong length, a
      * path the session cannot carry, a request too large to send, a peer
-     * a conversation still holds, a setting the protocol fixes.
+     * a conversation still holds, a setting the protocol fixes, or an
+     * unnarrowed ask for identities inside the discovery cooldown
+     * (`discovery_wait_ms`).
      */
     case InvalidRequest
     /**
@@ -27746,11 +32663,6 @@ enum MobileAppError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError
      */
     case Unreachable
     /**
-     * The device refused, with its status.
-     */
-    case Refused(status: UInt32
-    )
-    /**
      * The device's answer could not be read.
      */
     case Unreadable
@@ -27758,10 +32670,6 @@ enum MobileAppError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError
      * The operation was cancelled.
      */
     case Cancelled
-    /**
-     * The operation was already used.
-     */
-    case OperationReused
     /**
      * The session could not send.
      */
@@ -27845,20 +32753,16 @@ public struct FfiConverterTypeMobileAppError: FfiConverterRustBuffer {
         case 14: return .NotThisPhone
         case 15: return .NoAnswer
         case 16: return .Unreachable
-        case 17: return .Refused(
+        case 17: return .Unreadable
+        case 18: return .Cancelled
+        case 19: return .SendFailed
+        case 20: return .DfuUnsupported
+        case 21: return .DfuRefused(
             status: try FfiConverterUInt32.read(from: &buf)
             )
-        case 18: return .Unreadable
-        case 19: return .Cancelled
-        case 20: return .OperationReused
-        case 21: return .SendFailed
-        case 22: return .DfuUnsupported
-        case 23: return .DfuRefused(
-            status: try FfiConverterUInt32.read(from: &buf)
-            )
-        case 24: return .DfuUnconfirmed
-        case 25: return .EmergencyNotCertified
-        case 26: return .MessageNotQueued(
+        case 22: return .DfuUnconfirmed
+        case 23: return .EmergencyNotCertified
+        case 24: return .MessageNotQueued(
             recorded: try FfiConverterBool.read(from: &buf)
             )
 
@@ -27941,46 +32845,37 @@ public struct FfiConverterTypeMobileAppError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(16))
 
 
-        case let .Refused(status):
-            writeInt(&buf, Int32(17))
-            FfiConverterUInt32.write(status, into: &buf)
-
-
         case .Unreadable:
-            writeInt(&buf, Int32(18))
+            writeInt(&buf, Int32(17))
 
 
         case .Cancelled:
-            writeInt(&buf, Int32(19))
-
-
-        case .OperationReused:
-            writeInt(&buf, Int32(20))
+            writeInt(&buf, Int32(18))
 
 
         case .SendFailed:
-            writeInt(&buf, Int32(21))
+            writeInt(&buf, Int32(19))
 
 
         case .DfuUnsupported:
-            writeInt(&buf, Int32(22))
+            writeInt(&buf, Int32(20))
 
 
         case let .DfuRefused(status):
-            writeInt(&buf, Int32(23))
+            writeInt(&buf, Int32(21))
             FfiConverterUInt32.write(status, into: &buf)
 
 
         case .DfuUnconfirmed:
-            writeInt(&buf, Int32(24))
+            writeInt(&buf, Int32(22))
 
 
         case .EmergencyNotCertified:
-            writeInt(&buf, Int32(25))
+            writeInt(&buf, Int32(23))
 
 
         case let .MessageNotQueued(recorded):
-            writeInt(&buf, Int32(26))
+            writeInt(&buf, Int32(24))
             FfiConverterBool.write(recorded, into: &buf)
 
         }
@@ -28531,6 +33426,222 @@ public func FfiConverterTypeMobileAppStartFailure_lower(_ value: MobileAppStartF
 
 
 
+public enum MobileApplyResult: Equatable, Hashable {
+
+    case applied
+    case nothingToApply
+    /**
+     * Something edited is invalid; nothing was sent.
+     */
+    case invalid
+    /**
+     * The device refused some values; the reading's refusals say which.
+     */
+    case refused
+    case cancelled
+    case skipped
+    case failed(problem: MobileManagementProblem
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileApplyResult: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileApplyResult: FfiConverterRustBuffer {
+    typealias SwiftType = MobileApplyResult
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileApplyResult {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .applied
+
+        case 2: return .nothingToApply
+
+        case 3: return .invalid
+
+        case 4: return .refused
+
+        case 5: return .cancelled
+
+        case 6: return .skipped
+
+        case 7: return .failed(problem: try FfiConverterTypeMobileManagementProblem.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileApplyResult, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .applied:
+            writeInt(&buf, Int32(1))
+
+
+        case .nothingToApply:
+            writeInt(&buf, Int32(2))
+
+
+        case .invalid:
+            writeInt(&buf, Int32(3))
+
+
+        case .refused:
+            writeInt(&buf, Int32(4))
+
+
+        case .cancelled:
+            writeInt(&buf, Int32(5))
+
+
+        case .skipped:
+            writeInt(&buf, Int32(6))
+
+
+        case let .failed(problem):
+            writeInt(&buf, Int32(7))
+            FfiConverterTypeMobileManagementProblem.write(problem, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileApplyResult_lift(_ buf: RustBuffer) throws -> MobileApplyResult {
+    return try FfiConverterTypeMobileApplyResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileApplyResult_lower(_ value: MobileApplyResult) -> RustBuffer {
+    return FfiConverterTypeMobileApplyResult.lower(value)
+}
+
+
+
+/**
+ * A change Apply should confirm first.
+ */
+
+public enum MobileApplyWarning: Equatable, Hashable {
+
+    /**
+     * Across the mesh, a radio change that can leave the device where it
+     * cannot be reached.
+     */
+    case strandsRadio
+    /**
+     * Across the mesh, the station switched off.
+     */
+    case disablesWifi
+    /**
+     * Across the mesh, a family moved onto a static address.
+     */
+    case changesStaticAddressing
+    /**
+     * Bluetooth switched off on a device reached over Bluetooth.
+     */
+    case disablesBluetooth
+    /**
+     * The pairing window opened.
+     */
+    case opensPairing
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileApplyWarning: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileApplyWarning: FfiConverterRustBuffer {
+    typealias SwiftType = MobileApplyWarning
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileApplyWarning {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .strandsRadio
+
+        case 2: return .disablesWifi
+
+        case 3: return .changesStaticAddressing
+
+        case 4: return .disablesBluetooth
+
+        case 5: return .opensPairing
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileApplyWarning, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .strandsRadio:
+            writeInt(&buf, Int32(1))
+
+
+        case .disablesWifi:
+            writeInt(&buf, Int32(2))
+
+
+        case .changesStaticAddressing:
+            writeInt(&buf, Int32(3))
+
+
+        case .disablesBluetooth:
+            writeInt(&buf, Int32(4))
+
+
+        case .opensPairing:
+            writeInt(&buf, Int32(5))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileApplyWarning_lift(_ buf: RustBuffer) throws -> MobileApplyWarning {
+    return try FfiConverterTypeMobileApplyWarning.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileApplyWarning_lower(_ value: MobileApplyWarning) -> RustBuffer {
+    return FfiConverterTypeMobileApplyWarning.lower(value)
+}
+
+
+
+
 public enum MobileChatDirection: Equatable, Hashable {
 
     case inbound
@@ -29075,6 +34186,283 @@ public func FfiConverterTypeMobileChatSendRequest_lower(_ value: MobileChatSendR
 
 
 /**
+ * What an editor shows beside its fields.
+ */
+
+public enum MobileDraftDetails: Equatable, Hashable {
+
+    case none
+    case radio(
+        /**
+         * The vetted preset the fields spell out; `None` is custom.
+         */presetId: String?,
+        /**
+         * Every parameter a preset sets has been read.
+         */showsPresets: Bool
+    )
+    case identity(
+        /**
+         * The device keeps its own position, so the position and
+         * altitude are not written.
+         */selfPositioning: Bool,
+        /**
+         * What a typed or placed position is encoded to.
+         */encodingPrecision: UInt8,
+        /**
+         * Decimals the coordinate fields show at that precision.
+         */coordinateDecimals: UInt8,
+        /**
+         * The position Apply would leave, decoded: the reported one while
+         * self-positioning. Both `None` for no position.
+         */latitudeDeg: Double?, longitudeDeg: Double?
+    )
+    case repeater(
+        /**
+         * The regions the default-region picker offers: those listed,
+         * and the one the device tags with.
+         */taggableRegions: [String]
+    )
+    case meshCore(
+        /**
+         * The device's identity key may forward MeshCore.
+         */identityAllowed: Bool,
+        /**
+         * The switch cannot be turned on.
+         */toggleLocked: Bool
+    )
+    case bluetooth(
+        /**
+         * Turning Bluetooth off ends the link this phone manages over.
+         */disablesThisLink: Bool
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileDraftDetails: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileDraftDetails: FfiConverterRustBuffer {
+    typealias SwiftType = MobileDraftDetails
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileDraftDetails {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .none
+
+        case 2: return .radio(presetId: try FfiConverterOptionString.read(from: &buf), showsPresets: try FfiConverterBool.read(from: &buf)
+        )
+
+        case 3: return .identity(selfPositioning: try FfiConverterBool.read(from: &buf), encodingPrecision: try FfiConverterUInt8.read(from: &buf), coordinateDecimals: try FfiConverterUInt8.read(from: &buf), latitudeDeg: try FfiConverterOptionDouble.read(from: &buf), longitudeDeg: try FfiConverterOptionDouble.read(from: &buf)
+        )
+
+        case 4: return .repeater(taggableRegions: try FfiConverterSequenceString.read(from: &buf)
+        )
+
+        case 5: return .meshCore(identityAllowed: try FfiConverterBool.read(from: &buf), toggleLocked: try FfiConverterBool.read(from: &buf)
+        )
+
+        case 6: return .bluetooth(disablesThisLink: try FfiConverterBool.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileDraftDetails, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .none:
+            writeInt(&buf, Int32(1))
+
+
+        case let .radio(presetId,showsPresets):
+            writeInt(&buf, Int32(2))
+            FfiConverterOptionString.write(presetId, into: &buf)
+            FfiConverterBool.write(showsPresets, into: &buf)
+
+
+        case let .identity(selfPositioning,encodingPrecision,coordinateDecimals,latitudeDeg,longitudeDeg):
+            writeInt(&buf, Int32(3))
+            FfiConverterBool.write(selfPositioning, into: &buf)
+            FfiConverterUInt8.write(encodingPrecision, into: &buf)
+            FfiConverterUInt8.write(coordinateDecimals, into: &buf)
+            FfiConverterOptionDouble.write(latitudeDeg, into: &buf)
+            FfiConverterOptionDouble.write(longitudeDeg, into: &buf)
+
+
+        case let .repeater(taggableRegions):
+            writeInt(&buf, Int32(4))
+            FfiConverterSequenceString.write(taggableRegions, into: &buf)
+
+
+        case let .meshCore(identityAllowed,toggleLocked):
+            writeInt(&buf, Int32(5))
+            FfiConverterBool.write(identityAllowed, into: &buf)
+            FfiConverterBool.write(toggleLocked, into: &buf)
+
+
+        case let .bluetooth(disablesThisLink):
+            writeInt(&buf, Int32(6))
+            FfiConverterBool.write(disablesThisLink, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileDraftDetails_lift(_ buf: RustBuffer) throws -> MobileDraftDetails {
+    return try FfiConverterTypeMobileDraftDetails.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileDraftDetails_lower(_ value: MobileDraftDetails) -> RustBuffer {
+    return FfiConverterTypeMobileDraftDetails.lower(value)
+}
+
+
+
+/**
+ * Which editor a draft belongs to. Repeater and MeshCore both read and
+ * apply under `UlcpManageCategory::Repeater`, with disjoint properties.
+ */
+
+public enum MobileDraftKind: Equatable, Hashable {
+
+    case radio
+    case identity
+    case repeater
+    case meshCore
+    case wifi
+    case network
+    case bridge
+    case bluetooth
+    case gnss
+    case time
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileDraftKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileDraftKind: FfiConverterRustBuffer {
+    typealias SwiftType = MobileDraftKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileDraftKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .radio
+
+        case 2: return .identity
+
+        case 3: return .repeater
+
+        case 4: return .meshCore
+
+        case 5: return .wifi
+
+        case 6: return .network
+
+        case 7: return .bridge
+
+        case 8: return .bluetooth
+
+        case 9: return .gnss
+
+        case 10: return .time
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileDraftKind, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .radio:
+            writeInt(&buf, Int32(1))
+
+
+        case .identity:
+            writeInt(&buf, Int32(2))
+
+
+        case .repeater:
+            writeInt(&buf, Int32(3))
+
+
+        case .meshCore:
+            writeInt(&buf, Int32(4))
+
+
+        case .wifi:
+            writeInt(&buf, Int32(5))
+
+
+        case .network:
+            writeInt(&buf, Int32(6))
+
+
+        case .bridge:
+            writeInt(&buf, Int32(7))
+
+
+        case .bluetooth:
+            writeInt(&buf, Int32(8))
+
+
+        case .gnss:
+            writeInt(&buf, Int32(9))
+
+
+        case .time:
+            writeInt(&buf, Int32(10))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileDraftKind_lift(_ buf: RustBuffer) throws -> MobileDraftKind {
+    return try FfiConverterTypeMobileDraftKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileDraftKind_lower(_ value: MobileDraftKind) -> RustBuffer {
+    return FfiConverterTypeMobileDraftKind.lower(value)
+}
+
+
+
+/**
  * Stable error categories consumed by platform adapters.
  */
 public
@@ -29353,6 +34741,216 @@ public func FfiConverterTypeMobileError_lower(_ value: MobileError) -> RustBuffe
 
 
 
+public enum MobileFieldProblem: Equatable, Hashable {
+
+    /**
+     * Outside what the property can hold, or what the device takes as a
+     * value of this kind.
+     */
+    case outOfRange
+    case hostInvalid
+    /**
+     * Not 1 to 65,535.
+     */
+    case portInvalid
+    case serverKeyInvalid
+    case groupInvalid
+    /**
+     * Not 1 to 65,535.
+     */
+    case limitInvalid
+    case addressInvalid
+    /**
+     * Missing, or longer than the family's address.
+     */
+    case prefixInvalid
+    case gatewayInvalid
+    case resolverInvalid
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileFieldProblem: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileFieldProblem: FfiConverterRustBuffer {
+    typealias SwiftType = MobileFieldProblem
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileFieldProblem {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .outOfRange
+
+        case 2: return .hostInvalid
+
+        case 3: return .portInvalid
+
+        case 4: return .serverKeyInvalid
+
+        case 5: return .groupInvalid
+
+        case 6: return .limitInvalid
+
+        case 7: return .addressInvalid
+
+        case 8: return .prefixInvalid
+
+        case 9: return .gatewayInvalid
+
+        case 10: return .resolverInvalid
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileFieldProblem, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .outOfRange:
+            writeInt(&buf, Int32(1))
+
+
+        case .hostInvalid:
+            writeInt(&buf, Int32(2))
+
+
+        case .portInvalid:
+            writeInt(&buf, Int32(3))
+
+
+        case .serverKeyInvalid:
+            writeInt(&buf, Int32(4))
+
+
+        case .groupInvalid:
+            writeInt(&buf, Int32(5))
+
+
+        case .limitInvalid:
+            writeInt(&buf, Int32(6))
+
+
+        case .addressInvalid:
+            writeInt(&buf, Int32(7))
+
+
+        case .prefixInvalid:
+            writeInt(&buf, Int32(8))
+
+
+        case .gatewayInvalid:
+            writeInt(&buf, Int32(9))
+
+
+        case .resolverInvalid:
+            writeInt(&buf, Int32(10))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileFieldProblem_lift(_ buf: RustBuffer) throws -> MobileFieldProblem {
+    return try FfiConverterTypeMobileFieldProblem.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileFieldProblem_lower(_ value: MobileFieldProblem) -> RustBuffer {
+    return FfiConverterTypeMobileFieldProblem.lower(value)
+}
+
+
+
+/**
+ * Which of a device's key tables a command edits.
+ */
+
+public enum MobileKeyTable: Equatable, Hashable {
+
+    /**
+     * The nodes the device may hold a secure session with on its own.
+     */
+    case peers
+    /**
+     * The nodes that may manage the device.
+     */
+    case administrators
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileKeyTable: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileKeyTable: FfiConverterRustBuffer {
+    typealias SwiftType = MobileKeyTable
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileKeyTable {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .peers
+
+        case 2: return .administrators
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileKeyTable, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .peers:
+            writeInt(&buf, Int32(1))
+
+
+        case .administrators:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileKeyTable_lift(_ buf: RustBuffer) throws -> MobileKeyTable {
+    return try FfiConverterTypeMobileKeyTable.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileKeyTable_lower(_ value: MobileKeyTable) -> RustBuffer {
+    return FfiConverterTypeMobileKeyTable.lower(value)
+}
+
+
+
+
 public enum MobileLogLevel: Equatable, Hashable {
 
     case error
@@ -29435,6 +35033,615 @@ public func FfiConverterTypeMobileLogLevel_lift(_ buf: RustBuffer) throws -> Mob
 #endif
 public func FfiConverterTypeMobileLogLevel_lower(_ value: MobileLogLevel) -> RustBuffer {
     return FfiConverterTypeMobileLogLevel.lower(value)
+}
+
+
+
+/**
+ * One editor's draft.
+ */
+
+public enum MobileManagementDraft: Equatable, Hashable {
+
+    case radio(draft: MobileRadioDraft
+    )
+    case identity(draft: MobileIdentityDraft
+    )
+    case repeater(draft: MobileRepeaterDraft
+    )
+    case meshCore(draft: MobileMeshCoreDraft
+    )
+    case wifi(draft: MobileWifiDraft
+    )
+    case network(draft: MobileNetworkDraft
+    )
+    case bridge(draft: MobileBridgeDraft
+    )
+    case bluetooth(draft: MobileBluetoothDraft
+    )
+    case gnss(draft: MobileGnssDraft
+    )
+    case time(draft: MobileTimeDraft
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileManagementDraft: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileManagementDraft: FfiConverterRustBuffer {
+    typealias SwiftType = MobileManagementDraft
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileManagementDraft {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .radio(draft: try FfiConverterTypeMobileRadioDraft.read(from: &buf)
+        )
+
+        case 2: return .identity(draft: try FfiConverterTypeMobileIdentityDraft.read(from: &buf)
+        )
+
+        case 3: return .repeater(draft: try FfiConverterTypeMobileRepeaterDraft.read(from: &buf)
+        )
+
+        case 4: return .meshCore(draft: try FfiConverterTypeMobileMeshCoreDraft.read(from: &buf)
+        )
+
+        case 5: return .wifi(draft: try FfiConverterTypeMobileWifiDraft.read(from: &buf)
+        )
+
+        case 6: return .network(draft: try FfiConverterTypeMobileNetworkDraft.read(from: &buf)
+        )
+
+        case 7: return .bridge(draft: try FfiConverterTypeMobileBridgeDraft.read(from: &buf)
+        )
+
+        case 8: return .bluetooth(draft: try FfiConverterTypeMobileBluetoothDraft.read(from: &buf)
+        )
+
+        case 9: return .gnss(draft: try FfiConverterTypeMobileGnssDraft.read(from: &buf)
+        )
+
+        case 10: return .time(draft: try FfiConverterTypeMobileTimeDraft.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileManagementDraft, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .radio(draft):
+            writeInt(&buf, Int32(1))
+            FfiConverterTypeMobileRadioDraft.write(draft, into: &buf)
+
+
+        case let .identity(draft):
+            writeInt(&buf, Int32(2))
+            FfiConverterTypeMobileIdentityDraft.write(draft, into: &buf)
+
+
+        case let .repeater(draft):
+            writeInt(&buf, Int32(3))
+            FfiConverterTypeMobileRepeaterDraft.write(draft, into: &buf)
+
+
+        case let .meshCore(draft):
+            writeInt(&buf, Int32(4))
+            FfiConverterTypeMobileMeshCoreDraft.write(draft, into: &buf)
+
+
+        case let .wifi(draft):
+            writeInt(&buf, Int32(5))
+            FfiConverterTypeMobileWifiDraft.write(draft, into: &buf)
+
+
+        case let .network(draft):
+            writeInt(&buf, Int32(6))
+            FfiConverterTypeMobileNetworkDraft.write(draft, into: &buf)
+
+
+        case let .bridge(draft):
+            writeInt(&buf, Int32(7))
+            FfiConverterTypeMobileBridgeDraft.write(draft, into: &buf)
+
+
+        case let .bluetooth(draft):
+            writeInt(&buf, Int32(8))
+            FfiConverterTypeMobileBluetoothDraft.write(draft, into: &buf)
+
+
+        case let .gnss(draft):
+            writeInt(&buf, Int32(9))
+            FfiConverterTypeMobileGnssDraft.write(draft, into: &buf)
+
+
+        case let .time(draft):
+            writeInt(&buf, Int32(10))
+            FfiConverterTypeMobileTimeDraft.write(draft, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileManagementDraft_lift(_ buf: RustBuffer) throws -> MobileManagementDraft {
+    return try FfiConverterTypeMobileManagementDraft.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileManagementDraft_lower(_ value: MobileManagementDraft) -> RustBuffer {
+    return FfiConverterTypeMobileManagementDraft.lower(value)
+}
+
+
+
+/**
+ * Which link a device is managed over.
+ */
+
+public enum MobileManagementLink: Equatable, Hashable {
+
+    /**
+     * Across the mesh, through the attached radio.
+     */
+    case mesh
+    /**
+     * The attached radio, over its own link.
+     */
+    case companion
+    /**
+     * A device native code holds an administrative link to.
+     */
+    case administrative
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileManagementLink: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileManagementLink: FfiConverterRustBuffer {
+    typealias SwiftType = MobileManagementLink
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileManagementLink {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .mesh
+
+        case 2: return .companion
+
+        case 3: return .administrative
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileManagementLink, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .mesh:
+            writeInt(&buf, Int32(1))
+
+
+        case .companion:
+            writeInt(&buf, Int32(2))
+
+
+        case .administrative:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileManagementLink_lift(_ buf: RustBuffer) throws -> MobileManagementLink {
+    return try FfiConverterTypeMobileManagementLink.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileManagementLink_lower(_ value: MobileManagementLink) -> RustBuffer {
+    return FfiConverterTypeMobileManagementLink.lower(value)
+}
+
+
+
+/**
+ * How a command ended.
+ */
+
+public enum MobileManagementOutcome: Equatable, Hashable {
+
+    case done
+    /**
+     * The operator canceled it.
+     */
+    case cancelled
+    /**
+     * It did not run: the device entered firmware update, or every screen
+     * on it closed.
+     */
+    case skipped
+    case failed(problem: MobileManagementProblem
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileManagementOutcome: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileManagementOutcome: FfiConverterRustBuffer {
+    typealias SwiftType = MobileManagementOutcome
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileManagementOutcome {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .done
+
+        case 2: return .cancelled
+
+        case 3: return .skipped
+
+        case 4: return .failed(problem: try FfiConverterTypeMobileManagementProblem.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileManagementOutcome, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .done:
+            writeInt(&buf, Int32(1))
+
+
+        case .cancelled:
+            writeInt(&buf, Int32(2))
+
+
+        case .skipped:
+            writeInt(&buf, Int32(3))
+
+
+        case let .failed(problem):
+            writeInt(&buf, Int32(4))
+            FfiConverterTypeMobileManagementProblem.write(problem, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileManagementOutcome_lift(_ buf: RustBuffer) throws -> MobileManagementOutcome {
+    return try FfiConverterTypeMobileManagementOutcome.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileManagementOutcome_lower(_ value: MobileManagementOutcome) -> RustBuffer {
+    return FfiConverterTypeMobileManagementOutcome.lower(value)
+}
+
+
+
+/**
+ * What went wrong, for the status bar and a screen's alerts. Native code
+ * words each case.
+ */
+
+public enum MobileManagementProblem: Equatable, Hashable {
+
+    /**
+     * The request was acknowledged, then nothing: a lost answer, or this
+     * phone is not one of its administrators.
+     */
+    case noAnswer
+    /**
+     * The request was never acknowledged.
+     */
+    case unreachable
+    case refused(refusal: MobileRefusal
+    )
+    /**
+     * An answer this build cannot read.
+     */
+    case unreadable
+    /**
+     * No link to send through: the radio left, the link failed, or the
+     * driver stopped.
+     */
+    case noRadio
+    /**
+     * The radio has as many exchanges waiting as it takes.
+     */
+    case radioBusy
+    /**
+     * The device's table is full.
+     */
+    case tableFull
+    /**
+     * The device lacks what the request needs.
+     */
+    case unsupported
+    case dfuUnsupported
+    case dfuRefused(status: UInt32
+    )
+    case dfuUnconfirmed
+    /**
+     * Some values were refused, so nothing was saved; with `saving`, the
+     * ones taken are running unsaved.
+     */
+    case notAllApplied(saving: Bool
+    )
+    /**
+     * This app could not build the request.
+     */
+    case notBuilt
+    /**
+     * No identity is running.
+     */
+    case notRunning
+    /**
+     * No owner is set.
+     */
+    case noOwner
+    /**
+     * The attached radio is not this phone's.
+     */
+    case notThisPhone
+    /**
+     * What the command names is not stored.
+     */
+    case notFound
+    /**
+     * The request cannot be made as asked.
+     */
+    case invalidRequest
+    /**
+     * The mesh session could not send.
+     */
+    case sendFailed
+    /**
+     * The core is starting, erasing or stopping.
+     */
+    case busy
+    /**
+     * The core stopped.
+     */
+    case stopped
+    /**
+     * Any other failure.
+     */
+    case other
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileManagementProblem: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileManagementProblem: FfiConverterRustBuffer {
+    typealias SwiftType = MobileManagementProblem
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileManagementProblem {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .noAnswer
+
+        case 2: return .unreachable
+
+        case 3: return .refused(refusal: try FfiConverterTypeMobileRefusal.read(from: &buf)
+        )
+
+        case 4: return .unreadable
+
+        case 5: return .noRadio
+
+        case 6: return .radioBusy
+
+        case 7: return .tableFull
+
+        case 8: return .unsupported
+
+        case 9: return .dfuUnsupported
+
+        case 10: return .dfuRefused(status: try FfiConverterUInt32.read(from: &buf)
+        )
+
+        case 11: return .dfuUnconfirmed
+
+        case 12: return .notAllApplied(saving: try FfiConverterBool.read(from: &buf)
+        )
+
+        case 13: return .notBuilt
+
+        case 14: return .notRunning
+
+        case 15: return .noOwner
+
+        case 16: return .notThisPhone
+
+        case 17: return .notFound
+
+        case 18: return .invalidRequest
+
+        case 19: return .sendFailed
+
+        case 20: return .busy
+
+        case 21: return .stopped
+
+        case 22: return .other
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileManagementProblem, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .noAnswer:
+            writeInt(&buf, Int32(1))
+
+
+        case .unreachable:
+            writeInt(&buf, Int32(2))
+
+
+        case let .refused(refusal):
+            writeInt(&buf, Int32(3))
+            FfiConverterTypeMobileRefusal.write(refusal, into: &buf)
+
+
+        case .unreadable:
+            writeInt(&buf, Int32(4))
+
+
+        case .noRadio:
+            writeInt(&buf, Int32(5))
+
+
+        case .radioBusy:
+            writeInt(&buf, Int32(6))
+
+
+        case .tableFull:
+            writeInt(&buf, Int32(7))
+
+
+        case .unsupported:
+            writeInt(&buf, Int32(8))
+
+
+        case .dfuUnsupported:
+            writeInt(&buf, Int32(9))
+
+
+        case let .dfuRefused(status):
+            writeInt(&buf, Int32(10))
+            FfiConverterUInt32.write(status, into: &buf)
+
+
+        case .dfuUnconfirmed:
+            writeInt(&buf, Int32(11))
+
+
+        case let .notAllApplied(saving):
+            writeInt(&buf, Int32(12))
+            FfiConverterBool.write(saving, into: &buf)
+
+
+        case .notBuilt:
+            writeInt(&buf, Int32(13))
+
+
+        case .notRunning:
+            writeInt(&buf, Int32(14))
+
+
+        case .noOwner:
+            writeInt(&buf, Int32(15))
+
+
+        case .notThisPhone:
+            writeInt(&buf, Int32(16))
+
+
+        case .notFound:
+            writeInt(&buf, Int32(17))
+
+
+        case .invalidRequest:
+            writeInt(&buf, Int32(18))
+
+
+        case .sendFailed:
+            writeInt(&buf, Int32(19))
+
+
+        case .busy:
+            writeInt(&buf, Int32(20))
+
+
+        case .stopped:
+            writeInt(&buf, Int32(21))
+
+
+        case .other:
+            writeInt(&buf, Int32(22))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileManagementProblem_lift(_ buf: RustBuffer) throws -> MobileManagementProblem {
+    return try FfiConverterTypeMobileManagementProblem.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileManagementProblem_lower(_ value: MobileManagementProblem) -> RustBuffer {
+    return FfiConverterTypeMobileManagementProblem.lower(value)
 }
 
 
@@ -30455,6 +36662,131 @@ public func FfiConverterTypeMobileNotificationEventRecord_lower(_ value: MobileN
 
 
 /**
+ * What a read learned of one property.
+ */
+
+public enum MobilePropertyState: Equatable, Hashable {
+
+    case notRead
+    /**
+     * Octets decoded into the reading's properties.
+     */
+    case present
+    /**
+     * The device holds nothing (zero octets).
+     */
+    case empty
+    /**
+     * Octets this build cannot decode.
+     */
+    case invalid
+    case refused(refusal: MobileRefusal
+    )
+    /**
+     * The device answered the request without this property.
+     */
+    case noResponse
+    /**
+     * The request failed.
+     */
+    case failed(problem: MobileManagementProblem
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobilePropertyState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobilePropertyState: FfiConverterRustBuffer {
+    typealias SwiftType = MobilePropertyState
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobilePropertyState {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .notRead
+
+        case 2: return .present
+
+        case 3: return .empty
+
+        case 4: return .invalid
+
+        case 5: return .refused(refusal: try FfiConverterTypeMobileRefusal.read(from: &buf)
+        )
+
+        case 6: return .noResponse
+
+        case 7: return .failed(problem: try FfiConverterTypeMobileManagementProblem.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobilePropertyState, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .notRead:
+            writeInt(&buf, Int32(1))
+
+
+        case .present:
+            writeInt(&buf, Int32(2))
+
+
+        case .empty:
+            writeInt(&buf, Int32(3))
+
+
+        case .invalid:
+            writeInt(&buf, Int32(4))
+
+
+        case let .refused(refusal):
+            writeInt(&buf, Int32(5))
+            FfiConverterTypeMobileRefusal.write(refusal, into: &buf)
+
+
+        case .noResponse:
+            writeInt(&buf, Int32(6))
+
+
+        case let .failed(problem):
+            writeInt(&buf, Int32(7))
+            FfiConverterTypeMobileManagementProblem.write(problem, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobilePropertyState_lift(_ buf: RustBuffer) throws -> MobilePropertyState {
+    return try FfiConverterTypeMobilePropertyState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobilePropertyState_lower(_ value: MobilePropertyState) -> RustBuffer {
+    return FfiConverterTypeMobilePropertyState.lower(value)
+}
+
+
+
+/**
  * What a queued frame is, as far as a notification is concerned.
  */
 
@@ -31376,6 +37708,237 @@ public func FfiConverterTypeMobileReaction_lower(_ value: MobileReaction) -> Rus
 
 
 /**
+ * What a refusal's status means.
+ */
+
+public enum MobileRefusalReason: Equatable, Hashable {
+
+    /**
+     * `UNIMPLEMENTED`.
+     */
+    case notImplemented
+    /**
+     * `PROP_NOT_FOUND`.
+     */
+    case noSuchProperty
+    /**
+     * `INVALID_ARGUMENT`.
+     */
+    case outOfRange
+    /**
+     * `INVALID_STATE`.
+     */
+    case notNow
+    /**
+     * `NOMEM`.
+     */
+    case tooLarge
+    /**
+     * `IN_PROGRESS` or `BUSY`.
+     */
+    case busy
+    /**
+     * `NOT_PERMITTED`.
+     */
+    case notPermitted
+    /**
+     * A value missing with no status in its place.
+     */
+    case noStatus
+    /**
+     * Any other status; native code names it.
+     */
+    case other
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRefusalReason: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRefusalReason: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRefusalReason
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRefusalReason {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .notImplemented
+
+        case 2: return .noSuchProperty
+
+        case 3: return .outOfRange
+
+        case 4: return .notNow
+
+        case 5: return .tooLarge
+
+        case 6: return .busy
+
+        case 7: return .notPermitted
+
+        case 8: return .noStatus
+
+        case 9: return .other
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRefusalReason, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .notImplemented:
+            writeInt(&buf, Int32(1))
+
+
+        case .noSuchProperty:
+            writeInt(&buf, Int32(2))
+
+
+        case .outOfRange:
+            writeInt(&buf, Int32(3))
+
+
+        case .notNow:
+            writeInt(&buf, Int32(4))
+
+
+        case .tooLarge:
+            writeInt(&buf, Int32(5))
+
+
+        case .busy:
+            writeInt(&buf, Int32(6))
+
+
+        case .notPermitted:
+            writeInt(&buf, Int32(7))
+
+
+        case .noStatus:
+            writeInt(&buf, Int32(8))
+
+
+        case .other:
+            writeInt(&buf, Int32(9))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRefusalReason_lift(_ buf: RustBuffer) throws -> MobileRefusalReason {
+    return try FfiConverterTypeMobileRefusalReason.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRefusalReason_lower(_ value: MobileRefusalReason) -> RustBuffer {
+    return FfiConverterTypeMobileRefusalReason.lower(value)
+}
+
+
+
+/**
+ * Why a region could not be added.
+ */
+public
+enum MobileRegionEntryProblem: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
+
+
+
+    /**
+     * Not a region name the device takes.
+     */
+    case Invalid
+    /**
+     * Already listed, exactly.
+     */
+    case AlreadyListed
+
+
+
+
+
+
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+
+}
+
+#if compiler(>=6)
+extension MobileRegionEntryProblem: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRegionEntryProblem: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRegionEntryProblem
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRegionEntryProblem {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+
+
+
+        case 1: return .Invalid
+        case 2: return .AlreadyListed
+
+         default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRegionEntryProblem, into buf: inout [UInt8]) {
+        switch value {
+
+
+
+
+
+        case .Invalid:
+            writeInt(&buf, Int32(1))
+
+
+        case .AlreadyListed:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRegionEntryProblem_lift(_ buf: RustBuffer) throws -> MobileRegionEntryProblem {
+    return try FfiConverterTypeMobileRegionEntryProblem.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRegionEntryProblem_lower(_ value: MobileRegionEntryProblem) -> RustBuffer {
+    return FfiConverterTypeMobileRegionEntryProblem.lower(value)
+}
+
+
+/**
  * Anything that can go wrong opening or consulting a region database.
  */
 public
@@ -31595,6 +38158,1192 @@ public func FfiConverterTypeMobileRegionMembership_lower(_ value: MobileRegionMe
 
 
 /**
+ * What is known of whether a peer forwards.
+ */
+
+public enum MobileRepeaterEvidence: Equatable, Hashable {
+
+    /**
+     * It advertised forwarding, or is stored as a repeater or bridge.
+     */
+    case yes
+    /**
+     * Nothing says what it is.
+     */
+    case unknown
+    /**
+     * It advertised, or is stored as, something that does not forward.
+     */
+    case no
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRepeaterEvidence: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRepeaterEvidence: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRepeaterEvidence
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRepeaterEvidence {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .yes
+
+        case 2: return .unknown
+
+        case 3: return .no
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRepeaterEvidence, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .yes:
+            writeInt(&buf, Int32(1))
+
+
+        case .unknown:
+            writeInt(&buf, Int32(2))
+
+
+        case .no:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRepeaterEvidence_lift(_ buf: RustBuffer) throws -> MobileRepeaterEvidence {
+    return try FfiConverterTypeMobileRepeaterEvidence.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRepeaterEvidence_lower(_ value: MobileRepeaterEvidence) -> RustBuffer {
+    return FfiConverterTypeMobileRepeaterEvidence.lower(value)
+}
+
+
+
+/**
+ * What the operator is setting a device up as.
+ */
+
+public enum MobileSetupGoal: Equatable, Hashable {
+
+    /**
+     * A mobile node that carries its own identity and does not forward.
+     */
+    case tracker
+    /**
+     * A node that forwards traffic for the mesh.
+     */
+    case repeater
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileSetupGoal: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileSetupGoal: FfiConverterRustBuffer {
+    typealias SwiftType = MobileSetupGoal
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileSetupGoal {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .tracker
+
+        case 2: return .repeater
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileSetupGoal, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .tracker:
+            writeInt(&buf, Int32(1))
+
+
+        case .repeater:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSetupGoal_lift(_ buf: RustBuffer) throws -> MobileSetupGoal {
+    return try FfiConverterTypeMobileSetupGoal.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSetupGoal_lower(_ value: MobileSetupGoal) -> RustBuffer {
+    return FfiConverterTypeMobileSetupGoal.lower(value)
+}
+
+
+
+/**
+ * What the goal will not manage on this device. Not a warning.
+ */
+
+public enum MobileSetupNote: Equatable, Hashable {
+
+    /**
+     * No positioning receiver: it will not report where it is.
+     */
+    case noPositioning
+    /**
+     * It cannot be told a role: it advertises the one it derives.
+     */
+    case noRole
+    /**
+     * It keeps no clock: its time zone is not set.
+     */
+    case noClock
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileSetupNote: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileSetupNote: FfiConverterRustBuffer {
+    typealias SwiftType = MobileSetupNote
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileSetupNote {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .noPositioning
+
+        case 2: return .noRole
+
+        case 3: return .noClock
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileSetupNote, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .noPositioning:
+            writeInt(&buf, Int32(1))
+
+
+        case .noRole:
+            writeInt(&buf, Int32(2))
+
+
+        case .noClock:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSetupNote_lift(_ buf: RustBuffer) throws -> MobileSetupNote {
+    return try FfiConverterTypeMobileSetupNote.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSetupNote_lower(_ value: MobileSetupNote) -> RustBuffer {
+    return FfiConverterTypeMobileSetupNote.lower(value)
+}
+
+
+
+/**
+ * Where the radio profile on the draft came from.
+ */
+
+public enum MobileSetupProfile: Equatable, Hashable {
+
+    /**
+     * From this phone's radio, reduced to what the device accepts.
+     * `companion_name` is that radio's own name, when it has one.
+     */
+    case copied(companionName: String?
+    )
+    /**
+     * Nothing copied; the operator must choose before Apply.
+     */
+    case mustChoose(gap: MobileSetupProfileGap
+    )
+    /**
+     * Nothing copied and nothing safe to offer; the device keeps its own.
+     */
+    case leftAsFound(gap: MobileSetupProfileGap
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileSetupProfile: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileSetupProfile: FfiConverterRustBuffer {
+    typealias SwiftType = MobileSetupProfile
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileSetupProfile {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .copied(companionName: try FfiConverterOptionString.read(from: &buf)
+        )
+
+        case 2: return .mustChoose(gap: try FfiConverterTypeMobileSetupProfileGap.read(from: &buf)
+        )
+
+        case 3: return .leftAsFound(gap: try FfiConverterTypeMobileSetupProfileGap.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileSetupProfile, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .copied(companionName):
+            writeInt(&buf, Int32(1))
+            FfiConverterOptionString.write(companionName, into: &buf)
+
+
+        case let .mustChoose(gap):
+            writeInt(&buf, Int32(2))
+            FfiConverterTypeMobileSetupProfileGap.write(gap, into: &buf)
+
+
+        case let .leftAsFound(gap):
+            writeInt(&buf, Int32(3))
+            FfiConverterTypeMobileSetupProfileGap.write(gap, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSetupProfile_lift(_ buf: RustBuffer) throws -> MobileSetupProfile {
+    return try FfiConverterTypeMobileSetupProfile.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSetupProfile_lower(_ value: MobileSetupProfile) -> RustBuffer {
+    return FfiConverterTypeMobileSetupProfile.lower(value)
+}
+
+
+
+/**
+ * Why no profile could be copied.
+ */
+
+public enum MobileSetupProfileGap: Equatable, Hashable {
+
+    /**
+     * This phone has no radio, or it has not reported its profile.
+     */
+    case noCompanion
+    /**
+     * This phone's radio reported no modem profile for a device that
+     * needs one.
+     */
+    case companionHasNoModemProfile
+    /**
+     * The device would not report its modem profile, so none is copied
+     * onto it.
+     */
+    case deviceModemUnreported
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileSetupProfileGap: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileSetupProfileGap: FfiConverterRustBuffer {
+    typealias SwiftType = MobileSetupProfileGap
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileSetupProfileGap {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .noCompanion
+
+        case 2: return .companionHasNoModemProfile
+
+        case 3: return .deviceModemUnreported
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileSetupProfileGap, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .noCompanion:
+            writeInt(&buf, Int32(1))
+
+
+        case .companionHasNoModemProfile:
+            writeInt(&buf, Int32(2))
+
+
+        case .deviceModemUnreported:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSetupProfileGap_lift(_ buf: RustBuffer) throws -> MobileSetupProfileGap {
+    return try FfiConverterTypeMobileSetupProfileGap.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSetupProfileGap_lower(_ value: MobileSetupProfileGap) -> RustBuffer {
+    return FfiConverterTypeMobileSetupProfileGap.lower(value)
+}
+
+
+
+/**
+ * One radio parameter `setup_set_radio_parameter` writes.
+ */
+
+public enum MobileSetupRadioParameter: Equatable, Hashable {
+
+    case frequency
+    case transmitPower
+    case bandwidth
+    case spreadingFactor
+    case codingRate
+    case dutyLimit
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileSetupRadioParameter: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileSetupRadioParameter: FfiConverterRustBuffer {
+    typealias SwiftType = MobileSetupRadioParameter
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileSetupRadioParameter {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .frequency
+
+        case 2: return .transmitPower
+
+        case 3: return .bandwidth
+
+        case 4: return .spreadingFactor
+
+        case 5: return .codingRate
+
+        case 6: return .dutyLimit
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileSetupRadioParameter, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .frequency:
+            writeInt(&buf, Int32(1))
+
+
+        case .transmitPower:
+            writeInt(&buf, Int32(2))
+
+
+        case .bandwidth:
+            writeInt(&buf, Int32(3))
+
+
+        case .spreadingFactor:
+            writeInt(&buf, Int32(4))
+
+
+        case .codingRate:
+            writeInt(&buf, Int32(5))
+
+
+        case .dutyLimit:
+            writeInt(&buf, Int32(6))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSetupRadioParameter_lift(_ buf: RustBuffer) throws -> MobileSetupRadioParameter {
+    return try FfiConverterTypeMobileSetupRadioParameter.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSetupRadioParameter_lower(_ value: MobileSetupRadioParameter) -> RustBuffer {
+    return FfiConverterTypeMobileSetupRadioParameter.lower(value)
+}
+
+
+
+/**
+ * Why a device cannot serve the goal.
+ */
+
+public enum MobileSetupRefusal: Equatable, Hashable {
+
+    /**
+     * The device attached but reported no settings.
+     */
+    case notReported
+    /**
+     * Tracker: no device identity of its own.
+     */
+    case noDeviceIdentity
+    /**
+     * Tracker: cannot announce itself on a schedule.
+     */
+    case noAdvertSchedule
+    /**
+     * Repeater: cannot forward.
+     */
+    case cannotForward
+    /**
+     * Repeater: would not report its forwarding policy.
+     */
+    case forwardingUnreported
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileSetupRefusal: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileSetupRefusal: FfiConverterRustBuffer {
+    typealias SwiftType = MobileSetupRefusal
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileSetupRefusal {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .notReported
+
+        case 2: return .noDeviceIdentity
+
+        case 3: return .noAdvertSchedule
+
+        case 4: return .cannotForward
+
+        case 5: return .forwardingUnreported
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileSetupRefusal, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .notReported:
+            writeInt(&buf, Int32(1))
+
+
+        case .noDeviceIdentity:
+            writeInt(&buf, Int32(2))
+
+
+        case .noAdvertSchedule:
+            writeInt(&buf, Int32(3))
+
+
+        case .cannotForward:
+            writeInt(&buf, Int32(4))
+
+
+        case .forwardingUnreported:
+            writeInt(&buf, Int32(5))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSetupRefusal_lift(_ buf: RustBuffer) throws -> MobileSetupRefusal {
+    return try FfiConverterTypeMobileSetupRefusal.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSetupRefusal_lower(_ value: MobileSetupRefusal) -> RustBuffer {
+    return FfiConverterTypeMobileSetupRefusal.lower(value)
+}
+
+
+
+
+public enum MobileSetupResult: Equatable, Hashable {
+
+    /**
+     * Saved and read back as asked. `clock_failed`: the goal sets the
+     * clock and the device would not take it.
+     */
+    case configured(clockFailed: Bool
+    )
+    /**
+     * Saved, and then reported `setting` back differently.
+     */
+    case reportedDifferently(setting: MobileSetupSetting
+    )
+    /**
+     * Configured, but the administrator list did not take.
+     */
+    case administratorsNotApplied(problem: MobileManagementProblem
+    )
+    /**
+     * The configuration did not land, or may not have (by `problem`).
+     */
+    case notApplied(problem: MobileManagementProblem
+    )
+    /**
+     * Saved, then the read-back failed: nothing could be verified.
+     */
+    case notVerified(problem: MobileManagementProblem
+    )
+    /**
+     * Stopped after the configuration was sent. `configured` false:
+     * during the configuration pass, so the device may or may not have
+     * kept it; true: after the device confirmed it, so nothing was
+     * verified.
+     */
+    case interrupted(configured: Bool
+    )
+    /**
+     * Review would not allow it; nothing was sent.
+     */
+    case invalid
+    /**
+     * Stopped before anything was sent.
+     */
+    case cancelled
+    /**
+     * The device entered firmware update; nothing was sent.
+     */
+    case skipped
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileSetupResult: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileSetupResult: FfiConverterRustBuffer {
+    typealias SwiftType = MobileSetupResult
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileSetupResult {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .configured(clockFailed: try FfiConverterBool.read(from: &buf)
+        )
+
+        case 2: return .reportedDifferently(setting: try FfiConverterTypeMobileSetupSetting.read(from: &buf)
+        )
+
+        case 3: return .administratorsNotApplied(problem: try FfiConverterTypeMobileManagementProblem.read(from: &buf)
+        )
+
+        case 4: return .notApplied(problem: try FfiConverterTypeMobileManagementProblem.read(from: &buf)
+        )
+
+        case 5: return .notVerified(problem: try FfiConverterTypeMobileManagementProblem.read(from: &buf)
+        )
+
+        case 6: return .interrupted(configured: try FfiConverterBool.read(from: &buf)
+        )
+
+        case 7: return .invalid
+
+        case 8: return .cancelled
+
+        case 9: return .skipped
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileSetupResult, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .configured(clockFailed):
+            writeInt(&buf, Int32(1))
+            FfiConverterBool.write(clockFailed, into: &buf)
+
+
+        case let .reportedDifferently(setting):
+            writeInt(&buf, Int32(2))
+            FfiConverterTypeMobileSetupSetting.write(setting, into: &buf)
+
+
+        case let .administratorsNotApplied(problem):
+            writeInt(&buf, Int32(3))
+            FfiConverterTypeMobileManagementProblem.write(problem, into: &buf)
+
+
+        case let .notApplied(problem):
+            writeInt(&buf, Int32(4))
+            FfiConverterTypeMobileManagementProblem.write(problem, into: &buf)
+
+
+        case let .notVerified(problem):
+            writeInt(&buf, Int32(5))
+            FfiConverterTypeMobileManagementProblem.write(problem, into: &buf)
+
+
+        case let .interrupted(configured):
+            writeInt(&buf, Int32(6))
+            FfiConverterBool.write(configured, into: &buf)
+
+
+        case .invalid:
+            writeInt(&buf, Int32(7))
+
+
+        case .cancelled:
+            writeInt(&buf, Int32(8))
+
+
+        case .skipped:
+            writeInt(&buf, Int32(9))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSetupResult_lift(_ buf: RustBuffer) throws -> MobileSetupResult {
+    return try FfiConverterTypeMobileSetupResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSetupResult_lower(_ value: MobileSetupResult) -> RustBuffer {
+    return FfiConverterTypeMobileSetupResult.lower(value)
+}
+
+
+
+/**
+ * The settings the goal asks about, in the order the sheet shows them.
+ * Link notices, notes, host state and the apply status are native
+ * layout, not goal policy.
+ */
+
+public enum MobileSetupSection: Equatable, Hashable {
+
+    case name
+    case forwarding
+    case discoverability
+    case positioning
+    case announcements
+    case radioProfile
+    case administrators
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileSetupSection: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileSetupSection: FfiConverterRustBuffer {
+    typealias SwiftType = MobileSetupSection
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileSetupSection {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .name
+
+        case 2: return .forwarding
+
+        case 3: return .discoverability
+
+        case 4: return .positioning
+
+        case 5: return .announcements
+
+        case 6: return .radioProfile
+
+        case 7: return .administrators
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileSetupSection, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .name:
+            writeInt(&buf, Int32(1))
+
+
+        case .forwarding:
+            writeInt(&buf, Int32(2))
+
+
+        case .discoverability:
+            writeInt(&buf, Int32(3))
+
+
+        case .positioning:
+            writeInt(&buf, Int32(4))
+
+
+        case .announcements:
+            writeInt(&buf, Int32(5))
+
+
+        case .radioProfile:
+            writeInt(&buf, Int32(6))
+
+
+        case .administrators:
+            writeInt(&buf, Int32(7))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSetupSection_lift(_ buf: RustBuffer) throws -> MobileSetupSection {
+    return try FfiConverterTypeMobileSetupSection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSetupSection_lower(_ value: MobileSetupSection) -> RustBuffer {
+    return FfiConverterTypeMobileSetupSection.lower(value)
+}
+
+
+
+/**
+ * A setting as the operator knows it: what a mismatch names, and what a
+ * review problem on a setting with no box of its own names.
+ */
+
+public enum MobileSetupSetting: Equatable, Hashable {
+
+    case radioSwitch
+    case frequency
+    case bandwidth
+    case spreadingFactor
+    case codingRate
+    case transmitLimit
+    case advertisedRole
+    case mobility
+    case discoverability
+    case forwardingPolicy
+    case meshCoreForwarding
+    case timeZone
+    case clockFormat
+    case positioning
+    case announcements
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileSetupSetting: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileSetupSetting: FfiConverterRustBuffer {
+    typealias SwiftType = MobileSetupSetting
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileSetupSetting {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .radioSwitch
+
+        case 2: return .frequency
+
+        case 3: return .bandwidth
+
+        case 4: return .spreadingFactor
+
+        case 5: return .codingRate
+
+        case 6: return .transmitLimit
+
+        case 7: return .advertisedRole
+
+        case 8: return .mobility
+
+        case 9: return .discoverability
+
+        case 10: return .forwardingPolicy
+
+        case 11: return .meshCoreForwarding
+
+        case 12: return .timeZone
+
+        case 13: return .clockFormat
+
+        case 14: return .positioning
+
+        case 15: return .announcements
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileSetupSetting, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .radioSwitch:
+            writeInt(&buf, Int32(1))
+
+
+        case .frequency:
+            writeInt(&buf, Int32(2))
+
+
+        case .bandwidth:
+            writeInt(&buf, Int32(3))
+
+
+        case .spreadingFactor:
+            writeInt(&buf, Int32(4))
+
+
+        case .codingRate:
+            writeInt(&buf, Int32(5))
+
+
+        case .transmitLimit:
+            writeInt(&buf, Int32(6))
+
+
+        case .advertisedRole:
+            writeInt(&buf, Int32(7))
+
+
+        case .mobility:
+            writeInt(&buf, Int32(8))
+
+
+        case .discoverability:
+            writeInt(&buf, Int32(9))
+
+
+        case .forwardingPolicy:
+            writeInt(&buf, Int32(10))
+
+
+        case .meshCoreForwarding:
+            writeInt(&buf, Int32(11))
+
+
+        case .timeZone:
+            writeInt(&buf, Int32(12))
+
+
+        case .clockFormat:
+            writeInt(&buf, Int32(13))
+
+
+        case .positioning:
+            writeInt(&buf, Int32(14))
+
+
+        case .announcements:
+            writeInt(&buf, Int32(15))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSetupSetting_lift(_ buf: RustBuffer) throws -> MobileSetupSetting {
+    return try FfiConverterTypeMobileSetupSetting.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSetupSetting_lower(_ value: MobileSetupSetting) -> RustBuffer {
+    return FfiConverterTypeMobileSetupSetting.lower(value)
+}
+
+
+
+/**
+ * A setting the device would not report, so the sheet neither shows nor
+ * writes it.
+ */
+
+public enum MobileSetupUnreadable: Equatable, Hashable {
+
+    case modemProfile
+    case transmitLimit
+    case advertisedIdentity
+    case discoverability
+    case forwardingPolicy
+    case meshCoreForwarding
+    case positioning
+    case announcements
+    case timeZone
+    case administrators
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileSetupUnreadable: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileSetupUnreadable: FfiConverterRustBuffer {
+    typealias SwiftType = MobileSetupUnreadable
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileSetupUnreadable {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .modemProfile
+
+        case 2: return .transmitLimit
+
+        case 3: return .advertisedIdentity
+
+        case 4: return .discoverability
+
+        case 5: return .forwardingPolicy
+
+        case 6: return .meshCoreForwarding
+
+        case 7: return .positioning
+
+        case 8: return .announcements
+
+        case 9: return .timeZone
+
+        case 10: return .administrators
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileSetupUnreadable, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .modemProfile:
+            writeInt(&buf, Int32(1))
+
+
+        case .transmitLimit:
+            writeInt(&buf, Int32(2))
+
+
+        case .advertisedIdentity:
+            writeInt(&buf, Int32(3))
+
+
+        case .discoverability:
+            writeInt(&buf, Int32(4))
+
+
+        case .forwardingPolicy:
+            writeInt(&buf, Int32(5))
+
+
+        case .meshCoreForwarding:
+            writeInt(&buf, Int32(6))
+
+
+        case .positioning:
+            writeInt(&buf, Int32(7))
+
+
+        case .announcements:
+            writeInt(&buf, Int32(8))
+
+
+        case .timeZone:
+            writeInt(&buf, Int32(9))
+
+
+        case .administrators:
+            writeInt(&buf, Int32(10))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSetupUnreadable_lift(_ buf: RustBuffer) throws -> MobileSetupUnreadable {
+    return try FfiConverterTypeMobileSetupUnreadable.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSetupUnreadable_lower(_ value: MobileSetupUnreadable) -> RustBuffer {
+    return FfiConverterTypeMobileSetupUnreadable.lower(value)
+}
+
+
+
+/**
  * What a staged reply answers.
  */
 
@@ -31710,6 +39459,14 @@ enum MobileStagingAirError: Swift.Error, Equatable, Hashable, Foundation.Localiz
      * it in time.
      */
     case NotTransmitted
+    /**
+     * No staged device has this link identifier.
+     */
+    case NoSuchDevice
+    /**
+     * The host key is not one.
+     */
+    case InvalidHostKey
 
 
 
@@ -31747,6 +39504,8 @@ public struct FfiConverterTypeMobileStagingAirError: FfiConverterRustBuffer {
         case 6: return .NothingToAnswer
         case 7: return .Refused
         case 8: return .NotTransmitted
+        case 9: return .NoSuchDevice
+        case 10: return .InvalidHostKey
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -31789,6 +39548,14 @@ public struct FfiConverterTypeMobileStagingAirError: FfiConverterRustBuffer {
 
         case .NotTransmitted:
             writeInt(&buf, Int32(8))
+
+
+        case .NoSuchDevice:
+            writeInt(&buf, Int32(9))
+
+
+        case .InvalidHostKey:
+            writeInt(&buf, Int32(10))
 
         }
     }
@@ -32407,6 +40174,170 @@ public func FfiConverterTypeMobileStoredSystemRole_lower(_ value: MobileStoredSy
 
 
 
+/**
+ * Whether the sensors' names can be shown.
+ */
+
+public enum MobileTemperatureNames: Equatable, Hashable {
+
+    case known
+    /**
+     * The names could not be read: the request failed or was refused.
+     */
+    case unreadable
+    /**
+     * The names are malformed, or fewer than the readings.
+     */
+    case incomplete
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileTemperatureNames: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileTemperatureNames: FfiConverterRustBuffer {
+    typealias SwiftType = MobileTemperatureNames
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileTemperatureNames {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .known
+
+        case 2: return .unreadable
+
+        case 3: return .incomplete
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileTemperatureNames, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .known:
+            writeInt(&buf, Int32(1))
+
+
+        case .unreadable:
+            writeInt(&buf, Int32(2))
+
+
+        case .incomplete:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileTemperatureNames_lift(_ buf: RustBuffer) throws -> MobileTemperatureNames {
+    return try FfiConverterTypeMobileTemperatureNames.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileTemperatureNames_lower(_ value: MobileTemperatureNames) -> RustBuffer {
+    return FfiConverterTypeMobileTemperatureNames.lower(value)
+}
+
+
+
+
+public enum MobileTemperatureValue: Equatable, Hashable {
+
+    case reading(tenthsKelvin: UInt16
+    )
+    /**
+     * The sensor reported no value.
+     */
+    case unavailable
+    /**
+     * No reading for this index.
+     */
+    case notRead
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileTemperatureValue: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileTemperatureValue: FfiConverterRustBuffer {
+    typealias SwiftType = MobileTemperatureValue
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileTemperatureValue {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .reading(tenthsKelvin: try FfiConverterUInt16.read(from: &buf)
+        )
+
+        case 2: return .unavailable
+
+        case 3: return .notRead
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileTemperatureValue, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .reading(tenthsKelvin):
+            writeInt(&buf, Int32(1))
+            FfiConverterUInt16.write(tenthsKelvin, into: &buf)
+
+
+        case .unavailable:
+            writeInt(&buf, Int32(2))
+
+
+        case .notRead:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileTemperatureValue_lift(_ buf: RustBuffer) throws -> MobileTemperatureValue {
+    return try FfiConverterTypeMobileTemperatureValue.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileTemperatureValue_lower(_ value: MobileTemperatureValue) -> RustBuffer {
+    return FfiConverterTypeMobileTemperatureValue.lower(value)
+}
+
+
+
 public
 enum MobileVirtualRadioError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
 
@@ -32575,6 +40506,385 @@ public func FfiConverterTypeMobileWellKnownChannel_lift(_ buf: RustBuffer) throw
 #endif
 public func FfiConverterTypeMobileWellKnownChannel_lower(_ value: MobileWellKnownChannel) -> RustBuffer {
     return FfiConverterTypeMobileWellKnownChannel.lower(value)
+}
+
+
+
+
+public enum MobileWifiEntryProblem: Equatable, Hashable {
+
+    case ssidEmpty
+    /**
+     * Longer than a network name can be.
+     */
+    case ssidTooLong
+    /**
+     * The mode needs a credential and none is typed or kept.
+     */
+    case credentialRequired
+    /**
+     * The credential does not fit the mode.
+     */
+    case credentialInvalid
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileWifiEntryProblem: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileWifiEntryProblem: FfiConverterRustBuffer {
+    typealias SwiftType = MobileWifiEntryProblem
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileWifiEntryProblem {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .ssidEmpty
+
+        case 2: return .ssidTooLong
+
+        case 3: return .credentialRequired
+
+        case 4: return .credentialInvalid
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileWifiEntryProblem, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .ssidEmpty:
+            writeInt(&buf, Int32(1))
+
+
+        case .ssidTooLong:
+            writeInt(&buf, Int32(2))
+
+
+        case .credentialRequired:
+            writeInt(&buf, Int32(3))
+
+
+        case .credentialInvalid:
+            writeInt(&buf, Int32(4))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileWifiEntryProblem_lift(_ buf: RustBuffer) throws -> MobileWifiEntryProblem {
+    return try FfiConverterTypeMobileWifiEntryProblem.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileWifiEntryProblem_lower(_ value: MobileWifiEntryProblem) -> RustBuffer {
+    return FfiConverterTypeMobileWifiEntryProblem.lower(value)
+}
+
+
+
+/**
+ * How a command that stores a Wi-Fi network ended.
+ */
+
+public enum MobileWifiOutcome: Equatable, Hashable {
+
+    case done
+    /**
+     * The device would not take the network; nothing was saved.
+     */
+    case refused(refusal: MobileWifiRefusal
+    )
+    case cancelled
+    case skipped
+    case failed(problem: MobileManagementProblem
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileWifiOutcome: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileWifiOutcome: FfiConverterRustBuffer {
+    typealias SwiftType = MobileWifiOutcome
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileWifiOutcome {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .done
+
+        case 2: return .refused(refusal: try FfiConverterTypeMobileWifiRefusal.read(from: &buf)
+        )
+
+        case 3: return .cancelled
+
+        case 4: return .skipped
+
+        case 5: return .failed(problem: try FfiConverterTypeMobileManagementProblem.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileWifiOutcome, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .done:
+            writeInt(&buf, Int32(1))
+
+
+        case let .refused(refusal):
+            writeInt(&buf, Int32(2))
+            FfiConverterTypeMobileWifiRefusal.write(refusal, into: &buf)
+
+
+        case .cancelled:
+            writeInt(&buf, Int32(3))
+
+
+        case .skipped:
+            writeInt(&buf, Int32(4))
+
+
+        case let .failed(problem):
+            writeInt(&buf, Int32(5))
+            FfiConverterTypeMobileManagementProblem.write(problem, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileWifiOutcome_lift(_ buf: RustBuffer) throws -> MobileWifiOutcome {
+    return try FfiConverterTypeMobileWifiOutcome.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileWifiOutcome_lower(_ value: MobileWifiOutcome) -> RustBuffer {
+    return FfiConverterTypeMobileWifiOutcome.lower(value)
+}
+
+
+
+/**
+ * Why a device would not take a network.
+ */
+
+public enum MobileWifiRefusal: Equatable, Hashable {
+
+    /**
+     * The device has no room for another network.
+     */
+    case noRoom
+    /**
+     * The credential does not fit the security mode.
+     */
+    case credentialRejected
+    /**
+     * The device cannot use this network with `tried`; `weaker` is the
+     * next mode the network also offers, if any. The device answers this
+     * too for a name, key or password it cannot hold, so `weaker` is a
+     * mode to try, never one known to work.
+     */
+    case securityUnsupported(tried: UInt8, weaker: UInt8?
+    )
+    /**
+     * Anything else, at `step`.
+     */
+    case other(step: MobileWifiStep, refusal: MobileRefusal
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileWifiRefusal: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileWifiRefusal: FfiConverterRustBuffer {
+    typealias SwiftType = MobileWifiRefusal
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileWifiRefusal {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .noRoom
+
+        case 2: return .credentialRejected
+
+        case 3: return .securityUnsupported(tried: try FfiConverterUInt8.read(from: &buf), weaker: try FfiConverterOptionUInt8.read(from: &buf)
+        )
+
+        case 4: return .other(step: try FfiConverterTypeMobileWifiStep.read(from: &buf), refusal: try FfiConverterTypeMobileRefusal.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileWifiRefusal, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .noRoom:
+            writeInt(&buf, Int32(1))
+
+
+        case .credentialRejected:
+            writeInt(&buf, Int32(2))
+
+
+        case let .securityUnsupported(tried,weaker):
+            writeInt(&buf, Int32(3))
+            FfiConverterUInt8.write(tried, into: &buf)
+            FfiConverterOptionUInt8.write(weaker, into: &buf)
+
+
+        case let .other(step,refusal):
+            writeInt(&buf, Int32(4))
+            FfiConverterTypeMobileWifiStep.write(step, into: &buf)
+            FfiConverterTypeMobileRefusal.write(refusal, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileWifiRefusal_lift(_ buf: RustBuffer) throws -> MobileWifiRefusal {
+    return try FfiConverterTypeMobileWifiRefusal.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileWifiRefusal_lower(_ value: MobileWifiRefusal) -> RustBuffer {
+    return FfiConverterTypeMobileWifiRefusal.lower(value)
+}
+
+
+
+/**
+ * The steps of joining a network.
+ */
+
+public enum MobileWifiStep: Equatable, Hashable {
+
+    /**
+     * Storing the network.
+     */
+    case store
+    /**
+     * Turning the station on.
+     */
+    case turnOn
+    /**
+     * Joining the network.
+     */
+    case select
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileWifiStep: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileWifiStep: FfiConverterRustBuffer {
+    typealias SwiftType = MobileWifiStep
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileWifiStep {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .store
+
+        case 2: return .turnOn
+
+        case 3: return .select
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileWifiStep, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .store:
+            writeInt(&buf, Int32(1))
+
+
+        case .turnOn:
+            writeInt(&buf, Int32(2))
+
+
+        case .select:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileWifiStep_lift(_ buf: RustBuffer) throws -> MobileWifiStep {
+    return try FfiConverterTypeMobileWifiStep.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileWifiStep_lower(_ value: MobileWifiStep) -> RustBuffer {
+    return FfiConverterTypeMobileWifiStep.lower(value)
 }
 
 
@@ -34577,6 +42887,30 @@ fileprivate struct FfiConverterOptionTypeMobileRadioDriver: FfiConverterRustBuff
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeMobileAppDiscoveryVantageRecord: FfiConverterRustBuffer {
+    typealias SwiftType = MobileAppDiscoveryVantageRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileAppDiscoveryVantageRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileAppDiscoveryVantageRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeMobileAppPreviewRecord: FfiConverterRustBuffer {
     typealias SwiftType = MobileAppPreviewRecord?
 
@@ -34689,6 +43023,30 @@ fileprivate struct FfiConverterOptionTypeMobileChatChangesRecord: FfiConverterRu
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeMobileChatChangesRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileKeyTableRecord: FfiConverterRustBuffer {
+    typealias SwiftType = MobileKeyTableRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileKeyTableRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileKeyTableRecord.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -34913,6 +43271,54 @@ fileprivate struct FfiConverterOptionTypeMobileRegionRecord: FfiConverterRustBuf
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeMobileSetupCompanionRecord: FfiConverterRustBuffer {
+    typealias SwiftType = MobileSetupCompanionRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileSetupCompanionRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileSetupCompanionRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileSetupDraft: FfiConverterRustBuffer {
+    typealias SwiftType = MobileSetupDraft?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileSetupDraft.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileSetupDraft.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeMobileStoredChannelRecord: FfiConverterRustBuffer {
     typealias SwiftType = MobileStoredChannelRecord?
 
@@ -35129,30 +43535,6 @@ fileprivate struct FfiConverterOptionTypeMobileStoredConversationPreviewRecord: 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterOptionTypeMobileStoredManagementCardRecord: FfiConverterRustBuffer {
-    typealias SwiftType = MobileStoredManagementCardRecord?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeMobileStoredManagementCardRecord.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeMobileStoredManagementCardRecord.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterOptionTypeMobileStoredManualRouteRecord: FfiConverterRustBuffer {
     typealias SwiftType = MobileStoredManualRouteRecord?
 
@@ -35193,6 +43575,30 @@ fileprivate struct FfiConverterOptionTypeMobileStoredPeerRepeaterListingRecord: 
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeMobileStoredPeerRepeaterListingRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileTemperatureSummaryRecord: FfiConverterRustBuffer {
+    typealias SwiftType = MobileTemperatureSummaryRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileTemperatureSummaryRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileTemperatureSummaryRecord.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -35313,6 +43719,30 @@ fileprivate struct FfiConverterOptionTypeUlcpBridgeLinkRecord: FfiConverterRustB
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeUlcpBridgeLinkRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeUlcpDeviceCardRecord: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpDeviceCardRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeUlcpDeviceCardRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeUlcpDeviceCardRecord.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -35537,6 +43967,30 @@ fileprivate struct FfiConverterOptionTypeUlcpOperationErrorRecord: FfiConverterR
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeUlcpProtocolVersionRecord: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpProtocolVersionRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeUlcpProtocolVersionRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeUlcpProtocolVersionRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeUlcpRawTransmitResultRecord: FfiConverterRustBuffer {
     typealias SwiftType = UlcpRawTransmitResultRecord?
 
@@ -35657,6 +44111,30 @@ fileprivate struct FfiConverterOptionTypeUlcpWifiLinkRecord: FfiConverterRustBuf
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeUlcpWifiNetworkRecord: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpWifiNetworkRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeUlcpWifiNetworkRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeUlcpWifiNetworkRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeMobileAppLifecycle: FfiConverterRustBuffer {
     typealias SwiftType = MobileAppLifecycle?
 
@@ -35705,6 +44183,54 @@ fileprivate struct FfiConverterOptionTypeMobileAppPositionReading: FfiConverterR
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeMobileAppResent: FfiConverterRustBuffer {
+    typealias SwiftType = MobileAppResent?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileAppResent.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileAppResent.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileApplyWarning: FfiConverterRustBuffer {
+    typealias SwiftType = MobileApplyWarning?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileApplyWarning.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileApplyWarning.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeMobileChatDirection: FfiConverterRustBuffer {
     typealias SwiftType = MobileChatDirection?
 
@@ -35729,6 +44255,54 @@ fileprivate struct FfiConverterOptionTypeMobileChatDirection: FfiConverterRustBu
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeMobileManagementDraft: FfiConverterRustBuffer {
+    typealias SwiftType = MobileManagementDraft?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileManagementDraft.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileManagementDraft.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileManagementProblem: FfiConverterRustBuffer {
+    typealias SwiftType = MobileManagementProblem?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileManagementProblem.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileManagementProblem.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeMobileMeshRouteKind: FfiConverterRustBuffer {
     typealias SwiftType = MobileMeshRouteKind?
 
@@ -35745,6 +44319,30 @@ fileprivate struct FfiConverterOptionTypeMobileMeshRouteKind: FfiConverterRustBu
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeMobileMeshRouteKind.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobilePropertyState: FfiConverterRustBuffer {
+    typealias SwiftType = MobilePropertyState?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobilePropertyState.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobilePropertyState.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -35793,6 +44391,78 @@ fileprivate struct FfiConverterOptionTypeMobileReaction: FfiConverterRustBuffer 
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeMobileReaction.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileSetupProfile: FfiConverterRustBuffer {
+    typealias SwiftType = MobileSetupProfile?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileSetupProfile.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileSetupProfile.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileSetupRefusal: FfiConverterRustBuffer {
+    typealias SwiftType = MobileSetupRefusal?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileSetupRefusal.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileSetupRefusal.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileSetupResult: FfiConverterRustBuffer {
+    typealias SwiftType = MobileSetupResult?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileSetupResult.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileSetupResult.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -35889,6 +44559,30 @@ fileprivate struct FfiConverterOptionTypeMobileStoredSystemRole: FfiConverterRus
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeMobileStoredSystemRole.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileWifiEntryProblem: FfiConverterRustBuffer {
+    typealias SwiftType = MobileWifiEntryProblem?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileWifiEntryProblem.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileWifiEntryProblem.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -36259,6 +44953,56 @@ fileprivate struct FfiConverterSequenceUInt32: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceUInt64: FfiConverterRustBuffer {
+    typealias SwiftType = [UInt64]
+
+    public static func write(_ value: [UInt64], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterUInt64.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [UInt64] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [UInt64]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterUInt64.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceInt64: FfiConverterRustBuffer {
+    typealias SwiftType = [Int64]
+
+    public static func write(_ value: [Int64], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterInt64.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Int64] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [Int64]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterInt64.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
     typealias SwiftType = [String]
 
@@ -36509,31 +45253,6 @@ fileprivate struct FfiConverterSequenceTypeMobileAppNeighborReportRecord: FfiCon
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterSequenceTypeMobileAppOperationProgressRecord: FfiConverterRustBuffer {
-    typealias SwiftType = [MobileAppOperationProgressRecord]
-
-    public static func write(_ value: [MobileAppOperationProgressRecord], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for item in value {
-            FfiConverterTypeMobileAppOperationProgressRecord.write(item, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileAppOperationProgressRecord] {
-        let len: Int32 = try readInt(&buf)
-        var seq = [MobileAppOperationProgressRecord]()
-        seq.reserveCapacity(Int(len))
-        for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeMobileAppOperationProgressRecord.read(from: &buf))
-        }
-        return seq
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterSequenceTypeMobileAppPeerRecord: FfiConverterRustBuffer {
     typealias SwiftType = [MobileAppPeerRecord]
 
@@ -36576,6 +45295,31 @@ fileprivate struct FfiConverterSequenceTypeMobileAppRepeaterNeighborRecord: FfiC
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeMobileAppRepeaterNeighborRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileCategoryReadingRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileCategoryReadingRecord]
+
+    public static func write(_ value: [MobileCategoryReadingRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileCategoryReadingRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileCategoryReadingRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileCategoryReadingRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileCategoryReadingRecord.read(from: &buf))
         }
         return seq
     }
@@ -36651,6 +45395,81 @@ fileprivate struct FfiConverterSequenceTypeMobileChatCheckpointRecord: FfiConver
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeMobileChatCheckpointRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileFieldProblemRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileFieldProblemRecord]
+
+    public static func write(_ value: [MobileFieldProblemRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileFieldProblemRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileFieldProblemRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileFieldProblemRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileFieldProblemRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileHeardNetworkRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileHeardNetworkRecord]
+
+    public static func write(_ value: [MobileHeardNetworkRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileHeardNetworkRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileHeardNetworkRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileHeardNetworkRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileHeardNetworkRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileKeyEntryRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileKeyEntryRecord]
+
+    public static func write(_ value: [MobileKeyEntryRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileKeyEntryRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileKeyEntryRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileKeyEntryRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileKeyEntryRecord.read(from: &buf))
         }
         return seq
     }
@@ -36909,6 +45728,31 @@ fileprivate struct FfiConverterSequenceTypeMobileMeshPropertyWriteRecord: FfiCon
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeMobileOfferedCategoryRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileOfferedCategoryRecord]
+
+    public static func write(_ value: [MobileOfferedCategoryRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileOfferedCategoryRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileOfferedCategoryRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileOfferedCategoryRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileOfferedCategoryRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeMobilePeerRegistrationRecord: FfiConverterRustBuffer {
     typealias SwiftType = [MobilePeerRegistrationRecord]
 
@@ -36926,6 +45770,81 @@ fileprivate struct FfiConverterSequenceTypeMobilePeerRegistrationRecord: FfiConv
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeMobilePeerRegistrationRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobilePropertyRefusalRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobilePropertyRefusalRecord]
+
+    public static func write(_ value: [MobilePropertyRefusalRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobilePropertyRefusalRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobilePropertyRefusalRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobilePropertyRefusalRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobilePropertyRefusalRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobilePropertyStateRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobilePropertyStateRecord]
+
+    public static func write(_ value: [MobilePropertyStateRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobilePropertyStateRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobilePropertyStateRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobilePropertyStateRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobilePropertyStateRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobilePropertyValueRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobilePropertyValueRecord]
+
+    public static func write(_ value: [MobilePropertyValueRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobilePropertyValueRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobilePropertyValueRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobilePropertyValueRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobilePropertyValueRecord.read(from: &buf))
         }
         return seq
     }
@@ -37026,6 +45945,31 @@ fileprivate struct FfiConverterSequenceTypeMobileStagedChatReactionRecord: FfiCo
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeMobileStagedChatReactionRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileStagedDeviceRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileStagedDeviceRecord]
+
+    public static func write(_ value: [MobileStagedDeviceRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileStagedDeviceRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileStagedDeviceRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileStagedDeviceRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileStagedDeviceRecord.read(from: &buf))
         }
         return seq
     }
@@ -37334,6 +46278,31 @@ fileprivate struct FfiConverterSequenceTypeMobileStoredPeerRepeaterReportRecord:
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeMobileTemperatureRowRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileTemperatureRowRecord]
+
+    public static func write(_ value: [MobileTemperatureRowRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileTemperatureRowRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileTemperatureRowRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileTemperatureRowRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileTemperatureRowRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeMobileTraceSignalRecord: FfiConverterRustBuffer {
     typealias SwiftType = [MobileTraceSignalRecord]
 
@@ -37634,6 +46603,106 @@ fileprivate struct FfiConverterSequenceTypeMobileNotificationEventRecord: FfiCon
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeMobileSetupNote: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileSetupNote]
+
+    public static func write(_ value: [MobileSetupNote], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileSetupNote.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileSetupNote] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileSetupNote]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileSetupNote.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileSetupSection: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileSetupSection]
+
+    public static func write(_ value: [MobileSetupSection], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileSetupSection.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileSetupSection] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileSetupSection]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileSetupSection.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileSetupSetting: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileSetupSetting]
+
+    public static func write(_ value: [MobileSetupSetting], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileSetupSetting.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileSetupSetting] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileSetupSetting]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileSetupSetting.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileSetupUnreadable: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileSetupUnreadable]
+
+    public static func write(_ value: [MobileSetupUnreadable], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileSetupUnreadable.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileSetupUnreadable] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileSetupUnreadable]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileSetupUnreadable.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceOptionUInt16: FfiConverterRustBuffer {
     typealias SwiftType = [UInt16?]
 
@@ -37678,58 +46747,6 @@ fileprivate struct FfiConverterSequenceOptionTypeMobileReaction: FfiConverterRus
             seq.append(try FfiConverterOptionTypeMobileReaction.read(from: &buf))
         }
         return seq
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterDictionaryUInt32Data: FfiConverterRustBuffer {
-    public static func write(_ value: [UInt32: Data], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for (key, value) in value {
-            FfiConverterUInt32.write(key, into: &buf)
-            FfiConverterData.write(value, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [UInt32: Data] {
-        let len: Int32 = try readInt(&buf)
-        var dict = [UInt32: Data]()
-        dict.reserveCapacity(Int(len))
-        for _ in 0..<len {
-            let key = try FfiConverterUInt32.read(from: &buf)
-            let value = try FfiConverterData.read(from: &buf)
-            dict[key] = value
-        }
-        return dict
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterDictionaryUInt32TypeMobileStoredCachedPropertyRecord: FfiConverterRustBuffer {
-    public static func write(_ value: [UInt32: MobileStoredCachedPropertyRecord], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for (key, value) in value {
-            FfiConverterUInt32.write(key, into: &buf)
-            FfiConverterTypeMobileStoredCachedPropertyRecord.write(value, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [UInt32: MobileStoredCachedPropertyRecord] {
-        let len: Int32 = try readInt(&buf)
-        var dict = [UInt32: MobileStoredCachedPropertyRecord]()
-        dict.reserveCapacity(Int(len))
-        for _ in 0..<len {
-            let key = try FfiConverterUInt32.read(from: &buf)
-            let value = try FfiConverterTypeMobileStoredCachedPropertyRecord.read(from: &buf)
-            dict[key] = value
-        }
-        return dict
     }
 }
 private let UNIFFI_RUST_FUTURE_POLL_READY: Int8 = 0
@@ -37790,23 +46807,6 @@ public func channelConversationAddress(key: Data)throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
         uniffiCallStatus in
     uniffi_umsh_mobile_core_fn_func_channel_conversation_address(
-        FfiConverterData.lower(key),uniffiCallStatus
-    )
-})
-}
-/**
- * Derive the full sixteen-octet channel identifier for a key.
- *
- * The two-octet `channel_id` is its prefix and is what travels on the wire;
- * this is the width at which two channels can be told apart, which is what
- * naming one to a device takes. It is what the channel-key tables report
- * for each key they hold, what `PROP_HOST_MUTED_CHANNELS` carries, and
- * what `CMD_ANNOUNCE` names a channel by.
- */
-public func channelIdentifier(key: Data)throws  -> Data  {
-    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_func_channel_identifier(
         FfiConverterData.lower(key),uniffiCallStatus
     )
 })
@@ -38143,6 +47143,213 @@ public func radioCarriesThisPhone(radio: MobileRadioStateRecord?) -> Bool  {
 })
 }
 /**
+ * See [`MobileLimitsRecord`].
+ */
+public func mobileLimits() -> MobileLimitsRecord  {
+    return try!  FfiConverterTypeMobileLimitsRecord_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_mobile_limits(uniffiCallStatus
+    )
+})
+}
+/**
+ * Advertise no position, and no height with it.
+ */
+public func draftClearPosition(draft: MobileIdentityDraft) -> MobileIdentityDraft  {
+    return try!  FfiConverterTypeMobileIdentityDraft_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_draft_clear_position(
+        FfiConverterTypeMobileIdentityDraft_lower(draft),uniffiCallStatus
+    )
+})
+}
+/**
+ * Put a place in the position, rounded to the decimals the coordinate
+ * fields show at the draft's precision, so what is shown is what Apply
+ * writes.
+ */
+public func draftPlace(draft: MobileIdentityDraft, latitude: Double, longitude: Double) -> MobileIdentityDraft  {
+    return try!  FfiConverterTypeMobileIdentityDraft_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_draft_place(
+        FfiConverterTypeMobileIdentityDraft_lower(draft),
+        FfiConverterDouble.lower(latitude),
+        FfiConverterDouble.lower(longitude),uniffiCallStatus
+    )
+})
+}
+/**
+ * Place the device where the phone is. `altitude_m` is the phone's
+ * height when its fix states one; it is taken, rounded, where the device
+ * answered for an altitude, and left alone otherwise rather than written
+ * as a zero.
+ */
+public func draftPlaceFromPhone(draft: MobileIdentityDraft, latitude: Double, longitude: Double, altitudeM: Double?) -> MobileIdentityDraft  {
+    return try!  FfiConverterTypeMobileIdentityDraft_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_draft_place_from_phone(
+        FfiConverterTypeMobileIdentityDraft_lower(draft),
+        FfiConverterDouble.lower(latitude),
+        FfiConverterDouble.lower(longitude),
+        FfiConverterOptionDouble.lower(altitudeM),uniffiCallStatus
+    )
+})
+}
+/**
+ * Choose the grid a position is encoded to: the device's precision
+ * where it has one, the local choice otherwise.
+ */
+public func draftSetPrecision(draft: MobileIdentityDraft, precision: UInt8) -> MobileIdentityDraft  {
+    return try!  FfiConverterTypeMobileIdentityDraft_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_draft_set_precision(
+        FfiConverterTypeMobileIdentityDraft_lower(draft),
+        FfiConverterUInt8.lower(precision),uniffiCallStatus
+    )
+})
+}
+/**
+ * Add a MeshCore region name, kept as typed (case included) less any
+ * leading `#`. `Invalid` for a name the device would refuse,
+ * `AlreadyListed` for one listed exactly; empty text changes nothing.
+ */
+public func draftAddMeshcoreRegion(draft: MobileMeshCoreDraft, text: String)throws  -> MobileMeshCoreDraft  {
+    return try  FfiConverterTypeMobileMeshCoreDraft_lift(try rustCallWithError(FfiConverterTypeMobileRegionEntryProblem_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_draft_add_meshcore_region(
+        FfiConverterTypeMobileMeshCoreDraft_lower(draft),
+        FfiConverterString.lower(text),uniffiCallStatus
+    )
+})
+}
+/**
+ * Every radio parameter `preset_id` names, written into the fields the
+ * device answered for; power only where the preset has one. Unchanged
+ * for an id that is not a vetted preset.
+ */
+public func draftAdoptPreset(draft: MobileRadioDraft, presetId: String) -> MobileRadioDraft  {
+    return try!  FfiConverterTypeMobileRadioDraft_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_draft_adopt_preset(
+        FfiConverterTypeMobileRadioDraft_lower(draft),
+        FfiConverterString.lower(presetId),uniffiCallStatus
+    )
+})
+}
+/**
+ * Add a typed region, or respell the one the list already holds under
+ * another capitalization: the device keeps one entry per region however
+ * it is spelled. `Invalid` for text that is not a region; empty text
+ * changes nothing.
+ */
+public func draftAddRepeaterRegion(draft: MobileRepeaterDraft, text: String)throws  -> MobileRepeaterDraft  {
+    return try  FfiConverterTypeMobileRepeaterDraft_lift(try rustCallWithError(FfiConverterTypeMobileRegionEntryProblem_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_draft_add_repeater_region(
+        FfiConverterTypeMobileRepeaterDraft_lower(draft),
+        FfiConverterString.lower(text),uniffiCallStatus
+    )
+})
+}
+/**
+ * Take a region suggestion: its regions always, and its default region
+ * (a code, `None` for never tag) where the device answered for one.
+ */
+public func draftAdoptRegions(draft: MobileRepeaterDraft, regions: [String], defaultRegion: Data?) -> MobileRepeaterDraft  {
+    return try!  FfiConverterTypeMobileRepeaterDraft_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_draft_adopt_regions(
+        FfiConverterTypeMobileRepeaterDraft_lower(draft),
+        FfiConverterSequenceString.lower(regions),
+        FfiConverterOptionData.lower(defaultRegion),uniffiCallStatus
+    )
+})
+}
+/**
+ * A vetted preset's parameters on the radio fields the device reported,
+ * as `draft_adopt_preset`; settles a pending profile choice. Unchanged for
+ * an id that is not a vetted preset.
+ */
+public func setupAdoptPreset(draft: MobileSetupDraft, presetId: String) -> MobileSetupDraft  {
+    return try!  FfiConverterTypeMobileSetupDraft_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_setup_adopt_preset(
+        FfiConverterTypeMobileSetupDraft_lower(draft),
+        FfiConverterString.lower(presetId),uniffiCallStatus
+    )
+})
+}
+/**
+ * One radio parameter, and a pending profile choice settled: any edit of
+ * a parameter is a choice, even of the value it already had.
+ */
+public func setupSetRadioParameter(draft: MobileSetupDraft, parameter: MobileSetupRadioParameter, value: Int64) -> MobileSetupDraft  {
+    return try!  FfiConverterTypeMobileSetupDraft_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_setup_set_radio_parameter(
+        FfiConverterTypeMobileSetupDraft_lower(draft),
+        FfiConverterTypeMobileSetupRadioParameter_lower(parameter),
+        FfiConverterInt64.lower(value),uniffiCallStatus
+    )
+})
+}
+/**
+ * The modes to offer for a network the device already knows: every mode
+ * this app can build, with the stored one first when it is not one of
+ * them, so the choice always shows the truth.
+ */
+public func wifiEditPlan(network: UlcpWifiNetworkRecord) -> MobileWifiJoinPlanRecord  {
+    return try!  FfiConverterTypeMobileWifiJoinPlanRecord_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_wifi_edit_plan(
+        FfiConverterTypeUlcpWifiNetworkRecord_lower(network),uniffiCallStatus
+    )
+})
+}
+/**
+ * Judge a sheet's entry: a network being joined (`stored` `None`) or one
+ * the device knows being edited. Nothing here is logged: `credential` is
+ * the one secret the app ever holds.
+ */
+public func wifiEntryCheck(ssid: Data, security: UInt8, hidden: Bool, autoJoin: Bool, credential: Data, stored: UlcpWifiNetworkRecord?) -> MobileWifiEntryCheckRecord  {
+    return try!  FfiConverterTypeMobileWifiEntryCheckRecord_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_wifi_entry_check(
+        FfiConverterData.lower(ssid),
+        FfiConverterUInt8.lower(security),
+        FfiConverterBool.lower(hidden),
+        FfiConverterBool.lower(autoJoin),
+        FfiConverterData.lower(credential),
+        FfiConverterOptionTypeUlcpWifiNetworkRecord.lower(stored),uniffiCallStatus
+    )
+})
+}
+/**
+ * The modes to offer for joining a network that advertised `offered`
+ * (bit *n* for mode *n*). Nothing heard, or a device that could not
+ * tell (zero), offers every mode this app can build; so does a network
+ * offering none of them.
+ */
+public func wifiJoinPlan(offered: UInt16?) -> MobileWifiJoinPlanRecord  {
+    return try!  FfiConverterTypeMobileWifiJoinPlanRecord_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_wifi_join_plan(
+        FfiConverterOptionUInt16.lower(offered),uniffiCallStatus
+    )
+})
+}
+/**
+ * The modes in a scan result's `offered` set, strongest first.
+ */
+public func wifiOfferedModes(offered: UInt16) -> Data  {
+    return try!  FfiConverterData.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_wifi_offered_modes(
+        FfiConverterUInt16.lower(offered),uniffiCallStatus
+    )
+})
+}
+/**
  * Sends the core's log records to `logger` from now on, at `level` and
  * more severe. A later call replaces both.
  */
@@ -38178,24 +47385,6 @@ public func ulcpDeviceConfigWrites(configuration: UlcpDeviceConfigRecord, report
     uniffi_umsh_mobile_core_fn_func_ulcp_device_config_writes(
         FfiConverterTypeUlcpDeviceConfigRecord_lower(configuration),
         FfiConverterTypeUlcpSyncRecord_lower(reported),uniffiCallStatus
-    )
-})
-}
-/**
- * Present the answers to a management read as the property frames the
- * ULCP inspectors read.
- *
- * A mesh answer and a GATT property frame carry the same thing—a
- * property and what the device said it is worth—so the decoders are
- * the same decoders. Refusals drop out here: they are answers *about* a
- * property rather than values of one, and the event still carries them
- * for a caller that needs to know which.
- */
-public func ulcpRecordsFromAnswers(answers: [MobileMeshManagementAnswerRecord]) -> [UlcpPropertyFrameRecord]  {
-    return try!  FfiConverterSequenceTypeUlcpPropertyFrameRecord.lift(try! rustCall() {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_func_ulcp_records_from_answers(
-        FfiConverterSequenceTypeMobileMeshManagementAnswerRecord.lower(answers),uniffiCallStatus
     )
 })
 }
@@ -38244,6 +47433,20 @@ public func fixedOffsetRule(minutesEast: Int16) -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
         uniffiCallStatus in
     uniffi_umsh_mobile_core_fn_func_fixed_offset_rule(
+        FfiConverterInt16.lower(minutesEast),uniffiCallStatus
+    )
+})
+}
+/**
+ * The rule for the phone's own zone: the zone's, from the system's
+ * database, else a fixed rule for the offset the phone keeps now.
+ * `identifier` and `minutes_east` are the phone's current zone.
+ */
+public func phoneZoneRule(identifier: String, minutesEast: Int16) -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_phone_zone_rule(
+        FfiConverterString.lower(identifier),
         FfiConverterInt16.lower(minutesEast),uniffiCallStatus
     )
 })
@@ -38303,17 +47506,6 @@ public func describeUlcpFrame(bytes: Data) -> String  {
 })
 }
 /**
- * Validate and reduce a `PROP_ALERT` value.
- */
-public func inspectUlcpAlert(value: Data)throws  -> UlcpAlertState  {
-    return try  FfiConverterTypeUlcpAlertState_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_func_inspect_ulcp_alert(
-        FfiConverterData.lower(value),uniffiCallStatus
-    )
-})
-}
-/**
  * Validate and reduce a `PROP_BATTERY` value to fields used by mobile UI.
  */
 public func inspectUlcpBattery(value: Data)throws  -> UlcpBatteryRecord  {
@@ -38330,22 +47522,6 @@ public func inspectUlcpBatteryDiagnostic(propertyId: UInt32, value: Data)throws 
     uniffi_umsh_mobile_core_fn_func_inspect_ulcp_battery_diagnostic(
         FfiConverterUInt32.lower(propertyId),
         FfiConverterData.lower(value),uniffiCallStatus
-    )
-})
-}
-/**
- * Reduce the answers to a card read into what a device is.
- *
- * Capabilities are required—without them there is nothing to plan the
- * rest against. Everything else is absent rather than fatal: a device
- * that will not name its hardware is a device that does not name its
- * hardware.
- */
-public func inspectUlcpDeviceCard(responses: [UlcpPropertyFrameRecord])throws  -> UlcpDeviceCardRecord  {
-    return try  FfiConverterTypeUlcpDeviceCardRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_func_inspect_ulcp_device_card(
-        FfiConverterSequenceTypeUlcpPropertyFrameRecord.lower(responses),uniffiCallStatus
     )
 })
 }
@@ -38411,20 +47587,6 @@ public func inspectUlcpSync(responses: [UlcpPropertyFrameRecord])throws  -> Ulcp
 })
 }
 /**
- * Decode one `CMD_PROP_INSERTED` item of `PROP_WIFI_SCAN_RESULTS`.
- *
- * The other half of the scan stream: a host that followed the inserts
- * needs the same reduction a whole-table read gets.
- */
-public func inspectUlcpWifiScanResult(item: Data)throws  -> UlcpWifiScanResultRecord  {
-    return try  FfiConverterTypeUlcpWifiScanResultRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_func_inspect_ulcp_wifi_scan_result(
-        FfiConverterData.lower(item),uniffiCallStatus
-    )
-})
-}
-/**
  * Render a region code for display. Codes derived from an all-letter
  * short code come back as those letters; everything else as `0xXXXX`,
  * which [`region_code_from_string`] reads back.
@@ -38479,19 +47641,6 @@ public func ulcpBridgeServerKey(input: String)throws  -> Data  {
 })
 }
 /**
- * The four properties a device is identified by, asked for together.
- *
- * Capabilities first, so a device that declines the batch teaches the
- * crawl to ask one at a time before the rest.
- */
-public func ulcpCardProperties() -> [UInt32]  {
-    return try!  FfiConverterSequenceUInt32.lift(try! rustCall() {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_func_ulcp_card_properties(uniffiCallStatus
-    )
-})
-}
-/**
  * What one category asks for, given what the device says it can do.
  *
  * Capability-gated so a screen never spends airtime on a property the
@@ -38526,29 +47675,6 @@ public func ulcpDirtyWrites(desired: UlcpDevicePropertiesRecord, dirtyPropertyId
     uniffi_umsh_mobile_core_fn_func_ulcp_dirty_writes(
         FfiConverterTypeUlcpDevicePropertiesRecord_lower(desired),
         FfiConverterSequenceUInt32.lower(dirtyPropertyIds),uniffiCallStatus
-    )
-})
-}
-/**
- * Encode a place as the cell a device advertises it from.
- *
- * The counterpart to the latitude and longitude an inspection reports:
- * what goes on the air is a cell rather than a point, and how large that
- * cell is—the precision, which is also the value's length—is what the
- * device discloses. See [`ulcp_location_cell_meters`] for what each
- * precision is worth in meters.
- *
- * Precision must be 1 through 7. A coordinate outside its own range is
- * refused rather than wrapped: a longitude of 200° is a typo, not a
- * place.
- */
-public func ulcpEncodeLocation(latitudeDeg: Double, longitudeDeg: Double, precision: UInt8)throws  -> Data  {
-    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_func_ulcp_encode_location(
-        FfiConverterDouble.lower(latitudeDeg),
-        FfiConverterDouble.lower(longitudeDeg),
-        FfiConverterUInt8.lower(precision),uniffiCallStatus
     )
 })
 }
@@ -38600,19 +47726,6 @@ public func ulcpInspectionProperties(capabilities: Data)throws  -> [UInt32]  {
         uniffiCallStatus in
     uniffi_umsh_mobile_core_fn_func_ulcp_inspection_properties(
         FfiConverterData.lower(capabilities),uniffiCallStatus
-    )
-})
-}
-/**
- * A LAN multicast group, or a unicast peer in its place, as an operator
- * types it, `GROUP:PORT` or a bare `GROUP` on the default port, in the
- * form the device reports it.
- */
-public func ulcpLanGroup(input: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_func_ulcp_lan_group(
-        FfiConverterString.lower(input),uniffiCallStatus
     )
 })
 }
@@ -38734,36 +47847,6 @@ public func ulcpMaxHostPeers() -> UInt8  {
 })
 }
 /**
- * Whether a device identity key may forward MeshCore traffic.
- *
- * MeshCore reserves the 0x00 and 0xFF first-octet prefixes, and a device
- * whose `PROP_DEV_KEY` starts with either refuses to enable forwarding.
- * Anything that is not a 32-octet key is not a reason to say no here.
- */
-public func ulcpMeshcoreIdentityAllowed(devKey: Data) -> Bool  {
-    return try!  FfiConverterBool.lift(try! rustCall() {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_func_ulcp_meshcore_identity_allowed(
-        FfiConverterData.lower(devKey),uniffiCallStatus
-    )
-})
-}
-/**
- * A MeshCore region name as typed, in the form `PROP_MESHCORE_REGIONS`
- * stores it: without a leading `#`, and `None` for a name the device
- * would refuse.
- *
- * Case is kept, since MeshCore derives region keys case-sensitively.
- */
-public func ulcpMeshcoreRegionName(input: String) -> String?  {
-    return try!  FfiConverterOptionString.lift(try! rustCall() {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_func_ulcp_meshcore_region_name(
-        FfiConverterString.lower(input),uniffiCallStatus
-    )
-})
-}
-/**
  * Encode a `CMD_PROP_GET` request with the shared ULCP codec.
  */
 public func ulcpPropGet(transactionId: UInt8, propertyId: UInt32)throws  -> Data  {
@@ -38802,6 +47885,16 @@ public func ulcpPropertyRecord(propertyId: UInt32, value: Data) -> UlcpPropertyF
     uniffi_umsh_mobile_core_fn_func_ulcp_property_record(
         FfiConverterUInt32.lower(propertyId),
         FfiConverterData.lower(value),uniffiCallStatus
+    )
+})
+}
+/**
+ * What a radio editor offers for each setting with a fixed list.
+ */
+public func ulcpRadioChoices() -> UlcpRadioChoicesRecord  {
+    return try!  FfiConverterTypeUlcpRadioChoicesRecord_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_ulcp_radio_choices(uniffiCallStatus
     )
 })
 }
@@ -38865,31 +47958,6 @@ public func ulcpSupportedBandwidthsHz() -> [UInt32]  {
     )
 })
 }
-/**
- * Build one `PROP_WIFI_NETWORKS` item to insert.
- *
- * The only path a Wi-Fi credential takes across this boundary. It is
- * validated against its mode before it is encoded, so a passphrase the
- * device would refuse never reaches the air, and the octets are not
- * retained anywhere afterward.
- *
- * An empty credential for a mode that takes one builds the insert that
- * keeps the passphrase the device already holds for that SSID and
- * security, which is how a host changes `auto_join` on a network whose
- * password it never had.
- */
-public func ulcpWifiNetworkItem(ssid: Data, security: UInt8, hidden: Bool, autoJoin: Bool, credential: Data)throws  -> Data  {
-    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_func_ulcp_wifi_network_item(
-        FfiConverterData.lower(ssid),
-        FfiConverterUInt8.lower(security),
-        FfiConverterBool.lower(hidden),
-        FfiConverterBool.lower(autoJoin),
-        FfiConverterData.lower(credential),uniffiCallStatus
-    )
-})
-}
 
 private enum InitializationResult {
     case ok
@@ -38907,9 +47975,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.contractVersionMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_channel_conversation_address() != 37) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_func_channel_identifier() != 21731) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_channel_key_digest() != 30400) {
@@ -38984,13 +48049,55 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_radio_carries_this_phone() != 9248) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_func_mobile_limits() != 9228) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_draft_clear_position() != 28360) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_draft_place() != 62983) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_draft_place_from_phone() != 48055) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_draft_set_precision() != 27145) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_draft_add_meshcore_region() != 33450) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_draft_adopt_preset() != 39014) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_draft_add_repeater_region() != 58123) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_draft_adopt_regions() != 27410) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_setup_adopt_preset() != 30257) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_setup_set_radio_parameter() != 35043) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_wifi_edit_plan() != 53147) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_wifi_entry_check() != 60467) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_wifi_join_plan() != 59203) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_wifi_offered_modes() != 47226) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_func_set_logger() != 36786) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_device_config_writes() != 36349) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_func_ulcp_records_from_answers() != 35471) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_seed_staging() != 20613) {
@@ -39000,6 +48107,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_fixed_offset_rule() != 4700) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_phone_zone_rule() != 43489) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_rule_abbreviation() != 28818) {
@@ -39014,16 +48124,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_describe_ulcp_frame() != 25764) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_alert() != 25982) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_battery() != 22194) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_battery_diagnostic() != 22193) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_device_card() != 61975) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_properties() != 60051) {
@@ -39038,9 +48142,6 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_sync() != 14194) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_wifi_scan_result() != 14372) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_umsh_mobile_core_checksum_func_region_code_description() != 11282) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -39053,16 +48154,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_bridge_server_key() != 18738) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_ulcp_card_properties() != 10189) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_category_properties() != 65528) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_dirty_writes() != 41791) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_func_ulcp_encode_location() != 22900) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_factory_reset() != 65397) {
@@ -39075,9 +48170,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_inspection_properties() != 61576) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_func_ulcp_lan_group() != 7429) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_location_cell_meters() != 13268) {
@@ -39107,12 +48199,6 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_max_host_peers() != 45637) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_ulcp_meshcore_identity_allowed() != 1906) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_func_ulcp_meshcore_region_name() != 32316) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_prop_get() != 58684) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -39120,6 +48206,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_property_record() != 53152) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_radio_choices() != 45175) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_radio_presets() != 56599) {
@@ -39137,16 +48226,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_supported_bandwidths_hz() != 65256) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_ulcp_wifi_network_item() != 39528) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_umsh_mobile_core_checksum_method_mobileidentity_public_identity() != 38823) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_clear_listener() != 4532) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_erase() != 28008) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_erase() != 51876) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_poll_changes() != 40298) {
@@ -39227,13 +48313,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_request_missing() != 23838) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_resend() != 893) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_resend() != 35375) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_save_draft() != 64765) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_send_chat() != 60843) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_send_chat() != 6173) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_advertise_identity() != 29406) {
@@ -39266,37 +48352,19 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_set_meet_wanted() != 51493) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_remote_announce() != 7488) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_manage_administered() != 5517) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_remote_clear_bonds() != 31403) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_manage_device() != 18852) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_remote_enter_dfu() != 64089) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_manage_radio() != 22273) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_remote_fetch() != 20034) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_set_up_device() != 26912) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_remote_reset() != 1768) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_remote_save() != 1480) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_remote_set_admin() != 31808) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_remote_set_alert() != 12868) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_remote_set_peer() != 4912) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_remote_set_wifi_network() != 37306) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_remote_write() != 13342) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_setup_companion() != 38492) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_clear_discovered() != 36344) {
@@ -39311,7 +48379,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_demote_peer() != 1245) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_discover() != 39662) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_discover() != 48651) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_discovery_wait_ms() != 42576) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_fetch_identity() != 58842) {
@@ -39347,16 +48418,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_start_conversation() != 27174) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_cached_properties() != 48302) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_claimed_radios() != 49230) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_forget_management_cache() != 24174) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_management_card() != 60254) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_message_count() != 47892) {
@@ -39369,12 +48431,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_preview_channel() != 48994) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_save_cached_properties() != 28179) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_save_management_card() != 55221) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_state() != 59217) {
@@ -39419,10 +48475,118 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileappcorelistener_on_changes_pending() != 46836) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileoperation_cancel() != 55054) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemanageddevice_announce() != 18822) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileoperation_id() != 48209) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemanageddevice_apply() != 51683) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemanageddevice_cancel() != 2607) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemanageddevice_clear_bluetooth_pairings() != 10902) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemanageddevice_disconnect_network() != 19011) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemanageddevice_dismiss_problem() != 32959) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemanageddevice_draft() != 30644) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemanageddevice_enter_dfu() != 43620) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemanageddevice_factory_reset() != 37404) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemanageddevice_forget_network() != 58396) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemanageddevice_id() != 43272) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemanageddevice_join_known_network() != 7808) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemanageddevice_join_network() != 59230) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemanageddevice_load_card() != 55752) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemanageddevice_load_category() != 16194) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemanageddevice_rebase() != 60999) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemanageddevice_receive_pushes() != 31436) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemanageddevice_refresh_card() != 58487) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemanageddevice_refresh_category() != 16903) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemanageddevice_release() != 3984) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemanageddevice_reset_counters() != 27776) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemanageddevice_restart() != 57023) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemanageddevice_review() != 11056) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemanageddevice_scan_networks() != 57234) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemanageddevice_set_alert() != 38202) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemanageddevice_set_auto_join() != 53274) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemanageddevice_set_clock_now() != 34220) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemanageddevice_set_keys() != 23447) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemanageddevice_snapshot() != 51369) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemanageddevice_update_network() != 45532) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobiledevicesetup_add_administrator() != 7063) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobiledevicesetup_apply() != 56062) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobiledevicesetup_draft() != 48707) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobiledevicesetup_release() != 3057) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobiledevicesetup_remove_administrator() != 31461) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobiledevicesetup_review() != 52862) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobiledevicesetup_set_phone_administers() != 2747) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobiledevicesetup_snapshot() != 33153) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilecounterstore_commit_boundary() != 35727) {
@@ -39803,6 +48967,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_secretvault_delete_all() != 26864) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilestagingair_administered_device() != 5789) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilestagingair_administered_devices() != 26406) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobilestagingair_connect() != 24765) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -39929,21 +49099,6 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_update_draft() != 2228) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_cached_properties() != 28519) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_forget_management_cache() != 53112) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_management_card() != 40367) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_save_cached_properties() != 18003) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_save_management_card() != 45544) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_clear_transient_peers() != 38572) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -40028,7 +49183,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_seed_generated_messages() != 31981) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_seed_staged_transcript() != 43075) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_seed_staged_transcript() != 19416) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_chat_message_count() != 19075) {
@@ -40191,9 +49346,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_constructor_mobileappcore_new() != 42161) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_constructor_mobileoperation_new() != 7768) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_constructor_mobilecounterstore_new() != 37665) {

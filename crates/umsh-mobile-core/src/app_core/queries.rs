@@ -2,8 +2,6 @@
 //! reads for the current owner, synchronously; native code calls them off
 //! its main thread.
 
-use std::collections::HashMap;
-
 use super::channel_commands::parse_channel_input;
 use super::mapping::{self, PeerIndex};
 use super::records::{
@@ -13,9 +11,8 @@ use super::records::{
 use super::{MobileAppCore, MobileAppError};
 use crate::channel_key_digest;
 use crate::store::{
-    MobileStoredCachedPropertyRecord, MobileStoredChannelRecord, MobileStoredChatCursorRecord,
-    MobileStoredChatMessagePageRecord, MobileStoredChatMessageRefRecord,
-    MobileStoredClaimedRadioRecord, MobileStoredManagementCardRecord,
+    MobileStoredChannelRecord, MobileStoredChatCursorRecord, MobileStoredChatMessagePageRecord,
+    MobileStoredChatMessageRefRecord, MobileStoredClaimedRadioRecord,
 };
 
 #[uniffi::export]
@@ -29,7 +26,8 @@ impl MobileAppCore {
             .store
             .application_records(owner.clone(), conversations_only)?;
         let advertised_name = self.store.local_advertised_name(owner)?;
-        let lists = mapping::lists(records, conversations_only);
+        let certified = self.shared.snapshot().emergency_certified;
+        let lists = mapping::lists(records, conversations_only, certified);
         Ok(MobileAppStateRecord {
             peers: lists.peers,
             channels: lists.channels,
@@ -180,53 +178,6 @@ impl MobileAppCore {
     pub fn phone_node_key(&self) -> Result<Vec<u8>, MobileAppError> {
         Ok(crate::public_identity_bytes(self.reader()?)?)
     }
-
-    pub fn management_card(
-        &self,
-        public_address: String,
-    ) -> Result<Option<MobileStoredManagementCardRecord>, MobileAppError> {
-        let owner = self.reader()?;
-        Ok(self.store.management_card(owner, public_address)?)
-    }
-
-    pub fn save_management_card(
-        &self,
-        public_address: String,
-        card: MobileStoredManagementCardRecord,
-    ) -> Result<(), MobileAppError> {
-        let owner = self.reader()?;
-        Ok(self
-            .store
-            .save_management_card(owner, public_address, card)?)
-    }
-
-    pub fn forget_management_cache(&self, public_address: String) -> Result<(), MobileAppError> {
-        let owner = self.reader()?;
-        Ok(self.store.forget_management_cache(owner, public_address)?)
-    }
-
-    pub fn cached_properties(
-        &self,
-        public_address: String,
-        property_ids: Vec<u32>,
-    ) -> Result<HashMap<u32, MobileStoredCachedPropertyRecord>, MobileAppError> {
-        let owner = self.reader()?;
-        Ok(self
-            .store
-            .cached_properties(owner, public_address, property_ids)?)
-    }
-
-    /// Cache property values read now.
-    pub fn save_cached_properties(
-        &self,
-        public_address: String,
-        values: HashMap<u32, Vec<u8>>,
-    ) -> Result<(), MobileAppError> {
-        let owner = self.reader()?;
-        Ok(self
-            .store
-            .save_cached_properties(owner, public_address, values, self.clock.now_ms())?)
-    }
 }
 
 impl MobileAppCore {
@@ -242,7 +193,7 @@ impl MobileAppCore {
         } else {
             None
         };
-        Ok(mapping::page(page, peers.as_ref()))
+        Ok(mapping::page(page, peers.as_ref(), self.clock.now_ms()))
     }
 }
 

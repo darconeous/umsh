@@ -9,11 +9,6 @@ import UMSHMobileCore
 /// which is a long-lived binding with battery history, mesh traffic, and an
 /// auto-reconnect lifecycle. An administered device is a foreground session
 /// that exists to read a configuration and write one back.
-///
-/// `sync` is carried as the Rust record rather than remapped into an app
-/// model on purpose—the commissioning sheet reads `UlcpSyncRecord` and
-/// writes `UlcpDeviceConfigRecord`, so read and write speak one vocabulary
-/// and no field can be lost in a translation layer.
 struct AdministeredDeviceSnapshot: Equatable, Sendable {
     var linkState: RadioLinkState
     var identifier: UUID?
@@ -22,7 +17,6 @@ struct AdministeredDeviceSnapshot: Equatable, Sendable {
     /// Whose device this is. Purely informational here: an administrative
     /// session never claims, so this drives a banner, not a decision.
     var hostState: RadioHostState
-    var sync: UlcpSyncRecord?
     var batteryPercentage: Int?
     var batteryVoltageMillivolts: Int?
     var chargeState: RadioChargeState?
@@ -41,7 +35,6 @@ struct AdministeredDeviceSnapshot: Equatable, Sendable {
         name: nil,
         deviceIdentity: nil,
         hostState: .unknown,
-        sync: nil,
         batteryPercentage: nil,
         batteryVoltageMillivolts: nil,
         chargeState: nil,
@@ -72,7 +65,6 @@ extension AdministeredDeviceSnapshot {
                 )
             },
             hostState: RadioHostState(state.host),
-            sync: state.provisioning,
             batteryPercentage: liveBattery?.percentage.map(Int.init),
             batteryVoltageMillivolts: liveBattery?.voltageMv.map(Int.init),
             chargeState: liveBattery?.chargeState.map(RadioChargeState.init),
@@ -186,8 +178,14 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     /// arrived yet. The link is finished: nothing on it may progress toward
     /// ready.
     private var faultReported = false
-    private var propertyPushContinuations:
-        [UUID: AsyncStream<UlcpPropertyPushRecord>.Continuation] = [:]
+    /// The managed device the driver's pushes go to, while the
+    /// management sheet has one open.
+    private weak var managedDevice: MobileManagedDevice?
+    #if DEBUG
+    /// The staged devices listed before those found over Bluetooth, while
+    /// staging is on.
+    private var staged: StagedAdministeredDevices?
+    #endif
 
     override init() {
         super.init()
@@ -284,6 +282,19 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
             }
         }
     }
+
+    #if DEBUG
+    // MARK: - Staging
+
+    /// List `devices` before those found over Bluetooth, and attach to
+    /// them through the staging air.
+    func useStagedDevices(_ devices: StagedAdministeredDevices?) async {
+        await onQueue { [self] in
+            staged = devices
+            yieldDiscoveryList()
+        }
+    }
+    #endif
 
     // MARK: - Discovery
 
@@ -395,6 +406,13 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     }
 
     private func currentDiscoveryList() -> [DiscoveredRadio] {
+        #if DEBUG
+        if let staged { return staged.radios + bluetoothDiscoveryList() }
+        #endif
+        return bluetoothDiscoveryList()
+    }
+
+    private func bluetoothDiscoveryList() -> [DiscoveredRadio] {
         if RadioAccessories.usesSystemPicker {
             return accessoryInventory.availableRadios(
                 sightings: discovered.values.sorted { $0.discoveryOrder < $1.discoveryOrder }.map { entry in
@@ -454,26 +472,28 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
 
     // MARK: - Connection
 
-    /// Connect to `id` and synchronize with it, resolving with the device's
-    /// configuration once the ULCP session is attached and that configuration
-    /// has been read.
+    /// Connect to `id` and synchronize with it, resolving once the ULCP
+    /// session is attached and the attach's inspection has landed.
     ///
     /// `lazyAttach` cuts the post-attach inspection to what attaching
     /// itself requires, leaving the device to be read a screenful at a
-    /// time through `fetchProperties`—the sync it resolves with is
-    /// card-grade, not the device whole. The full attach is what
-    /// commissioning's whole-configuration draft needs, and a lazy
-    /// settings screen must never pay for.
+    /// time through the managed device. The full attach is what
+    /// commissioning needs, and a lazy settings screen must never pay for.
     ///
     /// Throws if the device cannot be reached, refuses the protocol, or the
     /// whole exchange overruns its budget. A drop *after* this resolves is
     /// not thrown anywhere—it arrives on `snapshots()` as a failed link,
     /// because by then the caller is a UI showing an editor, not an
     /// `await`.
-    @discardableResult
-    func connect(_ id: UUID, lazyAttach: Bool = false) async throws -> UlcpSyncRecord? {
+    func connect(_ id: UUID, lazyAttach: Bool = false) async throws {
         let selection = UUID()
         await onQueue { [self] in selectionGeneration = selection }
+        #if DEBUG
+        if await onQueue({ [self] in staged?.offers(id) == true }) {
+            try await connectStaged(id, selection: selection, lazyAttach: lazyAttach)
+            return
+        }
+        #endif
         if RadioAccessories.usesSystemPicker {
             let inventory = try await RadioAccessories.shared.prepareSelection(id)
             try await waitForBluetooth(inventory)
@@ -489,19 +509,77 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
                 }
             }
         }
-        // The driver resolves this once the attach's inspection has landed:
-        // a caller needs a device, not a link. The state it answers with is
-        // the one the attach ended on, so the configuration cannot be from
-        // before it.
+        try await awaitAttach(of: driver)
+    }
+
+    /// Wait for `driver`'s attach. It resolves once the attach's
+    /// inspection has landed: a caller needs a device, not a link.
+    private func awaitAttach(of driver: MobileRadioDriver) async throws {
         do {
-            let state = try await driver.attached()
+            _ = try await driver.attached()
             await onQueue { [self] in finishAttach(of: driver) }
-            return state.provisioning
         } catch let error as MobileRadioError {
             await onQueue { [self] in finishAttach(of: driver) }
             throw Self.attachError(error)
         }
     }
+
+    #if DEBUG
+    /// Attach to a staged device in place of a Bluetooth one. The staging
+    /// air runs the device's link itself and hands the driver this
+    /// session's host key before the link comes up, as `startDriver` does;
+    /// this session then adopts the driver, so snapshots and operations go
+    /// exactly as over Bluetooth.
+    private func connectStaged(
+        _ id: UUID,
+        selection: UUID,
+        lazyAttach: Bool
+    ) async throws {
+        try Task.checkCancellation()
+        let driver = try await withCheckedThrowingContinuation {
+            (result: CheckedContinuation<MobileRadioDriver, any Error>) in
+            queue.async { [self] in
+                do {
+                    result.resume(returning: try beginStagedConnect(
+                        id,
+                        selection: selection,
+                        lazyAttach: lazyAttach
+                    ))
+                } catch {
+                    result.resume(throwing: error)
+                }
+            }
+        }
+        try await awaitAttach(of: driver)
+    }
+
+    private func beginStagedConnect(
+        _ id: UUID,
+        selection: UUID,
+        lazyAttach: Bool
+    ) throws -> MobileRadioDriver {
+        guard selectionGeneration == selection else { throw CancellationError() }
+        guard let staged else { throw RadioConnectionError.radioNotFound }
+        guard !attachPending else { throw RadioConnectionError.operationInProgress }
+        Self.logger.notice("action: administer staged device \(id, privacy: .public)")
+        stopDiscoveryOnQueue()
+        releasePeripheral()
+        retireDriver()
+        let driver: MobileRadioDriver
+        do {
+            driver = try staged.driver(
+                for: id,
+                hostKey: selectedHostKey,
+                lazyInspection: lazyAttach
+            )
+        } catch {
+            throw RadioConnectionError.radioNotFound
+        }
+        adopt(driver)
+        attachPending = true
+        return driver
+    }
+    #endif
 
     /// Start connecting on the queue, and hand back the driver whose attach
     /// the caller waits on. It reports the transport connecting first, so
@@ -609,11 +687,17 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
             // Only fails when the system will not start a thread.
             throw RadioConnectionError.radioNotFound
         }
+        adopt(driver)
+        linkBridge = bridge
+        return driver
+    }
+
+    /// Make `driver` this session's: its updates publish snapshots, and
+    /// operations run on it.
+    private func adopt(_ driver: MobileRadioDriver) {
         driver.setListener(listener: AdministrativeDriverListener(session: self, driver: driver))
         try? driver.setHostKey(hostKey: selectedHostKey)
         self.driver = driver
-        linkBridge = bridge
-        return driver
     }
 
     /// Stop the current driver and cut it off from the link, so nothing
@@ -624,6 +708,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         driver?.clearListener()
         driver?.stop()
         driver = nil
+        managedDevice = nil
         attachPending = false
     }
 
@@ -652,266 +737,18 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         self.peripheral === peripheral && !faultReported
     }
 
-    // MARK: - Configuration
+    // MARK: - Management
 
-    /// Write a complete device configuration and wait for the radio to
-    /// persist it. Rust owns the write ordering and the trailing save.
-    func configureDevice(_ configuration: UlcpDeviceConfigRecord) async throws {
-        try await operation { try await $0.configureDevice(configuration: configuration) }
+    /// The driver for the attached device, which the core manages it
+    /// through. `nil` while nothing is attached.
+    func currentDriver() async -> MobileRadioDriver? {
+        await onQueue { [self] in driver }
     }
 
-    /// Let a node manage this device over the mesh, or stop it from doing
-    /// so. Persisted by a save the Rust session chains behind the write.
-    ///
-    /// The device's own list is the authority and comes back on the
-    /// snapshot, so nothing here reads it separately: a mutation that
-    /// resolves has already republished `dev_admin_keys`.
-    func setAdministrator(_ publicKey: Data, present: Bool) async throws {
-        Self.logger.notice(
-            "action: user \(present ? "added" : "removed", privacy: .public) an administrator"
-        )
-        try await tableEdit { driver in
-            present
-                ? try await driver.insertDeviceAdmin(publicKey: publicKey)
-                : try await driver.removeDeviceAdmin(publicKey: publicKey)
-        }
-    }
-
-    /// Store a node on the device's identity, or take it off, so it can
-    /// hold a secure session with that node on its own. Persisted by a
-    /// save the Rust session chains behind the write, like the
-    /// administrator table.
-    func setPeer(_ publicKey: Data, present: Bool) async throws {
-        Self.logger.notice(
-            "action: user \(present ? "added" : "removed", privacy: .public) a device peer"
-        )
-        try await tableEdit { driver in
-            present
-                ? try await driver.insertDevicePeer(publicKey: publicKey)
-                : try await driver.removeDevicePeer(publicKey: publicKey)
-        }
-    }
-
-    /// Start or stop the device's locate alert (`PROP_ALERT`).
-    ///
-    /// Live behavior rather than configuration: it is never part of a
-    /// configuration write, never saved, and it outlives this session—
-    /// an alert left running keeps running after the setup sheet closes.
-    /// Done once sent; the device's answer arrives on `snapshots()`.
-    func setAlert(_ state: RadioAlertState) async throws {
-        Self.logger.notice("action: user set locate alert to \(state.rawValue, privacy: .public)")
-        try await operation { try await $0.setAlert(state: state.wire) }
-    }
-
-    /// Set—or clear—the device's wall clock (`PROP_TIME`).
-    ///
-    /// Live state like the alert, and for the same kind of reason: the
-    /// clock is never saved, so it is not part of a configuration write.
-    /// The time *zone* is, and travels with `configureDevice`.
-    func setTime(epochSeconds: UInt32?) async throws {
-        Self.logger.notice(
-            "action: user \(epochSeconds == nil ? "cleared" : "set", privacy: .public) the device clock"
-        )
-        try await operation { try await $0.setTime(epochSeconds: epochSeconds) }
-    }
-
-    /// Re-read the device's authoritative configuration and return it.
-    ///
-    /// A write is already echo-verified property by property, so this is not
-    /// how a bad write is caught—it is how the *saved* device is read back
-    /// after the trailing `CMD_SAVE`, which is a different question.
-    @discardableResult
-    func refresh() async throws -> UlcpSyncRecord? {
-        try await operation { try await $0.refresh() }.provisioning
-    }
-
-    /// Sample where the device is, and how well it knows.
-    ///
-    /// A device announces a fix indicator and nothing else about a
-    /// position—see ``RadioPositionPoll``. Commissioning is where that
-    /// matters most: switching a receiver on and watching it acquire is
-    /// the whole point of the positioning section, and without asking, the
-    /// screen would show the reading taken at attach forever.
-    @discardableResult
-    func refreshPositioning() async throws -> UlcpSyncRecord? {
-        try await operation { try await $0.refreshPositioning() }.provisioning
-    }
-
-    // MARK: - Local management
-
-    /// Read named properties from the attached device, answering with what
-    /// it said about each—values and refusals alike. The administrative
-    /// counterpart of the companion session's `fetchCompanionProperties`,
-    /// with the same shape of answer.
-    func fetchProperties(
-        _ propertyIDs: [UInt32]
-    ) async throws -> [MobileMeshManagementAnswerRecord] {
-        guard !propertyIDs.isEmpty else { return [] }
-        return try await management { try await $0.fetchProperties(propertyIds: propertyIDs) }
-            .answers
-    }
-
-    /// Write properties to the attached device, in the given order, and
-    /// answer with what it says each is now worth.
-    func writeProperties(
-        _ writes: [MobileMeshPropertyWriteRecord]
-    ) async throws -> [MobileMeshManagementAnswerRecord] {
-        guard !writes.isEmpty else { return [] }
-        return try await management { try await $0.writeProperties(writes: writes) }.answers
-    }
-
-    /// Add or replace one Wi-Fi network on the attached device, or forget
-    /// one by name.
-    ///
-    /// The one table on these screens that cannot be written whole: the
-    /// credential has a single home on the device and never comes back, so
-    /// a host holding the reported table holds no credentials to rewrite
-    /// it with. Inserting an SSID the device already knows replaces that
-    /// entry, which is how a mistyped passphrase is corrected.
-    func setWifiNetwork(_ item: Data, present: Bool) async throws {
-        Self.logger.notice(
-            "action: user \(present ? "stored" : "forgot", privacy: .public) a Wi-Fi network"
-        )
-        let event = try await management {
-            try await $0.editPropertyItems(
-                propertyId: ulcpManagedPropertyIds().wifiNetworks,
-                mutations: [
-                    UlcpItemMutationRecord(
-                        mutation: present ? .insert : .remove,
-                        value: item
-                    )
-                ]
-            )
-        }
-        // The device answers with the item it changed, or with a status
-        // where that item belonged.
-        try RadioDriverAdapter.require(refusal: event.answers.first?.refusal ?? event.refusal)
-    }
-
-    /// Persist the attached device's live configuration.
-    func saveDevice() async throws {
-        let event = try await management { try await $0.save() }
-        try RadioDriverAdapter.require(refusal: event.refusal)
-    }
-
-    /// Ask the attached device to announce itself now.
-    ///
-    /// Answered, unlike the resets below: the device says whether it took
-    /// the announcement, and a device without `CAP_ADVERT` says it cannot.
-    func announce(_ request: MobileAnnouncementRecord) async throws {
-        Self.logger.notice("action: user asked the device to announce itself")
-        let event = try await management { try await $0.announce(request: request) }
-        try RadioDriverAdapter.require(refusal: event.refusal)
-    }
-
-    /// Forget every host paired with the attached device—the bond count
-    /// written to zero.
-    ///
-    /// Unlike the resets below this is answered, so the exchange runs to
-    /// completion: what a bench operator needs to know is whether the
-    /// device did it, and the write is echoed with the count the device
-    /// now holds before it drops this session with the rest.
-    func clearBluetoothBonds() async throws {
-        Self.logger.notice("action: user cleared the device's Bluetooth pairings")
-        let answers = try await writeProperties([
-            MobileMeshPropertyWriteRecord(
-                propertyId: ulcpManagedPropertyIds().bleBondCount,
-                value: Data([0])
-            )
-        ])
-        guard let answer = answers.first else { throw RemoteManagementError.unreadable }
-        if answer.value == nil {
-            throw RemoteManagementError.refused(status: answer.statusCode ?? 0)
-        }
-    }
-
-    /// Restart the attached device, or return it to a blank factory state.
-    ///
-    /// Neither is answered: the device acts and the link drops, so there is
-    /// no exchange to run to completion. The frame goes and the caller
-    /// treats the disconnect that follows as the confirmation.
-    func reset(scope: MobileMeshResetScope) async throws {
-        switch scope {
-        case .reboot:
-            try await management { try await $0.reboot() }
-        case .factory:
-            try await management { try await $0.factoryReset() }
-        case .protocol, .restore:
-            throw RemoteManagementError.unavailable
-        }
-    }
-
-    func enterDfu(mode: UlcpDfuMode) async throws {
-        try await DfuEntryError.perform {
-            try await self.management { try await $0.enterDfu(mode: mode) }.statusCode
-        }
-        await disconnect()
-    }
-
-    /// Values the attached device announces on its own, verbatim.
-    func propertyPushes() async -> AsyncStream<UlcpPropertyPushRecord> {
-        await onQueue { [self] in
-            AsyncStream(bufferingPolicy: .bufferingNewest(16)) { continuation in
-                let id = UUID()
-                propertyPushContinuations[id] = continuation
-                continuation.onTermination = { [weak self] _ in
-                    self?.queue.async { [weak self] in
-                        self?.propertyPushContinuations[id] = nil
-                    }
-                }
-            }
-        }
-    }
-
-    /// Run one exchange through the current driver. Errors wear
-    /// `RadioConnectionError`, as they always have here.
-    private func operation<T>(
-        _ body: (MobileRadioDriver) async throws -> T
-    ) async throws -> T {
-        try await run(
-            mapping: RadioDriverAdapter.connectionError,
-            missing: RadioConnectionError.radioNotFound,
-            body
-        )
-    }
-
-    /// Edit one of the device's key tables through the current driver.
-    /// Errors wear `DevicePeerError`, as the companion's edits of the same
-    /// tables do, so a full table or a device without an identity says so.
-    private func tableEdit(
-        _ body: (MobileRadioDriver) async throws -> Void
-    ) async throws {
-        try await run(
-            mapping: RadioDriverAdapter.devicePeerError,
-            missing: DevicePeerError.radioUnavailable,
-            body
-        )
-    }
-
-    /// Run one local management exchange through the current driver.
-    /// Errors wear `RemoteManagementError` so the management screens read
-    /// this session and the mesh with the same copy.
-    private func management<T>(
-        _ body: (MobileRadioDriver) async throws -> T
-    ) async throws -> T {
-        try await run(
-            mapping: RadioDriverAdapter.managementError,
-            missing: RemoteManagementError.unavailable,
-            body
-        )
-    }
-
-    private func run<T>(
-        mapping: (MobileRadioError) -> any Error,
-        missing: any Error,
-        _ body: (MobileRadioDriver) async throws -> T
-    ) async throws -> T {
-        guard let driver = await onQueue({ [self] in driver }) else { throw missing }
-        do {
-            return try await body(driver)
-        } catch let error as MobileRadioError {
-            throw mapping(error)
-        }
+    /// Hand what the attached device announces on its own, and how many
+    /// announcements were lost, to `device`.
+    func forwardPushes(to device: MobileManagedDevice?) async {
+        await onQueue { [self] in managedDevice = device }
     }
 
     // MARK: - What the driver publishes
@@ -923,10 +760,11 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
             if let state = update.state {
                 publish(AdministeredDeviceSnapshot(state))
             }
-            for push in update.pushedProperties {
-                for continuation in propertyPushContinuations.values {
-                    continuation.yield(push)
-                }
+            if !update.pushedProperties.isEmpty || update.pushedPropertiesDropped > 0 {
+                managedDevice?.receivePushes(
+                    pushes: update.pushedProperties,
+                    dropped: update.pushedPropertiesDropped
+                )
             }
         }
     }
@@ -1045,7 +883,7 @@ extension AdministrativeDeviceSession: UlcpFrameLink {
 
     func linkAbandonBinding() {}
 
-    /// `enterDfu` ends the session itself once the device confirms.
+    /// The setup flow ends the session itself once the device confirms.
     func linkDidEnterDfu() {}
 
     private func writeNext(on peripheral: CBPeripheral) {

@@ -6,7 +6,7 @@
 //! the radio driver arrive as flags raised from their threads; the pump
 //! task takes them in order.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
@@ -18,6 +18,7 @@ use tokio::sync::{Notify, mpsc, watch};
 
 use super::channels::ChannelCache;
 use super::clock::Clock;
+use super::manage::Registry;
 use super::pipeline::PipelineState;
 use super::policy::PolicyState;
 use super::records::{MobileAppChangesRecord, MobileAppConfigRecord, MobileAppLifecycle};
@@ -77,6 +78,9 @@ pub(super) struct Worker {
     /// Held by `start`, `erase`, `stop` and `use_radio`, so each runs whole
     /// and in turn.
     pub(super) transitions: tokio::sync::Mutex<()>,
+    /// Erases waiting for `transitions`. A start they wait out announces
+    /// nothing and opens no meet: its session is about to go.
+    pub(super) erases_waiting: Cell<u32>,
     /// Commands still running.
     in_flight: Rc<watch::Sender<usize>>,
     /// Raised by `stop` when it is done; ends the worker.
@@ -93,9 +97,14 @@ pub(super) struct Worker {
     pub(super) policy: RefCell<PolicyState>,
     pub(super) pipeline: RefCell<PipelineState>,
     pub(super) waiters: RefCell<Waiters>,
+    /// The devices being managed.
+    pub(super) managed: RefCell<Registry>,
     /// The failed messages a `resend` is sending again, by owner, so a
     /// second resend of one does not send it twice.
     pub(super) resending: RefCell<HashSet<(String, MobileStoredChatMessageRefRecord)>>,
+    /// Held by a reaction toggle from its read of the row through the
+    /// session's write, so the next toggle reads what this one stored.
+    pub(super) reaction_toggles: tokio::sync::Mutex<()>,
     /// Wakes the policy pass task.
     pub(super) policy_wake: Notify,
     /// Wakes the schedules to check whether one is due.
@@ -121,6 +130,8 @@ pub(crate) struct TestHooks {
     /// When set, a sent message's draft is not cleared, as when the store
     /// refuses the write.
     pub(crate) fail_draft_clear: std::sync::atomic::AtomicBool,
+    /// Starts that ended by arming the policy pass and settling the meet.
+    pub(crate) starts_announced: std::sync::atomic::AtomicUsize,
 }
 
 /// A command counted as running until it drops.
@@ -262,6 +273,7 @@ pub(super) fn run(
                 config: parts.config,
                 signals: parts.signals,
                 transitions: tokio::sync::Mutex::new(()),
+                erases_waiting: Cell::new(0),
                 in_flight: Rc::new(watch::Sender::new(0)),
                 exit: Notify::new(),
                 session: RefCell::new(None),
@@ -273,7 +285,9 @@ pub(super) fn run(
                 policy: RefCell::new(PolicyState::default()),
                 pipeline: RefCell::new(PipelineState::default()),
                 waiters: RefCell::new(Waiters::default()),
+                managed: RefCell::new(Registry::default()),
                 resending: RefCell::new(HashSet::new()),
+                reaction_toggles: tokio::sync::Mutex::new(()),
                 policy_wake: Notify::new(),
                 schedule_check: Notify::new(),
                 revocation_done: Notify::new(),

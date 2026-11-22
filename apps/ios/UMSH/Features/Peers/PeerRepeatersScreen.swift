@@ -141,7 +141,9 @@ struct PeerRepeatersScreen: View {
     /// repeater so the neighbor hears it one hop on. `nil` when the route
     /// cannot honestly land there.
     private var pathToRepeater: [Data]? {
-        guard let vantage = SolicitVantage(peer: peer, route: route), vantage.landsAtPeer else {
+        guard let vantage = SolicitVantage(peer: peer, vantage: route?.discoveryVantage),
+              vantage.landsAtPeer
+        else {
             return nil
         }
         return vantage.repeaters

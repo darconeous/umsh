@@ -31,8 +31,12 @@ struct DeviceAdministrator: Identifiable, Hashable {
 
     /// What to call this entry, given the nodes the phone has saved.
     func label(among peers: [PeerSummary]) -> String {
-        if isThisPhone { return "This phone" }
-        guard let identity else { return "Unrecognized key" }
+        if isThisPhone {
+            return String(localized: "This phone", comment: "Device setup: this phone's own entry in a device's administrator list.")
+        }
+        guard let identity else {
+            return String(localized: "Unrecognized key", comment: "Device setup: an administrator list entry that is not a node key.")
+        }
         let saved = peers.first {
             $0.identity.canonicalAddress == identity.canonicalAddress
         }
@@ -52,9 +56,12 @@ struct DeviceAdministratorsSection: View {
     /// Whether this phone is on the list, as a switch because it is the
     /// entry an operator actually decides.
     @Binding var phoneAdministers: Bool
-    /// False on a phone whose own node key is unknown, which leaves the
-    /// switch off and unusable rather than lying about what it would do.
+    /// False on a phone whose own node key is unknown.
     let phoneKeyKnown: Bool
+    /// Whether the switch can be moved: off and unusable on a phone whose
+    /// key is unknown, rather than lying about what it would do, and on a
+    /// full list this phone is not on.
+    let phoneSwitchEnabled: Bool
     let isFull: Bool
     /// Nodes this phone has saved, to name entries and to add from.
     let knownPeers: [PeerSummary]
@@ -64,7 +71,7 @@ struct DeviceAdministratorsSection: View {
     var body: some View {
         Section {
             Toggle("This phone", isOn: $phoneAdministers)
-                .disabled(!phoneKeyKnown || (isFull && !phoneAdministers))
+                .disabled(!phoneSwitchEnabled)
 
             ForEach(administrators.filter { !$0.isThisPhone }) { administrator in
                 LabeledContent(administrator.label(among: knownPeers)) {
@@ -85,7 +92,20 @@ struct DeviceAdministratorsSection: View {
         } header: {
             Text("Administrators")
         } footer: {
-            Text(footer)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Nodes listed here can read and change this device's settings over the mesh. It ignores everyone else, silently.")
+                if !phoneKeyKnown {
+                    Text("This phone's own node identity is not available, so it cannot list itself.")
+                } else if !phoneAdministers {
+                    Text("Without this phone on the list, its settings can only be changed from here, over Bluetooth.")
+                }
+                if isFull {
+                    Text(
+                        "The list is full (\(deviceAdminCapacity) of \(deviceAdminCapacity))—remove one to add another.",
+                        comment: "Device setup: administrators footer. Both placeholders are the list's capacity."
+                    )
+                }
+            }
         }
     }
 
@@ -106,21 +126,5 @@ struct DeviceAdministratorsSection: View {
         let id: String
         let displayName: String
         let publicKey: Data
-    }
-
-    private var footer: String {
-        var footer = """
-            Nodes listed here can read and change this device's settings over \
-            the mesh. It ignores everyone else, silently.
-            """
-        if !phoneKeyKnown {
-            footer += " This phone's own node identity is not available, so it cannot list itself."
-        } else if !phoneAdministers {
-            footer += " Without this phone on the list, its settings can only be changed from here, over Bluetooth."
-        }
-        if isFull {
-            footer += " The list is full (\(deviceAdminCapacity) of \(deviceAdminCapacity))—remove one to add another."
-        }
-        return footer
     }
 }

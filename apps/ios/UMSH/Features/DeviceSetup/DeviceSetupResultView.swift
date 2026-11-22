@@ -7,9 +7,9 @@ import UMSHMobileCore
 /// outcome somewhere else: a commissioning apply is two exchanges with the
 /// device, and the operator is owed one answer about both.
 struct DeviceSetupResultView: View {
-    let phase: DeviceConfigDraft.ApplyPhase
-    /// What the device was set up as—"tracker", "repeater".
-    let deviceNoun: String
+    let phase: DeviceSetupModel.ApplyPhase
+    /// What the device was set up as.
+    let goal: MobileSetupGoal
     let deviceName: String?
     /// Nil when this app has nowhere to file a peer.
     let savePeer: (() async throws -> Void)?
@@ -34,8 +34,8 @@ struct DeviceSetupResultView: View {
                     applying
                 case .succeeded, .succeededWithoutClock:
                     succeeded
-                case let .reportedDifferently(field):
-                    reportedDifferently(field)
+                case let .reportedDifferently(setting):
+                    reportedDifferently(setting)
                 }
             }
             .toolbar {
@@ -73,7 +73,7 @@ struct DeviceSetupResultView: View {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 52))
                         .foregroundStyle(.green)
-                    Text("Congrats, you've successfully set up your \(deviceNoun)!")
+                    Text(goal.success)
                         .font(.title3.weight(.semibold))
                         .multilineTextAlignment(.center)
                     if let deviceName {
@@ -100,7 +100,7 @@ struct DeviceSetupResultView: View {
                 Section {
                     savePeerRow(savePeer)
                 } footer: {
-                    Text("Saving it to Peers is how you find this \(deviceNoun) again from the rest of the app.")
+                    Text(goal.savePeerFooter)
                 }
             }
 
@@ -147,15 +147,17 @@ struct DeviceSetupResultView: View {
         }
     }
 
-    private func reportedDifferently(_ field: String) -> some View {
+    private func reportedDifferently(_ setting: MobileSetupSetting) -> some View {
         List {
             Section {
                 VStack(spacing: 12) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: 44))
                         .foregroundStyle(.orange)
-                    Text("The device reported \(field) back differently")
+                    Text("Settings Reported Differently", comment: "Device setup: headline of the result shown when the device reported a setting back other than what it was asked for.")
                         .font(.title3.weight(.semibold))
+                        .multilineTextAlignment(.center)
+                    Text(setting.reportedDifferently)
                         .multilineTextAlignment(.center)
                 }
                 .frame(maxWidth: .infinity)
@@ -164,7 +166,7 @@ struct DeviceSetupResultView: View {
             .listRowBackground(Color.clear)
 
             Section {
-                Text("It saved its settings, but what it read back afterwards is not what it was asked for. Read the device again before relying on this configuration.")
+                Text("It saved its settings, but what it read back afterward is not what it was asked for. Read the device again before relying on this configuration.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
