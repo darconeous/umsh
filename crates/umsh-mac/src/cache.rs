@@ -15,12 +15,12 @@ pub enum DupCacheKey {
         route_retry: bool,
     },
     /// MIC-less routable packet keyed by a stable local hash over non-dynamic
-    /// fields.
-    Hash32(u32),
+    /// fields, and whether it carries Route Retry, as a MIC-keyed packet is.
+    Hash32 { hash: u32, route_retry: bool },
     /// MAC ack keyed the same way as [`Hash32`](Self::Hash32), carried as its
     /// own variant because acks age out of the cache on a much shorter clock
-    ///—see [`ACK_DUP_CACHE_TTL_MS`].
-    AckHash32(u32),
+    ///—see [`DuplicateCache::set_ack_ttl_ms`].
+    AckHash32 { hash: u32, route_retry: bool },
 }
 
 /// How long a duplicate key stays suppressed.
@@ -35,18 +35,13 @@ pub enum DupCacheKey {
 /// again well within the time anyone would wait for it.
 pub const DUP_CACHE_TTL_MS: u64 = 60 * 60 * 1000;
 
-/// How long a MAC-ack duplicate key stays suppressed.
+/// How long a MAC-ack duplicate key stays suppressed until the MAC sets a
+/// lifetime from its channel timing ([`DuplicateCache::set_ack_ttl_ms`]).
 ///
-/// An identical re-acknowledgement is the one duplicate a *correct* node
-/// emits on purpose: the duplicate-acknowledgement window exists so a
-/// destination can re-ack when the sender retransmits, and that re-ack
-/// only helps if repeaters carry it. An ack held under the general
-/// hour-long TTL would be forwarded once and then silently absorbed for
-/// the rest of the hour, killing the recovery path at the first hop.
-/// Ten seconds still collapses the burst of copies from a single
-/// exchange—flood copies and retransmission ladders both play out
-/// within a few confirmation windows—while a re-ack provoked by a
-/// sender's route retry, arriving tens of seconds later, is carried.
+/// An ack's entry only has to outlive the copies of one exchange: late
+/// flood copies and a routed ack's single retry. A re-acknowledgement that
+/// answers a Route Retry carries the option itself, so it is a different
+/// key and is carried whatever this lifetime is.
 pub const ACK_DUP_CACHE_TTL_MS: u64 = 10 * 1000;
 
 /// Fixed-capacity cache of recently observed duplicate keys.
@@ -55,9 +50,12 @@ pub const ACK_DUP_CACHE_TTL_MS: u64 = 10 * 1000;
 /// oldest when the ring is full, whichever comes first.
 #[derive(Clone, Debug)]
 pub struct DuplicateCache<const N: usize = 64> {
-    /// Insertion-ordered, so the oldest entry is always at the front and
-    /// expiry can be pruned from that end without a scan.
+    /// Each key with the time it expires. Insertion-ordered, so the oldest
+    /// entry is always at the front and expiry can be pruned from that end
+    /// without a scan.
     entries: Deque<(DupCacheKey, u64), N>,
+    /// Lifetime of a MAC ack's entry.
+    ack_ttl_ms: u64,
 }
 
 impl<const N: usize> Default for DuplicateCache<N> {
@@ -71,14 +69,20 @@ impl<const N: usize> DuplicateCache<N> {
     pub fn new() -> Self {
         Self {
             entries: Deque::new(),
+            ack_ttl_ms: ACK_DUP_CACHE_TTL_MS,
         }
+    }
+
+    /// Set the lifetime of MAC-ack entries inserted from now on.
+    pub fn set_ack_ttl_ms(&mut self, ttl_ms: u64) {
+        self.ack_ttl_ms = ttl_ms;
     }
 
     /// Return whether `key` is present and has not aged out.
     pub fn contains(&self, key: &DupCacheKey, now_ms: u64) -> bool {
-        self.entries.iter().any(|(entry, inserted_ms)| {
-            entry == key && !Self::is_expired(entry, *inserted_ms, now_ms)
-        })
+        self.entries
+            .iter()
+            .any(|(entry, expires_ms)| entry == key && now_ms < *expires_ms)
     }
 
     /// Insert `key`, dropping aged-out entries and evicting the oldest
@@ -95,7 +99,11 @@ impl<const N: usize> DuplicateCache<N> {
         if self.entries.is_full() {
             let _ = self.entries.pop_front();
         }
-        let _ = self.entries.push_back((key, now_ms));
+        let ttl_ms = match key {
+            DupCacheKey::AckHash32 { .. } => self.ack_ttl_ms,
+            DupCacheKey::Mic { .. } | DupCacheKey::Hash32 { .. } => DUP_CACHE_TTL_MS,
+        };
+        let _ = self.entries.push_back((key, now_ms.saturating_add(ttl_ms)));
     }
 
     /// Forget `key`, so the next copy of its packet counts as new.
@@ -120,24 +128,17 @@ impl<const N: usize> DuplicateCache<N> {
     /// key kind, so an expired short-TTL entry can sit behind a live
     /// long-TTL one; it stops answering [`contains`](Self::contains)
     /// immediately and is reclaimed when it reaches the front.
+    ///
+    /// A clock that has gone backwards (a resynchronized monotonic source)
+    /// leaves an entry looking younger than it is, never older, so
+    /// suppression can only be held slightly too long—never released early.
     pub fn expire(&mut self, now_ms: u64) {
-        while let Some((entry, inserted_ms)) = self.entries.front() {
-            if !Self::is_expired(entry, *inserted_ms, now_ms) {
+        while let Some((_, expires_ms)) = self.entries.front() {
+            if now_ms < *expires_ms {
                 return;
             }
             let _ = self.entries.pop_front();
         }
-    }
-
-    /// A clock that has gone backwards (a resynchronized monotonic source)
-    /// leaves the entry looking younger than it is, never older, so
-    /// suppression can only be held slightly too long—never released early.
-    fn is_expired(key: &DupCacheKey, inserted_ms: u64, now_ms: u64) -> bool {
-        let ttl_ms = match key {
-            DupCacheKey::AckHash32(_) => ACK_DUP_CACHE_TTL_MS,
-            DupCacheKey::Mic { .. } | DupCacheKey::Hash32(_) => DUP_CACHE_TTL_MS,
-        };
-        now_ms.saturating_sub(inserted_ms) >= ttl_ms
     }
 
     /// Return the number of tracked entries.

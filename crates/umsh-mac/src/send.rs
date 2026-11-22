@@ -691,9 +691,22 @@ pub(crate) enum ForwardWatch {
     /// is when it airs again, with `retries` left counting that one; with
     /// none left, it is when the wait ends.
     Awaiting { retries: u8 },
+    /// A routed hop that airs once, with nothing listened for.
+    Routed,
 }
 
 impl ForwardWatch {
+    /// Whether the forward is a routed hop, which never gives way to
+    /// another forwarder's copy.
+    pub(crate) const fn is_routed(self) -> bool {
+        !matches!(self, Self::None)
+    }
+
+    /// Whether the forward is listened for once it airs.
+    pub(crate) const fn is_tracked(self) -> bool {
+        matches!(self, Self::Armed { .. } | Self::Awaiting { .. })
+    }
+
     /// Whether the forward has aired and is waiting to be heard carried
     /// onward.
     pub(crate) const fn has_aired(self) -> bool {

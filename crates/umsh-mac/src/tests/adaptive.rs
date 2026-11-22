@@ -201,15 +201,20 @@ fn forwarding_for_the_rest_of_the_mesh_does_not_renew_the_hold() {
     assert_eq!(mac.repeater_state(), RepeaterState::Standby);
 }
 
-/// An ordinary repeater counts every overheard copy, the previous hop's
-/// among them.
+/// An ordinary repeater gives way only to a copy carried as far as its own
+/// forward would go, never to a copy from behind.
 #[test]
-fn an_ordinary_repeater_counts_a_copy_from_behind() {
+fn an_ordinary_repeater_ignores_a_copy_from_behind() {
     let mut mac = make_adaptive_mac();
     mac.repeater_config_mut().mode = RepeaterMode::On;
     let frame = flood_broadcast(b"again");
     receive(&mut mac, &frame);
     receive(&mut mac, &frame);
+    let queued = mac.tx_queue_mut().pop_next().unwrap();
+    assert_eq!(queued.forward_deferrals, 0);
+    mac.tx_queue_mut().enqueue_entry(queued).unwrap();
+
+    receive(&mut mac, &forwarded_once(&frame));
     let queued = mac.tx_queue_mut().pop_next().unwrap();
     assert_eq!(queued.forward_deferrals, 1);
 }

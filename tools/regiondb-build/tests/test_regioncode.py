@@ -73,3 +73,32 @@ def test_rejects_out_of_form_short_codes():
         regioncode.from_short_code("SF-")
     with pytest.raises(regioncode.RegionCodeError):
         regioncode.from_short_code("")
+
+
+def test_from_string_trims_only_ascii_white_space():
+    assert regioncode.from_string(" \t\r\n\x0cRogue Valley \t") == regioncode.from_name(
+        "Rogue Valley"
+    )
+    nbsp = "Rogue Valley\u00a0"
+    assert regioncode.from_string(nbsp) == regioncode.from_name(nbsp)
+    assert regioncode.from_string(nbsp) != regioncode.from_name("Rogue Valley")
+
+
+def test_from_string_reads_literal_codes():
+    assert regioncode.from_string("0x7853") == 0x7853
+    assert regioncode.from_string("0XdF6f") == 0xDF6F
+    for name in ["0x12345", "0xzz", "0x 12", "0x+1"]:
+        assert regioncode.from_string(name) == regioncode.from_name(name)
+
+
+def test_from_string_collapses_white_space_inside_a_name():
+    expected = regioncode.from_name("Rogue Valley")
+    for spelling in ["Rogue  Valley", "Rogue\tValley", "Rogue \r\n Valley"]:
+        assert regioncode.from_string(spelling) == expected
+    assert regioncode.from_string("R" * 11 + "   " + "R" * 12)
+
+
+def test_from_string_rejects_control_characters():
+    for name in ["Rogue\x00Valley", "Rogue\x0bValley", "Rogue\x7f", "\x85Valley"]:
+        with pytest.raises(regioncode.RegionCodeError):
+            regioncode.from_string(name)

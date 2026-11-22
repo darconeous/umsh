@@ -99,25 +99,39 @@ fn test_pubkey(seed: u8) -> PublicKey {
     }
 }
 
+fn hash_key(hash: u32) -> DupCacheKey {
+    DupCacheKey::Hash32 {
+        hash,
+        route_retry: false,
+    }
+}
+
+fn ack_key(hash: u32) -> DupCacheKey {
+    DupCacheKey::AckHash32 {
+        hash,
+        route_retry: false,
+    }
+}
+
 #[test]
 fn duplicate_cache_evicts_oldest_entry() {
     let mut cache = DuplicateCache::<2>::new();
-    cache.insert(DupCacheKey::Hash32(1), 1);
-    cache.insert(DupCacheKey::Hash32(2), 2);
-    cache.insert(DupCacheKey::Hash32(3), 3);
+    cache.insert(hash_key(1), 1);
+    cache.insert(hash_key(2), 2);
+    cache.insert(hash_key(3), 3);
 
-    assert!(!cache.contains(&DupCacheKey::Hash32(1), 3));
-    assert!(cache.contains(&DupCacheKey::Hash32(2), 3));
-    assert!(cache.contains(&DupCacheKey::Hash32(3), 3));
+    assert!(!cache.contains(&hash_key(1), 3));
+    assert!(cache.contains(&hash_key(2), 3));
+    assert!(cache.contains(&hash_key(3), 3));
 }
 
 #[test]
 fn duplicate_cache_entries_age_out() {
     let mut cache = DuplicateCache::<4>::new();
-    cache.insert(DupCacheKey::Hash32(1), 1_000);
+    cache.insert(hash_key(1), 1_000);
 
-    assert!(cache.contains(&DupCacheKey::Hash32(1), 1_000 + DUP_CACHE_TTL_MS - 1));
-    assert!(!cache.contains(&DupCacheKey::Hash32(1), 1_000 + DUP_CACHE_TTL_MS));
+    assert!(cache.contains(&hash_key(1), 1_000 + DUP_CACHE_TTL_MS - 1));
+    assert!(!cache.contains(&hash_key(1), 1_000 + DUP_CACHE_TTL_MS));
 }
 
 /// A key repeated inside its window ages from when it was first seen, so a
@@ -125,25 +139,25 @@ fn duplicate_cache_entries_age_out() {
 #[test]
 fn duplicate_cache_repeat_does_not_extend_the_window() {
     let mut cache = DuplicateCache::<4>::new();
-    cache.insert(DupCacheKey::Hash32(1), 0);
-    cache.insert(DupCacheKey::Hash32(1), DUP_CACHE_TTL_MS / 2);
+    cache.insert(hash_key(1), 0);
+    cache.insert(hash_key(1), DUP_CACHE_TTL_MS / 2);
 
-    assert!(!cache.contains(&DupCacheKey::Hash32(1), DUP_CACHE_TTL_MS));
+    assert!(!cache.contains(&hash_key(1), DUP_CACHE_TTL_MS));
 }
 
-/// Ack keys age out on their own short clock, so a destination's
-/// deliberate re-acknowledgement can be forwarded again; a general key
-/// holding the same hash value is a different key on the long clock.
+/// Ack keys age out on their own short clock, the one the MAC sets; a
+/// general key holding the same hash value is a different key on the long
+/// clock.
 #[test]
 fn duplicate_cache_ages_ack_keys_out_fast() {
     let mut cache = DuplicateCache::<4>::new();
-    cache.insert(DupCacheKey::AckHash32(7), 1_000);
-    cache.insert(DupCacheKey::Hash32(7), 1_000);
+    cache.set_ack_ttl_ms(4_000);
+    cache.insert(ack_key(7), 1_000);
+    cache.insert(hash_key(7), 1_000);
 
-    let ack_expiry = 1_000 + crate::cache::ACK_DUP_CACHE_TTL_MS;
-    assert!(cache.contains(&DupCacheKey::AckHash32(7), ack_expiry - 1));
-    assert!(!cache.contains(&DupCacheKey::AckHash32(7), ack_expiry));
-    assert!(cache.contains(&DupCacheKey::Hash32(7), ack_expiry));
+    assert!(cache.contains(&ack_key(7), 4_999));
+    assert!(!cache.contains(&ack_key(7), 5_000));
+    assert!(cache.contains(&hash_key(7), 5_000));
 }
 
 #[test]
@@ -9249,6 +9263,23 @@ fn repeater_forwards_an_identical_reack_once_the_ack_entry_ages_out() {
         "a copy inside the suppression window is not forwarded again"
     );
 
+    // The re-ack that answers a Route Retry carries the option, so it is a
+    // different identity and is carried inside the window.
+    let mut buf = [0u8; 64];
+    let reack = PacketBuilder::new(&mut buf)
+        .mac_ack([0xA5; 8])
+        .flood_hops(2)
+        .option(OptionNumber::RouteRetry, &[])
+        .build()
+        .unwrap();
+    let reack: heapless::Vec<u8, 64> = reack.iter().copied().collect();
+    mac.radio_mut().queue_received_frame(reack.as_slice());
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+    assert!(
+        mac.tx_queue_mut().pop_next().is_some(),
+        "a Route Retry re-ack is carried while the first ack is held"
+    );
+
     mac.clock().advance_ms(crate::cache::ACK_DUP_CACHE_TTL_MS);
 
     mac.radio_mut().queue_received_frame(ack.as_slice());
@@ -10091,6 +10122,35 @@ fn receive_one_repeater_counts_configured_region_refusal_as_policy_drop() {
 
 /// Whether a repeater with a default region flood-forwards a unicast
 /// carrying the given option.
+#[test]
+fn repeater_does_not_flood_a_packet_that_has_already_flooded_fifteen_hops() {
+    let forwarded_at = |remaining: u8, accumulated: u8| {
+        let mut mac = make_mac();
+        mac.repeater_config_mut().mode = RepeaterMode::On;
+        let _repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+        let remote = DummyIdentity::new([0xAB; 32]);
+        let channel_key = ChannelKey([0x5A; 32]);
+        let channel_id = mac.crypto().derive_channel_id(&channel_key);
+        let keys = PairwiseKeys {
+            k_enc: [1; 32],
+            k_mic: [2; 32],
+        };
+        mac.add_channel(channel_key).unwrap();
+        mac.radio_mut().queue_received_multicast_with_flood(
+            &remote,
+            channel_id,
+            &keys,
+            b"group",
+            Some((remaining, accumulated)),
+        );
+        let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
+        !mac.tx_queue().is_empty()
+    };
+
+    assert!(forwarded_at(1, 14));
+    assert!(!forwarded_at(1, 15));
+}
+
 fn repeater_forwards_flood_with_option(number: OptionNumber, value: &[u8]) -> bool {
     repeater_forward_of_flood_with_options(&[(number, value)]).is_some()
 }
@@ -10384,6 +10444,53 @@ fn receive_one_repeater_accepts_any_matching_region_from_multiple_region_options
 fn receive_one_defers_pending_forward_when_duplicate_is_overheard() {
     let mut mac = make_mac();
     mac.repeater_config_mut().mode = RepeaterMode::On;
+    let _repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let keys = PairwiseKeys {
+        k_enc: [1; 32],
+        k_mic: [2; 32],
+    };
+    let frame = build_received_unicast_frame(
+        &remote,
+        &keys,
+        &umsh_core::NodeHint([0x77, 0x66, 0x55]),
+        b"hello",
+        false,
+        Some((4, 0)),
+        None,
+        None,
+    );
+
+    mac.radio_mut().queue_received_frame(frame.as_slice());
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+    assert_eq!(mac.tx_queue().len(), 1);
+
+    // The originator sending again is a copy from behind: nobody has carried
+    // the packet on, so the forward keeps its place.
+    mac.radio_mut().queue_received_frame(frame.as_slice());
+    assert!(!block_on(mac.receive_one(|_, _| {})).unwrap());
+    let forwarded = mac.tx_queue_mut().pop_next().unwrap();
+    assert_eq!(forwarded.forward_deferrals, 0);
+    mac.tx_queue_mut().enqueue_entry(forwarded).unwrap();
+
+    // Another repeater's forward of the same reception has carried it as far
+    // as this one would.
+    let carried = pending_forward_frame(&mut mac);
+    mac.radio_mut().queue_received_frame(carried.as_slice());
+    let handled = block_on(mac.receive_one(|_, _| {})).unwrap();
+
+    assert!(!handled);
+    assert_eq!(mac.tx_queue().len(), 1);
+    let forwarded = mac.tx_queue_mut().pop_next().unwrap();
+    assert_eq!(forwarded.priority, TxPriority::Forward);
+    assert_eq!(forwarded.forward_deferrals, 1);
+}
+
+#[test]
+fn a_routed_hop_does_not_give_way_to_another_copy() {
+    let mut mac = make_mac();
+    mac.repeater_config_mut().mode = RepeaterMode::On;
     let repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let repeater_hint = mac
         .identity(repeater_id)
@@ -10410,16 +10517,16 @@ fn receive_one_defers_pending_forward_when_duplicate_is_overheard() {
 
     mac.radio_mut().queue_received_frame(frame.as_slice());
     assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
-    assert_eq!(mac.tx_queue().len(), 1);
+    let carried = pending_forward_frame(&mut mac);
 
-    mac.radio_mut().queue_received_frame(frame.as_slice());
-    let handled = block_on(mac.receive_one(|_, _| {})).unwrap();
-
-    assert!(!handled);
-    assert_eq!(mac.tx_queue().len(), 1);
+    // Neither the previous hop's retry nor a hint-sharing repeater's forward
+    // moves a hop the route named this node for.
+    for copy in [frame.as_slice(), carried.as_slice()] {
+        mac.radio_mut().queue_received_frame(copy);
+        let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
+    }
     let forwarded = mac.tx_queue_mut().pop_next().unwrap();
-    assert_eq!(forwarded.priority, TxPriority::Forward);
-    assert_eq!(forwarded.forward_deferrals, 1);
+    assert_eq!(forwarded.forward_deferrals, 0);
 }
 
 /// The frame of the one forward waiting in `mac`'s queue: what another
@@ -10437,13 +10544,7 @@ fn pending_forward_frame(mac: &mut TestMac) -> heapless::Vec<u8, 256> {
 fn receive_one_drops_pending_forward_on_the_third_overheard_copy() {
     let mut mac = make_mac();
     mac.repeater_config_mut().mode = RepeaterMode::On;
-    let repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let repeater_hint = mac
-        .identity(repeater_id)
-        .unwrap()
-        .identity()
-        .public_key()
-        .router_hint();
+    let _repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
 
     let remote = DummyIdentity::new([0xAB; 32]);
     let keys = PairwiseKeys {
@@ -10458,7 +10559,7 @@ fn receive_one_drops_pending_forward_on_the_third_overheard_copy() {
         false,
         Some((4, 0)),
         None,
-        Some(&[repeater_hint]),
+        None,
     );
 
     mac.radio_mut().queue_received_frame(frame.as_slice());

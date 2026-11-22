@@ -2749,6 +2749,7 @@ impl<
             ack_trailer,
             flood_hops,
             trace_route,
+            false,
             source_route,
             regions,
         )?;
@@ -2779,10 +2780,14 @@ impl<
             .saturating_add(slack)
             .clamp(1, MAX_FLOOD_HOPS);
         let mut buf = [0u8; FRAME];
+        // The re-ack answers a Route Retry, and carries the option itself:
+        // repeaters that carried the first ack hold its identity, and the
+        // option makes this one a different one.
         let frame = self.build_mac_ack(
             &mut buf,
             ack_trailer,
             flood_hops,
+            true,
             true,
             None,
             request_regions,
@@ -2797,12 +2802,14 @@ impl<
     /// the [ack tag] covers it.
     ///
     /// [ack tag]: https://darconeous.github.io/umsh/docs/protocol/security.html#ack-tag-construction
+    #[allow(clippy::too_many_arguments)]
     fn build_mac_ack<'a>(
         &self,
         buf: &'a mut [u8; FRAME],
         ack_trailer: AckTrailer<'_>,
         flood_hops: u8,
         trace_route: bool,
+        route_retry: bool,
         source_route: Option<&[RouterHint]>,
         regions: &[[u8; 2]],
     ) -> Result<&'a [u8], SendError> {
@@ -2827,6 +2834,9 @@ impl<
         }
         if let Some(callsign) = callsign {
             builder = builder.option(OptionNumber::OperatorCallsign, callsign.as_trimmed_slice());
+        }
+        if route_retry {
+            builder = builder.option(OptionNumber::RouteRetry, &[]);
         }
         if trace_route {
             builder = builder.trace();
@@ -3442,7 +3452,7 @@ impl<
                     .arm(identity_id, receipt, queued.frame.as_slice(), now_ms);
             }
         }
-        if queued.forward_watch != ForwardWatch::None {
+        if queued.forward_watch.is_tracked() {
             self.rearm_tracked_forward(queued);
         }
         Ok(receipt)
@@ -3478,7 +3488,7 @@ impl<
         if let Some(key) = Self::confirmation_key(queued.frame.as_slice()) {
             let now_ms = self.clock.now_ms();
             if !self.dup_cache.contains(&key, now_ms) {
-                self.dup_cache.insert(key, now_ms);
+                self.insert_forwarding_identity(key, now_ms);
             }
         }
     }
@@ -3552,7 +3562,7 @@ impl<
     #[inline(never)]
     fn rearm_tracked_forward(&mut self, mut queued: QueuedTx<FRAME>) {
         let retries = match queued.forward_watch {
-            ForwardWatch::None => return,
+            ForwardWatch::None | ForwardWatch::Routed => return,
             ForwardWatch::Armed { retries } => retries,
             ForwardWatch::Awaiting { retries } => {
                 MacCounters::bump(&mut self.counters.forward_retried);
@@ -8224,7 +8234,7 @@ impl<
         // frame back on the air that already left this antenna once.
         if rx.origin == RxOrigin::LocalTx {
             if let Some(cache_key) = Self::forward_dup_key(header, frame) {
-                self.dup_cache.insert(cache_key, self.clock.now_ms());
+                self.insert_forwarding_identity(cache_key, self.clock.now_ms());
             }
             return false;
         }
@@ -8268,7 +8278,7 @@ impl<
             // stays left: a later copy of it, from a forwarder further
             // off, is the same flood and not a second chance at it.
             if left_to_others {
-                self.dup_cache.insert(cache_key, self.clock.now_ms());
+                self.insert_forwarding_identity(cache_key, self.clock.now_ms());
             }
             return false;
         };
@@ -8329,7 +8339,7 @@ impl<
                 entry.forward_watch = Self::source_routed_forward_watch(header, hints_left);
             }
         }
-        self.dup_cache.insert(cache_key, now_ms);
+        self.insert_forwarding_identity(cache_key, now_ms);
         // Counted at the decision to repeat rather than at the eventual
         // transmit, so the tally measures what this node chose to carry.
         // The frame is also counted again in `tx_frames` when it actually
@@ -8358,7 +8368,7 @@ impl<
             PacketType::UnicastAckReq | PacketType::BlindUnicastAckReq
         );
         if hints_left == 0 && !acknowledged {
-            return ForwardWatch::None;
+            return ForwardWatch::Routed;
         }
         let retries = if header.packet_type() == PacketType::MacAck {
             MAX_ACK_FORWARD_RETRIES
@@ -8420,7 +8430,9 @@ impl<
 
         if decrement_flood_hops {
             let flood_hops = header.flood_hops?;
-            if flood_hops.remaining() == 0 {
+            // A packet that has already flooded 15 hops has no room to count
+            // another, whatever budget it still claims.
+            if flood_hops.remaining() == 0 || flood_hops.accumulated() == 0x0F {
                 return None;
             }
             adaptive_flood = self.repeater.mode == RepeaterMode::Adaptive;
@@ -9150,14 +9162,22 @@ impl<
         // else forwarded. The originator sending the packet again shows the
         // opposite, that nobody carried it, which is when the adaptive
         // forward is wanted.
+        //
+        // A routed hop gives way to nobody: the route named this node. A
+        // flood forward gives way only to a copy already carried as far as
+        // its own would go. A copy from behind, such as the originator's own
+        // retry, is a sign the packet has not gone on.
         let Some(mut queued) = self.tx_queue.remove_first_matching(|entry| {
             entry.priority == TxPriority::Forward
-                && !entry.forward_watch.has_aired()
+                && !entry.forward_watch.is_routed()
                 && Self::confirmation_key(entry.frame.as_slice())
                     .map(|entry_key| &entry_key == key)
                     .unwrap_or(false)
-                && (!entry.adaptive.is_flood()
-                    || crate::forward_id::serves_neighborhood(entry.frame.as_slice(), frame))
+                && if entry.adaptive.is_flood() {
+                    crate::forward_id::serves_neighborhood(entry.frame.as_slice(), frame)
+                } else {
+                    crate::forward_id::carried_as_far(entry.frame.as_slice(), frame)
+                }
         }) else {
             return;
         };
@@ -9262,7 +9282,9 @@ impl<
                 && Self::forward_named_by_ack_mic(entry, ack_mic, acks_too)
             {
                 entry.cad_attempts = HINTED;
-                entry.forward_watch = ForwardWatch::None;
+                if entry.forward_watch.is_routed() {
+                    entry.forward_watch = ForwardWatch::Routed;
+                }
                 hinted += 1;
             }
         }
@@ -9496,6 +9518,21 @@ impl<
     /// `2 × T_frame + W_max + 2 × W_jitter + D_ack`, which at the default
     /// tuning is `2.95 × T_frame` (repeater-operation.md § Forwarding
     /// Confirmation).
+    /// Record a forwarding identity in the duplicate cache.
+    ///
+    /// A MAC ack's entry lives for a confirmation timeout and one frame
+    /// time: long enough to absorb a routed ack's single retry and the late
+    /// flood copies of one exchange. A re-acknowledgement answering a Route
+    /// Retry carries the option, so it is a different identity and is
+    /// carried however soon it follows.
+    fn insert_forwarding_identity(&mut self, key: DupCacheKey, now_ms: u64) {
+        let ack_ttl_ms = self
+            .forward_confirm_timeout_ms()
+            .saturating_add(u64::from(self.radio.t_frame_ms()));
+        self.dup_cache.set_ack_ttl_ms(ack_ttl_ms);
+        self.dup_cache.insert(key, now_ms);
+    }
+
     fn forward_confirm_timeout_ms(&self) -> u64 {
         let t_frame_ms = u64::from(self.radio.t_frame_ms());
         t_frame_ms

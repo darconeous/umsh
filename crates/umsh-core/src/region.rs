@@ -117,12 +117,13 @@ impl RegionCode {
     /// Derive the code for a named region.
     ///
     /// ASCII letters are folded to lowercase before hashing, so spellings
-    /// that differ only in case are the same region. No other bytes are
-    /// altered; a name containing non-ASCII characters hashes those bytes
-    /// verbatim.
+    /// that differ only in case are the same region, and each run of ASCII
+    /// white space is hashed as one space, so spellings that differ only in
+    /// spacing are too. No other bytes are altered; a name containing
+    /// non-ASCII characters hashes those bytes verbatim.
     pub fn from_name(name: &str) -> Self {
         let mut hasher = Sha256::new();
-        for byte in name.bytes() {
+        for byte in collapse_ascii_whitespace(name) {
             hasher.update([byte.to_ascii_lowercase()]);
         }
         let digest = hasher.finalize();
@@ -243,9 +244,10 @@ impl fmt::Write for LetterSink {
 
 /// Parse a region code from its textual form.
 ///
-/// `0x` followed by exactly four hex digits is the code it spells, one to
-/// three ASCII letters or digits is a short code, and anything else is a
-/// region name. The derivation is total over every string of one to
+/// Surrounding ASCII white space is removed first; other white space is part
+/// of the string. `0x` followed by exactly four hex digits is the code it
+/// spells, one to three ASCII letters or digits is a short code, and anything
+/// else is a region name. The derivation is total over every string of one to
 /// [`REGION_NAME_MAX_LEN`] bytes: a string that merely looks like a literal
 /// code—`0x12`, `0xzz`—is not one, and is hashed as the name it is
 /// (packet-options.md § Region Code Encoding).
@@ -253,11 +255,17 @@ impl FromStr for RegionCode {
     type Err = RegionCodeError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let trimmed = s.trim();
+        let trimmed = s.trim_matches(|c: char| c.is_ascii_whitespace());
         if trimmed.is_empty() {
             return Err(RegionCodeError::Empty);
         }
-        if trimmed.len() > REGION_NAME_MAX_LEN {
+        if trimmed
+            .chars()
+            .any(|c| c.is_control() && !c.is_ascii_whitespace())
+        {
+            return Err(RegionCodeError::Control);
+        }
+        if collapse_ascii_whitespace(trimmed).count() > REGION_NAME_MAX_LEN {
             return Err(RegionCodeError::TooLong);
         }
         if let Some(hex) = trimmed
@@ -271,6 +279,21 @@ impl FromStr for RegionCode {
         }
         Self::from_short_code(trimmed).or_else(|_| Ok(Self::from_name(trimmed)))
     }
+}
+
+/// The bytes of `name` with each run of ASCII white space as one space.
+fn collapse_ascii_whitespace(name: &str) -> impl Iterator<Item = u8> + '_ {
+    let mut previous_was_space = false;
+    name.bytes().filter_map(move |byte| {
+        if byte.is_ascii_whitespace() {
+            let first = !previous_was_space;
+            previous_was_space = true;
+            first.then_some(b' ')
+        } else {
+            previous_was_space = false;
+            Some(byte)
+        }
+    })
 }
 
 impl fmt::Display for RegionCode {
@@ -305,6 +328,8 @@ impl From<[u8; 2]> for RegionCode {
 pub enum RegionCodeError {
     /// The input was empty or only whitespace.
     Empty,
+    /// The input contained a control character other than white space.
+    Control,
     /// The input was longer than [`REGION_NAME_MAX_LEN`] bytes.
     TooLong,
     /// The input was not one to three ASCII letters or digits.
@@ -315,6 +340,7 @@ impl fmt::Display for RegionCodeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Empty => f.write_str("empty region code"),
+            Self::Control => f.write_str("region name contains a control character"),
             Self::TooLong => write!(f, "region name longer than {REGION_NAME_MAX_LEN} bytes"),
             Self::NotShortCode => f.write_str("expected one to three letters or digits"),
         }
@@ -551,6 +577,56 @@ mod tests {
             "OHIO".parse::<RegionCode>().unwrap(),
             RegionCode::from_name("OHIO")
         );
+    }
+
+    #[test]
+    fn trims_only_ascii_white_space() {
+        assert_eq!(
+            " \t\r\n\x0cRogue Valley \t".parse::<RegionCode>().unwrap(),
+            RegionCode::from_name("Rogue Valley")
+        );
+        // A no-break space is part of the name, not padding around it.
+        let nbsp = "Rogue Valley\u{a0}";
+        assert_eq!(
+            nbsp.parse::<RegionCode>().unwrap(),
+            RegionCode::from_name(nbsp)
+        );
+        assert_ne!(
+            nbsp.parse::<RegionCode>().unwrap(),
+            RegionCode::from_name("Rogue Valley")
+        );
+    }
+
+    #[test]
+    fn collapses_runs_of_white_space_inside_a_name() {
+        let expected = RegionCode::from_name("Rogue Valley");
+        for spelling in ["Rogue  Valley", "Rogue\tValley", "Rogue \r\n Valley"] {
+            assert_eq!(spelling.parse::<RegionCode>().unwrap(), expected);
+        }
+        // A no-break space is not ASCII white space, and is kept.
+        assert_eq!(
+            "Rogue\u{a0}Valley".parse::<RegionCode>().unwrap().as_u16(),
+            0x63CC
+        );
+        // The limit counts the collapsed name.
+        let spaced = format!("{}   {}", "R".repeat(11), "R".repeat(12));
+        assert!(spaced.parse::<RegionCode>().is_ok());
+    }
+
+    #[test]
+    fn rejects_a_name_with_a_control_character() {
+        for input in [
+            "Rogue\u{0}Valley",
+            "Rogue\u{b}Valley",
+            "Rogue\u{7f}",
+            "\u{85}Valley",
+        ] {
+            assert_eq!(
+                input.parse::<RegionCode>(),
+                Err(RegionCodeError::Control),
+                "{input:?}"
+            );
+        }
     }
 
     #[test]

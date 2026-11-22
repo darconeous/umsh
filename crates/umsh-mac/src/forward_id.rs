@@ -29,18 +29,19 @@ use crate::cache::DupCacheKey;
 /// or wider than the 16 bytes the key holds), or when its options do not
 /// parse.
 pub fn forwarding_dup_key_parsed(header: &PacketHeader, frame: &[u8]) -> Option<DupCacheKey> {
+    let options = ParsedOptions::extract(frame, header.options_range.clone());
     if !header.packet_type().is_secure() {
         let hash = normalized_routable_hash32(header, frame);
+        let route_retry = options.is_ok_and(|options| options.route_retry);
         // Acks carry the same hash under their own variant so the cache
-        // can age them out fast enough for deliberate re-acknowledgements
-        // (spec §Duplicate Acknowledgement Window) to be carried onward.
+        // can age them out once the copies of one exchange have passed.
         return Some(if header.packet_type() == PacketType::MacAck {
-            DupCacheKey::AckHash32(hash)
+            DupCacheKey::AckHash32 { hash, route_retry }
         } else {
-            DupCacheKey::Hash32(hash)
+            DupCacheKey::Hash32 { hash, route_retry }
         });
     }
-    let options = ParsedOptions::extract(frame, header.options_range.clone()).ok()?;
+    let options = options.ok()?;
     let mic = frame.get(header.mic_range.clone())?;
     if mic.is_empty() || mic.len() > 16 {
         return None;
@@ -93,6 +94,21 @@ pub(crate) fn same_packet(sent: &[u8], heard: &[u8]) -> bool {
 pub(crate) fn carried_onward(sent: &[u8], heard: &[u8]) -> bool {
     match (path_progress(sent), path_progress(heard)) {
         (Some(sent), Some(heard)) => heard > sent,
+        _ => false,
+    }
+}
+
+/// Whether `heard`, a copy of the packet a repeater has the flood forward
+/// `pending` queued for, is further along than the copy `pending` was made
+/// from: another forwarder has carried the packet at least as far as
+/// `pending` would.
+///
+/// A copy from behind is not: the originator sending again because it heard
+/// nobody carry the packet, or a copy from the same hop as the one received,
+/// which takes the packet no further than this forward would.
+pub(crate) fn carried_as_far(pending: &[u8], heard: &[u8]) -> bool {
+    match (path_progress(pending), path_progress(heard)) {
+        (Some(pending), Some(heard)) => heard >= pending,
         _ => false,
     }
 }
