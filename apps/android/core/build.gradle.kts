@@ -152,6 +152,10 @@ val cargoHost = tasks.register<CargoHost>("cargoHost") {
 tasks.withType<Test>().configureEach {
     dependsOn(cargoHost)
     systemProperty("jna.library.path", hostLibraryDir.path)
+    // A rebuilt core reruns the tests rather than leaving them up to date.
+    inputs.files(fileTree(hostLibraryDir) { include("libumsh_mobile_core.dylib", "libumsh_mobile_core.so") })
+        .withPropertyName("hostCore")
+        .withPathSensitivity(PathSensitivity.NAME_ONLY)
 }
 
 dependencies {

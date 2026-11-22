@@ -15,4 +15,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "UMSH"
-include(":core", ":app")
+include(":core", ":app", ":lint-rules")

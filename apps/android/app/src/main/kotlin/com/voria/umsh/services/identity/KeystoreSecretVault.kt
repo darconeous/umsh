@@ -5,9 +5,13 @@ import android.security.keystore.KeyInfo
 import android.security.keystore.KeyProperties
 import android.security.keystore.StrongBoxUnavailableException
 import android.util.AtomicFile
+import com.voria.umsh.services.mobilecore.AppLog
 import java.io.File
 import java.io.FileNotFoundException
+import java.io.IOException
+import java.security.GeneralSecurityException
 import java.security.KeyStore
+import java.security.ProviderException
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -15,7 +19,10 @@ import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
 
 /**
- * Secrets at rest: the identity's private key and channel keys.
+ * Secrets at rest, one kind per instance: the identity's private key in one
+ * vault, each core's channel keys in another. Each has its own [directory]
+ * and [keyAlias], so erasing one kind (the core's `deleteAll`) never touches
+ * another.
  *
  * Each secret is a file under [directory], AES-256-GCM encrypted under one
  * non-exportable Android Keystore key, held in StrongBox when the device has
@@ -31,12 +38,19 @@ import javax.crypto.spec.GCMParameterSpec
  */
 class KeystoreSecretVault(
     private val directory: File,
-    private val keyAlias: String = DEFAULT_KEY_ALIAS,
+    private val keyAlias: String,
 ) {
     /** Where the wrapping key lives, as the Keystore reports it. */
     enum class Protection { StrongBox, TrustedEnvironment, Software, Unknown }
 
-    /** The stored secret for [account], or null when there is none. */
+    /**
+     * The stored secret for [account], or null when there is none.
+     *
+     * Throws when a secret is stored but cannot be opened: a damaged or
+     * moved file (`AEADBadTagException`, `IllegalArgumentException`), a
+     * wrapping key that is gone ([WrappingKeyMissingException]), or a
+     * Keystore that is not ready. Never answers null for those.
+     */
     fun load(account: String): ByteArray? {
         val sealed = try {
             file(account).readFully()
@@ -44,10 +58,12 @@ class KeystoreSecretVault(
             return null
         }
         require(sealed.size > HEADER_LEN && sealed[0] == FORMAT) { "Unreadable secret" }
+        // Never a fresh key here: one made now could only fail the tag.
+        val key = existingKey() ?: throw WrappingKeyMissingException()
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(
             Cipher.DECRYPT_MODE,
-            key(),
+            key,
             GCMParameterSpec(TAG_BITS, sealed, 1, IV_LEN),
         )
         cipher.updateAAD(account.toByteArray(Charsets.UTF_8))
@@ -76,6 +92,31 @@ class KeystoreSecretVault(
     /** Forget [account]'s secret. Nothing happens when it has none. */
     fun delete(account: String) {
         file(account).delete()
+        check(!file(account).baseFile.exists()) { "Secret not deleted" }
+    }
+
+    /**
+     * Forget every secret, and the wrapping key with them. Done when the
+     * files are gone, an atomic write's leftovers included: a key left
+     * behind wraps nothing and is reused by the next [store], and an empty
+     * directory holds nothing, so failing to delete either is not thrown.
+     */
+    @Synchronized
+    fun deleteAll() {
+        directory.listFiles()?.forEach { it.deleteRecursively() }
+        // listFiles answers null for an unreadable directory, too: only an
+        // empty listing, or no directory, is done.
+        check(!directory.exists() || directory.listFiles()?.isEmpty() == true) { "Secrets not deleted" }
+        if (directory.exists() && !directory.delete()) AppLog.w(TAG, "empty secrets directory kept")
+        try {
+            KeyStore.getInstance(KEYSTORE).apply { load(null) }.deleteEntry(keyAlias)
+        } catch (error: GeneralSecurityException) {
+            AppLog.w(TAG, "wrapping key kept: ${error.javaClass.name}")
+        } catch (error: IOException) {
+            AppLog.w(TAG, "wrapping key kept: ${error.javaClass.name}")
+        } catch (error: ProviderException) {
+            AppLog.w(TAG, "wrapping key kept: ${error.javaClass.name}")
+        }
     }
 
     /** Where the wrapping key is held; creates the key if there is none. */
@@ -98,9 +139,12 @@ class KeystoreSecretVault(
     )
 
     @Synchronized
+    private fun existingKey(): SecretKey? =
+        KeyStore.getInstance(KEYSTORE).apply { load(null) }.getKey(keyAlias, null) as SecretKey?
+
+    @Synchronized
     private fun key(): SecretKey {
-        val keyStore = KeyStore.getInstance(KEYSTORE).apply { load(null) }
-        (keyStore.getKey(keyAlias, null) as SecretKey?)?.let { return it }
+        existingKey()?.let { return it }
         return try {
             generate(strongBox = true)
         } catch (_: StrongBoxUnavailableException) {
@@ -124,7 +168,7 @@ class KeystoreSecretVault(
     }
 
     private companion object {
-        const val DEFAULT_KEY_ALIAS = "com.voria.umsh.secret-vault"
+        const val TAG = "umsh.vault"
         const val KEYSTORE = "AndroidKeyStore"
         const val TRANSFORMATION = "AES/GCM/NoPadding"
         const val FORMAT: Byte = 1
@@ -133,3 +177,6 @@ class KeystoreSecretVault(
         const val HEADER_LEN = 1 + IV_LEN
     }
 }
+
+/** A secret is stored, but the Keystore key that wrapped it is gone. */
+class WrappingKeyMissingException : GeneralSecurityException("Wrapping key missing")

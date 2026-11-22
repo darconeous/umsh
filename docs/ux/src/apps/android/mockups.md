@@ -21,6 +21,17 @@ drawing are in [Android open decisions](open-decisions.md).
   rules; the sample hints and names are made up, apart from the four canonical
   examples.
 - A dashed box marks content that a later batch draws.
+- Narrow windows and large text reflow the drawn layouts: navigation labels
+  stay on one line and end in an ellipsis, Your identity's actions wrap to a
+  second line, dialog buttons ride above the keyboard, and long dialogs
+  scroll.
+- Message text follows the type scale's Body large (16/24), wherever a board
+  draws bubble text smaller.
+- Ages use Android's short relative form, such as "12 min. ago", wherever a
+  board draws another form; TalkBack reads the long form.
+
+Where Phase 1 ships less than a section draws, a **Phase 1** note says what is
+left out. The drawing stays the target.
 
 ## Review status
 
@@ -32,6 +43,7 @@ drawing are in [Android open decisions](open-decisions.md).
 | 1 | [D. Radio control and problem banner](#d-radio-control-and-problem-banner) | Approved 2026-11-17 |
 | 1 | [E. List-detail on tablets and foldables](#e-list-detail-on-tablets-and-foldables) | Approved 2026-11-17 |
 | 1 | [F. Storage unavailable](#f-storage-unavailable) | Approved 2026-11-17 |
+| 1 | [AM. Identity unavailable](#am-identity-unavailable) | Approved 2026-11-22 |
 | 2 | [G. Conversation list](#g-conversation-list) | Approved 2026-11-18 |
 | 2 | [H. Threads](#h-threads) | Approved 2026-11-18 |
 | 2 | [I. Bubbles, delivery, and the message menu](#i-bubbles-delivery-and-the-message-menu) | Approved 2026-11-18 |
@@ -112,17 +124,22 @@ approved before the others are drawn in detail.
   thing in the top app bar.
 - Threads hide the bar; other pushed pages keep it.
 - Back is predictive, and a destination's stack is kept when switching away.
+- **Phase 1:** no **Scan** on either root; the scanner is Phase 3.
 
 ## D. Radio control and problem banner
 
 [![Radio control and banner mockups: every radio control state in light and dark with its TalkBack label, every problem banner in light and dark, and the banner on a Conversations root and in a thread](mockups/radio-control.svg)](mockups/radio-control.svg)
 
 - The control is a fixed-width tonal pill holding the link glyph and the power
-  glyph, so screen actions never shift as the radio's state changes.
+  glyph, centered as a group, so screen actions never shift as the radio's
+  state changes.
 - A cached battery reading is dimmed; its age is in the banner and the TalkBack
   label.
 - The banner sits in the app-level slot under the top app bar, with one action.
   Bluetooth off and the Nearby devices permission are Android's own banners.
+- **Phase 1:** the banner has no action and the control opens nothing; both
+  keep their state descriptions for TalkBack. Radio Detail and the actions'
+  targets arrive in Phase 2.
 
 ## E. List-detail on tablets and foldables
 
@@ -131,8 +148,9 @@ approved before the others are drawn in detail.
 - `ListDetailPaneScaffold` for Conversations, Peers, and Settings from 840 dp.
 - On rail layouts the radio control lives in the rail's header and the banner
   spans the content area, so neither belongs to a pane.
-- An empty detail pane shows the destination's icon and one line; Settings
-  opens on Your identity instead.
+- An empty detail pane shows the destination's icon and one line: "No
+  conversation selected" or "No peer selected". Settings opens on Your
+  identity instead.
 
 ## F. Storage unavailable
 
@@ -141,7 +159,22 @@ approved before the others are drawn in detail.
 - Replaces the whole app: no navigation, radio control, or banner.
 - The copy is adapted to Android, where uninstalling also erases the identity
   and an older build cannot be installed over a newer one.
-- **Copy details** puts the error on the clipboard.
+- The detail is the error the core reports for the file it could not open.
+  **Copy details** puts it on the clipboard.
+
+## AM. Identity unavailable
+
+[![Identity unavailable mockups in light and dark](mockups/identity-unavailable.svg)](mockups/identity-unavailable.svg)
+
+[![Identity can't be opened mockups in light and dark](mockups/identity-lost.svg)](mockups/identity-lost.svg)
+
+- Two states on Storage unavailable's layout, each replacing the whole app.
+- **Identity unavailable:** Android's keystore failed in a way that can pass.
+  Nothing is offered; the app tries again the next time it comes to the
+  foreground.
+- **Identity can't be opened:** the stored key can never be opened again. The
+  detail is Android's error. **Erase identity** asks first, then makes this
+  phone a new node and opens Welcome; messages and peers stay.
 
 # Batch 2: Conversations
 
@@ -156,10 +189,14 @@ notes say so and [open decisions](open-decisions.md#conversations) explain why.
   previews: "You:", the channel sender, "Draft:", "Message deleted", and
   "No messages yet".
 - **New chat** is an extended FAB opening a sheet with iOS's two ways in.
-- Search is full screen and grouped as on iOS. It finds conversations, peers,
-  joined channels, and heard nodes, not message text.
-- Swiping a row away asks first: Delete for a direct conversation, Leave for a
-  channel chat, with iOS's wording.
+- Search covers the list pane and its top app bar; on a phone the navigation
+  bar stays below it. Results are grouped as on iOS. It finds conversations,
+  peers, joined channels, and heard nodes, not message text.
+- Swiping a row away shows a delete glyph and "Delete", or "Leave" for a
+  channel chat, then asks first with iOS's wording. A short swipe springs
+  back.
+- **Phase 1:** no **Scan** and no **New chat**. The empty state is its icon
+  and "No conversations", without the body and buttons, which point at them.
 
 ## H. Threads
 
@@ -168,10 +205,20 @@ notes say so and [open decisions](open-decisions.md#conversations) explain why.
 - The top app bar holds Back, the avatar and title, and the radio control.
   There is no subtitle, and tapping the title opens conversation info.
 - Threads hide the navigation bar; the composer owns the bottom edge.
-- A time line appears after an hour's gap. Channel runs are named above and
-  carry the sender's avatar.
+- A time line appears after an hour's gap, in the locale's date and time
+  format; the day is bold only for Today and Yesterday. Channel runs are named
+  above and carry the sender's avatar.
 - A gap of missing messages is a tappable placeholder.
 - EMERGENCY asks for certification before the first action after each launch.
+- **Jump to latest** shows while newer messages exist beyond the loaded ones.
+- An unnamed channel sender is "Member" and the node hint, never an address
+  prefix.
+- A conversation is marked read only while its thread is the page shown, the
+  app is in the foreground, and the newest message is on screen. A thread seen
+  during predictive back marks nothing.
+- **Phase 1:** the title and avatar open nothing and gaps are display-only;
+  TalkBack reads a gap as "A missing message" or "N missing messages". There
+  is no sending, so no certification sheet.
 
 ## I. Bubbles, delivery, and the message menu
 
@@ -187,6 +234,8 @@ notes say so and [open decisions](open-decisions.md#conversations) explain why.
 - Resending a message first sent under PFS offers to send it without forward
   secrecy, the one place text names PFS.
 - Message details is a full page with iOS's sections.
+- **Phase 1:** captions carry no retry button, and there is no long-press
+  menu, delete, resend, or details.
 
 ## J. Replies and reactions
 
@@ -197,6 +246,9 @@ notes say so and [open decisions](open-decisions.md#conversations) explain why.
 - Tapping a quote jumps to the original and highlights it briefly.
 - Reaction chips sit across the bubble's bottom edge. Mine is filled with the
   conversation's color; one that failed is faded.
+- Where the system font lacks 🩷, its chip and TalkBack label show ❤️; the
+  stored reaction is unchanged.
+- **Phase 1:** no swipe to reply and no reply composer.
 
 ## K. Composer
 
@@ -204,10 +256,16 @@ notes say so and [open decisions](open-decisions.md#conversations) explain why.
 
 - Send appears only when there is text, in the color the message will be
   sent in.
-- While the link is transient, Send is dimmed and waits.
+- While the link is transient, Send is dimmed and waits. A radio that is
+  connected but not yet carrying this phone, or not yet read, counts as
+  transient.
 - With no radio, the draft stays editable and Send shows blocked. A line above
   the field gives the reason and the way out. Nothing is queued.
 - Editing happens in the composer under an "Editing message" strip.
+- **Phase 1:** nothing is sent. Send appears with text but keeps Material's
+  disabled look in every state; the cursor takes the security color. The
+  blocked line has no Connect radio button, and there is no editing or
+  not-sent alert.
 
 ## L. Conversation info
 
@@ -261,8 +319,13 @@ key storage. Where Android departs from it, the board's notes say so and
   with what happened and why.
 - Connect a radio lists radios in pairing mode with their board photos, as
   iOS's picker does. Tapping one adds it; **Set up later** skips.
-- Onboarding ends on Conversations with Public and EMERGENCY joined and
-  muted. There is no preset or completion step.
+- Onboarding ends on Conversations with Public listed, joined and muted, as on
+  iOS. EMERGENCY is joined and muted too, and found through search until it
+  has a conversation. There is no preset or completion step.
+- **Phase 1:** onboarding is Welcome alone. Connect a radio is built over a
+  test source and reached only from the debug Developer section; its rows
+  carry the radio glyph until the shared board list ships, and it asks for no
+  permission.
 
 ## P. Adding a radio
 
@@ -293,7 +356,13 @@ key storage. Where Android departs from it, the board's notes say so and
   **Advertise**, and **Edit name**.
 - **Announcements** holds what nearby nodes learn; **Key** holds the key
   protection Android reported and **Erase identity**.
-- Reach and Start over move out of this page (batch 5).
+- Reach is under Settings › Routing and Start over under Settings › Storage.
+- Beacon and Identity open a single-choice dialog of iOS's intervals: Off,
+  20 min, 30 min, 1 h, or 4 h for the beacon; Off, 1 h, 4 h, 12 h, or 24 h for
+  the identity. Choosing applies and closes it.
+- Debug staging hides Erase identity and Start over everywhere, and never
+  touches the live identity or channel keys.
+- **Phase 1:** no Share location or Precision.
 
 ## S. Manage space
 
@@ -321,6 +390,8 @@ departs from it, the board's notes say so and
 - Search finds every known node, saved first, then nodes heard but not saved.
 - Long press offers Favorite, Share, and Remove peer. Remove keeps iOS's
   choices and wording.
+- **Phase 1:** the sections and rows only. Chips, Search, Scan, Add peer, and
+  Discover peers arrive with the peer page, and rows open nothing.
 
 ## U. Peer page
 
@@ -518,7 +589,8 @@ screen in this batch shows or edits the radio's own channel list.
 
 - The overview: Identity, Radios, Mesh, and This app. Nothing destructive is
   on it.
-- **Routing** holds Reach; **Storage** holds Start over. Both moved out of
-  Your identity.
+- **Routing** holds Reach; **Storage** holds Start over.
 - **Notifications** lists the notification channels and the lock-screen
   option. **Diagnostics** and **About** are new; neither app has them yet.
+- **Phase 1:** the overview holds Identity alone, plus a Developer section in
+  debug builds; the other rows arrive with their pages.

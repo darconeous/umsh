@@ -97,7 +97,8 @@ own input or controls:
 - full-screen dialogs (editors such as the manual path editor and channel
   creation);
 - the QR scanner; and
-- onboarding and the storage-unavailable screen, which replace the shell.
+- onboarding, Storage unavailable, and the two identity screens, which replace
+  the shell.
 
 On medium and expanded widths the rail is always shown alongside the content,
 except on the screens that replace the shell.
@@ -194,7 +195,7 @@ a second line, and one action:
 
 | Problem | Action |
 |---|---|
-| No radio set up | **Choose radio** (opens the system device picker) |
+| No radio set up | **Choose radio** (opens the scan list from onboarding; Android confirms a new radio) |
 | Radio disconnected or out of reach | **Details** (opens Radio Detail) |
 | Bluetooth is off | **Turn on** (the system Bluetooth request) |
 | Nearby devices permission denied | **Allow** (asks again, or opens app settings once Android stops asking) |
@@ -273,7 +274,10 @@ app routes `onOpenURL`. Links are held until launch has loaded the store.
 | Screen | When |
 |---|---|
 | Storage unavailable | The app database cannot be opened |
+| Identity unavailable | Android's keystore fails in a way that can pass |
+| Identity can't be opened | The stored identity can never be opened again |
 | Onboarding | First launch, until finished |
 
 They draw no navigation component, no top app bar radio control, and no
-problem banner. Storage unavailable outranks onboarding.
+problem banner. Storage unavailable and both identity screens outrank
+onboarding.

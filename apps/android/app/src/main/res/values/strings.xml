@@ -1,5 +1,633 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
     <!-- The app's name. A product name: not translated. -->
     <string name="app_name" translatable="false">UMSH</string>
+
+    <!--
+        Failure reasons. Each is the reason line of a failure dialog: why an
+        action did not happen, never what to do about it.
+    -->
+    <!-- A command failed for a reason the app has no words for. -->
+    <string name="reason_unknown">Something went wrong on this phone.</string>
+    <!-- The phone's database failed. -->
+    <string name="reason_store">Stored information could not be read.</string>
+    <!-- A node's address did not decode. -->
+    <string name="reason_invalid_input">That isn\'t a valid address.</string>
+    <!-- The phone's mesh session would not make a request as asked. -->
+    <string name="reason_invalid_request">This request can\'t be made.</string>
+    <!-- A peer, channel or conversation was removed while its screen was open. -->
+    <string name="reason_not_found">It is no longer on this phone.</string>
+    <!-- Joining a channel: the phone holds as many as it can. -->
+    <string name="reason_channel_table_full">This phone holds as many channels as it can.</string>
+    <!-- Asked for something before this phone's identity has started. -->
+    <string name="reason_not_running">Your identity isn\'t ready yet.</string>
+    <!-- Asked for something while this phone's identity is starting, erasing or stopping. -->
+    <string name="reason_busy">Not available while your identity is being set up or erased.</string>
+    <!-- Asked for something while the app moves to another radio. -->
+    <string name="reason_stopped">Not available while switching radios.</string>
+    <!-- Android's keystore would not hand over a channel key yet. -->
+    <string name="reason_vault_unavailable">Channel keys aren\'t available right now.</string>
+    <!-- Android's keystore refused to read a channel key. -->
+    <string name="reason_vault_failed">The channel key could not be read.</string>
+    <!-- Erasing this phone's identity: its message counter files stayed. -->
+    <string name="reason_counters_not_removed">Message counters could not be erased.</string>
+    <!-- Why something could not be sent: no radio. -->
+    <string name="reason_no_radio">No companion radio is connected.</string>
+    <!-- Why something could not be sent: the radio belongs to another phone. -->
+    <string name="reason_not_this_phone">This radio is not set up for this phone.</string>
+    <!-- Managing a node: it acknowledged a request but never answered. -->
+    <string name="reason_no_answer">No answer. This phone may not be one of its administrators.</string>
+    <!-- Managing a node: a request was never acknowledged. -->
+    <string name="reason_unreachable">Couldn\'t reach the device.</string>
+    <!-- Managing a node: its reply did not decode. -->
+    <string name="reason_unreadable">The device\'s answer couldn\'t be read. Its firmware may be newer than this app.</string>
+    <!-- Managing a node: it refused. The placeholder is a protocol status name, not translated. -->
+    <string name="reason_refused">The device refused the request: <xliff:g id="status" example="UNSUPPORTED">%1$s</xliff:g>.</string>
+    <!-- A request the person stopped. -->
+    <string name="reason_cancelled">The operation was canceled.</string>
+    <!-- The phone's radio could not transmit a request. -->
+    <string name="reason_send_failed">The radio could not send it.</string>
+    <!-- Firmware update: the device has no such update mode. -->
+    <string name="reason_dfu_unsupported">This firmware does not support the requested update mode.</string>
+    <!-- Firmware update: the device refused. The placeholder is a protocol status name, not translated. -->
+    <string name="reason_dfu_refused">The device refused the update: <xliff:g id="status" example="BUSY">%1$s</xliff:g>.</string>
+    <!-- Firmware update: the device never confirmed entering its update mode. -->
+    <string name="reason_dfu_unconfirmed">The device did not confirm the update.</string>
+    <!-- A send was refused because the EMERGENCY channel's warning has not been accepted. EMERGENCY is the channel's name and is not translated. -->
+    <string name="reason_emergency_not_certified">Sending on <xliff:g id="channel">EMERGENCY</xliff:g> needs its warning accepted first.</string>
+    <!-- A message was kept in the conversation, but the radio could not take it. -->
+    <string name="reason_message_not_queued">It was saved but could not go out. It\'s marked Not delivered.</string>
+    <!-- A message was kept, the radio could not take it, and recording that failed too. -->
+    <string name="reason_message_not_recorded">It could not go out, and that could not be saved. It may show as sending until UMSH restarts.</string>
+    <!-- Starting this phone's identity: the companion radio refused its host key. -->
+    <string name="reason_start_host_key">The radio did not accept this phone\'s key.</string>
+    <!-- Starting this phone's identity: its message counter files could not be used. -->
+    <string name="reason_start_session">Message counters could not be opened.</string>
+    <!-- Starting this phone's identity: the phone's database could not be readied. -->
+    <string name="reason_start_store">Stored information could not be prepared.</string>
+    <!-- Android's keystore would not hand over this phone's identity yet. -->
+    <string name="reason_identity_unavailable">Your identity isn\'t available right now.</string>
+    <!-- This phone's identity is stored but can no longer be read. -->
+    <string name="reason_identity_lost">Your identity can no longer be read.</string>
+    <!-- Design system. -->
+    <!-- TalkBack: a peer's avatar. The placeholder is the node's hint, an identifier such as AP5R. -->
+    <string name="avatar_node_hint">Node hint <xliff:g id="hint" example="AP5R">%1$s</xliff:g></string>
+    <!-- TalkBack: a favorite peer's avatar. The placeholder is the node's hint, an identifier such as AP5R. -->
+    <string name="avatar_favorite_node_hint">Favorite node, hint <xliff:g id="hint" example="AP5R">%1$s</xliff:g></string>
+    <!-- TalkBack: a channel's badge. The placeholder is the channel's title. -->
+    <string name="channel_badge">Channel <xliff:g id="title" example="Hot Topic">%1$s</xliff:g></string>
+    <!-- TalkBack: the badge of a private channel that was never named. The placeholder is the channel's identifier, as the badge shows it. -->
+    <string name="channel_badge_private">Private channel <xliff:g id="identifier" example="3F9A">%1$s</xliff:g></string>
+    <!-- The built-in public channel's name. A channel name every node shares: not translated. -->
+    <string name="channel_public" translatable="false">Public</string>
+    <!-- The built-in emergency channel's name. A channel name every node shares: not translated. -->
+    <string name="channel_emergency" translatable="false">EMERGENCY</string>
+    <!-- Title of a private channel that was never named. Its badge shows its identifier. -->
+    <string name="channel_private">Private channel</string>
+    <!-- TalkBack action on a node's address: copies it. -->
+    <string name="action_copy_address">Copy address</string>
+    <!-- Brief notice after an address was copied. Shown on Android 12 and earlier only. -->
+    <string name="copied_address">Address copied</string>
+    <!-- Button: puts a failure's full error on the clipboard. -->
+    <string name="copy_details">Copy details</string>
+    <!-- Brief notice after a failure's details were copied. Shown on Android 12 and earlier only. -->
+    <string name="details_copied">Details copied</string>
+    <!-- Dismisses a dialog. -->
+    <string name="dialog_ok">OK</string>
+
+    <!-- Node roles. -->
+    <!-- Node role: forwards other nodes' traffic. -->
+    <string name="role_repeater">Repeater</string>
+    <!-- Node role: a person's messaging device. -->
+    <string name="role_chat">Chat</string>
+    <!-- Node role: reports its position. -->
+    <string name="role_tracker">Tracker</string>
+    <!-- Node role: reports measurements. -->
+    <string name="role_sensor">Sensor</string>
+    <!-- Node role: links the mesh to another network. -->
+    <string name="role_bridge">Bridge</string>
+    <!-- Node role: hosts a shared conversation. -->
+    <string name="role_chat_room">Chat room</string>
+    <!-- Node role: a short-lived identity. -->
+    <string name="role_temporary_session">Temporary session</string>
+    <!-- Node role: none advertised, or one this app cannot name. -->
+    <string name="role_unknown">Unknown</string>
+    <!-- A node role this app has no name for, by its number. -->
+    <string name="role_code">Role <xliff:g id="code" example="9">%1$d</xliff:g></string>
+
+    <!-- Node capabilities. -->
+    <!-- Node capability: forwards other nodes' traffic. -->
+    <string name="capability_repeater">Repeater</string>
+    <!-- Node capability: moves around. -->
+    <string name="capability_mobile">Mobile</string>
+    <!-- Node capability: sends and receives text messages. -->
+    <string name="capability_text_messages">Text messages</string>
+    <!-- Node capability: reports measurements. -->
+    <string name="capability_telemetry">Telemetry</string>
+    <!-- Node capability: hosts a shared conversation. -->
+    <string name="capability_chat_room">Chat room</string>
+    <!-- Node capability: answers CoAP requests. A protocol name; usually left untranslated. -->
+    <string name="capability_coap">CoAP</string>
+
+    <!-- Times. -->
+    <!-- A list row's time for something that happened yesterday. -->
+    <string name="time_yesterday">Yesterday</string>
+    <!-- A line above messages sent today. The placeholder is a time of day, such as 9:40. Keep the annotation around the day, which is drawn in bold. -->
+    <string name="date_line_today"><annotation type="day">Today</annotation> <xliff:g id="time" example="9:40">%1$s</xliff:g></string>
+    <!-- A line above messages sent yesterday. The placeholder is a time of day, such as 6:12 PM. Keep the annotation around the day, which is drawn in bold. -->
+    <string name="date_line_yesterday"><annotation type="day">Yesterday</annotation> <xliff:g id="time" example="6:12 PM">%1$s</xliff:g></string>
+    <!-- An age under a minute, such as when a node was last heard. Lowercase: it ends sentences. -->
+    <string name="age_just_now">just now</string>
+
+    <!-- Navigation. -->
+    <!-- Navigation destination: the list of conversations. -->
+    <string name="nav_conversations">Conversations</string>
+    <!-- Navigation destination: the nodes this phone knows. -->
+    <string name="nav_peers">Peers</string>
+    <!-- Navigation destination: the map of nodes. -->
+    <string name="nav_map">Map</string>
+    <!-- Navigation destination: the app's settings. -->
+    <string name="nav_settings">Settings</string>
+    <!-- TalkBack: the badge on Conversations, which counts conversations with unread messages, not messages. -->
+    <plurals name="nav_unread_conversations">
+        <item quantity="one"><xliff:g id="count" example="1">%d</xliff:g> conversation with unread messages</item>
+        <item quantity="other"><xliff:g id="count" example="2">%d</xliff:g> conversations with unread messages</item>
+    </plurals>
+    <!-- TalkBack: the top app bar's button that returns to the previous page. -->
+    <string name="action_back">Back</string>
+    <!-- The empty detail pane beside the conversation list on a tablet. -->
+    <string name="no_conversation_selected">No conversation selected</string>
+    <!-- The empty detail pane beside the peer list on a tablet. -->
+    <string name="no_peer_selected">No peer selected</string>
+    <!-- Settings: header of the section about this phone's own identity. -->
+    <string name="settings_section_identity">Identity</string>
+    <!-- Settings row, and the title of the page it opens: this phone's own mesh identity. -->
+    <string name="your_identity">Your identity</string>
+
+    <!--
+        The radio control: TalkBack reads its state as a list of these
+        clauses, joined in the reader's language, for example "Companion
+        radio T1000-E, connected, battery 78 percent".
+    -->
+    <!-- TalkBack clause: the companion radio, by its name. -->
+    <string name="radio_tb_name">Companion radio <xliff:g id="name" example="T1000-E">%1$s</xliff:g></string>
+    <!-- TalkBack clause: the companion radio, before it has reported a name. -->
+    <string name="radio_tb_unnamed">Companion radio</string>
+    <!--
+        TalkBack: joins two of the clauses below into one sentence; applied
+        in turn to join them all. A plain clause join, never "and": "Companion
+        radio T1000-E, connected". Used before Android 13, which joins them
+        itself.
+    -->
+    <string name="radio_tb_clause_join"><xliff:g id="before" example="Companion radio T1000-E">%1$s</xliff:g>, <xliff:g id="after" example="connected">%2$s</xliff:g></string>
+    <!-- TalkBack: the radio control when no companion radio is set up. -->
+    <string name="radio_tb_not_set_up">No companion radio set up</string>
+    <!-- TalkBack clause: the radio's link is up. Lowercase: it follows the radio's name. -->
+    <string name="radio_tb_connected">connected</string>
+    <!-- TalkBack clause: the radio's link is coming up for the first time. -->
+    <string name="radio_tb_connecting">connecting</string>
+    <!-- TalkBack clause: the radio's link is coming back after it was lost. -->
+    <string name="radio_tb_reconnecting">reconnecting</string>
+    <!-- TalkBack clause: the radio's link is down. -->
+    <string name="radio_tb_disconnected">disconnected</string>
+    <!-- TalkBack clause: connecting to the radio failed. -->
+    <string name="radio_tb_failed">connection failed</string>
+    <!-- TalkBack clause: the radio's live battery level. -->
+    <plurals name="radio_tb_battery">
+        <item quantity="one">battery <xliff:g id="percent" example="1">%d</xliff:g> percent</item>
+        <item quantity="other">battery <xliff:g id="percent" example="78">%d</xliff:g> percent</item>
+    </plurals>
+    <!-- TalkBack clause: the battery level the radio reported before its link went down. An age follows it. -->
+    <plurals name="radio_tb_last_battery">
+        <item quantity="one">last battery <xliff:g id="percent" example="1">%d</xliff:g> percent</item>
+        <item quantity="other">last battery <xliff:g id="percent" example="78">%d</xliff:g> percent</item>
+    </plurals>
+    <!-- TalkBack clause: the radio's battery is charging. -->
+    <string name="radio_tb_charging">charging</string>
+    <!-- TalkBack clause: the radio runs on external power. -->
+    <string name="radio_tb_external_power">on external power</string>
+    <!-- TalkBack clause: the radio measures its battery but has not reported a level. -->
+    <string name="radio_tb_battery_unknown">battery level unavailable</string>
+
+    <!-- Problem banners: a title, a detail line, at most one action. -->
+    <!-- Banner title: no companion radio is set up. -->
+    <string name="banner_no_radio_title">No radio set up</string>
+    <!-- Banner detail under "No radio set up". -->
+    <string name="banner_detail_choose_radio">Choose a radio to send and receive</string>
+    <!-- Banner title: the companion radio's link is down. -->
+    <string name="banner_disconnected_title">Radio disconnected</string>
+    <!-- Banner title: Bluetooth is turned off on this phone. -->
+    <string name="banner_bluetooth_off_title">Bluetooth is off</string>
+    <!-- Banner title: Android's Nearby devices permission is not granted. "Nearby devices" is Android's name for the permission. -->
+    <string name="banner_nearby_denied_title">Nearby devices not allowed</string>
+    <!-- Banner detail under "Nearby devices not allowed". "it" is the permission. -->
+    <string name="banner_detail_needs_permission">UMSH needs it to reach your radio</string>
+    <!-- Banner title: connecting to the companion radio failed. -->
+    <string name="banner_failed_title">Radio connection failed</string>
+    <!-- Banner title: the radio refused to transmit something this phone sent. -->
+    <string name="banner_tx_rejected_title">Radio rejected the transmission</string>
+    <!-- Banner title: reading this phone's stored data failed. -->
+    <string name="banner_data_load_title">Couldn’t load your data</string>
+    <!-- Banner detail under "Couldn't load your data". -->
+    <string name="banner_detail_data_load">Conversations and peers may be out of date</string>
+    <!-- Banner action: reads the stored data again. -->
+    <string name="banner_retry">Retry</string>
+    <!-- Banner detail: the radio's name, then the battery level it last reported and how long ago, such as "T1000-E · Last battery 78%, 12 min. ago". -->
+    <string name="banner_detail_last_battery"><xliff:g id="radio" example="T1000-E">%1$s</xliff:g> · Last battery <xliff:g id="percent" example="78%">%2$s</xliff:g>, <xliff:g id="age" example="12 min. ago">%3$s</xliff:g></string>
+    <!-- Banner detail: why the radio refused, the radio's name, and its live battery level, such as "Duty cycle limit · T1000-E · Battery 52%". -->
+    <string name="banner_detail_reason_battery"><xliff:g id="reason" example="Duty cycle limit">%1$s</xliff:g> · <xliff:g id="radio" example="T1000-E">%2$s</xliff:g> · Battery <xliff:g id="percent" example="52%">%3$s</xliff:g></string>
+    <!-- Banner detail: why the radio refused, and the radio's name, when it reports no battery level. -->
+    <string name="banner_detail_reason_radio"><xliff:g id="reason" example="Duty cycle limit">%1$s</xliff:g> · <xliff:g id="radio" example="T1000-E">%2$s</xliff:g></string>
+    <!-- Why the radio refused a transmission: it has used its share of airtime for now. -->
+    <string name="banner_reason_duty_cycle">Duty cycle limit</string>
+    <!-- Why the radio refused a transmission: it heard the channel in use. -->
+    <string name="banner_reason_channel_busy">Channel busy</string>
+    <!-- Why the radio refused a transmission: it stayed busy with other work. -->
+    <string name="banner_reason_radio_busy">Radio busy</string>
+    <!-- Why the radio refused a transmission: its queue had no room. -->
+    <string name="banner_reason_queue_full">Radio queue full</string>
+    <!-- Why the radio refused a transmission, for a status this app has no words for. The placeholder is the radio's status name, such as INVALID_STATE. -->
+    <string name="banner_reason_status">Status <xliff:g id="status" example="INVALID_STATE">%1$s</xliff:g></string>
+    <!-- Common dialog buttons. -->
+    <!-- Closes a dialog without doing what it asks. -->
+    <string name="dialog_cancel">Cancel</string>
+    <!-- Button: stores what was typed. -->
+    <string name="action_save">Save</string>
+    <!-- Button: goes on to the next step of setup. -->
+    <string name="action_continue">Continue</string>
+    <!-- Button: asks Android for a permission again. -->
+    <string name="action_allow">Allow</string>
+    <!-- Button: asks Android to turn Bluetooth on. -->
+    <string name="action_turn_on">Turn on</string>
+
+    <!-- Failures that won't fix themselves: the reason line names what Android reported. -->
+    <!-- The reason line of a failure dialog. The placeholder is one of the phrases below, such as "the disk is full". -->
+    <string name="failure_reason_android">Android reported: <xliff:g id="phrase" example="the disk is full">%1$s</xliff:g>.</string>
+    <!-- What Android reported, after "Android reported:". Lowercase: it continues a sentence. -->
+    <string name="android_reason_full">the disk is full</string>
+    <!-- What Android reported, after "Android reported:". Lowercase: it continues a sentence. -->
+    <string name="android_reason_read_only">storage is read-only</string>
+    <!-- What Android reported, after "Android reported:". Lowercase: it continues a sentence. -->
+    <string name="android_reason_io">a disk read or write failed</string>
+    <!-- What Android reported, after "Android reported:". Lowercase: it continues a sentence. -->
+    <string name="android_reason_damaged">the database is damaged</string>
+    <!-- What Android reported, after "Android reported:". Lowercase: it continues a sentence. -->
+    <string name="android_reason_cant_open">the database could not be opened</string>
+    <!-- What Android reported, after "Android reported:". Lowercase: it continues a sentence. -->
+    <string name="android_reason_busy">the database was in use</string>
+    <!-- What Android reported, after "Android reported:". Lowercase: it continues a sentence. -->
+    <string name="android_reason_denied">access to storage was denied</string>
+    <!-- What Android reported, after "Android reported:", for a storage error with no phrase of its own. The placeholder is SQLite's code name, such as SQLITE_PROTOCOL. -->
+    <string name="android_reason_code">storage error <xliff:g id="code" example="SQLITE_PROTOCOL">%1$s</xliff:g></string>
+
+    <!-- Onboarding: Welcome. -->
+    <!-- Welcome page title, on first launch. -->
+    <string name="welcome_title">Welcome to UMSH</string>
+    <!-- Welcome page body. "The radio" is the companion LoRa radio the phone pairs with. -->
+    <string name="welcome_body">This phone has its own identity, separate from the radio—let’s get it set up!</string>
+    <!-- Welcome page link: opens umsh.dev in the browser. -->
+    <string name="welcome_learn_more">Learn more about UMSH</string>
+    <!-- Text field label: the name this phone advertises to nearby nodes. -->
+    <string name="name_label">Name</string>
+    <!-- Supporting line under the Name field. -->
+    <string name="name_supporting">Nearby nodes see this name. It can stay empty.</string>
+    <!-- Failure dialog title: the name could not be stored. -->
+    <string name="name_save_failed_title">Couldn’t save your name</string>
+    <!-- Failure dialog body: the name could not be stored. -->
+    <string name="name_save_failed_body">UMSH couldn’t write to its storage on this phone, so the name wasn’t saved.</string>
+    <!-- Failure dialog title: Welcome's name was stored, but recording that first-run setup is done failed. -->
+    <string name="setup_step_failed_title">Couldn’t finish setup</string>
+    <!-- Failure dialog body: Welcome's name was stored, but recording that first-run setup is done failed. -->
+    <string name="setup_step_failed_body">Your name was saved, but UMSH couldn’t write to its storage on this phone.</string>
+
+    <!-- Onboarding: Connect a radio. -->
+    <!-- Page title: choosing the companion radio to pair. -->
+    <string name="connect_radio_title">Connect a radio</string>
+    <!-- Section header over the radios found nearby. -->
+    <string name="available_radios">Available radios</string>
+    <!-- Shown while searching for radios in pairing mode. -->
+    <string name="looking_for_radios">Looking for radios</string>
+    <!-- Under "Looking for radios": what to do so a radio appears. -->
+    <string name="open_pairing_window">Open the radio’s pairing window.</string>
+    <!-- Button: finishes setup without a radio. -->
+    <string name="set_up_later">Set up later</string>
+    <!-- TalkBack state of a found radio's row while the phone connects to it. -->
+    <string name="connect_radio_row_connecting">Connecting</string>
+    <!-- A found radio's model, when the app doesn't know the model it advertises. -->
+    <string name="unknown_model">Unknown model</string>
+    <!-- Pairing failed: the radio was not in its pairing window. -->
+    <string name="pairing_removed">Open the radio’s pairing window and add it again.</string>
+    <!-- Pairing failed: Bluetooth could not be used. -->
+    <string name="bluetooth_unavailable">Bluetooth is unavailable. Check that it is enabled.</string>
+    <!-- Pairing failed: the radio did not answer. -->
+    <string name="connect_failed">Could not connect to that radio. Check that it is powered on and nearby.</string>
+
+    <!-- Your identity. -->
+    <!-- Action under the identity header: shows this phone's QR code. -->
+    <string name="identity_qr_code">QR code</string>
+    <!-- Action: shares this phone's link through Android's share sheet. -->
+    <string name="identity_share">Share</string>
+    <!-- Action, a verb: broadcasts this phone's identity once, now. -->
+    <string name="identity_advertise">Advertise</string>
+    <!-- Action: changes the name this phone advertises. -->
+    <string name="identity_edit_name">Edit name</string>
+    <!-- Brief notice after Advertise. -->
+    <string name="identity_advertised">Identity advertised</string>
+    <!-- Failure dialog title: Advertise did not go out. -->
+    <string name="advertise_failed_title">Couldn’t advertise your identity</string>
+    <!-- Failure dialog body: Advertise did not go out. -->
+    <string name="advertise_failed_body">Nothing was sent.</string>
+    <!-- Section header: what nearby nodes learn about this phone. -->
+    <string name="section_announcements">Announcements</string>
+    <!-- Switch: this phone answers identity requests. -->
+    <string name="discoverable">Discoverable</string>
+    <!-- Under Discoverable. -->
+    <string name="discoverable_detail">Answers nodes that ask who this phone is</string>
+    <!-- Row and dialog title, a noun: how often this phone sends a short presence beacon. -->
+    <string name="beacon">Beacon</string>
+    <!-- Row and dialog title, a noun: how often this phone announces its full identity. Not the page "Your identity". -->
+    <string name="identity_schedule">Identity</string>
+    <!-- A schedule's value, an adjective: never sent on a schedule. -->
+    <string name="schedule_off">Off</string>
+    <!-- A schedule's value. -->
+    <plurals name="schedule_every_hours">
+        <item quantity="one">Every hour</item>
+        <item quantity="other">Every <xliff:g id="count" example="4">%d</xliff:g> hours</item>
+    </plurals>
+    <!-- A schedule's value. -->
+    <plurals name="schedule_every_minutes">
+        <item quantity="one">Every minute</item>
+        <item quantity="other">Every <xliff:g id="count" example="20">%d</xliff:g> minutes</item>
+    </plurals>
+    <!-- Section header: this phone's private key. -->
+    <string name="section_key">Key</string>
+    <!-- Row: where Android keeps the key that protects this phone's identity. -->
+    <string name="key_protection">Key protection</string>
+    <!-- Key protection value: a dedicated security chip. "StrongBox" is Android's name for it. -->
+    <string name="key_protection_strongbox">Security chip (StrongBox)</string>
+    <!-- Key protection value: the processor's secure area. "TEE" is the trusted execution environment. -->
+    <string name="key_protection_tee">Secure area (TEE)</string>
+    <!-- Key protection value: no hardware protection. -->
+    <string name="key_protection_software">Software only</string>
+    <!-- Key protection value: Android didn't say. -->
+    <string name="key_protection_unknown">Unknown</string>
+    <!-- Destructive row and button: destroys this phone's private key. -->
+    <string name="erase_identity">Erase identity</string>
+    <!-- Confirmation title before erasing this phone's identity. -->
+    <string name="erase_identity_title">Erase this identity?</string>
+    <!-- Confirmation body before erasing this phone's identity. -->
+    <string name="erase_identity_body">Destroys the private key; this phone becomes a new node. Old messages stay but are unreachable.</string>
+    <!-- Failure dialog title: the identity's key could not be destroyed. -->
+    <string name="erase_failed_title">Couldn’t erase this identity</string>
+    <!-- Failure dialog body: the identity's key could not be destroyed. -->
+    <string name="erase_failed_body">Its private key couldn’t be destroyed, so nothing was erased.</string>
+    <!-- Failure dialog title: the private key was destroyed, but some keys it used are still stored. -->
+    <string name="erase_incomplete_title">Erase not finished</string>
+    <!-- Failure dialog body: the private key was destroyed, but some keys it used are still stored. -->
+    <string name="erase_incomplete_body">The private key was destroyed, but some keys it used are still on this phone.</string>
+    <!-- Dialog title: change the advertised name. -->
+    <string name="edit_name_title">Edit name</string>
+    <!-- QR sheet button: copies this phone's umsh: link. -->
+    <string name="copy_link">Copy link</string>
+    <!-- Brief notice after a link was copied. Shown on Android 12 and earlier only. -->
+    <string name="link_copied">Link copied</string>
+    <!-- TalkBack: the QR code image on the QR sheet. -->
+    <string name="identity_qr_description">QR code with your identity’s link</string>
+
+    <!-- Storage unavailable: replaces the app when its database won't open. -->
+    <!-- Title. -->
+    <string name="storage_unavailable_title">Storage unavailable</string>
+    <!-- First paragraph. -->
+    <string name="storage_unavailable_body">UMSH could not open its local database, so your contacts and conversations can’t be shown and nothing new can be saved.</string>
+    <!-- Second paragraph, emphasized. -->
+    <string name="storage_unavailable_intact">Your records have not been deleted.</string>
+    <!-- Third paragraph. "The error below" is the diagnostic line under it. -->
+    <string name="storage_unavailable_advice">Don’t uninstall the app or clear its storage. That erases them, and your identity with them. An update that fixes the error below restores everything.</string>
+
+    <!-- Identity unavailable: Android isn't ready to hand over the identity. -->
+    <!-- Title. -->
+    <string name="identity_unavailable_title">Identity unavailable</string>
+    <!-- First paragraph. -->
+    <string name="identity_unavailable_body">UMSH can’t open this phone’s identity right now.</string>
+    <!-- Second paragraph, emphasized. -->
+    <string name="identity_unavailable_intact">Nothing has been lost.</string>
+
+    <!-- Identity lost: the identity is stored but can never be opened again. -->
+    <!-- Title. -->
+    <string name="identity_lost_title">Identity can’t be opened</string>
+    <!-- First paragraph. -->
+    <string name="identity_lost_body">This phone’s identity is stored but can no longer be opened, so UMSH can’t run as this node.</string>
+    <!-- Second paragraph, emphasized. -->
+    <string name="identity_lost_intact">Your messages and peers have not been deleted.</string>
+    <!-- Third paragraph, above the Erase identity button. -->
+    <string name="identity_lost_advice">Erase identity makes this phone a new node. Old messages stay but are unreachable.</string>
+
+    <!-- Manage space: opened from Android's App info › Storage in place of Clear storage. -->
+    <!-- Title. -->
+    <string name="manage_space_title">UMSH storage</string>
+    <!-- Section header: what uses this app's storage. -->
+    <string name="space_used">Space used</string>
+    <!-- Space used by the databases. -->
+    <string name="space_messages">Messages and peers</string>
+    <!-- Space used by the identity and channel keys. -->
+    <string name="space_keys">Identity and keys</string>
+    <!-- Under Erase identity in Manage space. -->
+    <string name="erase_identity_detail">Keeps messages and peers</string>
+    <!-- Destructive row: erases everything the app holds. -->
+    <string name="start_over">Start over</string>
+    <!-- Under Start over. "Clear storage" is Android's button name. -->
+    <string name="start_over_detail">Erases everything, like Clear storage</string>
+    <!-- First confirmation title before Start over. -->
+    <string name="start_over_title">Start over?</string>
+    <!-- First confirmation body before Start over. -->
+    <string name="start_over_body">Your identity, messages, contacts, channels, and paired radio are all erased. UMSH comes back as a first launch.</string>
+    <!-- Destructive button in both Start over confirmations. -->
+    <string name="start_over_confirm">Erase everything</string>
+    <!-- Second confirmation title before Start over. -->
+    <string name="start_over_again_title">This cannot be undone.</string>
+    <!-- Second confirmation body before Start over. -->
+    <string name="start_over_again_body">Every message on this phone will be erased.</string>
+    <!-- Conversation list. -->
+    <!-- The conversation list while the phone's stored conversations are still being read. -->
+    <string name="conversations_loading">Loading conversations…</string>
+    <!-- The conversation list when there are none. -->
+    <string name="conversations_empty_title">No conversations</string>
+    <!-- TalkBack: the top app bar's Search action. -->
+    <string name="action_search">Search</string>
+    <!-- Placeholder in the search field over conversations, peers and channels: what it matches. -->
+    <string name="search_placeholder">Name, alias, address, or hint</string>
+    <!-- TalkBack: empties the search field. -->
+    <string name="action_clear_search">Clear search</string>
+    <!-- Search results section: conversations that already exist. -->
+    <string name="search_section_conversations">Conversations</string>
+    <!-- Search results section: saved peers with no conversation yet. -->
+    <string name="search_section_peers">Peers</string>
+    <!-- Search results section: channels this phone joined with no conversation yet. -->
+    <string name="search_section_channels">Channels</string>
+    <!-- Footer under the Channels search results. -->
+    <string name="search_channels_footer">Joined, no conversation yet</string>
+    <!-- Search results section: nodes heard over the air but not saved. -->
+    <string name="search_section_discovered">Discovered nodes</string>
+    <!-- Footer under the Discovered nodes search results. -->
+    <string name="search_discovered_footer">Heard nearby, not saved</string>
+    <!-- Search found nothing. -->
+    <string name="search_nothing">Nothing matches this search.</string>
+    <!-- A channel's kind, under its name: one of the channels every phone starts with. -->
+    <string name="channel_kind_builtin">Built-in</string>
+    <!-- A channel's kind, under its name: joined by name, so anyone who knows the name can read it. -->
+    <string name="channel_kind_named">Public</string>
+    <!-- A channel's kind, under its name: joined with a secret key. -->
+    <string name="channel_kind_private">Private</string>
+    <!-- Title of a node that has no alias and advertised no name. -->
+    <string name="unnamed_node">Unnamed node</string>
+    <!-- Title and role line of this phone's own companion radio among the peers. -->
+    <string name="companion_radio">Companion radio</string>
+    <!-- Conversation row preview: an unsent draft. Keep the annotation around the label, which is drawn in the error color. -->
+    <string name="preview_draft"><annotation type="draft">Draft:</annotation> <xliff:g id="draft" example="Bring the spare antenna">%1$s</xliff:g></string>
+    <!-- Conversation row preview: the last message was deleted. -->
+    <string name="preview_deleted">Message deleted</string>
+    <!-- Conversation row preview: the conversation has no messages. -->
+    <string name="preview_none">No messages yet</string>
+    <!-- Conversation row preview: the last message is one this phone sent. -->
+    <string name="preview_mine">You: <xliff:g id="message" example="Thanks! Got it.">%1$s</xliff:g></string>
+    <!-- Conversation row preview in a channel: who sent the last message, then the message. -->
+    <string name="preview_channel_sender"><xliff:g id="sender" example="Ana">%1$s</xliff:g>: <xliff:g id="message" example="Trail’s clear past the second bridge">%2$s</xliff:g></string>
+    <!-- Status text, like an IRC /me: a person's name, then what they say they did ("Ridge Medic is at the saddle"). -->
+    <string name="status_line"><xliff:g id="name" example="Ridge Medic">%1$s</xliff:g> <xliff:g id="status" example="is at the saddle">%2$s</xliff:g></string>
+    <!-- Status text of this phone's own, while it advertises no name: the subject of the line. -->
+    <string name="status_you">You</string>
+    <!-- A channel member this phone cannot name, by its node hint. "Member" is a channel's member. -->
+    <string name="member_hint">Member <xliff:g id="hint" example="BtC5">%1$s</xliff:g></string>
+    <!-- A channel member about whom nothing is known, not even a node hint. "Member" is a channel's member. -->
+    <string name="member_unknown">Member</string>
+    <!-- TalkBack, conversation row: how many messages are unread. -->
+    <plurals name="row_unread_messages">
+        <item quantity="one"><xliff:g id="count" example="1">%d</xliff:g> unread message</item>
+        <item quantity="other"><xliff:g id="count" example="2">%d</xliff:g> unread messages</item>
+    </plurals>
+    <!-- TalkBack, conversation row: the conversation's notifications are off. -->
+    <string name="row_muted">Muted</string>
+    <!-- Conversation row action (TalkBack actions menu, and the swipe): delete a direct conversation. -->
+    <string name="action_delete_conversation">Delete conversation</string>
+    <!-- Conversation row action (TalkBack actions menu, and the swipe): leave a channel's chat; the phone stays in the channel. -->
+    <string name="action_leave_chat">Leave chat</string>
+    <!-- Revealed by swiping a direct conversation's row: deletes it, after asking. -->
+    <string name="swipe_delete">Delete</string>
+    <!-- Revealed by swiping a channel conversation's row: leaves its chat, after asking. -->
+    <string name="swipe_leave">Leave</string>
+    <!-- Confirmation title before deleting a direct conversation. -->
+    <string name="delete_conversation_title">Delete this conversation?</string>
+    <!-- Confirmation body before deleting a direct conversation; the peer's name. -->
+    <string name="delete_conversation_body">The message history on this phone is removed. <xliff:g id="peer" example="Kestrel">%1$s</xliff:g> keeps their copy.</string>
+    <!-- Destructive button: deletes the conversation. -->
+    <string name="delete_conversation_confirm">Delete</string>
+    <!-- Confirmation title before leaving a channel's chat; the channel's name, in quotes. -->
+    <string name="leave_chat_title">Leave “<xliff:g id="channel" example="hike-club">%1$s</xliff:g>” chat?</string>
+    <!-- Confirmation body before leaving a channel's chat. -->
+    <string name="leave_chat_body">The messages on this phone are removed. You stay in the channel, and a new message opens this conversation again.</string>
+    <!-- Destructive button: leaves the channel's chat. -->
+    <string name="leave_chat_confirm">Leave</string>
+    <!-- Failure dialog title: a direct conversation was not deleted. -->
+    <string name="delete_failed_title">Couldn’t delete this conversation</string>
+    <!-- Failure dialog title: a channel's chat was not left. -->
+    <string name="leave_failed_title">Couldn’t leave this chat</string>
+    <!-- Failure dialog body: a conversation was not deleted or left. -->
+    <string name="remove_failed_body">Nothing was removed.</string>
+    <!-- Failure dialog title: a conversation found by search could not be opened or started. -->
+    <string name="open_failed_title">Couldn’t open this conversation</string>
+    <!-- Failure dialog body: a conversation found by search could not be opened or started. -->
+    <string name="open_failed_body">No conversation was started.</string>
+
+    <!-- Threads. -->
+    <!-- A deleted message of mine, an italic line in the transcript in place of its bubble. -->
+    <string name="message_you_deleted">You deleted a message</string>
+    <!-- A message its sender deleted, an italic line in the transcript; also a reply's quote of one. -->
+    <string name="message_deleted">Message deleted</string>
+    <!-- In the transcript: a missing message that never arrived. -->
+    <string name="message_unavailable">Message unavailable</string>
+    <!-- TalkBack: a placeholder for messages that did not arrive. -->
+    <plurals name="gap_missing">
+        <item quantity="one">A missing message</item>
+        <item quantity="other"><xliff:g id="count" example="3">%d</xliff:g> missing messages</item>
+    </plurals>
+    <!-- Under my message: it is being sent. -->
+    <string name="caption_sending">Sending…</string>
+    <!-- Under my message: it went out and no acknowledgment is expected (a channel). -->
+    <string name="caption_sent">Sent</string>
+    <!-- Under my message: repeaters were heard carrying it, none of which named itself. -->
+    <plurals name="caption_heard_repeats">
+        <item quantity="one">Heard a repeat</item>
+        <item quantity="other">Heard <xliff:g id="count" example="3">%d</xliff:g> repeats</item>
+    </plurals>
+    <!-- Under my message: one repeater was heard carrying it; its name or router hint. -->
+    <string name="caption_sent_via_one">Sent via <xliff:g id="repeater" example="Spencer Butte">%1$s</xliff:g></string>
+    <!-- Under my message: several repeaters were heard carrying it; the first one's name or router hint, then how many others. -->
+    <plurals name="caption_sent_via_others">
+        <item quantity="one">Sent via <xliff:g id="repeater" example="Spencer Butte">%1$s</xliff:g> and <xliff:g id="count" example="1">%2$d</xliff:g> other</item>
+        <item quantity="other">Sent via <xliff:g id="repeater" example="Spencer Butte">%1$s</xliff:g> and <xliff:g id="count" example="2">%2$d</xliff:g> others</item>
+    </plurals>
+    <!-- Under my direct message: it went out, and its acknowledgment is awaited. -->
+    <string name="caption_confirming">Confirming delivery…</string>
+    <!-- Under my newest direct message: its recipient acknowledged it. -->
+    <string name="caption_delivered">Delivered</string>
+    <!-- Under my direct message: acknowledged after it had been marked unconfirmed. -->
+    <string name="caption_delivered_late">Delivered late</string>
+    <!-- Under my direct message: acknowledged, but only after the mesh flooded it because the route failed. -->
+    <string name="caption_delivered_flooded">Delivered · Flooded</string>
+    <!-- Under my message, in the error color: it went out, but no acknowledgment came back. -->
+    <string name="caption_unconfirmed">Unconfirmed</string>
+    <!-- Under my message, in the error color: it never went out where its recipient could read it. -->
+    <string name="caption_not_delivered">Not delivered</string>
+    <!-- Under a message that was edited, alone. -->
+    <string name="caption_edited">Edited</string>
+    <!-- Under a message that was edited, then the rest of its caption, such as Delivered. -->
+    <string name="caption_edited_pair">Edited · <xliff:g id="caption" example="Delivered">%1$s</xliff:g></string>
+    <!-- Under a received message that arrived long after it was sent. -->
+    <string name="caption_received_late">Received late</string>
+    <!-- Under a message that arrived as an edit of a message this phone never received, shown as a message of its own. -->
+    <string name="caption_edit_of_unknown">Received as an edit for an unknown previous message</string>
+    <!-- A reply's quote of my own message: who wrote the original. -->
+    <string name="quote_you">You</string>
+    <!-- A reply's quote of a message this phone never had. -->
+    <string name="quote_unknown">Reply to an unknown message</string>
+    <!-- TalkBack action on a reply's quote: scrolls to the message it quotes. -->
+    <string name="quote_show_original">Show original</string>
+    <!-- TalkBack: a reaction chip; the emoji, then how many reacted with it. -->
+    <plurals name="reaction_chip">
+        <item quantity="one"><xliff:g id="emoji" example="👍">%1$s</xliff:g>, <xliff:g id="count" example="1">%2$d</xliff:g></item>
+        <item quantity="other"><xliff:g id="emoji" example="👍">%1$s</xliff:g>, <xliff:g id="count" example="3">%2$d</xliff:g></item>
+    </plurals>
+    <!-- TalkBack: a reaction chip that includes mine; the emoji, then how many reacted with it. -->
+    <plurals name="reaction_chip_yours">
+        <item quantity="one"><xliff:g id="emoji" example="👍">%1$s</xliff:g>, <xliff:g id="count" example="1">%2$d</xliff:g>, including yours</item>
+        <item quantity="other"><xliff:g id="emoji" example="👍">%1$s</xliff:g>, <xliff:g id="count" example="3">%2$d</xliff:g>, including yours</item>
+    </plurals>
+    <!-- TalkBack: a reaction of mine that was not delivered; the emoji. -->
+    <string name="reaction_failed"><xliff:g id="emoji" example="👍">%1$s</xliff:g>, yours, not delivered</string>
+    <!-- Button over the transcript: back to the newest message. -->
+    <string name="jump_to_latest">Jump to latest</string>
+    <!-- An empty thread's title. -->
+    <string name="thread_empty_title">No messages yet</string>
+    <!-- An empty direct thread's line; the peer's name. -->
+    <string name="thread_empty_direct">Messages with <xliff:g id="peer" example="Kestrel">%1$s</xliff:g> will appear here.</string>
+    <!-- An empty channel thread's line. -->
+    <string name="thread_empty_channel">Messages sent to this channel by anyone holding its key will appear here.</string>
+    <!-- The composer's placeholder; the conversation's name. -->
+    <string name="composer_placeholder">Message <xliff:g id="conversation" example="Ridge Medic">%1$s</xliff:g></string>
+    <!-- Above the composer when there is no radio or its link is down. -->
+    <string name="composer_blocked">Connect a radio to send</string>
+    <!-- Button, a verb: sends the message. -->
+    <string name="action_send">Send</string>
+    <!-- TalkBack: the Send button while the companion radio's link is coming up. -->
+    <string name="send_unavailable_connecting">Send unavailable while the radio connects.</string>
+
+    <!-- Peers list. -->
+    <!-- Peers list section: favorite nodes. -->
+    <string name="peers_section_favorites">Favorites</string>
+    <!-- TalkBack: the state of a favorite peer in search results. -->
+    <string name="search_favorite_state">Favorite</string>
+    <!-- Peers list section: the other saved nodes. -->
+    <string name="peers_section_saved">Saved</string>
+    <!-- Peers list section: this phone's own companion radio. -->
+    <string name="peers_section_companion_radio">Companion radio</string>
 </resources>

@@ -140,8 +140,10 @@ Material 3 has no warning color, and the attention banners need one that
 dynamic color cannot turn into something else.
 
 **Recommendation:** add one role, a warning container and its text color, from
-the communicator's amber in both schemes. Under dynamic color it is harmonized
-toward the wallpaper, not replaced, so it stays amber.
+the communicator's amber in both schemes: `#FFE9C2` in light and `#3A2A0E` in
+dark. The same pair is used under dynamic color. Harmonizing it toward the
+wallpaper, still amber, waits for a port of Material's color utilities to
+Compose.
 
 ### Sent-bubble colors
 
@@ -199,6 +201,17 @@ different across apps. If it proves a problem in practice, add a rule to
 surface's outline-variant color whenever the fill's contrast against the
 surface falls below a threshold.
 
+### Emoji-only channel titles
+
+A channel named only an emoji needs a title. iOS shows the name as written.
+Naming the emoji ("🔥" as **Fire**) needs CLDR's emoji annotations, which
+`android.icu` does not expose.
+
+**Recommendation:** a flag's title is its region code, as `channel-badges.md`
+gives it (🇫🇷 is **FR**), which reads the same in every locale. Any other
+emoji-only name is its own title, as on iOS. Short names come later, on both
+platforms at once, if the annotations are bundled.
+
 ### Storage-unavailable wording
 
 The iOS screen tells the user that reinstalling the previous version restores
@@ -211,6 +224,15 @@ restores everything. **Clear storage** in system settings leads to the app's
 manage-space screen (batch 3), not a wipe.
 
 ## Conversations
+
+### Reactions the system font can't draw
+
+🩷 leads the reaction palette but needs Emoji 15.0, which Android 12 and 13
+fonts lack; without Play services they never download it.
+
+**Recommendation:** where the font has no glyph for 🩷, its chip and TalkBack
+label show ❤️, and the stored reaction is unchanged. Bundling an emoji font
+(`emoji2-bundled`) costs about 10 MB.
 
 ### The blocked composer keeps the field
 
@@ -225,7 +247,7 @@ adopts the same so a long draft never disappears under a banner.
 
 ### The thread header carries no subtitle
 
-Batch 1's thread placeholder had a subtitle ("Chat · heard 2 min ago"). iOS
+A subtitle such as "Chat · heard 2 min. ago" could sit under the title. iOS
 shows only the avatar and title, and tapping either opens the info page.
 
 **Recommendation:** match iOS. Presence from routing or recent traffic is weak
@@ -407,7 +429,9 @@ storage, and both erasures, each section with a footer.
 - **The top says who this phone is:** avatar, name, and address (tap to
   copy). Under it are four actions, as on a contact card: QR code, Share,
   Advertise, and Edit name. The QR code opens a sheet with a large code;
-  the link is never printed.
+  the link is never printed. QR code uses `qr_code`, leaving
+  `qr_code_scanner` to Scan; Advertise uses `wifi_tethering`, the broadcast
+  glyph every Discover and Announce action shares.
 - **Announcements:** what nearby nodes learn. Discoverable, the beacon and
   identity schedules, and location sharing with its precision. Each row
   states its current value, so the page needs no footers.
@@ -462,6 +486,24 @@ trouble. Asking the user to try again doesn't help.
 says what happened, then the reason Android gave, and has Copy details and
 OK. Whatever the user typed stays in place. The same dialog serves every
 failure of this kind across the app.
+
+### When the identity can't be opened
+
+Android's keystore can fail in two ways: for a while (not ready, or an error
+it may not repeat), or for good (the key invalidated or missing, or the
+stored file failing its check). Making a new identity over one that still
+exists would lose it for nothing.
+
+**Recommendation:** each replaces the whole app on Storage unavailable's
+layout.
+- **Identity unavailable** offers nothing and tries again the next time the
+  app comes to the foreground. A failure Android does not classify counts as
+  this state.
+- **Identity can't be opened** shows Android's error with Copy details, and
+  **Erase identity** behind the usual confirmation. Erasing makes this phone a
+  new node and opens Welcome; messages and peers stay in the store.
+
+The app never erases or replaces an identity on its own.
 
 ### Welcome copy and Learn more
 

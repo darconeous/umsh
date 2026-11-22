@@ -396,7 +396,7 @@ jobs:
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$ndk" > /dev/null
 
       - name: Lint, unit tests, and debug build
-        run: apps/android/gradlew -p apps/android lint testDebugUnitTest assembleDebug
+        run: apps/android/gradlew -p apps/android lint testDebugUnitTest :lint-rules:test assembleDebug
 
       # Play refuses updates whose native code is not 16 KB page aligned:
       # every LOAD segment of every library, and each library's place in the

@@ -1,0 +1,157 @@
+package com.voria.umsh.app
+
+/** Test tags. UI tests find nodes by these, never by their text. */
+object Tags {
+    const val APP_ROOT = "app_root"
+    const val FAILURE_DIALOG = "failure_dialog"
+    const val FAILURE_COPY_DETAILS = "failure_copy_details"
+    const val FAILURE_OK = "failure_ok"
+    const val DESIGN_GALLERY = "design_gallery"
+
+    // Shell
+    const val SHELL = "shell"
+    const val NAV_DISPLAY = "nav_display"
+    const val NAV_CONVERSATIONS = "nav_conversations"
+    const val NAV_PEERS = "nav_peers"
+    const val NAV_MAP = "nav_map"
+    const val NAV_SETTINGS = "nav_settings"
+    const val NAV_UNREAD_BADGE = "nav_unread_badge"
+    const val RAIL_HEADER = "rail_header"
+    const val TOP_APP_BAR = "top_app_bar"
+    const val TOP_BAR_BACK = "top_bar_back"
+    const val RADIO_CONTROL = "radio_control"
+    const val BANNER_SLOT = "banner_slot"
+    const val RADIO_BANNER = "radio_banner"
+    const val DATA_LOAD_BANNER = "data_load_banner"
+    const val BANNER_ACTION = "banner_action"
+    const val EMPTY_DETAIL = "empty_detail"
+
+    // Roots and pages
+    const val CONVERSATIONS_ROOT = "conversations_root"
+    const val THREAD = "thread"
+    const val PEERS_ROOT = "peers_root"
+    const val MAP_ROOT = "map_root"
+    const val SETTINGS_ROOT = "settings_root"
+    const val SETTINGS_LIST = "settings_list"
+    const val SETTINGS_YOUR_IDENTITY = "settings_your_identity"
+    const val YOUR_IDENTITY = "your_identity"
+
+    // Conversation list
+    const val CONVERSATION_LIST = "conversation_list"
+    const val CONVERSATIONS_LOADING = "conversations_loading"
+    const val CONVERSATIONS_EMPTY = "conversations_empty"
+    const val CONVERSATIONS_SEARCH = "conversations_search"
+    const val ROW_UNREAD = "row_unread"
+    const val ROW_MUTED = "row_muted"
+    const val ROW_TIME = "row_time"
+    const val ROW_PREVIEW = "row_preview"
+    const val ROW_TITLE = "row_title"
+    const val SWIPE_REMOVE = "swipe_remove"
+    const val SEARCH_VIEW = "search_view"
+    const val SEARCH_FIELD = "search_field"
+    const val SEARCH_CLOSE = "search_close"
+    const val SEARCH_CLEAR = "search_clear"
+    const val SEARCH_NOTHING = "search_nothing"
+    const val SEARCH_CONVERSATIONS = "search_conversations"
+    const val SEARCH_PEERS = "search_peers"
+    const val SEARCH_CHANNELS = "search_channels"
+    const val SEARCH_DISCOVERED = "search_discovered"
+
+    fun conversationRow(address: String) = "conversation_row/$address"
+    fun searchConversation(address: String) = "search_conversation/$address"
+    fun searchPeer(address: String) = "search_peer/$address"
+    fun searchChannel(id: String) = "search_channel/$id"
+
+    // Thread
+    const val TRANSCRIPT = "transcript"
+    const val TRANSCRIPT_EDGE = "transcript_edge"
+    const val THREAD_LOADING = "thread_loading"
+    const val THREAD_EMPTY = "thread_empty"
+    const val DATE_LINE = "date_line"
+    const val RUN_LABEL = "run_label"
+    const val MEMBER_AVATAR = "member_avatar"
+    const val BUBBLE = "bubble"
+    const val CAPTION = "caption"
+    const val QUOTE = "quote"
+    const val GAP = "gap"
+    const val REACTION_CHIPS = "reaction_chips"
+    const val JUMP_TO_LATEST = "jump_to_latest"
+    const val COMPOSER = "composer"
+    const val COMPOSER_FIELD = "composer_field"
+    const val COMPOSER_SEND = "composer_send"
+    const val COMPOSER_BLOCKED = "composer_blocked"
+
+    /** A transcript row by its message's key. */
+    fun message(key: String) = "message/$key"
+    fun reactionChip(key: String) = "reaction_chip/$key"
+
+    // Peers
+    const val PEERS_LIST = "peers_list"
+    const val PEERS_FAVORITES = "peers_favorites"
+    const val PEERS_SAVED = "peers_saved"
+    const val PEERS_RADIO = "peers_radio"
+
+    fun peerRow(address: String) = "peer_row/$address"
+
+    // Screens that replace the shell
+    const val STORAGE_UNAVAILABLE = "storage_unavailable"
+    const val IDENTITY_UNAVAILABLE = "identity_unavailable"
+    const val IDENTITY_LOST = "identity_lost"
+    const val UNAVAILABLE_TITLE = "unavailable_title"
+    const val UNAVAILABLE_DETAIL = "unavailable_detail"
+    const val UNAVAILABLE_COPY = "unavailable_copy"
+    const val IDENTITY_LOST_ERASE = "identity_lost_erase"
+
+    // Onboarding
+    const val WELCOME = "welcome"
+    const val WELCOME_NAME = "welcome_name"
+    const val WELCOME_CONTINUE = "welcome_continue"
+    const val WELCOME_LEARN_MORE = "welcome_learn_more"
+    const val CONNECT_RADIO = "connect_radio"
+    const val CONNECT_RADIO_ROW = "connect_radio_row"
+    const val CONNECT_RADIO_SEARCHING = "connect_radio_searching"
+    const val CONNECT_RADIO_FAILURE = "connect_radio_failure"
+    const val CONNECT_RADIO_BLOCKED = "connect_radio_blocked"
+    const val CONNECT_RADIO_BLOCKED_ACTION = "connect_radio_blocked_action"
+    const val CONNECT_RADIO_PROGRESS = "connect_radio_progress"
+    const val SET_UP_LATER = "set_up_later"
+
+    // Your identity
+    const val IDENTITY_QR = "identity_qr"
+    const val IDENTITY_SHARE = "identity_share"
+    const val IDENTITY_ADVERTISE = "identity_advertise"
+    const val IDENTITY_EDIT_NAME = "identity_edit_name"
+    const val IDENTITY_DISCOVERABLE = "identity_discoverable"
+    const val IDENTITY_BEACON = "identity_beacon"
+    const val IDENTITY_SCHEDULE = "identity_schedule"
+    const val IDENTITY_KEY_PROTECTION = "identity_key_protection"
+    const val IDENTITY_ERASE = "identity_erase"
+    const val QR_SHEET = "qr_sheet"
+    const val QR_IMAGE = "qr_image"
+    const val QR_COPY_LINK = "qr_copy_link"
+    const val QR_SHARE = "qr_share"
+    const val EDIT_NAME_DIALOG = "edit_name_dialog"
+    const val EDIT_NAME_FIELD = "edit_name_field"
+    const val SCHEDULE_DIALOG = "schedule_dialog"
+    const val SCHEDULE_OPTION = "schedule_option"
+    const val CONFIRM_DIALOG = "confirm_dialog"
+    const val CONFIRM_ACTION = "confirm_action"
+    const val CONFIRM_CANCEL = "confirm_cancel"
+
+    // Manage space
+    const val MANAGE_SPACE = "manage_space"
+    const val MANAGE_SPACE_IDENTITY = "manage_space_identity"
+    const val MANAGE_SPACE_MESSAGES = "manage_space_messages"
+    const val MANAGE_SPACE_KEYS = "manage_space_keys"
+    const val MANAGE_SPACE_ERASE = "manage_space_erase"
+    const val MANAGE_SPACE_START_OVER = "manage_space_start_over"
+
+    // Developer section (debug builds)
+    const val DEV_CONNECT_RADIO_PREVIEW = "dev_connect_radio_preview"
+
+    const val DEV_STAGING = "dev_staging"
+    const val DEV_LINK_UP = "dev_link_up"
+    const val DEV_TX_FAILING = "dev_tx_failing"
+    const val DEV_FALLBACK_COLORS = "dev_fallback_colors"
+    const val DEV_RESET_STAGED = "dev_reset_staged"
+}

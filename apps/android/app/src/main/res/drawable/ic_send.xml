@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Material Symbols Outlined "send", fill 1, weight 400, grade 0, optical size 24.
+     Apache License 2.0, from github.com/google/material-design-icons
+     symbols/web/send/materialsymbolsoutlined/send_fill1_24px.svg. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960"
+    android:autoMirrored="true">
+    <group android:translateY="960">
+        <path
+            android:fillColor="@android:color/white"
+            android:pathData="M120-160v-240l320-80-320-80v-240l760 320-760 320Z" />
+    </group>
+</vector>

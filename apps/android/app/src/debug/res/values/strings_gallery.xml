@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The debug-only design gallery, which redraws design-language.svg and
+    avatars-and-badges.svg from the real components for screenshot checks.
+    Never shipped, never translated.
+-->
+<resources>
+    <string name="gallery_title" translatable="false">Design gallery</string>
+
+    <string name="gallery_board_colors_light" translatable="false">1 · Color roles, light</string>
+    <string name="gallery_board_colors_dark" translatable="false">2 · Color roles, dark</string>
+    <string name="gallery_board_fixed" translatable="false">3 · Fixed colors</string>
+    <string name="gallery_board_type" translatable="false">4 · Type</string>
+    <string name="gallery_board_shape" translatable="false">5 · Shape</string>
+    <string name="gallery_board_avatars" translatable="false">B1 · Peer avatars</string>
+    <string name="gallery_board_pfs" translatable="false">B2 · PFS is a bubble color</string>
+    <string name="gallery_board_badges" translatable="false">B3 · Channel badges</string>
+    <string name="gallery_board_components" translatable="false">Components</string>
+
+    <string name="gallery_colors_light" translatable="false">Color roles · light</string>
+    <string name="gallery_colors_dark" translatable="false">Color roles · dark</string>
+    <string name="gallery_colors_subtitle" translatable="false">Fallback, from the communicator palette</string>
+    <string name="gallery_role_primary" translatable="false">Primary</string>
+    <string name="gallery_role_primary_container" translatable="false">Primary container</string>
+    <string name="gallery_role_secondary_container" translatable="false">Secondary container</string>
+    <string name="gallery_role_tertiary_container" translatable="false">Tertiary container</string>
+    <string name="gallery_role_error" translatable="false">Error</string>
+    <string name="gallery_role_error_container" translatable="false">Error container</string>
+    <string name="gallery_role_surface" translatable="false">Surface</string>
+    <string name="gallery_role_surface_container" translatable="false">Surface container</string>
+    <string name="gallery_role_surface_container_highest" translatable="false">Surface container highest</string>
+    <string name="gallery_role_inverse_surface" translatable="false">Inverse surface</string>
+    <string name="gallery_role_added" translatable="false">Added role: attention banners</string>
+    <string name="gallery_role_warning_container" translatable="false">Warning container</string>
+    <string name="gallery_role_lines" translatable="false">Text and lines</string>
+    <string name="gallery_role_on_surface_variant" translatable="false">On surface variant</string>
+    <string name="gallery_role_outline" translatable="false">Outline</string>
+    <string name="gallery_role_outline_variant" translatable="false">Outline variant</string>
+
+    <string name="gallery_fixed_title" translatable="false">Fixed colors</string>
+    <string name="gallery_fixed_subtitle" translatable="false">Never taken from the theme</string>
+    <string name="gallery_light" translatable="false">Light</string>
+    <string name="gallery_dark" translatable="false">Dark</string>
+    <string name="gallery_sent" translatable="false">Sent</string>
+
+    <string name="gallery_type_title" translatable="false">Type</string>
+    <string name="gallery_type_subtitle" translatable="false">Material 3 scale in the system font</string>
+    <string name="gallery_type_headline_small" translatable="false">Headline small · 24/32</string>
+    <string name="gallery_type_title_large" translatable="false">Title large · 22/28</string>
+    <string name="gallery_type_title_medium" translatable="false">Title medium · 16/24</string>
+    <string name="gallery_type_title_small" translatable="false">Title small · 14/20</string>
+    <string name="gallery_type_body_large" translatable="false">Body large · 16/24</string>
+    <string name="gallery_type_body_medium" translatable="false">Body medium · 14/20</string>
+    <string name="gallery_type_body_small" translatable="false">Body small · 12/16</string>
+    <string name="gallery_type_label_large" translatable="false">Label large · 14/20</string>
+    <string name="gallery_type_label_medium" translatable="false">Label medium · 12/16</string>
+    <string name="gallery_type_label_small" translatable="false">Label small · 11/16</string>
+    <string name="gallery_type_monospace" translatable="false">System monospace · 13/20</string>
+    <string name="gallery_use_full_screen" translatable="false">Full-screen states</string>
+    <string name="gallery_use_top_bar" translatable="false">Top app bar title</string>
+    <string name="gallery_use_pane" translatable="false">Pane and sheet titles</string>
+    <string name="gallery_use_banner_title" translatable="false">Banner title</string>
+    <string name="gallery_use_list" translatable="false">List headline, message text</string>
+    <string name="gallery_use_supporting" translatable="false">Supporting text</string>
+    <string name="gallery_use_banner_detail" translatable="false">Banner detail</string>
+    <string name="gallery_use_buttons" translatable="false">Buttons</string>
+    <string name="gallery_use_navigation" translatable="false">Navigation labels</string>
+    <string name="gallery_use_badge_counts" translatable="false">Badge counts</string>
+    <string name="gallery_use_monospace" translatable="false">Addresses, hints, hex. Never truncated.</string>
+    <string name="gallery_sample_storage" translatable="false">Storage unavailable</string>
+    <string name="gallery_sample_conversations" translatable="false">Conversations</string>
+    <string name="gallery_sample_ridge_medic" translatable="false">Ridge Medic</string>
+    <string name="gallery_sample_radio_disconnected" translatable="false">Radio disconnected</string>
+    <string name="gallery_sample_copy" translatable="false">Copy, heading up now.</string>
+    <string name="gallery_sample_repeater" translatable="false">Repeater</string>
+    <string name="gallery_sample_battery" translatable="false">Last battery 78%, 12 min ago</string>
+    <string name="gallery_sample_details" translatable="false">Details</string>
+    <string name="gallery_sample_two" translatable="false">2</string>
+
+    <string name="gallery_shape_title" translatable="false">Shape</string>
+    <string name="gallery_shape_subtitle" translatable="false">Material 3 corner scale</string>
+    <string name="gallery_shape_extra_small" translatable="false">Extra small · 4</string>
+    <string name="gallery_shape_small" translatable="false">Small · 8</string>
+    <string name="gallery_shape_medium" translatable="false">Medium · 12</string>
+    <string name="gallery_shape_large" translatable="false">Large · 16</string>
+    <string name="gallery_shape_extra_large" translatable="false">Extra large · 28</string>
+    <string name="gallery_shape_full" translatable="false">Full</string>
+    <string name="gallery_use_extra_small" translatable="false">Text field top, tooltips</string>
+    <string name="gallery_use_small" translatable="false">Chips, snackbar</string>
+    <string name="gallery_use_medium" translatable="false">Cards</string>
+    <string name="gallery_use_large" translatable="false">FAB, nav drawer, selected list row</string>
+    <string name="gallery_use_extra_large" translatable="false">Dialogs, bottom sheet top</string>
+    <string name="gallery_use_full" translatable="false">Buttons, nav indicator, search bar, radio control</string>
+    <string name="gallery_outlines" translatable="false">Canonical outlines, outside the scale</string>
+    <string name="gallery_outline_circle" translatable="false">Circle</string>
+    <string name="gallery_outline_triangle" translatable="false">Triangle</string>
+    <string name="gallery_outline_hexagon" translatable="false">Hexagon</string>
+    <string name="gallery_outline_badge" translatable="false">Badge, 25%</string>
+
+    <string name="gallery_avatars_title" translatable="false">Peer avatars</string>
+    <string name="gallery_avatars_subtitle" translatable="false">Canonical examples at list size, 40 dp</string>
+    <string name="gallery_avatar_circle_black" translatable="false">Circle · black text by APCA</string>
+    <string name="gallery_avatar_circle_white" translatable="false">Circle · white text by APCA</string>
+    <string name="gallery_avatar_triangle_white" translatable="false">Triangle · white text by APCA</string>
+    <string name="gallery_avatar_triangle_black" translatable="false">Triangle · black text by APCA</string>
+    <string name="gallery_avatar_hexagon_white" translatable="false">Hexagon · white text by APCA</string>
+    <string name="gallery_avatar_hexagon_black" translatable="false">Hexagon · black text by APCA</string>
+    <string name="gallery_sizes" translatable="false">Sizes</string>
+    <string name="gallery_size_top_bar" translatable="false">32 · top bar</string>
+    <string name="gallery_size_list" translatable="false">40 · list</string>
+    <string name="gallery_size_card" translatable="false">56 · card</string>
+    <string name="gallery_size_page" translatable="false">96 · page</string>
+    <string name="gallery_talkback" translatable="false">TalkBack: “%1$s”</string>
+    <string name="gallery_favorite" translatable="false">Favorite: “%1$s”</string>
+
+    <string name="gallery_pfs_title" translatable="false">PFS is a bubble color</string>
+    <string name="gallery_pfs_subtitle" translatable="false">The avatar never changes with session state</string>
+    <string name="gallery_pfs_light" translatable="false">Sent bubbles · light</string>
+    <string name="gallery_pfs_dark" translatable="false">Sent bubbles · dark</string>
+    <string name="gallery_pfs_encrypted" translatable="false">Encrypted</string>
+    <string name="gallery_pfs_encrypted_detail" translatable="false">Direct or private channel</string>
+    <string name="gallery_pfs_open" translatable="false">Open</string>
+    <string name="gallery_pfs_open_detail" translatable="false">A channel anyone can read</string>
+    <string name="gallery_pfs_forward_secret" translatable="false">Forward secret</string>
+    <string name="gallery_pfs_forward_secret_detail" translatable="false">Sent under a PFS session</string>
+    <string name="gallery_pfs_sample_encrypted" translatable="false">On my way down.</string>
+    <string name="gallery_pfs_sample_open" translatable="false">Trail’s clear.</string>
+    <string name="gallery_pfs_sample_forward_secret" translatable="false">Gate code is 4471.</string>
+
+    <string name="gallery_badges_title" translatable="false">Channel badges</string>
+    <string name="gallery_badges_subtitle" translatable="false">Badge beside the title, at 40 dp</string>
+    <string name="gallery_badge_name" translatable="false">Name: %1$s</string>
+    <string name="gallery_badge_never_named" translatable="false">Name: never named · identifier %1$s</string>
+
+    <string name="gallery_components_address" translatable="false">Canonical address (tap to copy)</string>
+    <string name="gallery_components_times" translatable="false">Relative times</string>
+    <string name="gallery_components_roles" translatable="false">Roles and capabilities</string>
+    <string name="gallery_components_empty" translatable="false">Empty state</string>
+    <string name="gallery_components_dialog" translatable="false">Show the failure dialog</string>
+    <string name="gallery_empty_line" translatable="false">No conversation selected</string>
+    <string name="gallery_dialog_title" translatable="false">Couldn’t save your name</string>
+    <string name="gallery_dialog_body" translatable="false">UMSH couldn’t write to its storage on this phone, so the name wasn’t saved.</string>
+    <string name="gallery_dialog_reason" translatable="false">Android reported: the disk is full.</string>
+
+    <string name="gallery_board_radio" translatable="false">R1 · Radio control states</string>
+    <string name="gallery_board_banners" translatable="false">R2 · Problem banners</string>
+    <string name="gallery_radio_subtitle" translatable="false">End of every top app bar; TalkBack text under each</string>
+    <string name="gallery_banners_subtitle" translatable="false">App-level slot under the top app bar</string>
+    <string name="gallery_radio_connected" translatable="false">Connected · 78%</string>
+    <string name="gallery_radio_charging" translatable="false">Connected · Charging 78%</string>
+    <string name="gallery_radio_external" translatable="false">Connected · External power</string>
+    <string name="gallery_radio_unknown" translatable="false">Connected · Battery unavailable</string>
+    <string name="gallery_radio_no_power" translatable="false">Connected · no power state</string>
+    <string name="gallery_radio_low" translatable="false">Connected · 12%</string>
+    <string name="gallery_radio_reconnecting" translatable="false">Reconnecting</string>
+    <string name="gallery_radio_disconnected" translatable="false">Disconnected</string>
+    <string name="gallery_radio_failed" translatable="false">Connection failed</string>
+    <string name="gallery_radio_none" translatable="false">No radio set up</string>
+
+    <string name="gallery_board_icons" translatable="false">I1 · Icons</string>
+    <string name="gallery_icons_rtl" translatable="false">Auto-mirrored, right to left</string>
+</resources>

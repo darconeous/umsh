@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Material Symbols Outlined "vertical_align_bottom", fill 0, weight 400, grade 0, optical size 24.
+     Apache License 2.0, from github.com/google/material-design-icons
+     symbols/web/vertical_align_bottom/materialsymbolsoutlined/vertical_align_bottom_24px.svg. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960">
+    <group android:translateY="960">
+        <path
+            android:fillColor="@android:color/white"
+            android:pathData="M160-120v-80h640v80H160Zm320-160L280-480l56-56 104 104v-408h80v408l104-104 56 56-200 200Z" />
+    </group>
+</vector>

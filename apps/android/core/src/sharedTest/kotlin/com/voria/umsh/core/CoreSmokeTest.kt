@@ -2,6 +2,8 @@ package com.voria.umsh.core
 
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -138,7 +140,7 @@ class CoreSmokeTest {
 
     /**
      * A send with no radio is refused, and the words submitted stay as the
-     * draft; a draft save whose coroutine is cancelled still lands.
+     * draft; a draft save whose coroutine is canceled still lands.
      */
     @Test
     fun aRadiolessCoreKeepsWhatWasTyped() = runBlocking {
@@ -176,6 +178,70 @@ class CoreSmokeTest {
             waited += 10
         }
         assertEquals("kept anyway", draft())
+
+        core.stop()
+        core.close()
+        store.close()
+    }
+
+    /**
+     * The app core's listener fires from the core's own thread, once per
+     * pending-to-drained cycle however much changed, and not at all once
+     * cleared.
+     */
+    @Test
+    fun appCoreListenerWakesOncePerDrain() = runBlocking {
+        val vault = object : SecretVault {
+            val secrets = mutableMapOf<String, ByteArray>()
+            override fun load(account: String) = synchronized(secrets) { secrets[account] }
+            override fun store(account: String, secret: ByteArray) {
+                synchronized(secrets) { secrets[account] = secret }
+            }
+            override fun delete(account: String) {
+                synchronized(secrets) { secrets.remove(account) }
+            }
+            override fun deleteAll() = synchronized(secrets) { secrets.clear() }
+        }
+        val store = MobileAppStore.open(temp.newFolder().resolve("application.sqlite").path)
+        val core = MobileAppCore(store, vault, MobileAppConfigRecord(temp.newFolder().path, 0u))
+        val wakes = AtomicInteger()
+        val wakeThread = AtomicReference<Thread>()
+        core.setListener(
+            object : MobileAppCoreListener {
+                override fun onChangesPending() {
+                    wakeThread.compareAndSet(null, Thread.currentThread())
+                    wakes.incrementAndGet()
+                }
+            },
+        )
+        core.pollChanges()
+        val before = wakes.get()
+
+        // A start publishes several changes: one wake until they are drained.
+        core.start(identity(71))
+        assertEquals(before + 1, wakes.get())
+        assertTrue(wakeThread.get() != Thread.currentThread())
+
+        // A change before the drain raises no second wake.
+        core.savePeer(identity(72).publicIdentity().canonicalAddress, null, false)
+        delay(300)
+        assertEquals(before + 1, wakes.get())
+
+        // The drain re-arms it: the next change wakes again.
+        core.pollChanges()
+        core.savePeer(identity(74).publicIdentity().canonicalAddress, null, false)
+        var waited = 0
+        while (wakes.get() < before + 2 && waited < 5_000) {
+            delay(10)
+            waited += 10
+        }
+        assertEquals(before + 2, wakes.get())
+
+        core.pollChanges()
+        core.clearListener()
+        core.savePeer(identity(73).publicIdentity().canonicalAddress, null, false)
+        delay(300)
+        assertEquals(before + 2, wakes.get())
 
         core.stop()
         core.close()

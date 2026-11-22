@@ -28,6 +28,7 @@
 	release-artifacts release-stage release-publish release-mirror \
 	ios-mobile-core ios-archive ios-upload \
 	android-mobile-core android-debug android-release android-test \
+	android-install android-connected-test \
 	build-simulator-communicator run-simulator-communicator \
 	run-simulator-communicator-demo simulator-communicator-tours \
 	install-umshctl install-umsh-bridge install-dissector install-extcap \
@@ -727,9 +728,20 @@ android-debug:
 android-release:
 	$(GRADLE) assembleRelease
 
-# The JVM unit tests, against a host build of the core.
+# The JVM unit tests, against a host build of the core, and the custom lint
+# checks' own tests.
 android-test:
-	$(GRADLE) testDebugUnitTest
+	$(GRADLE) testDebugUnitTest :lint-rules:test
+
+# Installs the debug build on every connected device or emulator; set
+# ANDROID_SERIAL to pick one.
+android-install:
+	$(GRADLE) installDebug
+
+# The instrumented tests, on every connected device or emulator; set
+# ANDROID_SERIAL to pick one.
+android-connected-test:
+	$(GRADLE) connectedDebugAndroidTest
 
 # Where `cargo install` puts a binary, by cargo's own precedence.
 CARGO_BIN_DIR := $(or $(CARGO_INSTALL_ROOT),$(CARGO_HOME),$(HOME)/.cargo)/bin

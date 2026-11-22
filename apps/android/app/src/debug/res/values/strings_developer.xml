@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The Settings Developer section: debug builds only. Never shipped, never
+    translated.
+-->
+<resources>
+    <string name="developer_title" translatable="false">Developer</string>
+    <string name="developer_staging_mode" translatable="false">Staging mode</string>
+    <string name="developer_staging_detail" translatable="false">A fabricated trail-crew mesh in its own database, with a staged radio</string>
+    <string name="developer_wifi_scan_only" translatable="false">Staged device only scans Wi-Fi</string>
+    <string name="developer_wifi_scan_only_detail" translatable="false">Takes effect when staging next starts</string>
+    <string name="developer_fallback_colors" translatable="false">Use fallback colors</string>
+    <string name="developer_link_up" translatable="false">Staged radio link up</string>
+    <string name="developer_tx_failing" translatable="false">Drop everything sent</string>
+    <string name="developer_peer_says" translatable="false">Staged message in 5 seconds</string>
+    <string name="developer_peer_says_channel" translatable="false">Staged channel message in 5 seconds</string>
+    <string name="developer_peer_loses_one" translatable="false">Staged lost channel message</string>
+    <string name="developer_peer_reacts" translatable="false">Staged reaction in 5 seconds</string>
+    <string name="developer_peer_replies" translatable="false">Staged reply in 5 seconds</string>
+    <string name="developer_connect_radio_preview" translatable="false">Connect a radio preview</string>
+    <string name="developer_reset_staged" translatable="false">Reset staged data</string>
+    <string name="developer_reset_failed" translatable="false">The staged data could not be erased.</string>
+
+    <!-- What the staged peer says: message bodies, as iOS's staging sends them. -->
+    <string-array name="developer_peer_lines" translatable="false">
+        <item>Radio check—you copy?</item>
+        <item>Heading up the ridge now.</item>
+        <item>Found the cache, all good.</item>
+        <item>Back at basecamp before dark.</item>
+    </string-array>
+    <string name="developer_peer_reply" translatable="false">Sounds good, see you there.</string>
+</resources>
