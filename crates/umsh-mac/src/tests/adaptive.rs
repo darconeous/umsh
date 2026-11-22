@@ -1,4 +1,4 @@
-//! Adaptive forwarding (repeater-operation.md § Adaptive Forwarding): a
+//! Adaptive forwarding (UEP-0018): a
 //! forwarder that honors every source-routed hop and floods only where it
 //! hears no other forwarder.
 
@@ -363,6 +363,184 @@ fn a_spread_out_team_shares_nothing() {
     hear_neighbors(&mut mac, 29, FAR_RSSI_DBM);
     assert_eq!(mac.neighbors_beside(), 0);
     assert_eq!(floods_carried(&mut mac), 400);
+}
+
+/// A forwarder held back by its battery still records what its own radio
+/// sent, so that it does not carry the frame once the battery recovers.
+#[test]
+fn a_withheld_forwarder_still_records_its_own_radios_frames() {
+    let mut mac = make_adaptive_mac();
+    mac.set_battery_percent(Some(5));
+    let frame = flood_broadcast(b"from the host");
+    mac.radio_mut().rx_origin = RxOrigin::LocalTx;
+    receive(&mut mac, &frame);
+    mac.radio_mut().rx_origin = RxOrigin::Air;
+    mac.set_battery_percent(Some(50));
+
+    receive(&mut mac, &forwarded_once(&frame));
+    assert!(mac.tx_queue().is_empty());
+}
+
+/// Running low stops what was already queued too: a flood forward that
+/// never aired gives back its identity, so a copy heard once the battery
+/// recovers is carried, and a routed hop that aired is not retried.
+#[test]
+fn running_low_gives_up_what_was_queued() {
+    let mut mac = make_adaptive_mac();
+    let flood = flood_broadcast(b"queued before");
+    // Routed through this node and then one more, whose forward it awaits.
+    let own = mac
+        .identity(LocalIdentityId(0))
+        .unwrap()
+        .identity()
+        .public_key()
+        .router_hint();
+    let routed = build_received_unicast_frame(
+        &DummyIdentity::new([0xAB; 32]),
+        &PairwiseKeys {
+            k_enc: [1; 32],
+            k_mic: [2; 32],
+        },
+        &umsh_core::NodeHint([0x77, 0x66, 0x55]),
+        b"routed on",
+        false,
+        None,
+        None,
+        Some(&[own, RouterHint([0x44, 0x33])]),
+    );
+    receive(&mut mac, &routed);
+    assert!(
+        transmit(&mut mac),
+        "the routed hop airs and awaits its next hop"
+    );
+    receive(&mut mac, &flood);
+    assert_eq!(mac.tx_queue().len(), 2);
+
+    mac.set_battery_percent(Some(5));
+    assert!(mac.tx_queue().is_empty());
+    mac.clock().advance_ms(T_FRAME_MS * 10);
+    block_on(mac.transmit_next(&mut |_, _| {})).unwrap();
+    assert_eq!(mac.radio().transmitted.len(), 1, "nothing retried");
+
+    mac.set_battery_percent(Some(50));
+    receive(&mut mac, &flood);
+    assert_eq!(mac.tx_queue().len(), 1);
+}
+
+/// A copy from a bearer or a host link carries no measurement, so it never
+/// stands beside the forwarder, whatever its signal fields say.
+#[test]
+fn an_unmeasured_copy_is_never_beside() {
+    for origin in [RxOrigin::Backhaul, RxOrigin::Bearer(BearerId::LAN)] {
+        let mut mac = make_adaptive_mac();
+        mac.radio_mut().rx_origin = origin;
+        mac.radio_mut().rx_rssi = 0;
+        receive(&mut mac, &flood_broadcast(b"over a wire"));
+        assert_eq!(mac.tx_queue().len(), 1, "{origin:?}");
+    }
+}
+
+/// A flood over a bearer reaches a group standing together at once, as one
+/// over the air does, so the group shares it.
+#[test]
+fn a_group_shares_a_flood_from_a_bearer() {
+    let mut mac = make_adaptive_mac();
+    hear_neighbors(&mut mac, 29, BESIDE_RSSI_DBM + 10);
+    mac.radio_mut().rx_origin = RxOrigin::Bearer(BearerId::LAN);
+    let carried = floods_carried(&mut mac);
+    assert!((5..=100).contains(&carried), "{carried} of 400");
+}
+
+/// The offset is added whatever the arrival: a repeater beside this node
+/// may hold the same copy over a link of its own, and goes first. A copy
+/// asking for an acknowledgment is held back by `D_ack` too.
+#[test]
+fn the_offset_applies_whatever_the_arrival() {
+    let offset = T_FRAME_MS * 70 / 100;
+    let d_ack = T_FRAME_MS / 4;
+
+    let mut mac = make_adaptive_mac();
+    mac.radio_mut().rx_origin = RxOrigin::Backhaul;
+    let frame = build_received_unicast_frame(
+        &DummyIdentity::new([0xAB; 32]),
+        &PairwiseKeys {
+            k_enc: [1; 32],
+            k_mic: [2; 32],
+        },
+        &umsh_core::NodeHint([0x77, 0x66, 0x55]),
+        b"acknowledge me",
+        true,
+        Some((4, 0)),
+        None,
+        None,
+    );
+    receive(&mut mac, &frame);
+    let queued = mac.tx_queue_mut().pop_next().unwrap();
+    assert_eq!(queued.not_before_ms, START_MS + offset + d_ack);
+
+    let mut mac = make_adaptive_mac();
+    mac.radio_mut().rx_origin = RxOrigin::Bearer(BearerId::LAN);
+    receive(&mut mac, &flood_broadcast(b"on the bearer"));
+    let not_before_ms = mac.tx_queue_mut().pop_next().unwrap().not_before_ms;
+    // After the offset, a draw over the whole unranked window.
+    assert!(not_before_ms >= START_MS + offset);
+    assert!(not_before_ms <= START_MS + offset + T_FRAME_MS * 60 / 100);
+}
+
+/// Engaged, a forward of a flood that arrived already forwarded defers on
+/// two copies that count and is abandoned on the third, as a repeater's is.
+#[test]
+fn an_engaged_forward_is_abandoned_on_the_third_copy() {
+    let mut mac = make_adaptive_mac();
+    receive(&mut mac, &flood_broadcast(b"needed"));
+    assert!(transmit(&mut mac));
+    assert_eq!(mac.repeater_state(), RepeaterState::Engaged);
+
+    receive(&mut mac, &forwarded_once(&flood_broadcast(b"coming back")));
+    let carried = pending_forward_frame(&mut mac);
+    receive(&mut mac, &carried);
+    receive(&mut mac, &carried);
+    assert_eq!(mac.tx_queue_mut().pop_next().unwrap().forward_deferrals, 2);
+
+    let mut mac = make_adaptive_mac();
+    receive(&mut mac, &flood_broadcast(b"needed"));
+    assert!(transmit(&mut mac));
+    receive(&mut mac, &forwarded_once(&flood_broadcast(b"coming back")));
+    let carried = pending_forward_frame(&mut mac);
+    for _ in 0..3 {
+        receive(&mut mac, &carried);
+    }
+    assert!(mac.tx_queue().is_empty());
+}
+
+/// An empty Source Route records that the packet crossed an explicit path,
+/// so it was not heard from its originator: it neither counts its sender
+/// toward the group nor engages the forwarder that carries it.
+#[test]
+fn an_empty_source_route_is_not_heard_from_its_originator() {
+    let with_empty_route = |payload: &[u8]| {
+        let source = DummyIdentity::new([0xAB; 32]);
+        let mut buf = [0u8; 256];
+        let frame = PacketBuilder::new(&mut buf)
+            .broadcast()
+            .source_full(source.public_key())
+            .flood_hops(4)
+            .option(OptionNumber::SourceRoute, &[])
+            .payload(payload)
+            .build()
+            .unwrap();
+        frame.iter().copied().collect::<heapless::Vec<u8, 256>>()
+    };
+
+    let mut mac = make_adaptive_mac();
+    mac.radio_mut().rx_rssi = BESIDE_RSSI_DBM + 10;
+    receive(&mut mac, &with_empty_route(b"routed here"));
+    assert_eq!(mac.neighbors_beside(), 0);
+
+    let mut mac = make_adaptive_mac();
+    receive(&mut mac, &with_empty_route(b"from a route's end"));
+    assert!(transmit(&mut mac));
+    assert_eq!(mac.repeater_state(), RepeaterState::Standby);
 }
 
 #[test]
@@ -833,6 +1011,7 @@ fn run_survey(survey: Survey) -> Outcome {
     });
     for (node, mac) in macs.iter().enumerate() {
         let mut mac = mac.borrow_mut();
+
         if shape == Shape::Conference {
             if repeater(node) {
                 mac.repeater_config_mut().mode = RepeaterMode::On;
@@ -840,8 +1019,10 @@ fn run_survey(survey: Survey) -> Outcome {
                 mac.repeater_config_mut().mode = RepeaterMode::Off;
             }
         }
-        let draws = mac.rng_mut().0.wrapping_add(run.wrapping_mul(101));
-        mac.rng_mut().0 = draws;
+        // A real generator's spread: the counter the other tests use draws
+        // in lockstep across nodes.
+        mac.rng_mut().1 =
+            0x9e37_79b9_7f4a_7c15u64 ^ ((node as u64) << 32) ^ (u64::from(run) << 48) ^ 1;
     }
     let talks = |node: usize| {
         shape != Shape::Conference || node == 0 || node == last || (1..=talkers).contains(&node)

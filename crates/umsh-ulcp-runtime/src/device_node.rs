@@ -539,8 +539,17 @@ fn advertised_identity(
 ) -> (NodeRole, NodeCapabilities) {
     let messaging = cfg!(feature = "communicator");
     let is_repeater = mode == repeater_mode::ON;
-    let role = match configured_role {
-        Some(byte) => NodeRole::from_byte(byte),
+    let role = match configured_role.map(NodeRole::from_byte) {
+        // Nor does it claim a role its neighbors would plan on, whatever
+        // it was configured with.
+        Some(NodeRole::Repeater | NodeRole::Bridge) if mode == repeater_mode::ADAPTIVE => {
+            if messaging {
+                NodeRole::Chat
+            } else {
+                NodeRole::Tracker
+            }
+        }
+        Some(role) => role,
         None if messaging => NodeRole::Chat,
         None if is_repeater && is_bridged => NodeRole::Bridge,
         None if is_repeater => NodeRole::Repeater,
@@ -1774,6 +1783,17 @@ mod tests {
             ),
             (NodeRole::Sensor, caps(true))
         );
+        for claimed in [NodeRole::Repeater, NodeRole::Bridge] {
+            assert_eq!(
+                advertised_identity(
+                    repeater_mode::ADAPTIVE,
+                    true,
+                    false,
+                    Some(claimed.as_byte())
+                ),
+                (NodeRole::Tracker, caps(false))
+            );
+        }
     }
 
     /// Only a battery that is running down holds an adaptive forwarder

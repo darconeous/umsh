@@ -948,7 +948,7 @@ pub struct RepeaterConfig {
     /// How many of a group standing together should forward a flood that
     /// reached them from elsewhere. An adaptive forwarder with more
     /// neighbors beside it than this forwards with that many chances in
-    /// their number, drawn for itself.
+    /// their number, drawn for itself. Zero is taken as one.
     pub adaptive_beside_forwarders: u8,
     /// Battery level, in percent, at or below which an adaptive forwarder
     /// forwards nothing.
@@ -992,7 +992,7 @@ impl Default for RepeaterConfig {
 pub const REPEATERS_HEARD_WINDOW_MS: u64 = 60 * 60 * 1000;
 
 /// Whether, and how eagerly, a node forwards other nodes' traffic
-/// (repeater-operation.md § Adaptive Forwarding).
+/// (UEP-0013, and UEP-0018 for the adaptive mode).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum RepeaterMode {
     /// Carries only its own traffic.
@@ -1001,7 +1001,7 @@ pub enum RepeaterMode {
     /// An ordinary repeater.
     On,
     /// Honors every source-routed hop, and floods only where nobody else
-    /// is heard forwarding (repeater-operation.md § Adaptive Forwarding).
+    /// is heard forwarding (UEP-0018).
     ///
     /// A flood it has not seen before is taken through these in order:
     ///
@@ -1551,6 +1551,26 @@ impl<
             }
             Some(_) => {}
         }
+        if self.adaptive_withheld() {
+            self.withhold_forwards();
+        }
+    }
+
+    /// Whether an adaptive forwarder's battery holds it back.
+    fn adaptive_withheld(&self) -> bool {
+        self.repeater.mode == RepeaterMode::Adaptive && self.battery_low
+    }
+
+    /// Give up every forward still queued: a forwarder held back carries
+    /// nothing, the forwards it took on before included. One that never
+    /// aired releases its forwarding identity, and one awaiting its next hop
+    /// stops listening and retrying.
+    fn withhold_forwards(&mut self) {
+        while let Some(queued) = self.tx_queue.remove_first_matching(|entry| {
+            entry.priority == TxPriority::Forward && entry.receipt.is_none()
+        }) {
+            self.forget_unaired_forward(&queued);
+        }
     }
 
     /// What this node's forwarding is doing at the moment.
@@ -1619,7 +1639,7 @@ impl<
     /// start within one channel check of each other collide, and none
     /// hears a copy to give way to.
     fn adaptive_group_admits(&mut self) -> bool {
-        let wanted = u32::from(self.repeater.adaptive_beside_forwarders);
+        let wanted = u32::from(self.repeater.adaptive_beside_forwarders).max(1);
         // This node and the ones beside it.
         let group = self.neighbors_beside() as u32 + 1;
         group <= wanted || self.rng.random_range(..group) < wanted
@@ -8421,13 +8441,6 @@ impl<
         if !self.repeater.mode.forwards() {
             return false;
         }
-        // An adaptive forwarder's battery is its owner's before it is the
-        // mesh's. Low, it carries nothing for anyone, a source-routed hop
-        // included: the sender's missing confirmation is what tells it to
-        // find another way.
-        if self.repeater.mode == RepeaterMode::Adaptive && self.battery_low {
-            return false;
-        }
         if !header.packet_type().is_routable() {
             return false;
         }
@@ -8474,6 +8487,14 @@ impl<
         };
         if self.dup_cache.contains(&cache_key, self.clock.now_ms()) {
             self.defer_pending_forward(&cache_key, frame, header, rx, &options);
+            return false;
+        }
+        // An adaptive forwarder's battery is its owner's before it is the
+        // mesh's. Low, it carries nothing for anyone, a source-routed hop
+        // included: the sender's missing confirmation is what tells it to
+        // find another way. It still records its own radio's frames above,
+        // so that it does not carry them once the battery recovers.
+        if self.adaptive_withheld() {
             return false;
         }
 

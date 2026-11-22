@@ -1135,9 +1135,12 @@ impl DelayNs for DummyDelay {
 
 /// Deterministic byte-filling RNG used by tests.
 ///
-/// This type is intentionally predictable.
+/// This type is intentionally predictable: each byte is one more than the
+/// last. A nonzero second field switches it to a xorshift generator seeded
+/// with that value, still deterministic, for surveys whose draws must be
+/// spread like a real generator's.
 #[derive(Clone, Default)]
-pub struct DummyRng(pub u8);
+pub struct DummyRng(pub u8, pub u64);
 
 impl TryRng for DummyRng {
     type Error = Infallible;
@@ -1156,6 +1159,13 @@ impl TryRng for DummyRng {
 
     fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Infallible> {
         for byte in dest.iter_mut() {
+            if self.1 != 0 {
+                self.1 ^= self.1 << 13;
+                self.1 ^= self.1 >> 7;
+                self.1 ^= self.1 << 17;
+                *byte = (self.1 >> 32) as u8;
+                continue;
+            }
             *byte = self.0;
             self.0 = self.0.wrapping_add(1);
         }

@@ -797,8 +797,7 @@ pub mod repeater_state {
     /// Adaptive, tolerating as many overheard copies as an ordinary
     /// repeater: it recently carried a flood for its originator.
     pub const ENGAGED: u8 = 3;
-    /// Adaptive, holding back: the battery is low, or the channel is
-    /// busy.
+    /// Adaptive, forwarding nothing: the battery is low.
     pub const WITHHELD: u8 = 4;
 }
 
