@@ -25,7 +25,7 @@
 - [UEP-0016: Path Discovery](uep-0016.md)
 - [UEP-0017: Amateur Radio Operation](uep-0017.md)
 - [UEP-0018: Adaptive Forwarding](uep-0018.md)
-- [UEP-0019: URI Formats]()
+- [UEP-0019: URI Formats](uep-0019.md)
 - [UEP-0020: Text Messages]()
 - [UEP-0021: Message Repair]()
 - [UEP-0022: Default Groups]()
