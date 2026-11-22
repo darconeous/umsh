@@ -44,11 +44,15 @@ end
 -- Channel key derivation
 -- ---------------------------------------------------------------------------
 
--- Named channels: key = HKDF-Extract(salt="UMSH-CHANNEL-V1", ikm=UTF-8(name))
--- This matches the spec formula for well-known named channels like "umsh:cs:public"
+-- Named channels: key = HKDF-Extract(salt="UMSH-CHANNEL-V1", ikm=canonical name)
+-- This matches the spec formula for well-known named channels like "umsh:gs:public"
 local function derive_named_channel_key(name)
   if not crypto_ref then return nil end
-  -- Per spec: HMAC-SHA256(key="UMSH-CHANNEL-V1", data=name)
+  -- The name of a umsh:gs: URI is percent-decoded (UEP-0019), then ASCII
+  -- letters are folded to lowercase (UEP-0008): Public, PUBLIC, and %50ublic
+  -- are one group. Per spec: HMAC-SHA256(key="UMSH-CHANNEL-V1", data=name)
+  name = name:gsub("%%(%x%x)", function(hex) return string.char(tonumber(hex, 16)) end)
+  name = name:gsub("[A-Z]", string.lower)
   return crypto_ref.hmac_sha256("UMSH-CHANNEL-V1", name)
 end
 
@@ -109,7 +113,7 @@ end
 --
 --   64 hex characters                  the historical form
 --   44 base58 characters               what an address looks like everywhere else
---   umsh:n:<44>  / umsh:ck:<44>        node and channel-key URIs
+--   umsh:n:<44>  / umsh:gk:<44>        node and group-key URIs
 --
 -- Hex and base58 are told apart by length, the same rule PublicKey::FromStr
 -- uses in crates/umsh-core/src/packet.rs. `scheme` names the URI prefix this
@@ -122,6 +126,8 @@ local function parse_key_material(str, scheme)
 
   local uri_scheme, body = str:match("^umsh:(%a+):(.+)$")
   if uri_scheme then
+    -- `ck` and `cs` are the deprecated spellings of `gk` and `gs`.
+    if uri_scheme == "ck" then uri_scheme = "gk" end
     if uri_scheme ~= scheme then return nil end
     -- URIs may carry `?k=v` parameters; the key is what precedes them.
     str = body:match("^([^?]+)") or body
@@ -168,19 +174,20 @@ end
 -- Parse a multi-line channel preference string. Lines are either a key in
 -- any form parse_key_material accepts, or a channel *name* to derive from:
 --   <key>:<label>                           raw 32-byte channel key
---   umsh:ck:<44-base58>:<label>             channel-key URI
---   umsh:cs:<channel-name>:<display-name>   named channel derivation
---   umsh:cs:<channel-name>                  named channel, no display name
+--   umsh:gk:<44-base58>:<label>             group-key URI
+--   umsh:gs:<channel-name>:<display-name>   named group derivation
+--   umsh:gs:<channel-name>                  named group, no display name
+-- (`ck` and `cs` are read as `gk` and `gs`.)
 local function parse_channel_lines(pref_str)
   if not pref_str or pref_str == "" then return {} end
   local result = {}
   for line in (pref_str .. "\n"):gmatch("([^\n]*)\n") do
     line = line:match("^%s*(.-)%s*$")
     if line ~= "" and line:sub(1,1) ~= "#" then
-      -- Named channel: umsh:cs:<name> or umsh:cs:<name>:<display>
-      local chan_name, display = line:match("^umsh:cs:([^:]+):(.+)$")
+      -- Named channel: umsh:gs:<name> or umsh:gs:<name>:<display>
+      local chan_name, display = line:match("^umsh:[gc]s:([^:]+):(.+)$")
       if not chan_name then
-        chan_name = line:match("^umsh:cs:(.+)$")
+        chan_name = line:match("^umsh:[gc]s:(.+)$")
         display   = chan_name
       end
       if chan_name then
@@ -188,7 +195,7 @@ local function parse_channel_lines(pref_str)
                              name=(display or chan_name):match("^%s*(.-)%s*$")}
       else
         local key, name = split_key_label(line)
-        local bytes = parse_key_material(key, "ck")
+        local bytes = parse_key_material(key, "gk")
         if bytes then
           result[#result+1] = {kind="raw", bytes=bytes,
                                name=(name or ""):match("^%s*(.-)%s*$")}
@@ -280,8 +287,8 @@ function M.rebuild_from_uat(uat_rows)
       if b then privkeys[#privkeys+1] = privkey_entry(b, label) end
 
     elseif ktype == "channel" then
-      -- Named channel: umsh:cs:<name>
-      local chan_name = key:match("^umsh:cs:(.+)$")
+      -- Named channel: umsh:gs:<name>
+      local chan_name = key:match("^umsh:[gc]s:(.+)$")
       if chan_name then
         if crypto_ref then
           local ck = derive_named_channel_key(chan_name)
@@ -290,7 +297,7 @@ function M.rebuild_from_uat(uat_rows)
           end
         end
       else
-        local b = parse_key_material(key, "ck")
+        local b = parse_key_material(key, "gk")
         if b then
           channels[#channels+1] = compute_channel_entry(b, label)
         end

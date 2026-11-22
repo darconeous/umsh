@@ -88,8 +88,15 @@ impl PartialEq for ChannelKeyUri<'_> {
 impl Eq for ChannelKeyUri<'_> {}
 
 /// Parse a `umsh:` URI reference.
+///
+/// The scheme is matched without regard to ASCII case; the kind, the
+/// base58 digits, and the parameter names are case-sensitive
+/// (UEP-0019 §syntax).
 pub fn parse_umsh_uri<'a>(uri: &'a UriRef) -> Result<UmshUri<'a>, Error> {
-    if uri.scheme() != Some("umsh") {
+    if !uri
+        .scheme()
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("umsh"))
+    {
         return Err(Error::InvalidUri);
     }
 
@@ -97,23 +104,51 @@ pub fn parse_umsh_uri<'a>(uri: &'a UriRef) -> Result<UmshUri<'a>, Error> {
     let kind = parts.next().ok_or(Error::InvalidUri)?;
     let value = parts.next().ok_or(Error::InvalidUri)?;
     let tail = parts.next();
-    let params = parse_channel_params(uri)?;
 
     match kind {
         "n" => Ok(UmshUri::Node(NodeUri {
             public_key: umsh_core::PublicKey(decode_base58_32(value)?),
             identity_data: tail,
         })),
-        "cs" => Ok(UmshUri::ChannelByName(ChannelNameUri {
-            name: value,
-            params,
-        })),
-        "ck" => Ok(UmshUri::ChannelByKey(ChannelKeyUri {
+        // A group URI has no third segment: `umsh:gs:a:b` would otherwise
+        // join the group `a`, not the one its sender meant. `cs` and `ck`
+        // are deprecated spellings of `gs` and `gk`.
+        "gs" | "cs" if tail.is_none() && !value.is_empty() => {
+            Ok(UmshUri::ChannelByName(ChannelNameUri {
+                name: value,
+                params: parse_channel_params(uri),
+            }))
+        }
+        "gk" | "ck" if tail.is_none() => Ok(UmshUri::ChannelByKey(ChannelKeyUri {
             key: umsh_core::ChannelKey(decode_base58_32(value)?),
-            params,
+            params: parse_channel_params(uri),
         })),
         _ => Err(Error::InvalidUri),
     }
+}
+
+/// `text` after a leading `umsh:`, the scheme matched without regard to
+/// ASCII case. For entry points that decide whether typed or pasted text is
+/// a URI before parsing it.
+pub fn strip_scheme(text: &str) -> Option<&str> {
+    let scheme = text.get(..5)?;
+    scheme
+        .eq_ignore_ascii_case("umsh:")
+        .then(|| &text[scheme.len()..])
+}
+
+/// `rest`, the text after `umsh:`, with a group-name kind (`gs:`, or the
+/// deprecated `cs:`) removed.
+pub fn strip_group_name_kind(rest: &str) -> Option<&str> {
+    rest.strip_prefix("gs:")
+        .or_else(|| rest.strip_prefix("cs:"))
+}
+
+/// `rest`, the text after `umsh:`, with a group-key kind (`gk:`, or the
+/// deprecated `ck:`) removed.
+pub fn strip_group_key_kind(rest: &str) -> Option<&str> {
+    rest.strip_prefix("gk:")
+        .or_else(|| rest.strip_prefix("ck:"))
 }
 
 /// Parse `text` as a `umsh:` URI.
@@ -122,7 +157,12 @@ pub fn parse_umsh_str(text: &str) -> Result<UmshUri<'_>, Error> {
     parse_umsh_uri(uri)
 }
 
-fn parse_channel_params<'a>(uri: &'a UriRef) -> Result<ChannelParams<'a>, Error> {
+/// The most flood hops a group URI's `mh` may name: the flood radius.
+const MAX_SUGGESTED_FLOOD_HOPS: u8 = 15;
+
+/// A parameter that is malformed is left out, never a reason to reject the
+/// URI (UEP-0019 §parameters); a repeated one takes its last occurrence.
+fn parse_channel_params<'a>(uri: &'a UriRef) -> ChannelParams<'a> {
     let mut display_name = None;
     let mut max_flood_hops = None;
     let mut region = None;
@@ -130,20 +170,29 @@ fn parse_channel_params<'a>(uri: &'a UriRef) -> Result<ChannelParams<'a>, Error>
     for (key, value) in uri.raw_query_key_values() {
         match key {
             "n" => display_name = Some(value),
-            "mh" => {
-                max_flood_hops = Some(value.parse::<u8>().map_err(|_| Error::InvalidUri)?);
-            }
+            "mh" => max_flood_hops = parse_flood_hops(value),
             "r" => region = Some(value),
             _ => {}
         }
     }
 
-    Ok(ChannelParams {
+    ChannelParams {
         display_name,
         max_flood_hops,
         region,
         raw_query: uri.raw_query(),
-    })
+    }
+}
+
+/// One or two decimal digits no greater than the flood radius.
+fn parse_flood_hops(value: &str) -> Option<u8> {
+    if value.is_empty() || value.len() > 2 || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    value
+        .parse::<u8>()
+        .ok()
+        .filter(|hops| *hops <= MAX_SUGGESTED_FLOOD_HOPS)
 }
 
 fn decode_base58_32(input: &str) -> Result<[u8; 32], Error> {
@@ -267,14 +316,14 @@ pub fn format_node_uri(key: &umsh_core::PublicKey, buf: &mut [u8]) -> Result<usi
 /// original with [`decode_percent`] before canonicalizing it.
 pub fn format_channel_name_uri(name: &str, buf: &mut [u8]) -> Result<usize, Error> {
     let mut pos = 0usize;
-    copy_into(buf, &mut pos, b"umsh:cs:")?;
+    copy_into(buf, &mut pos, b"umsh:gs:")?;
     write_percent_encoded(buf, &mut pos, name)?;
     Ok(pos)
 }
 
 pub fn format_channel_key_uri(key: &umsh_core::ChannelKey, buf: &mut [u8]) -> Result<usize, Error> {
     let mut pos = 0usize;
-    copy_into(buf, &mut pos, b"umsh:ck:")?;
+    copy_into(buf, &mut pos, b"umsh:gk:")?;
     copy_into(buf, &mut pos, &umsh_core::base58::encode(&key.0))?;
     Ok(pos)
 }
@@ -299,9 +348,18 @@ pub fn format_channel_key_uri_with_params(
     Ok(pos)
 }
 
+/// Write the parameters a group URI carries (UEP-0019 §parameters). An empty
+/// display name says nothing and is left out; an `mh` above the flood radius
+/// is one a sender must not write.
 fn write_params(params: &ChannelParams<'_>, buf: &mut [u8], pos: &mut usize) -> Result<(), Error> {
+    if params
+        .max_flood_hops
+        .is_some_and(|hops| hops > MAX_SUGGESTED_FLOOD_HOPS)
+    {
+        return Err(Error::InvalidUri);
+    }
     let mut wrote = false;
-    if let Some(display_name) = params.display_name {
+    if let Some(display_name) = params.display_name.filter(|name| !name.is_empty()) {
         push_byte(buf, pos, if wrote { b';' } else { b'?' })?;
         wrote = true;
         copy_into(buf, pos, b"n=")?;
@@ -584,7 +642,7 @@ mod tests {
             region: None,
             raw_query: None,
         };
-        // Room for `umsh:ck:` and the 44-character key, but not the query.
+        // Room for `umsh:gk:` and the 44-character key, but not the query.
         let mut buf = [0u8; 52];
         assert_eq!(
             format_channel_key_uri_with_params(&channel_key, &params, &mut buf),
@@ -605,5 +663,239 @@ mod tests {
             parse_channel_key_base58(&channel_text).unwrap(),
             channel_key
         );
+    }
+
+    // The vectors below are those of UEP-0019 Appendix A.
+
+    const NODE_A: &str = "GySVDr1omr3GTodgWFH7qD1ZKav9C5NMPFjdpwb33LvU";
+    const GROUP_5A: &str = "75hbt6uvDqjPZ9WgFtMhBnTeyHw7cinoHiz4FD2vEz2d";
+
+    fn hex(text: &str) -> alloc::vec::Vec<u8> {
+        let digits: alloc::vec::Vec<u8> =
+            text.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
+        digits
+            .chunks(2)
+            .map(|pair| u8::from_str_radix(core::str::from_utf8(pair).unwrap(), 16).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn variable_base58_matches_the_spec_vectors() {
+        for (bytes, text) in [
+            ("", ""),
+            ("00", "1"),
+            ("000001", "112"),
+            ("61", "2g"),
+            ("FFFF", "LUv"),
+            ("000206", "19w"),
+        ] {
+            let bytes = hex(bytes);
+            assert_eq!(encode_base58_bytes(&bytes), text);
+            assert_eq!(decode_base58_bytes(text).unwrap(), bytes);
+        }
+    }
+
+    #[test]
+    fn node_uris_match_the_spec_vectors() {
+        let address = hex("ED54A59FB1AC3A5123935136294 1B868E85A60E3D7B2485D828821DC7A69C279");
+        let bare = alloc::format!("umsh:n:{NODE_A}");
+        match parse_umsh_str(&bare).unwrap() {
+            UmshUri::Node(node) => {
+                assert_eq!(node.public_key.0.as_slice(), address.as_slice());
+                assert_eq!(node.identity_data, None);
+            }
+            _ => panic!("expected a node uri"),
+        }
+
+        let signed = hex("02 06 05 41 6C 69 63 65 13 B2 59 15 11 F4 14 6B 36 EC 80 FF
+             5CA53BC830CE05AA596EC08C2AEE41A37F5F08D291E6854D4E76E5A2126DC273
+             10FC2EDBB20E095F2E7A43613BA373F73943EE97E63B8EC333B84A22E08B3E08");
+        let bundle = "9NPVXctGv5bNRLpyNDMXGYvne4bHwV8WxQ1xQoEiA3gemRET41UnDHRfTmWvYSu4TMKK441imEcJSVx3LCwyqj4kY4HZPAJSTrgeazDPGM1nBn59zF";
+        assert_eq!(encode_base58_bytes(&signed), bundle);
+        let with_bundle = alloc::format!("umsh:n:{NODE_A}:{bundle}");
+        match parse_umsh_str(&with_bundle).unwrap() {
+            UmshUri::Node(node) => assert_eq!(node.identity_data, Some(bundle)),
+            _ => panic!("expected a node uri"),
+        }
+
+        let unsigned = hex("02 06 05 41 6C 69 63 65 13 B2 59 15 11 F4 14 6B 36 EC 80");
+        assert_eq!(encode_base58_bytes(&unsigned), "NVBjSY2wfbwPypTziMyej18fh");
+    }
+
+    #[test]
+    fn strip_scheme_ignores_case_and_never_splits_a_character() {
+        assert_eq!(strip_scheme("umsh:n:x"), Some("n:x"));
+        assert_eq!(strip_scheme("UMSH:n:x"), Some("n:x"));
+        assert_eq!(strip_scheme("umsh"), None);
+        assert_eq!(strip_scheme("umsh;n:x"), None);
+        assert_eq!(strip_scheme("umsé:n"), None);
+    }
+
+    #[test]
+    fn a_sender_writes_neither_an_empty_name_nor_a_flood_budget_above_15() {
+        let key = umsh_core::ChannelKey([0x5A; 32]);
+        let mut buf = [0u8; 160];
+        let write = |params: ChannelParams<'_>, buf: &mut [u8]| {
+            format_channel_key_uri_with_params(&key, &params, buf)
+        };
+        let params = |name, hops| ChannelParams {
+            display_name: name,
+            max_flood_hops: hops,
+            region: None,
+            raw_query: None,
+        };
+        assert_eq!(
+            write(params(None, Some(16)), &mut buf),
+            Err(Error::InvalidUri)
+        );
+        assert_eq!(
+            write(params(Some("x"), Some(200)), &mut buf),
+            Err(Error::InvalidUri)
+        );
+        let len = write(params(Some(""), Some(15)), &mut buf).unwrap();
+        assert!(
+            core::str::from_utf8(&buf[..len])
+                .unwrap()
+                .ends_with("?mh=15")
+        );
+        let len = write(params(Some(""), None), &mut buf).unwrap();
+        assert!(
+            core::str::from_utf8(&buf[..len])
+                .unwrap()
+                .ends_with(GROUP_5A)
+        );
+    }
+
+    #[test]
+    fn the_deprecated_kinds_parse_as_their_replacements() {
+        let new = alloc::format!("umsh:gk:{GROUP_5A}?mh=3");
+        let old = alloc::format!("umsh:ck:{GROUP_5A}?mh=3");
+        match (parse_umsh_str(&new).unwrap(), parse_umsh_str(&old).unwrap()) {
+            (UmshUri::ChannelByKey(new), UmshUri::ChannelByKey(old)) => assert_eq!(new, old),
+            _ => panic!("expected group keys"),
+        }
+        match parse_umsh_str("umsh:cs:Public").unwrap() {
+            UmshUri::ChannelByName(group) => assert_eq!(group.name, "Public"),
+            _ => panic!("expected a named group"),
+        }
+        assert!(parse_umsh_str("umsh:cs:a:b").is_err());
+        assert!(parse_umsh_str("umsh:cs:").is_err());
+        assert!(parse_umsh_str(&alloc::format!("umsh:ck:{GROUP_5A}:x")).is_err());
+
+        assert_eq!(strip_group_name_kind("gs:x"), Some("x"));
+        assert_eq!(strip_group_name_kind("cs:x"), Some("x"));
+        assert_eq!(strip_group_key_kind("gk:x"), Some("x"));
+        assert_eq!(strip_group_key_kind("ck:x"), Some("x"));
+        assert_eq!(strip_group_key_kind("gs:x"), None);
+    }
+
+    #[test]
+    fn the_scheme_is_matched_without_regard_to_case_but_nothing_else_is() {
+        assert!(matches!(
+            parse_umsh_str(&alloc::format!("UMSH:n:{NODE_A}")),
+            Ok(UmshUri::Node(_))
+        ));
+        assert!(parse_umsh_str(&alloc::format!("umsh:N:{NODE_A}")).is_err());
+        assert!(parse_umsh_str("umsh:GS:public").is_err());
+        assert!(parse_umsh_str("umsh:CS:public").is_err());
+    }
+
+    #[test]
+    fn named_group_uris_name_one_group_however_they_are_written() {
+        for text in [
+            "umsh:gs:Public",
+            "umsh:gs:public",
+            "umsh:gs:PUBLIC",
+            "umsh:gs:%50ublic",
+        ] {
+            match parse_umsh_str(text).unwrap() {
+                UmshUri::ChannelByName(group) => assert_eq!(
+                    decode_percent(group.name).unwrap().to_ascii_lowercase(),
+                    "public"
+                ),
+                _ => panic!("expected a named group"),
+            }
+        }
+    }
+
+    #[test]
+    fn group_key_uri_carries_the_spec_parameters() {
+        let text = alloc::format!("umsh:gk:{GROUP_5A}?n=Trail%20Crew;mh=3;r=SJC");
+        match parse_umsh_str(&text).unwrap() {
+            UmshUri::ChannelByKey(group) => {
+                assert_eq!(group.key.0, [0x5A; 32]);
+                assert_eq!(
+                    decode_percent(group.params.display_name.unwrap()).unwrap(),
+                    "Trail Crew"
+                );
+                assert_eq!(group.params.max_flood_hops, Some(3));
+                assert_eq!(group.params.region, Some("SJC"));
+            }
+            _ => panic!("expected a group key"),
+        }
+        // `&` also separates parameters, and the last of a repeat wins.
+        let text = alloc::format!("umsh:gk:{GROUP_5A}?mh=2&mh=7");
+        match parse_umsh_str(&text).unwrap() {
+            UmshUri::ChannelByKey(group) => assert_eq!(group.params.max_flood_hops, Some(7)),
+            _ => panic!("expected a group key"),
+        }
+    }
+
+    #[test]
+    fn a_separator_in_a_parameter_value_round_trips() {
+        let key = umsh_core::ChannelKey([0x5A; 32]);
+        let params = ChannelParams {
+            display_name: Some("a?b;c=d&e/f"),
+            max_flood_hops: None,
+            region: None,
+            raw_query: None,
+        };
+        let mut buf = [0u8; 128];
+        let len = format_channel_key_uri_with_params(&key, &params, &mut buf).unwrap();
+        let text = core::str::from_utf8(&buf[..len]).unwrap();
+        assert!(text.ends_with("?n=a%3Fb%3Bc%3Dd%26e%2Ff"));
+    }
+
+    #[test]
+    fn the_spec_rejects_these_uris() {
+        for text in [
+            "umsh:gs:",
+            "umsh:gs:a:b",
+            "umsh:gs:100%",
+            "umsh:gs:public%00x",
+            "umsh:gs:a%0Ab",
+            "umsh:gs:a b",
+            "umsh:gk:75hbt6uvDqjPZ9WgFtMhBnTeyHw7cinoHiz4FD2vEz2d?n=%FF",
+            "umsh:gk:GySVDr1omr3GTodgWFH7qD1ZKav9C5NMPFjdpwb33Lv",
+            "umsh:x:GySVDr1omr3GTodgWFH7qD1ZKav9C5NMPFjdpwb33LvU",
+        ] {
+            assert!(parse_umsh_str(text).is_err(), "{text}");
+        }
+        // A group key with a third segment is as wrong as a name with one.
+        assert!(parse_umsh_str(&alloc::format!("umsh:gk:{GROUP_5A}:extra")).is_err());
+    }
+
+    #[test]
+    fn a_malformed_parameter_is_ignored_not_fatal() {
+        for (query, hops) in [
+            ("mh=16", None),
+            ("mh=x", None),
+            ("mh=+3", None),
+            ("mh=003", None),
+            ("mh=%33", None),
+            ("%6D%68=3", None),
+            ("mh=", None),
+            ("mh=15", Some(15)),
+            ("mh=0", Some(0)),
+            ("q=1", None),
+        ] {
+            let text = alloc::format!("umsh:gk:{GROUP_5A}?{query}");
+            match parse_umsh_str(&text).unwrap() {
+                UmshUri::ChannelByKey(group) => {
+                    assert_eq!(group.params.max_flood_hops, hops, "{query}")
+                }
+                _ => panic!("expected a group key"),
+            }
+        }
     }
 }

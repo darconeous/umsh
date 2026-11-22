@@ -1,4 +1,4 @@
-//! Add channel: one field takes a channel's name or a `umsh:ck:`
+//! Add channel: one field takes a channel's name or a `umsh:gk:`
 //! invitation, and the line under it says which as it is typed. Join
 //! unlocks once it names a channel. Backspace goes back.
 

@@ -411,7 +411,7 @@ check("malformed key line is skipped",
       keystore.lookup_node_by_key(from_hex(NODE_A_PUB)), "Good")
 
 -- A URI of the wrong kind is refused rather than read as this kind of key.
-keystore.rebuild("umsh:ck:" .. NODE_A_B58 .. ":WrongScheme", "", "")
+keystore.rebuild("umsh:gk:" .. NODE_A_B58 .. ":WrongScheme", "", "")
 check("channel-key URI is not accepted as a node",
       keystore.lookup_node_by_key(from_hex(NODE_A_PUB)), nil)
 
@@ -422,9 +422,13 @@ if crypto then
   local ch = keystore.get_channel_by_id(from_hex("B08D"))
   check("channel key as base58", ch and ch.name, "ChanFromBase58")
 
-  keystore.rebuild("", "", "umsh:ck:" .. CHAN_B58 .. ":ChanFromUri")
+  keystore.rebuild("", "", "umsh:gk:" .. CHAN_B58 .. ":ChanFromUri")
   ch = keystore.get_channel_by_id(from_hex("B08D"))
-  check("channel key as umsh:ck: URI", ch and ch.name, "ChanFromUri")
+  check("channel key as umsh:gk: URI", ch and ch.name, "ChanFromUri")
+
+  keystore.rebuild("", "", "umsh:ck:" .. CHAN_B58 .. ":ChanFromOldUri")
+  ch = keystore.get_channel_by_id(from_hex("B08D"))
+  check("channel key as deprecated umsh:ck: URI", ch and ch.name, "ChanFromOldUri")
 
   -- Private keys too, checked through the X25519 public key they derive.
   keystore.rebuild("", NODE_A_B58 .. ":SeedFromBase58", "")
@@ -465,6 +469,8 @@ else
   -- A hand-configured well-known channel keeps its own label rather than
   -- gaining a second entry under the same key.
   keystore.rebuild("", "", "umsh:cs:public:MyPublic")
+  check("deprecated umsh:cs: line is read", #keystore.get_all_channels(), 1)
+  keystore.rebuild("", "", "umsh:gs:public:MyPublic")
   keystore.add_builtin_channels()
   check("configured well-known channel is not duplicated",
         #keystore.get_all_channels(), 2)

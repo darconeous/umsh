@@ -6,7 +6,7 @@
 //! will not hold is let go again, and its chat with it when nothing was
 //! said there.
 //!
-//! An invitation is a `umsh:ck:` or `umsh:cs:` URI (`app-text-messages.md`,
+//! An invitation is a `umsh:gk:` or `umsh:gs:` URI (`app-text-messages.md`,
 //! Channel Invitations in Messages). A named channel goes by the name its
 //! key derives from, which is what sharing it gives; a private channel by
 //! the name its invitation gave it, or by its key's first characters.
@@ -28,10 +28,10 @@ use crate::record::{
 use crate::store::ChatStore;
 
 /// What an invitation to a private channel starts with.
-const BY_KEY: &str = "umsh:ck:";
+const BY_KEY: &str = "umsh:gk:";
 
 /// What an invitation to a named channel starts with.
-const BY_NAME: &str = "umsh:cs:";
+const BY_NAME: &str = "umsh:gs:";
 
 /// A channel named or invited to.
 pub(crate) struct Found {
@@ -50,7 +50,7 @@ impl<S: ChatStore> Chats<S> {
     /// The channel `text` names: a name, or a whole invitation.
     fn find_channel(&self, text: &str) -> Option<Found> {
         let text = text.trim();
-        if !text.starts_with("umsh:") {
+        if umsh_uri::strip_scheme(text).is_none() {
             return self.named_channel(text);
         }
         match umsh_uri::parse_umsh_str(text).ok()? {
@@ -85,7 +85,7 @@ impl<S: ChatStore> Chats<S> {
         if text.is_empty() {
             return ChannelEntry::Empty;
         }
-        if let Some(rest) = text.strip_prefix(BY_KEY) {
+        if let Some(rest) = umsh_uri::strip_scheme(text).and_then(umsh_uri::strip_group_key_kind) {
             let digits = rest.split_once('?').map_or(rest, |(digits, _)| digits);
             let missing = base58::ENCODED_LEN.saturating_sub(digits.len()) as u8;
             if digits.len() > base58::ENCODED_LEN
@@ -280,7 +280,10 @@ impl<S: ChatStore> Chats<S> {
     /// The invitation `text` is, when the whole of it is one.
     pub(super) fn invite_in(&self, text: &str) -> Option<Invite> {
         let text = text.trim();
-        if !text.starts_with(BY_KEY) && !text.starts_with(BY_NAME) {
+        if !umsh_uri::strip_scheme(text).is_some_and(|rest| {
+            umsh_uri::strip_group_key_kind(rest).is_some()
+                || umsh_uri::strip_group_name_kind(rest).is_some()
+        }) {
             return None;
         }
         let found = self.find_channel(text)?;

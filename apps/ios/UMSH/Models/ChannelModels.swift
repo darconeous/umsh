@@ -91,7 +91,7 @@ struct ChannelSummary: Identifiable, Hashable, Sendable {
     /// enforces the same ceiling whatever it is asked to register.
     ///
     /// Keyed on the canonical name rather than the record's kind, because the
-    /// name is what derives the key: joining `umsh:cs:public` by hand reaches
+    /// name is what derives the key: joining `umsh:gs:public` by hand reaches
     /// the same channel and inherits the same rules.
     var protocolMaxFloodHops: Int? {
         wellKnown.map { Int($0.fixedMaxFloodHops) }

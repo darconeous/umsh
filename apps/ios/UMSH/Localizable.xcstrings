@@ -1322,7 +1322,7 @@
     "Enter a prefix length that fits the address." : {
       "comment" : "Managing a node: under a static IP address's prefix length."
     },
-    "Enter a public channel name, or a umsh:cs: or umsh:ck: invitation. Nothing was joined." : {
+    "Enter a public channel name, or a umsh:gs: or umsh:gk: invitation. Nothing was joined." : {
       "comment" : "Typed text is neither a channel name nor a channel invitation."
     },
     "Enter a valid address for each resolver." : {

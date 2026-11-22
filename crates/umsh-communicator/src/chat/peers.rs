@@ -729,15 +729,16 @@ impl<S: ChatStore> Chats<S> {
         if text.is_empty() {
             return PeerEntry::Empty;
         }
-        let (digits, identity) = match text.strip_prefix(INVITATION) {
-            Some(rest) => match rest.split_once(':') {
-                Some((digits, identity)) => (digits, Some(identity)),
-                None => (rest, None),
-            },
-            // An invitation still being typed.
-            None if INVITATION.starts_with(text) => ("", None),
-            None => (text, None),
-        };
+        let (digits, identity) =
+            match umsh_uri::strip_scheme(text).and_then(|rest| rest.strip_prefix("n:")) {
+                Some(rest) => match rest.split_once(':') {
+                    Some((digits, identity)) => (digits, Some(identity)),
+                    None => (rest, None),
+                },
+                // An invitation still being typed.
+                None if INVITATION.starts_with(text) => ("", None),
+                None => (text, None),
+            };
         if digits.is_empty() {
             return PeerEntry::Partial {
                 avatar: None,

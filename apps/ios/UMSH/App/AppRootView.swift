@@ -265,9 +265,10 @@ struct AppRootView: View {
         .onOpenURL { url in
             guard url.scheme?.lowercased() == "umsh" else { return }
             let uri = url.absoluteString
-            // `cs:` and `ck:` are channels; everything else stays on the peer
-            // path, which also handles bare addresses and unknown forms.
-            let isChannel = ["umsh:cs:", "umsh:ck:"].contains {
+            // `gs:` and `gk:` (and the deprecated `cs:` and `ck:`) are
+            // channels; everything else stays on the peer path, which also
+            // handles bare addresses and unknown forms.
+            let isChannel = ["umsh:gs:", "umsh:gk:", "umsh:cs:", "umsh:ck:"].contains {
                 uri.lowercased().hasPrefix($0)
             }
             if isChannel {
