@@ -96,19 +96,37 @@ pub(crate) fn fmt_hint(
     hint: &[u8],
     budget: usize,
 ) -> core::fmt::Result {
+    let (digits, verified) = hint_prefix(hint, budget);
+    for &digit in &digits[..verified] {
+        f.write_char(char::from(digit))?;
+    }
+    if verified < budget {
+        f.write_char('*')?;
+    }
+    Ok(())
+}
+
+/// How many characters [`fmt_hint`] renders for `hint` before any `*`.
+pub(crate) fn hint_verified_chars(hint: &[u8], budget: usize) -> usize {
+    hint_prefix(hint, budget).1
+}
+
+/// The encoding of `hint` padded with 0x00, and how many of its first
+/// `budget` characters the encoding padded with 0xFF shares.
+fn hint_prefix(hint: &[u8], budget: usize) -> ([u8; ENCODED_LEN], usize) {
     let mut lo = [0x00u8; 32];
     let mut hi = [0xFFu8; 32];
     lo[..hint.len()].copy_from_slice(hint);
     hi[..hint.len()].copy_from_slice(hint);
     let lo = encode(&lo);
     let hi = encode(&hi);
-    for (&a, &b) in lo.iter().zip(hi.iter()).take(budget) {
-        if a != b {
-            return f.write_char('*');
-        }
-        f.write_char(char::from(a))?;
-    }
-    Ok(())
+    let verified = lo
+        .iter()
+        .zip(&hi)
+        .take(budget)
+        .take_while(|(a, b)| a == b)
+        .count();
+    (lo, verified)
 }
 
 #[cfg(test)]

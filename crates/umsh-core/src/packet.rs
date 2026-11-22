@@ -352,6 +352,11 @@ impl NodeHint {
     pub fn from_public_key(key: &PublicKey) -> Self {
         Self([key.0[0], key.0[1], key.0[2]])
     }
+
+    /// How many characters the hint renders before any `*`, at most four.
+    pub fn verified_chars(&self) -> usize {
+        crate::base58::hint_verified_chars(&self.0, 4)
+    }
 }
 
 impl core::fmt::Display for NodeHint {
@@ -376,6 +381,11 @@ impl RouterHint {
     /// Derive the router hint from the first two public-key bytes.
     pub fn from_public_key(key: &PublicKey) -> Self {
         Self([key.0[0], key.0[1]])
+    }
+
+    /// How many characters the hint renders before any `*`, at most three.
+    pub fn verified_chars(&self) -> usize {
+        crate::base58::hint_verified_chars(&self.0, 3)
     }
 
     /// Every router hint carried by an address that begins with `prefix`.
@@ -1936,6 +1946,33 @@ mod tests {
         // Carry case: the third digit is ambiguous (encodings read 9vEz/9vF1).
         assert_eq!(NodeHint([0x84, 0x81, 0x1B]).to_string(), "9v*");
         assert_eq!(NodeHint([0xFF, 0xFF, 0x94]).to_string(), "JE*");
+    }
+
+    /// The characters a rendering shows before any `*`.
+    fn shown_before_star(rendered: &str) -> usize {
+        rendered.find('*').unwrap_or(rendered.len())
+    }
+
+    #[test]
+    fn node_hint_verified_chars_match_display() {
+        for value in (0..1u32 << 24).step_by(997) {
+            let [_, a, b, c] = value.to_be_bytes();
+            let hint = NodeHint([a, b, c]);
+            assert_eq!(hint.verified_chars(), shown_before_star(&hint.to_string()));
+        }
+        assert_eq!(NodeHint([0xA1, 0xB2, 0x03]).verified_chars(), 4);
+        assert_eq!(NodeHint([0x84, 0x81, 0x1B]).verified_chars(), 2);
+    }
+
+    #[test]
+    fn router_hint_verified_chars_match_display() {
+        for value in 0..=u16::MAX {
+            let hint = RouterHint(value.to_be_bytes());
+            assert_eq!(hint.verified_chars(), shown_before_star(&hint.to_string()));
+        }
+        assert_eq!(RouterHint([0xA1, 0xB2]).verified_chars(), 3);
+        assert_eq!(RouterHint([0x5E, 0xA1]).verified_chars(), 2);
+        assert_eq!(RouterHint([0x00, 0x41]).verified_chars(), 1);
     }
 
     #[test]

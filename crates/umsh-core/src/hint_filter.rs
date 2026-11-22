@@ -1,4 +1,4 @@
-use crate::{PublicKey, base58};
+use crate::{NodeHint, PublicKey, RouterHint, base58};
 
 mod data;
 
@@ -98,6 +98,15 @@ impl Filter {
         self.matches(core::array::from_fn(|i| fold(digits[i]).unwrap_or(PAD)))
     }
 
+    /// Whether a freshly drawn key may become a long-term identity: the
+    /// filter does not match it, its node hint renders all four characters,
+    /// and its router hint renders at least two.
+    pub fn admits_identity(&self, key: &PublicKey) -> bool {
+        !self.avoids(key)
+            && NodeHint::from_public_key(key).verified_chars() == 4
+            && RouterHint::from_public_key(key).verified_chars() >= 2
+    }
+
     pub fn rejection_rate(&self) -> f64 {
         let mut rejected = 0.0;
         for_each_prefix(|symbols, weight| {
@@ -109,8 +118,8 @@ impl Filter {
     }
 }
 
-pub fn is_avoided(key: &PublicKey) -> bool {
-    FILTER.avoids(key)
+pub fn admits_identity(key: &PublicKey) -> bool {
+    FILTER.admits_identity(key)
 }
 
 pub fn for_each_prefix(mut visit: impl FnMut([u8; 4], f64)) {

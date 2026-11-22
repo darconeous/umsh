@@ -428,7 +428,7 @@ pub fn is_test_message_body(body: String) -> bool {
 
 /// Generate a fresh 32-octet secret for a new local identity.
 ///
-/// Redrawn while the hint filter matches its key.
+/// Redrawn until `admits_identity` accepts its key.
 #[uniffi::export]
 pub fn generate_identity_secret() -> Vec<u8> {
     use rand::Rng;
