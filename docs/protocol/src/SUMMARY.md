@@ -24,7 +24,7 @@
 - [UEP-0015: Source Routing](uep-0015.md)
 - [UEP-0016: Path Discovery](uep-0016.md)
 - [UEP-0017: Amateur Radio Operation](uep-0017.md)
-- [UEP-0018: Adaptive Forwarding]()
+- [UEP-0018: Adaptive Forwarding](uep-0018.md)
 - [UEP-0019: URI Formats]()
 - [UEP-0020: Text Messages]()
 - [UEP-0021: Message Repair]()
