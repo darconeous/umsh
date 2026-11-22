@@ -354,7 +354,7 @@ impl<const PEERS: usize, const HOLDS: usize> Station<PEERS, HOLDS> {
             CaptureRadio::default(),
             fixup::engine(),
             clock.clone(),
-            DummyRng(flags >> 4),
+            DummyRng(flags >> 4, 0),
             store.clone(),
             repeater,
             policy,
@@ -494,7 +494,11 @@ impl<const PEERS: usize, const HOLDS: usize> Harness<PEERS, HOLDS> {
             _ => RxOrigin::Bearer(BearerId::new(0).expect("the first bearer")),
         };
         let frame = fields.rest();
-        if omit_raw && selector == RAW && !is_unauthenticated_kind(frame) {
+        if omit_raw
+            && selector == RAW
+            && !is_unauthenticated_kind(frame)
+            && !fixup::authenticates(frame)
+        {
             // Something still arrived: noise anyone could have sent at that
             // instant, so the node wakes for a frame in both runs, and only
             // what it made of the left-out frame's content can differ.

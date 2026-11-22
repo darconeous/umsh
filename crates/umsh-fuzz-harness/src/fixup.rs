@@ -230,3 +230,42 @@ pub fn apply(frame: &[u8], selector: u8) -> Vec<u8> {
     }
     buf
 }
+
+/// Whether `frame`'s MIC verifies under the keys of anyone in the cast.
+///
+/// Decided here, from the keys alone, and not from what the node made of the
+/// frame: an oracle that trusted the node's verdict could never catch the
+/// node accepting a frame it should not have. A frame this accepts is
+/// authentic traffic however it reached the node; a fuzzer can mutate a
+/// spoiled seed back into one. Acknowledgements are not covered: their tag
+/// depends on the send they answer.
+pub fn authenticates(frame: &[u8]) -> bool {
+    let Ok(header) = PacketHeader::parse(frame) else {
+        return false;
+    };
+    if header.total_len != frame.len() {
+        return false;
+    }
+    let cast = cast();
+    let engine = engine();
+    let parties = || cast.parties.iter().chain([&cast.canary]);
+    let opens = |keys: &PairwiseKeys, buf: &[u8], blind: Option<&BlindAddr>| {
+        let mut buf = buf.to_vec();
+        engine.open_packet(&mut buf, &header, keys, blind).is_ok()
+    };
+    match header.packet_type() {
+        PacketType::Unicast | PacketType::UnicastAckReq => {
+            parties().any(|party| opens(&party.keys, frame, None))
+        }
+        PacketType::Multicast => opens(&channel_keys(cast), frame, None),
+        PacketType::BlindUnicast | PacketType::BlindUnicastAckReq => {
+            let mut addressed = frame.to_vec();
+            let Ok(opened) = engine.decrypt_blind_addr(&mut addressed, &header, &cast.channel)
+            else {
+                return false;
+            };
+            parties().any(|party| opens(&blind_keys(party), &addressed, Some(&opened.addr)))
+        }
+        PacketType::Broadcast | PacketType::MacAck | PacketType::Reserved5 => false,
+    }
+}
