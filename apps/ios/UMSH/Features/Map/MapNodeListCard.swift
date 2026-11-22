@@ -168,41 +168,27 @@ struct MapNodeListCard: View {
     /// all: the bundle's own timestamp is not when it was added, and nothing
     /// records that.
     ///
-    /// `now` is the map's timeline tick—and the reason this is a
-    /// `RelativeDateTimeFormatter` rather than the `.relative` format style
-    /// used elsewhere in the app: only the formatter takes a reference date.
+    /// `now` is the map's timeline tick, so each age is read against it.
     private func subtitle(_ node: MapNode, now: Date) -> String? {
         if let reporter = node.reportedBy {
             // Second-hand: who said so, and when they last heard the node.
-            var parts = ["Reported by \(reporter.displayName)"]
-            if let heard = node.lastHeard {
-                parts.append("heard \(Self.ageText(heard, now: now))")
+            let name = reporter.displayName
+            guard let heard = node.lastHeard else {
+                return String(localized: "Reported by \(name)", comment: "Map list subtitle for a node another node reported. The placeholder is the reporter's name.")
             }
-            return parts.joined(separator: " · ")
+            let age = AgePresentation.text(since: heard, now: now)
+            return String(localized: "Reported by \(name) · heard \(age)", comment: "Map list subtitle for a node another node reported. The placeholders are the reporter's name and when it last heard the node, such as 5 min. ago.")
         }
         guard let heard = node.lastHeard else { return nil }
-        let heardText = "Heard \(Self.ageText(heard, now: now))"
+        let age = AgePresentation.text(since: heard, now: now)
         if let reported = node.reportedAt,
            heard.timeIntervalSince(reported) > 4 * 3_600
         {
-            return "\(heardText) · location from \(Self.ageText(reported, now: now))"
+            let reportedAge = AgePresentation.text(since: reported, now: now)
+            return String(localized: "Heard \(age) · location from \(reportedAge)", comment: "Map list subtitle. The placeholders are when the node was last heard and when its location was reported, each an age such as 5 min. ago.")
         }
-        return heardText
+        return String(localized: "Heard \(age)", comment: "When a node was last heard. The placeholder is an age, such as 5 min. ago or just now.")
     }
-
-    /// Floored at the refresh tick: the row updates once a minute, and a
-    /// reading in seconds would sit frozen on screen claiming a precision
-    /// the refresh cannot honor.
-    private static func ageText(_ date: Date, now: Date) -> String {
-        if now.timeIntervalSince(date) < 60 { return "just now" }
-        return relative.localizedString(for: date, relativeTo: now)
-    }
-
-    private static let relative: RelativeDateTimeFormatter = {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter
-    }()
 
     // MARK: - Empty states
 

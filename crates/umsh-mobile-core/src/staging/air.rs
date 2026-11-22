@@ -14,6 +14,11 @@
 //! under the repeater's identity, served through the responder the
 //! firmware uses.
 //!
+//! Beside the phone stand two devices it can set up or change over a link
+//! of their own, as it would one on the bench: one that forwards and one
+//! that does not. Each is a fresh soft device behind an administrative
+//! driver, on no air.
+//!
 //! Each chat peer keeps its chat in an in-memory store of its own, as the
 //! app keeps the phone's: that is where it answers a request to send
 //! something again from, and where it finds what the phone last said.
@@ -75,6 +80,48 @@ const RADIO_LINK_ID: &str = "3F6C2A9E-1B47-4D85-8E21-7A0C5D9B4E10";
 /// staged node's does with its seed: fixed, so its key reads the same
 /// every run. It names the radio in [`LINKS`].
 const RADIO_SEED: u8 = 0x88;
+
+/// A staged device the phone sets up or changes over a link of its own,
+/// as it would one on the bench beside it. It is on no air: what it
+/// transmits goes nowhere, and it hears nothing.
+struct Administered {
+    /// Fills the device's identity secret, as a staged node's seed does.
+    seed: u8,
+    name: &'static str,
+    model: &'static str,
+    /// The link identifier its driver's state reports it under.
+    link_id: &'static str,
+    /// Whether it forwards, so the repeater goal takes it.
+    forwards: bool,
+}
+
+/// The administered devices, the one that forwards first: the repeater
+/// goal takes it and refuses the other.
+const ADMINISTERED: [Administered; 2] = [
+    Administered {
+        seed: 0x99,
+        name: "Ralston Peak",
+        model: "SenseCAP Solar P1",
+        link_id: "5B0E7C31-9A2D-4F68-B3C4-1D8E6A2F7059",
+        forwards: true,
+    },
+    Administered {
+        seed: 0xAA,
+        name: "Fallen Leaf",
+        model: "T1000-E",
+        link_id: "C7A41E58-2F93-4B0D-9E6C-83D5B1A0F42E",
+        forwards: false,
+    },
+];
+
+/// A staged device beside the phone, as device setup lists it.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct MobileStagedDeviceRecord {
+    /// The link identifier its driver's state reports it under.
+    pub link_id: String,
+    /// What it is called until the phone renames it.
+    pub name: String,
+}
 
 /// The speaking peer, by its place in [`NODES`]: a chat node in range of
 /// the radio.
@@ -141,6 +188,10 @@ pub enum MobileStagingAirError {
     /// The speaking peer took what it was told to say and did not transmit
     /// it in time.
     NotTransmitted,
+    /// No staged device has this link identifier.
+    NoSuchDevice,
+    /// The host key is not one.
+    InvalidHostKey,
 }
 
 impl fmt::Display for MobileStagingAirError {
@@ -154,6 +205,8 @@ impl fmt::Display for MobileStagingAirError {
             Self::NothingToAnswer => "the phone has said nothing to the staged peer",
             Self::Refused => "the staged peer's session refused",
             Self::NotTransmitted => "the staged peer did not transmit in time",
+            Self::NoSuchDevice => "no staged device has this link identifier",
+            Self::InvalidHostKey => "the host key is malformed",
         })
     }
 }
@@ -201,6 +254,9 @@ impl MobileStagingAir {
             events,
             driver: OnceLock::new(),
             stopped: AtomicBool::new(false),
+            name: RADIO_NAME,
+            link_id: RADIO_LINK_ID,
+            _device: None,
         });
         let radio = MobileRadioDriver::new(link.clone())
             .map_err(|_| MobileStagingAirError::WorkerUnavailable)?;
@@ -320,6 +376,66 @@ impl MobileStagingAir {
     /// What the staged radio is called until the phone renames it.
     pub fn radio_name(&self) -> String {
         RADIO_NAME.to_owned()
+    }
+
+    /// The staged devices beside the phone that
+    /// [`administered_device`](Self::administered_device) attaches to, the
+    /// one that forwards first.
+    pub fn administered_devices(&self) -> Vec<MobileStagedDeviceRecord> {
+        ADMINISTERED
+            .iter()
+            .map(|staged| MobileStagedDeviceRecord {
+                link_id: staged.link_id.to_owned(),
+                name: staged.name.to_owned(),
+            })
+            .collect()
+    }
+
+    /// An administrative driver for a fresh copy of the staged device
+    /// `link_id` names, attaching as it returns. It holds `host_key`
+    /// before the link comes up, as a driver over Bluetooth does.
+    /// `lazy_inspection` attaches without reading the device whole
+    /// ([`MobileRadioDriver::administrative`]). The device runs for as
+    /// long as the driver does, and starts afresh each call.
+    pub fn administered_device(
+        &self,
+        link_id: String,
+        host_key: Option<Vec<u8>>,
+        lazy_inspection: bool,
+    ) -> Result<Arc<MobileRadioDriver>, MobileStagingAirError> {
+        if self.link.stopped.load(Ordering::Relaxed) {
+            return Err(MobileStagingAirError::Stopped);
+        }
+        let staged = ADMINISTERED
+            .iter()
+            .find(|staged| staged.link_id == link_id)
+            .ok_or(MobileStagingAirError::NoSuchDevice)?;
+        let (events, host_events) = mpsc::channel(HOST_EVENT_DEPTH);
+        let stop = driven::spawn("umsh-staging-administered", move || {
+            let device = SoftDevice::new(
+                administered_config(staged),
+                SimulatedPlatform::with_identity([staged.seed; 32]),
+            );
+            Ok::<_, std::convert::Infallible>(driven::run(device, BenchMedium, host_events, |_| {}))
+        })
+        .map_err(|_| MobileStagingAirError::WorkerUnavailable)?;
+        let link = Arc::new(AirLink {
+            events,
+            driver: OnceLock::new(),
+            stopped: AtomicBool::new(false),
+            name: staged.name,
+            link_id: staged.link_id,
+            _device: Some(stop),
+        });
+        let driver = MobileRadioDriver::administrative(link.clone(), lazy_inspection)
+            .map_err(|_| MobileStagingAirError::WorkerUnavailable)?;
+        let _ = link.driver.set(Arc::downgrade(&driver));
+        if driver.set_host_key(host_key).is_err() {
+            driver.stop();
+            return Err(MobileStagingAirError::InvalidHostKey);
+        }
+        link.connect();
+        Ok(driver)
     }
 
     /// Stop the air. The radio's link goes down, and the radio and the
@@ -516,15 +632,49 @@ fn radio_config() -> SessionConfig {
     }
 }
 
-// --- The link between the driver and the staged radio ---
+/// An administered device's capability surface: everything a device can
+/// offer, forwarding only when it `forwards`.
+fn administered_config(staged: &'static Administered) -> SessionConfig {
+    // One ledger per device, for as long as the process runs: a fresh
+    // device must not inherit the last one's duty limit.
+    let mut config = umsh_ulcp_simdev::full_config(Box::leak(Box::new(DutyLedger::new())), None);
+    config.dev_version = DEV_VERSION;
+    config.dev_model = Some(staged.model);
+    config.default_device_name = staged.name;
+    config.mac_node = staged.forwards;
+    config
+}
 
-/// The staged radio's link: whole frames from the driver, HDLC-Lite to
+/// The medium of a device on the bench: on no air.
+struct BenchMedium;
+
+impl Medium for BenchMedium {
+    fn follow<P: SoftPlatform>(&mut self, _device: &mut SoftDevice<P>) {}
+
+    async fn transmit(&mut self, _frame: &[u8]) -> TxOutcome {
+        TxOutcome::Sent
+    }
+
+    async fn hear(&mut self) -> Option<Heard> {
+        std::future::pending().await
+    }
+}
+
+// --- The link between the driver and a staged device ---
+
+/// A staged device's link: whole frames from the driver, HDLC-Lite to
 /// the device, and back.
 struct AirLink {
     events: mpsc::Sender<HostEvent>,
     driver: OnceLock<Weak<MobileRadioDriver>>,
     /// The air has stopped, and there is no device to connect to.
     stopped: AtomicBool,
+    /// What the link reports the device as, and under which identifier.
+    name: &'static str,
+    link_id: &'static str,
+    /// The thread of a device that runs on one of its own, an administered
+    /// device's: it ends when the link is let go of.
+    _device: Option<oneshot::Sender<()>>,
 }
 
 impl AirLink {
@@ -547,10 +697,10 @@ impl AirLink {
             return;
         };
         if self.stopped.load(Ordering::Relaxed) || self.events.is_closed() {
-            driver.transport_changed(transport(MobileRadioTransportPhase::Idle));
+            driver.transport_changed(self.transport(MobileRadioTransportPhase::Idle));
             return;
         }
-        driver.transport_changed(transport(MobileRadioTransportPhase::Connecting));
+        driver.transport_changed(self.transport(MobileRadioTransportPhase::Connecting));
         self.post(HostEvent::Attach(sink(Arc::downgrade(&driver))));
         driver.link_ready(true);
     }
@@ -558,17 +708,17 @@ impl AirLink {
     fn disconnect(&self) {
         self.post(HostEvent::Detach);
         if let Some(driver) = self.driver() {
-            driver.transport_changed(transport(MobileRadioTransportPhase::Idle));
+            driver.transport_changed(self.transport(MobileRadioTransportPhase::Idle));
         }
     }
-}
 
-fn transport(phase: MobileRadioTransportPhase) -> MobileRadioTransportStateRecord {
-    MobileRadioTransportStateRecord {
-        phase,
-        name: Some(RADIO_NAME.to_owned()),
-        link_id: Some(RADIO_LINK_ID.to_owned()),
-        problem: None,
+    fn transport(&self, phase: MobileRadioTransportPhase) -> MobileRadioTransportStateRecord {
+        MobileRadioTransportStateRecord {
+            phase,
+            name: Some(self.name.to_owned()),
+            link_id: Some(self.link_id.to_owned()),
+            problem: None,
+        }
     }
 }
 

@@ -201,12 +201,6 @@ class RadioDriverAdapter: NSObject, @unchecked Sendable {
         transportReport = nil
         driver.linkReady(boundRadio: boundRadio)
     }
-
-    /// Throw the device's refusal, if it refused. The core decides what
-    /// counts as one.
-    static func require(refusal: UInt32?) throws {
-        if let refusal { throw RemoteManagementError.refused(status: refusal) }
-    }
 }
 
 // ----------------------------------------------------------------------
@@ -248,43 +242,7 @@ extension RadioDriverAdapter {
         })
     }
 
-    // MARK: Device tables
-
-    func addDevicePeer(_ publicKey: Data) async throws {
-        try await deviceTable { try await $0.insertDevicePeer(publicKey: publicKey) }
-    }
-
-    func removeDevicePeer(_ publicKey: Data) async throws {
-        try await deviceTable { try await $0.removeDevicePeer(publicKey: publicKey) }
-    }
-
-    func addDeviceAdmin(_ publicKey: Data) async throws {
-        try await deviceTable { try await $0.insertDeviceAdmin(publicKey: publicKey) }
-    }
-
-    func removeDeviceAdmin(_ publicKey: Data) async throws {
-        try await deviceTable { try await $0.removeDeviceAdmin(publicKey: publicKey) }
-    }
-
-    /// A table edit, resolved by the update that carries its outcome. The
-    /// driver queues it behind other exchanges and mesh traffic, and
-    /// reports `operationInProgress` only when its queue is full.
-    private func deviceTable(
-        _ edit: (MobileRadioDriver) async throws -> Void
-    ) async throws {
-        try await call(mapping: Self.devicePeerError, cancellable: true) {
-            try await edit(driver)
-        }
-    }
-
     // MARK: Commands the radio acts on at once
-
-    func setAlert(_ state: RadioAlertState) async throws {
-        Self.logger.notice("action: user set locate alert to \(state.rawValue)")
-        try await call(mapping: Self.immediateError) {
-            try await driver.setAlert(state: state.wire)
-        }
-    }
 
     /// The radio erases all state and reboots, dropping the link itself.
     /// The driver abandons the binding so the app does not reconnect to
@@ -303,134 +261,21 @@ extension RadioDriverAdapter {
         try await call(mapping: Self.immediateError) { try await driver.reboot() }
     }
 
-    // MARK: Managing the companion radio itself
-
-    func announce(_ request: MobileAnnouncementRecord) async throws {
-        Self.logger.notice(
-            "action: user asked the radio to announce itself (\(String(describing: request.kind)))"
-        )
-        // Answered, so it runs as a management exchange: what the radio
-        // says—busy, a channel it does not hold—reaches the screen that
-        // asked, the way it does over the mesh.
-        let event = try await localManagement { try await $0.announce(request: request) }
-        try Self.require(refusal: event.refusal)
-    }
-
-    func enterDfu(mode: UlcpDfuMode) async throws {
-        try await DfuEntryError.perform {
-            try await self.localManagement { try await $0.enterDfu(mode: mode) }.statusCode
-        }
-    }
-
-    /// Read named properties from the companion radio over the local link.
-    ///
-    /// The local counterpart of `fetchRemoteProperties`: same answers,
-    /// same refusal semantics, no mesh in between.
-    func fetchCompanionProperties(
-        _ propertyIDs: [UInt32]
-    ) async throws -> [MobileMeshManagementAnswerRecord] {
-        guard !propertyIDs.isEmpty else { return [] }
-        return try await localManagement { try await $0.fetchProperties(propertyIds: propertyIDs) }
-            .answers
-    }
-
-    /// Write properties to the companion radio, in the given order.
-    func writeCompanionProperties(
-        _ writes: [MobileMeshPropertyWriteRecord]
-    ) async throws -> [MobileMeshManagementAnswerRecord] {
-        guard !writes.isEmpty else { return [] }
-        return try await localManagement { try await $0.writeProperties(writes: writes) }.answers
-    }
-
-    func addDeviceWifiNetwork(_ item: Data) async throws {
-        try await mutateWifiNetworks(.insert, value: item)
-    }
-
-    func removeDeviceWifiNetwork(ssid: Data) async throws {
-        try await mutateWifiNetworks(.remove, value: ssid)
-    }
-
-    /// Run one edit of the radio's own network table and read its answer:
-    /// the item it changed, or a status where that item belonged.
-    private func mutateWifiNetworks(
-        _ mutation: UlcpItemMutation,
-        value: Data
-    ) async throws {
-        let event = try await localManagement {
-            try await $0.editPropertyItems(
-                propertyId: ulcpManagedPropertyIds().wifiNetworks,
-                mutations: [UlcpItemMutationRecord(mutation: mutation, value: value)]
-            )
-        }
-        try Self.require(refusal: event.answers.first?.refusal ?? event.refusal)
-    }
-
-    /// Persist the companion radio's live configuration.
-    func saveCompanionDevice() async throws {
-        let event = try await localManagement { try await $0.save() }
-        try Self.require(refusal: event.refusal)
-    }
-
-    func clearBluetoothBonds() async throws {
-        Self.logger.notice("action: user cleared the radio's Bluetooth pairings")
-        // The bond count written to zero. The radio answers before it drops
-        // the bonds, so this completes normally and the disconnect arrives
-        // afterward on its own. The binding is kept: this is the same
-        // radio, and the operator's next move is pairing with it again.
-        let answers = try await writeCompanionProperties([
-            MobileMeshPropertyWriteRecord(
-                propertyId: ulcpManagedPropertyIds().bleBondCount,
-                value: Data([0])
-            )
-        ])
-        guard let answer = answers.first else { throw RemoteManagementError.unreadable }
-        if answer.value == nil {
-            throw RemoteManagementError.refused(status: answer.statusCode ?? 0)
-        }
-    }
-
-    /// Run one local management exchange to completion.
-    ///
-    /// Errors wear `RemoteManagementError` so the management screens read
-    /// this path and the mesh path with the same copy.
-    private func localManagement(
-        _ exchange: (MobileRadioDriver) async throws -> UlcpLocalManagementEventRecord
-    ) async throws -> UlcpLocalManagementEventRecord {
-        try await call(mapping: Self.managementError, cancellable: true) {
-            try await exchange(driver)
-        }
-    }
-
     // MARK: Errors
 
     /// Make a driver call, and give its caller the error it has always
     /// handled.
     ///
     /// A call cannot be canceled once it reaches the driver: the radio
-    /// may already be acting on it. A `cancellable` caller that stopped
-    /// waiting learns so when it returns, the radio's answer or the
-    /// driver's deadline whichever comes first.
+    /// may already be acting on it.
     private func call<Value>(
         mapping: (MobileRadioError) -> any Error,
-        cancellable: Bool = false,
         _ body: () async throws -> Value
     ) async throws -> Value {
-        let outcome: Result<Value, any Error>
         do {
-            outcome = .success(try await body())
-        } catch {
-            outcome = .failure(error)
-        }
-        if cancellable {
-            try Task.checkCancellation()
-        }
-        switch outcome {
-        case let .success(value):
-            return value
-        case let .failure(error as MobileRadioError):
+            return try await body()
+        } catch let error as MobileRadioError {
             throw mapping(error)
-        case let .failure(error):
-            throw error
         }
     }
 
@@ -465,28 +310,6 @@ extension RadioDriverAdapter {
         }
     }
 
-    /// For an edit of the radio's own tables, shaped for the inline copy
-    /// those screens show.
-    static func devicePeerError(_ error: MobileRadioError) -> any Error {
-        switch error {
-        case .RadioUnavailable, .Stopped, .LinkFailed:
-            DevicePeerError.radioUnavailable
-        case .Unsupported:
-            DevicePeerError.unsupported
-        case .DeviceFull:
-            DevicePeerError.deviceFull
-        case let .OperationRejected(_, _, statusName):
-            DevicePeerError.failed(statusName)
-        case .UnrecognizedAnswer:
-            DevicePeerError.unrecognizedAnswer
-        case .TimedOut:
-            DevicePeerError.failed(String(localized: "The radio did not answer"))
-        case .OperationInProgress, .Refused, .IncompatibleProtocol, .IdentityUnavailable,
-             .TakeoverNotAllowed, .InvalidArgument:
-            RadioConnectionError.operationInProgress
-        }
-    }
-
     /// For a command the radio acts on at once.
     static func immediateError(_ error: MobileRadioError) -> any Error {
         switch error {
@@ -502,16 +325,6 @@ extension RadioDriverAdapter {
         case .TakeoverNotAllowed: RadioConnectionError.takeoverNotAllowed
         case .Stopped, .LinkFailed: RadioConnectionError.radioNotFound
         default: RadioConnectionError.incompatibleProtocol
-        }
-    }
-
-    /// For a management exchange with the companion radio. Timed out is
-    /// the radio saying nothing; everything else is the radio not being
-    /// there to ask.
-    static func managementError(_ error: MobileRadioError) -> any Error {
-        switch error {
-        case .TimedOut: RemoteManagementError.noAnswer
-        default: RemoteManagementError.unavailable
         }
     }
 }
@@ -640,7 +453,11 @@ extension RadioProvisioningSummary {
             timeZoneRule: sync.tzRule,
             time24h: sync.time24h,
             gnss: sync.gnss,
-            advert: sync.advert
+            advert: sync.advert,
+            protocolVersion: sync.protocolVersion,
+            capabilities: sync.capabilities,
+            deviceVersion: sync.deviceVersion,
+            deviceModel: sync.deviceModel
         )
     }
 }

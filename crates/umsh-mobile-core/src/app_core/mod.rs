@@ -37,7 +37,8 @@ mod commands;
 mod lifecycle;
 #[cfg(test)]
 mod lifecycle_tests;
-mod management;
+mod limits;
+mod manage;
 mod mapping;
 #[cfg(test)]
 mod parity;
@@ -59,20 +60,46 @@ pub use chat::{MobileAppChatRequest, MobileAppResent, MobileReaction, radio_carr
 pub(crate) use clock::Clock;
 use clock::SystemClock;
 pub use commands::{MobileAppPingReplyRecord, MobileAppPingResult};
-pub use management::MobileOperation;
+pub(crate) use limits::DEFAULT_LOCATION_PRECISION;
+pub use limits::{MobileLimitsRecord, mobile_limits};
+pub use manage::{
+    MobileAnnouncementReach, MobileApplyOutcome, MobileApplyResult, MobileApplyWarning,
+    MobileBluetoothDraft, MobileBridgeDraft, MobileCategoryReadingRecord, MobileChoiceField,
+    MobileChoiceList, MobileDeviceSetup, MobileDeviceSetupRecord, MobileDraftDetails,
+    MobileDraftKind, MobileDraftReviewRecord, MobileFieldProblem, MobileFieldProblemRecord,
+    MobileGnssDraft, MobileHeardNetworkRecord, MobileIdentityDraft, MobileIntegerField,
+    MobileKeyEntryRecord, MobileKeyListField, MobileKeyTable, MobileKeyTableRecord,
+    MobileManagedDevice, MobileManagedDeviceRecord, MobileManagementDraft, MobileManagementLink,
+    MobileManagementOutcome, MobileManagementProblem, MobileMeshCoreDraft, MobileNetworkDraft,
+    MobileOfferedCategoryRecord, MobileOptionalIntegerField, MobilePositionField,
+    MobilePropertyRefusalRecord, MobilePropertyState, MobilePropertyStateRecord,
+    MobilePropertyValueRecord, MobileRadioDraft, MobileRefusal, MobileRefusalReason,
+    MobileRegionEntryProblem, MobileRepeaterDraft, MobileSetupApplyOutcome,
+    MobileSetupChoicesRecord, MobileSetupCompanionRecord, MobileSetupDraft, MobileSetupGoal,
+    MobileSetupNote, MobileSetupProfile, MobileSetupProfileGap, MobileSetupRadioParameter,
+    MobileSetupRefusal, MobileSetupResult, MobileSetupReviewRecord, MobileSetupSection,
+    MobileSetupSetting, MobileSetupUnreadable, MobileTemperatureNames, MobileTemperatureRowRecord,
+    MobileTemperatureSummaryRecord, MobileTemperatureValue, MobileTextField, MobileTextListField,
+    MobileTimeDraft, MobileToggleField, MobileWifiDraft, MobileWifiEntryCheckRecord,
+    MobileWifiEntryProblem, MobileWifiJoinPlanRecord, MobileWifiOutcome, MobileWifiRefusal,
+    MobileWifiStep, draft_add_meshcore_region, draft_add_repeater_region, draft_adopt_preset,
+    draft_adopt_regions, draft_clear_position, draft_place, draft_place_from_phone,
+    draft_set_precision, setup_adopt_preset, setup_set_radio_parameter, wifi_edit_plan,
+    wifi_entry_check, wifi_join_plan, wifi_offered_modes,
+};
 pub use records::{
     MobileAppChangesRecord, MobileAppChannelConversationRecord, MobileAppChannelPreviewRecord,
     MobileAppChannelRecord, MobileAppConfigRecord, MobileAppDirectConversationRecord,
     MobileAppJoinedChannelRecord, MobileAppLifecycle, MobileAppMessageRecord,
-    MobileAppMessageRepeaterRecord, MobileAppNeighborReportRecord,
-    MobileAppOperationProgressRecord, MobileAppPeerRecord, MobileAppPreviewRecord,
-    MobileAppRepeaterListingRecord, MobileAppRepeaterNeighborRecord, MobileAppStartFailure,
-    MobileAppStateRecord, MobileAppStatusRecord, MobileAppTranscriptPageRecord,
-    MobileNotificationEventRecord, MobileNotificationReactionRecord,
+    MobileAppMessageRepeaterRecord, MobileAppNeighborReportRecord, MobileAppPeerRecord,
+    MobileAppPreviewRecord, MobileAppRepeaterListingRecord, MobileAppRepeaterNeighborRecord,
+    MobileAppStartFailure, MobileAppStateRecord, MobileAppStatusRecord,
+    MobileAppTranscriptPageRecord, MobileMessageActionsRecord, MobileNotificationEventRecord,
+    MobileNotificationReactionRecord, MobileRepeaterEvidence,
 };
 pub use routes::{
-    MobileAppLearnedPathOffer, MobileAppPositionReading, MobileAppRouteCandidateRecord,
-    MobileAppRouteRecord,
+    MobileAppDiscoveryVantageRecord, MobileAppLearnedPathOffer, MobileAppPositionReading,
+    MobileAppRouteCandidateRecord, MobileAppRouteRecord,
 };
 pub use settings::{MobileAppPolicyRecord, MobilePositionRecord};
 use worker::{Job, Signals, Worker, WorkerParts};
@@ -86,7 +113,9 @@ pub enum MobileAppError {
     InvalidInput { error: MobileError },
     /// The request cannot be made as asked: a key of the wrong length, a
     /// path the session cannot carry, a request too large to send, a peer
-    /// a conversation still holds, a setting the protocol fixes.
+    /// a conversation still holds, a setting the protocol fixes, or an
+    /// unnarrowed ask for identities inside the discovery cooldown
+    /// (`discovery_wait_ms`).
     InvalidRequest,
     /// The peer, channel or conversation a command names is not stored.
     NotFound,
@@ -114,14 +143,10 @@ pub enum MobileAppError {
     NoAnswer,
     /// The device could not be reached.
     Unreachable,
-    /// The device refused, with its status.
-    Refused { status: u32 },
     /// The device's answer could not be read.
     Unreadable,
     /// The operation was cancelled.
     Cancelled,
-    /// The operation was already used.
-    OperationReused,
     /// The session could not send.
     SendFailed,
     /// The device cannot enter firmware update.
@@ -161,10 +186,8 @@ impl std::fmt::Display for MobileAppError {
             Self::NotThisPhone => formatter.write_str("the radio is not this phone's"),
             Self::NoAnswer => formatter.write_str("nothing answered"),
             Self::Unreachable => formatter.write_str("the device could not be reached"),
-            Self::Refused { status } => write!(formatter, "refused with status {status}"),
             Self::Unreadable => formatter.write_str("the answer could not be read"),
             Self::Cancelled => formatter.write_str("cancelled"),
-            Self::OperationReused => formatter.write_str("the operation was already used"),
             Self::SendFailed => formatter.write_str("the session could not send"),
             Self::DfuUnsupported => formatter.write_str("firmware update is unsupported"),
             Self::DfuRefused { status } => {
@@ -236,6 +259,9 @@ struct Snapshot {
     revoking_claimed_radios: bool,
     /// The user agreed to `EMERGENCY`'s warning under `owner`.
     emergency_certified: bool,
+    /// When, on the monotonic clock, an unnarrowed ask for identities may
+    /// go again; `None` before the first.
+    discovery_ready_at_ms: Option<i64>,
 }
 
 impl Snapshot {
@@ -415,7 +441,8 @@ impl MobileAppCore {
     /// shuts down, the channel keys and counter reservations go, and with
     /// `also_content` the store's content too. Native code erases the
     /// identity's secret first, and stops if that fails. Leaves the core
-    /// idle, even when a later part fails.
+    /// idle, even when a later part fails. A start under way is waited
+    /// out.
     pub async fn erase(&self, also_content: bool) -> Result<(), MobileAppError> {
         self.on_worker(move |worker| async move { worker.erase(also_content).await })
             .await
@@ -509,6 +536,7 @@ impl MobileAppCore {
                 meet: None,
                 revoking_claimed_radios: false,
                 emergency_certified: false,
+                discovery_ready_at_ms: None,
             }),
             changes: Mutex::new(MobileAppChangesRecord::default()),
             wake: WakeSignal::new(),

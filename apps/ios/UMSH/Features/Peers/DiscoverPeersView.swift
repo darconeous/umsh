@@ -38,6 +38,9 @@ struct DiscoverPeersView: View {
     /// themselves—in this phone's own range, or in range of the vantage's
     /// landing point. Returns once it was handed to the radio.
     var solicitNearbyIdentities: ((PeerRole?, SolicitVantage?) async throws -> Void)? = nil
+    /// How long until another ask may go. The core keeps one wait for every
+    /// such ask, so closing and reopening this sheet does not end it.
+    var discoveryWait: (@MainActor () -> Duration)? = nil
     /// Where the ask is aimed; nil is this phone's own neighborhood. A
     /// binding because the sheet is presented once at the app root and
     /// re-aimed by deep links from peer pages—`@State` seeded from a
@@ -58,20 +61,18 @@ struct DiscoverPeersView: View {
     @State private var showsClearConfirmation = false
     @State private var roleFilter: PeerRole?
     @State private var isSoliciting = false
-    @State private var lastSolicitedAt: Date?
+    /// Whether this sheet sent the ask the current wait follows, so the
+    /// footer can say where its replies appear.
+    @State private var askedHere = false
     @State private var solicitNotice: String?
     @State private var failure: FailureNotice?
 
-    /// Minimum spacing between solicitations—one ask is one broadcast,
-    /// and mashing the button must not become airtime.
-    static let solicitCooldown: TimeInterval = 40
-
     var body: some View {
         NavigationStack(path: $path) {
-            // The tick drives only the solicit cooldown.
-            TimelineView(.periodic(from: .now, by: 1)) { context in
+            // The tick drives only the wait before the next ask.
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
                 List {
-                    solicitSection(now: context.date)
+                    solicitSection(wait: discoveryWait?() ?? .zero)
                     resultsSection
                     announceSection
                 }
@@ -156,7 +157,7 @@ struct DiscoverPeersView: View {
     /// The active half of discovery: one Identity Request that matching nodes
     /// in range of the chosen vantage answer with a unicast identity.
     @ViewBuilder
-    private func solicitSection(now: Date) -> some View {
+    private func solicitSection(wait: Duration) -> some View {
         if solicitNearbyIdentities != nil {
             Section {
                 vantageRow
@@ -171,9 +172,9 @@ struct DiscoverPeersView: View {
                 } label: {
                     Label(askButtonTitle, systemImage: "wave.3.right")
                 }
-                .disabled(!radioListening || isSoliciting || cooldownRemaining(now) > 0)
+                .disabled(!radioListening || isSoliciting || wait > .zero)
             } footer: {
-                if let footer = solicitFooter(now: now) {
+                if let footer = solicitFooter(wait: wait) {
                     Text(footer)
                 }
             }
@@ -216,12 +217,7 @@ struct DiscoverPeersView: View {
         )
     }
 
-    private func cooldownRemaining(_ now: Date) -> TimeInterval {
-        guard let lastSolicitedAt else { return 0 }
-        return max(0, Self.solicitCooldown - now.timeIntervalSince(lastSolicitedAt))
-    }
-
-    private func solicitFooter(now: Date) -> String? {
+    private func solicitFooter(wait: Duration) -> String? {
         if let solicitNotice {
             return solicitNotice
         }
@@ -231,18 +227,29 @@ struct DiscoverPeersView: View {
                 comment: "Footer under Discover's ask when no radio can send it."
             )
         }
-        let cooldown = cooldownRemaining(now)
-        if cooldown > 0 {
-            // One cooldown covers both kinds of ask: each is a transmission
-            // whatever it is aimed at, so re-aiming does not buy a free one.
-            let wait = Duration.seconds(Int(cooldown.rounded(.up)))
-                .formatted(.units(allowed: [.seconds], width: .abbreviated))
+        return Self.waitFooter(wait: wait, askedHere: askedHere) ?? vantageFooter
+    }
+
+    /// How long until the next ask, or `nil` when one may go now. `askedHere`
+    /// says whether the ask holding this one back was sent from this sheet.
+    nonisolated static func waitFooter(wait: Duration, askedHere: Bool, locale: Locale = .current) -> String? {
+        guard wait > .zero else { return nil }
+        // Rounded up, so the last second reads "1 sec", never "0 sec".
+        let (seconds, fraction) = wait.components
+        let remaining = Duration.seconds(seconds + (fraction > 0 ? 1 : 0))
+            .formatted(.units(allowed: [.seconds], width: .abbreviated).locale(locale))
+        if askedHere {
             return String(
-                localized: "Asked—replies appear below. Ask again in \(wait).",
+                localized: "Asked—replies appear below. Ask again in \(remaining).",
+                locale: locale,
                 comment: "Footer under Discover's ask after it was sent. The placeholder is a duration, such as 40 sec."
             )
         }
-        return vantageFooter
+        return String(
+            localized: "Ask again in \(remaining).",
+            locale: locale,
+            comment: "Footer under Discover's ask while a recent ask holds it back. The placeholder is a duration, such as 40 sec."
+        )
     }
 
     /// What a steered ask actually reaches, said plainly. The nodes that
@@ -268,6 +275,15 @@ struct DiscoverPeersView: View {
                 localized: "Sent \(hops) hops to \(peer). This phone has never heard what \(peer) is, so this only reaches anything if it forwards traffic; if it does not, nothing answers.",
                 comment: "Footer under Discover's ask aimed at a peer not known to repeat. Has plural variants."
             )
+        case (false, .yes):
+            // Known to repeat, but the route to it already holds as many
+            // hints as a path can, so the peer's own cannot be added.
+            guard let landing = vantage.landingRepeater else { return nil }
+            let name = RouterHintNaming.label(landing, among: peerActions.knownPeers)
+            return String(
+                localized: "The path to \(peer) is already as long as a path can be, so the ask stops at \(name), the last repeater on the way there, and is answered by whatever is in range of it. \(RouterHintNaming.ambiguityNote)",
+                comment: "Footer under Discover's ask that stops short of a peer known to repeat because the path to it is at its length limit. The first placeholder is the peer, the second the repeater it stops at, the last a sentence about guessed repeater names."
+            )
         case (false, _):
             guard let landing = vantage.landingRepeater else { return nil }
             let name = RouterHintNaming.label(landing, among: peerActions.knownPeers)
@@ -284,7 +300,11 @@ struct DiscoverPeersView: View {
         defer { isSoliciting = false }
         do {
             try await solicitNearbyIdentities(roleFilter, vantage)
-            lastSolicitedAt = Date()
+            askedHere = true
+            solicitNotice = nil
+        } catch MobileAppError.InvalidRequest where (discoveryWait?() ?? .zero) > .zero {
+            // An ask made elsewhere holds this one back; the footer already
+            // says how long.
             solicitNotice = nil
         } catch {
             solicitNotice = MobileAppError.message(for: error)
@@ -342,10 +362,7 @@ struct DiscoverPeersView: View {
         NavigationLink(value: peer) {
             PeerRow(
                 peer: peer,
-                subtitle: [
-                    peer.isSaved ? "Saved" : "Heard \(Self.heardLabel(peer.lastHeard))",
-                    peer.roleLabel,
-                ].compactMap { $0 }.joined(separator: " · ")
+                subtitle: Self.resultSubtitle(peer)
             )
         }
         .swipeActions(edge: .leading, allowsFullSwipe: false) {
@@ -377,9 +394,9 @@ struct DiscoverPeersView: View {
     // MARK: - Data
 
     /// Nodes whose identity announcements landed during this session,
-    /// newest first. No second pipeline: `applyReceivedAdvertisement`
-    /// already persisted them, so the session is just a time window over
-    /// the live peer list.
+    /// newest first. No second pipeline: the core already filed them as
+    /// peers, so the session is just a time window over the live peer
+    /// list.
     private var results: [PeerSummary] {
         peers
             .filter {
@@ -422,9 +439,23 @@ struct DiscoverPeersView: View {
         }
     }
 
+    /// Read on the sheet's one-second tick, so the age moves on by itself;
+    /// its words change only once a minute.
+    private static func resultSubtitle(_ peer: PeerSummary) -> String {
+        let state = peer.isSaved
+            ? String(localized: "Saved", comment: "A peer kept in this phone's list.")
+            : heardLabel(peer.lastHeard)
+        guard let role = peer.roleLabel else { return state }
+        return String(
+            localized: "\(state) · \(role)",
+            comment: "A Discover result's subtitle: whether the peer is saved or when it was last heard, then its role."
+        )
+    }
+
     private static func heardLabel(_ date: Date?) -> String {
-        guard let date else { return "just now" }
-        return date.formatted(.relative(presentation: .named))
+        let age = date.map { AgePresentation.text(since: $0) }
+            ?? String(localized: "just now", comment: "An age under a minute, such as when a node was last heard.")
+        return String(localized: "Heard \(age)", comment: "When a node was last heard. The placeholder is an age, such as 5 min. ago or just now.")
     }
 }
 

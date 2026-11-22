@@ -1,1137 +1,285 @@
 import Foundation
 import UMSHMobileCore
 
-/// How a device being managed is reached, which decides what managing it
-/// may assume: a local link is fast enough to refresh on sight and pushes
-/// unsolicited values; the mesh is neither, and every read is the
-/// operator's to spend.
-enum DeviceManagementLink: Equatable {
-    /// Across the mesh, through the companion radio.
-    case mesh
-    /// The companion radio itself, over its own local link.
-    case companion
-    /// A bench device over a foreground administrative BLE session.
-    case administrative
-}
-
-/// Everything managing a device needs from the app: the way to reach it,
-/// and the store to remember what it said.
+/// One device being managed, as the screens read it: a thin view over the
+/// core's `MobileManagedDevice`, which holds the queue, the cache, the
+/// readings and every rule about them.
 ///
-/// A bundle of closures for the same reason `PeerActions` is one: the peer
-/// sheet is presented from several places, and threading these through each
-/// of them one parameter at a time is how the same screen ends up able to do
-/// different things depending on where it was opened. It is also what makes
-/// the management screens transport-blind: a mesh exchange, the companion's
-/// own link, and a bench BLE session all fit behind the same handful of
-/// closures.
-struct DeviceManagementBackend {
-    var link: DeviceManagementLink = .mesh
-    /// True only when this device is managed over its own Bluetooth link.
-    var usesBluetooth = false
-    /// Read named properties, reporting how many the read has left to ask
-    /// for, and answer with what the device said about each.
-    var fetch: (String, [UInt32], Bool, @escaping @Sendable (UInt32?) -> Void) async throws
-        -> [MobileMeshManagementAnswerRecord]
-    /// Write properties, answering with what the device says each is now
-    /// worth.
-    var write: (String, [MobileMeshPropertyWriteRecord]) async throws
-        -> [MobileMeshManagementAnswerRecord]
-    var save: (String) async throws -> Void
-    var setAdministrator: (String, Data, Bool) async throws -> Void
-    var setPeer: (String, Data, Bool) async throws -> Void
-    /// Store a Wi-Fi network on the device, given an already-encoded entry
-    /// with its credential folded in. An SSID the device already holds is
-    /// replaced.
-    ///
-    /// The one table here that is edited an item at a time rather than
-    /// written whole: the credential lives only on the device and never
-    /// comes back, so a host holding the reported table has nothing to
-    /// rewrite it with.
-    var insertNetwork: (String, Data) async throws -> Void
-    /// Forget a Wi-Fi network by name. The SSID octets are the selector.
-    var removeNetwork: (String, Data) async throws -> Void
-    /// Make the device conspicuous, or stop it, answering with what it
-    /// reports it is doing.
-    var setAlert: (String, RadioAlertState) async throws -> RadioAlertState
-    /// Act on the device itself rather than on its settings: restart it, or
-    /// return it to a blank factory state. Both are answered by the device
-    /// doing the thing and saying nothing, so success here means the
-    /// command was delivered, not that the device has finished.
-    var reset: (String, MobileMeshResetScope) async throws -> Void
-    var enterDfu: (String, UlcpDfuMode) async throws -> Void
-    /// Ask the device to announce itself now. Answered, so returning means
-    /// the device said it had the announcement queued; when it actually
-    /// goes out is up to channel access and the device's duty limit.
-    var announce: (String, MobileAnnouncementRecord) async throws -> Void
-    /// Forget every host paired with the device: the bond count written to
-    /// zero. Unlike the resets above this is answered, so returning means
-    /// the device said it did it. It stands apart from the ordinary Apply
-    /// flow only because it is destructive and confirmed on its own.
-    var clearBluetoothBonds: (String) async throws -> Void
-    /// This phone's own node key, so the administrator list can say which
-    /// entry is this phone—and refuse to remove it.
-    ///
-    /// Asked of the radio rather than read off the local identity: what the
-    /// managed device sees requests arrive from is the key the mesh session
-    /// sends as, and a guard against locking this phone out has to be
-    /// keyed on the one the device would actually match.
-    var phoneNodeKey: () async -> Data?
-
-    /// What this phone last learned about the device, and where to put what
-    /// it learns next. Without a store these read empty and write nowhere,
-    /// which costs a fetch on every open rather than breaking anything.
-    var loadCard: (String) async -> StoredManagementCard?
-    var saveCard: (String, StoredManagementCard) async -> Void
-    var forgetCache: (String) async -> Void
-    var loadValues: (String, [UInt32]) async -> [UInt32: StoredCachedProperty]
-    var saveValues: (String, [UInt32: Data]) async -> Void
-
-    /// Values the device announces on its own, for backends that have a
-    /// live link to hear them on. `nil` on the mesh: a device pushes only
-    /// to the host it is attached to, never across the network.
-    var propertyPushes: (() -> AsyncStream<PropertyPushEvent>)? = nil
-}
-
-/// What a live link says on its own: a value the device pushed, or word
-/// that some were lost on the way, so what is shown must be read again.
-enum PropertyPushEvent: Sendable {
-    case push(UlcpPropertyPushRecord)
-    case resync
-}
-
-extension DeviceManagementBackend {
-    /// Whether a screen that opens without fresh values should ask for
-    /// them on sight. On a local link the answer arrives in the time a
-    /// screen takes to settle; on the mesh it costs everyone airtime, so
-    /// asking stays the operator's decision.
-    var refreshesStaleReadings: Bool { link != .mesh }
-
-    /// Whether to offer a factory reset at all.
-    ///
-    /// Only where the device is in hand. A wipe takes the device's identity
-    /// with it, so the node the command was addressed to stops existing
-    /// mid-exchange—there is no confirmation to wait for and no way back
-    /// if it was the wrong node. Restarting is offered everywhere; this is
-    /// not.
-    var offersFactoryReset: Bool { link != .mesh }
-
-    /// Whether where this phone is stands for where the device is.
-    ///
-    /// True on a local link—a bench session or the companion radio—where
-    /// the two are within a few meters of each other, and where the phone's
-    /// own fix is the freshest thing either of them knows. Across the mesh
-    /// the device is by definition somewhere the phone is not, so its
-    /// position there would propose regions for the operator's desk.
-    var phoneStandsForDevice: Bool { link != .mesh }
-}
-
-/// One device managed across the mesh: what it is, what it holds, and the
-/// operations this phone has asked of it, run one at a time in the order
-/// they were asked.
-///
-/// Deliberately not a session—there is nothing to hold open. An operation
-/// is a handful of frames that either come back or do not, and a failure is
-/// reported rather than recovered from. What makes this worth an object is
-/// the cache: the card and the last-known values are what let opening a
-/// device's settings cost nothing, and they have to outlive any one screen.
+/// Rebuilt from the core's published snapshot whenever the core says the
+/// device changed (``deviceChanged()``, called by `AppRuntime`'s drain) and
+/// after each call this model forwards, so a screen that awaits a call
+/// reads its result at once. Several models may share one device: every
+/// screen on a node gets its own handle on the same engine.
 @MainActor
 @Observable
-final class ManageDeviceModel {
-    /// What the device is. `nil` until the first card fetch lands, which is
-    /// the one exchange this screen cannot avoid.
-    private(set) var card: UlcpDeviceCardRecord?
-    private(set) var cardAsOf: Date?
-    /// What each category last read.
+final class ManageDeviceModel: ManagedDeviceObserver {
+    /// The core's handle. Not observed: only the snapshot is.
+    @ObservationIgnored nonisolated let device: MobileManagedDevice
+    /// The engine's id, which the changes record names.
+    @ObservationIgnored nonisolated let deviceID: UInt64
+    /// Everything the core last published about the device.
+    private(set) var snapshot: MobileManagedDeviceRecord
+    /// What each category last read, rebuilt per snapshot.
     private(set) var readings: [UlcpManageCategory: RemoteCategoryReading] = [:]
-    /// What the device is doing to make itself findable, once asked.
-    private(set) var alert: RadioAlertState = .none
-    /// Whether anything asked of the device has yet to finish.
-    var isBusy: Bool { !operations.isEmpty }
-    private(set) var enteredDfu = false
-    /// Properties the running fetch has yet to ask for, for progress.
-    private(set) var propertiesRemaining: UInt32?
-    /// What went wrong, in a sentence an operator can act on.
-    var problem: String?
-    /// Values the device rejected on the last apply, by property—each a
-    /// sentence for the row that offered the value. Cleared by the next
-    /// apply or refresh of that category.
+    /// Values the device rejected on the last apply, by property, worded
+    /// for the row that offered the value.
     private(set) var writeRefusals: [UlcpManageCategory: [UInt32: String]] = [:]
+    /// A call the core refused outright (the core stopping, say), which no
+    /// snapshot carries.
+    private var refusedCall: MobileManagementProblem?
 
+    /// The node's address, for the screens that show it. Empty for a radio
+    /// with no identity of its own.
     let address: String
     /// What to call the device before it has said. The peer's own name.
     let fallbackName: String
-    private let management: DeviceManagementBackend
+    /// Run once, when the device confirms firmware update entry. The setup
+    /// flow ends its session here, whichever screen asked for the entry.
+    @ObservationIgnored var onEnteredDfu: (@MainActor () -> Void)?
 
-    /// Manage the device at `address`, called `fallbackName` until it says
-    /// otherwise. A device reached over its own link and holding no
-    /// identity has no address, and passes an empty one.
-    init(address: String, fallbackName: String, management: DeviceManagementBackend) {
+    init(device: MobileManagedDevice, address: String, fallbackName: String) {
+        self.device = device
+        deviceID = device.id()
         self.address = address
         self.fallbackName = fallbackName
-        self.management = management
+        snapshot = device.snapshot()
+        rebuild(from: nil)
     }
 
-    convenience init(peer: PeerSummary, management: DeviceManagementBackend) {
-        self.init(
-            address: peer.identity.canonicalAddress,
-            fallbackName: peer.displayName,
-            management: management
+    deinit { device.release() }
+
+    /// This screen is done with the device. Idempotent; the last handle on
+    /// a device to go relinquishes it.
+    nonisolated func release() { device.release() }
+
+    /// Read the core's snapshot again.
+    func deviceChanged() {
+        let next = device.snapshot()
+        guard next.revision != snapshot.revision else { return }
+        let previous = snapshot
+        snapshot = next
+        rebuild(from: previous)
+        if next.enteredDfu, !previous.enteredDfu { onEnteredDfu?() }
+    }
+
+    private func rebuild(from previous: MobileManagedDeviceRecord?) {
+        let earlier = Dictionary(
+            (previous?.readings ?? []).map { ($0.category, $0.revision) },
+            uniquingKeysWith: { first, _ in first }
         )
+        var next: [UlcpManageCategory: RemoteCategoryReading] = [:]
+        var refusals: [UlcpManageCategory: [UInt32: String]] = [:]
+        for record in snapshot.readings {
+            if let kept = readings[record.category], earlier[record.category] == record.revision {
+                next[record.category] = kept
+            } else {
+                next[record.category] = RemoteCategoryReading(record)
+            }
+            if !record.refusals.isEmpty {
+                refusals[record.category] = Dictionary(
+                    record.refusals.map { ($0.propertyId, RefusalText.row($0.refusal)) },
+                    uniquingKeysWith: { first, _ in first }
+                )
+            }
+        }
+        readings = next
+        if refusals != writeRefusals { writeRefusals = refusals }
     }
 
+    // MARK: - What the screens read
+
+    var card: UlcpDeviceCardRecord? { snapshot.card }
+    var cardAsOf: Date? { snapshot.cardAsOfMs.map(Date.init(storeMilliseconds:)) }
+    var alert: RadioAlertState { RadioAlertState(snapshot.alert) }
+    var isBusy: Bool { snapshot.busy }
+    var enteredDfu: Bool { snapshot.enteredDfu }
+    var problem: MobileManagementProblem? { snapshot.problem ?? refusedCall }
+    var phoneNodeKey: Data? { snapshot.phoneNodeKey }
+    var link: MobileManagementLink { snapshot.link }
+    var usesBluetooth: Bool { snapshot.usesBluetooth }
+    var offersFactoryReset: Bool { snapshot.offersFactoryReset }
+    var phoneStandsForDevice: Bool { snapshot.phoneStandsForDevice }
+    var supportsWifiStation: Bool { snapshot.supportsWifiStation }
+    var supportsBluetoothPairing: Bool { snapshot.supportsBluetoothPairing }
+    /// Whether this device says it can restart on command (`CAP_REBOOT`).
+    var supportsRestart: Bool { card?.supportsReboot ?? false }
     /// What to show as the device's name: what it calls itself, then what
     /// this phone calls it.
     var displayName: String { card?.deviceName ?? fallbackName }
-
-    /// Whether this device says it can restart on command (`CAP_REBOOT`).
-    /// Read off the cached card, so offering the control costs no airtime.
-    var supportsRestart: Bool { card?.supportsReboot ?? false }
-
-    /// Whether this device can join a network, as opposed to only seeing
-    /// which ones are there.
-    ///
-    /// A capability would be the wrong test: `CAP_WIFI` is on the card, but
-    /// the screen has to render before the card's promise is worth
-    /// anything, and a device that advertises a station it does not hold
-    /// refuses the property. The device answering for whether its station
-    /// is enabled is the claim, by the pattern ``supportsBluetoothPairing``
-    /// set.
-    var supportsWifiStation: Bool {
-        readings[.wifi]?.answered(ulcpProperties.wifiEnabled) ?? false
-    }
-
-    /// Whether this device manages its own Bluetooth bonds on command.
-    ///
-    /// Not a capability—Bluetooth has only one, and the rest is
-    /// discovered by asking. The device answering for its bond count is
-    /// the claim; a refusal, or a screen that has not been read yet, is
-    /// not, so the controls stay out until the device has said otherwise.
-    var supportsBluetoothPairing: Bool {
-        readings[.bluetooth]?.answered(ulcpProperties.bleBondCount) ?? false
-    }
-
-    /// How this device is reached. Link-changing edits only need a warning
-    /// when they can interrupt the management connection.
-    var link: DeviceManagementLink { management.link }
-
-    var usesBluetooth: Bool { management.usesBluetooth }
-
-    /// Whether a factory reset is offered here at all—a question about
-    /// how the device is reached, not about what it can do.
-    var offersFactoryReset: Bool { management.offersFactoryReset }
-
-    /// Whether this phone's own position can stand in for the device's—a
-    /// question about how the device is reached, not about what it can do.
-    var phoneStandsForDevice: Bool { management.phoneStandsForDevice }
-
-    /// This phone's own node key, once the radio has said what it is.
-    private(set) var phoneNodeKey: Data?
-
-    /// Ask the radio for this phone's key, once.
-    ///
-    /// Costs nothing on the air—it is the attached radio answering about
-    /// itself—but it is a round trip over the link, so it is not repeated
-    /// on every screen that opens.
-    private func learnPhoneNodeKey() async {
-        guard phoneNodeKey == nil else { return }
-        phoneNodeKey = await management.phoneNodeKey()
-    }
-
-    // MARK: - The card
-
-    /// Whether the card on screen came off the air during this model's
-    /// lifetime, as opposed to out of the cache.
-    private var cardIsFresh = false
-
-    /// Fill the card in from the cache, and ask the device only if this
-    /// phone has never asked—or if the device is on a local link, where
-    /// asking costs nothing anyone else can hear.
-    ///
-    /// The whole point of the design: over the mesh, the second and every
-    /// later opening of a device's settings puts nothing on the air. On a
-    /// local link the cached card still renders first, and the fresh read
-    /// also revalidates the firmware version, so a reflashed device sheds
-    /// its stale cache the moment its settings open.
-    func loadCard() async {
-        await learnPhoneNodeKey()
-        if card == nil, let stored = await management.loadCard(address) {
-            adopt(stored)
-        }
-        if card == nil || (management.refreshesStaleReadings && !cardIsFresh),
-           !isReading(.card)
-        {
-            await refreshCard()
-        }
-    }
-
-    /// Ask the device what it is, whether or not this phone already knows.
-    func refreshCard() async {
-        await run(reading: .card) { [self] in
-            let answers = try await fetch(ulcpCardProperties(), multiHint: true)
-            let fetched = try inspectUlcpDeviceCard(
-                responses: ulcpRecordsFromAnswers(answers: answers)
-            )
-            // Different firmware may hold different properties, so what was
-            // cached about the old firmware is not about this device any
-            // more. The store drops the values; this drops what is on
-            // screen.
-            if fetched.deviceVersion != card?.deviceVersion {
-                readings.removeAll()
-            }
-            let now = Date()
-            await management.saveCard(
-                address,
-                StoredManagementCard(
-                    capabilities: fetched.capabilities,
-                    deviceVersion: fetched.deviceVersion,
-                    deviceModel: fetched.deviceModel,
-                    deviceName: fetched.deviceName,
-                    fetchedAt: now
-                )
-            )
-            card = fetched
-            cardAsOf = now
-            cardIsFresh = true
-        }
-    }
-
-    /// Rebuild the card from what the store kept.
-    ///
-    /// Only the capabilities need decoding; the rest of a card is text the
-    /// store holds as text. A stored blob that will not decode is one this
-    /// build cannot use, and asking the device again is the only repair.
-    private func adopt(_ stored: StoredManagementCard) {
-        guard let decoded = try? inspectUlcpDeviceCard(
-            responses: [
-                ulcpPropertyRecord(
-                    propertyId: ulcpProperties.caps,
-                    value: stored.capabilities
-                )
-            ]
-        ) else { return }
-        card = UlcpDeviceCardRecord(
-            capabilities: decoded.capabilities,
-            deviceVersion: stored.deviceVersion,
-            deviceModel: stored.deviceModel,
-            deviceName: stored.deviceName,
-            supportsDeviceName: decoded.supportsDeviceName,
-            supportsBattery: decoded.supportsBattery,
-            supportsLora: decoded.supportsLora,
-            supportsDutyCycleLimit: decoded.supportsDutyCycleLimit,
-            supportsRepeater: decoded.supportsRepeater,
-            supportsMeshcoreForwarder: decoded.supportsMeshcoreForwarder,
-            supportsIdent: decoded.supportsIdent,
-            supportsDeviceIdentity: decoded.supportsDeviceIdentity,
-            supportsGnss: decoded.supportsGnss,
-            supportsAdvert: decoded.supportsAdvert,
-            supportsAdmin: decoded.supportsAdmin,
-            supportsAlert: decoded.supportsAlert,
-            supportsBle: decoded.supportsBle,
-            supportsWifiScan: decoded.supportsWifiScan,
-            supportsWifi: decoded.supportsWifi,
-            supportsBridgeClient: decoded.supportsBridgeClient,
-            supportsIpv4: decoded.supportsIpv4,
-            supportsIpv6: decoded.supportsIpv6,
-            supportsReboot: decoded.supportsReboot,
-            supportsSave: decoded.supportsSave,
-            supportsMulti: decoded.supportsMulti
-        )
-        cardAsOf = stored.fetchedAt
-    }
-
-    // MARK: - Categories
+    /// What a scan heard, strongest first, one row per network.
+    var heardNetworks: [MobileHeardNetworkRecord] { snapshot.heardNetworks }
 
     /// What one category covers on this device, or nothing when the device
-    /// has none of it.
+    /// has none of it. Read off the card, so a section can be gated before
+    /// its reading exists.
     func properties(of category: UlcpManageCategory) -> [UInt32] {
-        guard let card,
-              let properties = try? ulcpCategoryProperties(
-                  category: category,
-                  capabilities: card.capabilities
-              )
-        else { return [] }
-        return properties
+        snapshot.categories.first { $0.category == category }?.propertyIds ?? []
     }
 
-    /// Fill a category in from the cache, and—on a local link—follow
-    /// with a fresh read when nothing has come off the air this session.
-    ///
-    /// Every screen opens from the cache first, read-only ones included.
-    /// Over the mesh it stays that way: an operator who wants a current
-    /// reading asks for one, and one who is walking the screens to see
-    /// what is there does not spend a device's airtime doing it. A local
-    /// link answers in the time the screen takes to settle, so there the
-    /// stale-or-empty case refreshes itself—but only that case: a
-    /// screen already refreshed this session is not re-asked on every
-    /// visit, and nothing ever reads a category no screen is showing.
+    // MARK: - Reads
+
+    func loadCard() async { await forward { try await $0.loadCard() } }
+    func refreshCard() async { await forward { try await $0.refreshCard() } }
     func loadCategory(_ category: UlcpManageCategory) async {
-        if readings[category] == nil {
-            let properties = properties(of: category)
-            guard !properties.isEmpty else { return }
-            let cached = await management.loadValues(address, properties.filter(isPersistentManagedProperty))
-            var reading = RemoteCategoryReading()
-            reading.propertyIDs = properties
-            if let oldest = cached.values.map(\.fetchedAt).min() {
-                reading.absorb(
-                    cached.mapValues(\.value), at: oldest, fromAir: false,
-                    sampleDates: cached.mapValues(\.fetchedAt)
-                )
-            }
-            readings[category] = reading
-        }
-        if management.refreshesStaleReadings, readings[category]?.isFresh == false,
-           !isReading(.category(category))
-        {
-            await refreshCategory(category)
-        }
+        await forward { try await $0.loadCategory(category: category) }
     }
-
-    /// Ask the device for one category's properties.
     func refreshCategory(_ category: UlcpManageCategory) async {
-        let properties = properties(of: category)
-        guard !properties.isEmpty, let card else { return }
-        writeRefusals[category] = nil
-        await run(reading: .category(category)) { [self] in
-            if category == .sensors {
-                // Read every measurement together, with names until they are
-                // known; reuse names until a measurement reveals more sensors.
-                var reading = RemoteCategoryReading.sensorRefresh(
-                    previous: readings[category], properties: properties
-                )
-                readings[category] = reading
-                for requested in reading.sensorRefreshRequests {
-                    if requested == [ulcpProperties.temperatureNames] && !reading.needsTemperatureNames {
-                        continue
-                    }
-                    do {
-                        let answers = try await fetch(requested, multiHint: true)
-                        let now = Date()
-                        for answer in answers where answer.value == nil {
-                            reading.refused.insert(answer.propertyId)
-                            reading.statuses[answer.propertyId] = answer.statusCode
-                        }
-                        let reported = Self.values(in: answers)
-                        for property in requested where reported[property] == nil && !reading.refused.contains(property) {
-                            reading.failures[property] = "No response"
-                        }
-                        reading.absorb(
-                            reported.filter { $0.key != ulcpProperties.temperatureNames },
-                            at: now, fromAir: true
-                        )
-                        if let names = reported[ulcpProperties.temperatureNames] {
-                            reading.absorbTemperatureNames(names, at: now)
-                        }
-                    } catch is CancellationError {
-                        throw CancellationError()
-                    } catch {
-                        for property in requested {
-                            reading.failures[property] = error.localizedDescription
-                        }
-                    }
-                    readings[category] = reading
-                }
-                return
-            }
-            let answers = try await fetch(properties, multiHint: card.supportsMulti)
-            let reported = Self.values(in: answers)
-            await cache(reported)
-            // Replaced rather than merged: a refusal means the device does
-            // not hold that property at all, and carrying an older value for
-            // it forward would show a setting that is not there.
-            var reading = RemoteCategoryReading()
-            reading.propertyIDs = properties
-            reading.refused = Set(answers.filter { $0.value == nil }.map(\.propertyId))
-            reading.statuses = answers.reduce(into: [:]) { statuses, answer in
-                if answer.value == nil, let status = answer.statusCode {
-                    statuses[answer.propertyId] = status
-                }
-            }
-            reading.absorb(reported, at: Date(), fromAir: true)
-            readings[category] = reading
+        await forward { try await $0.refreshCategory(category: category) }
+    }
+
+    // MARK: - Writes
+
+    /// Write what an editor's draft changed, and save. The core judges the
+    /// draft against the device as it is when the apply runs.
+    func apply(_ draft: MobileManagementDraft) async -> MobileApplyOutcome {
+        await forward(failed: MobileApplyOutcome(answered: false, result: .cancelled)) {
+            try await $0.apply(draft: draft)
         }
     }
 
-    /// Write the fields the operator changed, and normally save.
-    ///
-    /// What the device echoes is what it is now holding, which is not always
-    /// what was asked for—a transmit power above what the hardware can
-    /// reach comes back clamped. Those echoes are the readback: they answer
-    /// the question a second full read would have asked, and they cost
-    /// nothing extra.
-    ///
-    /// Returns whether the device answered—false when nothing reached it,
-    /// which is when the operator's unapplied fields are still the only
-    /// record of what they asked for and must not be thrown away.
-    @discardableResult
-    func apply(
-        _ category: UlcpManageCategory,
-        desired: UlcpDevicePropertiesRecord,
-        dirty: Set<UInt32>,
-        save: Bool = true
-    ) async -> Bool {
-        guard !dirty.isEmpty else { return true }
-        let answered = Reported(false)
-        writeRefusals[category] = nil
-        await run(changesDevice: true) { [self] in
-            let writes = try ulcpDirtyWrites(
-                desired: desired,
-                dirtyPropertyIds: Array(dirty).sorted()
-            )
-            let answers = try await management.write(address, writes)
-            answered.value = true
-            let echoed = Self.values(in: answers)
-            await cache(echoed)
-            readings[category]?.absorb(echoed, at: Date(), fromAir: true)
+    func setClockNow() async { await forward { try await $0.setClockNow() } }
+    func resetCounters() async { await forward { try await $0.resetCounters() } }
 
-            // A status where a value belonged is a setting the device would
-            // not take. Each rejection goes on the row that offered the
-            // value; nothing is saved, and saying so is the difference
-            // between a device left half-changed and one an operator knows
-            // to look at.
-            let refused = answers.filter { $0.value == nil }
-            guard refused.isEmpty else {
-                writeRefusals[category] = refused.reduce(into: [:]) { map, answer in
-                    map[answer.propertyId] = Self.refusalText(answer.statusCode)
-                }
-                problem = save
-                    ? "Settings the device did accept are running but not saved."
-                    : "The device rejected some changes."
-                return
-            }
-            if save {
-                try await management.save(address)
-            }
-        }
-        return answered.value
-    }
-
-    /// Why the device would not take a value, said for the row that
-    /// offered it.
-    private static func refusalText(_ status: UInt32?) -> String {
-        guard let status else { return "The device rejected this value." }
-        let reason = switch status {
-        case 2, 13: // UNIMPLEMENTED, PROP_NOT_FOUND
-            "the device does not implement this setting"
-        case 3: // INVALID_ARGUMENT
-            "the device says it is out of range"
-        case 4: // INVALID_STATE
-            "the device's current state does not allow it"
-        case 11: // NOMEM
-            "it is too large for the device to hold"
-        case 10, 12: // IN_PROGRESS, BUSY
-            "the device was busy—try again"
-        default:
-            "the device answered \(ulcpStatusName(status: status))"
-        }
-        return "Rejected: \(reason)."
-    }
-
-    // MARK: - Peers and administrators
-
-    /// Bring one of the device's key tables to `desired`, and save.
-    ///
-    /// Removals before additions, because a full table takes a removal but
-    /// not an addition.
-    func setKeys(_ desired: Set<Data>, administrators: Bool) async {
-        let property = administrators
-            ? ulcpProperties.devAdmins
-            : ulcpProperties.devPeers
-        let reading = readings[.peerNodes]
-        let current = Set(
-            (administrators
-                ? reading?.properties.devAdminKeys
-                : reading?.properties.devPeerKeys) ?? []
-        )
-        guard current != desired else { return }
-        await run(changesDevice: true) { [self] in
-            let edit = administrators ? management.setAdministrator : management.setPeer
-            for key in current.subtracting(desired) {
-                try await edit(address, key, false)
-            }
-            for key in desired.subtracting(current) {
-                try await edit(address, key, true)
-            }
-            // Live the moment the device answers, and saved only when it is
-            // told to—unlike the Bluetooth path, where the session chains
-            // a save behind each mutation.
-            try await management.save(address)
-            let table = desired.sorted { $0.lexicographicallyPrecedes($1) }
-                .reduce(into: Data()) { $0 += $1 }
-            await cache([property: table])
-            var updated = readings[.peerNodes] ?? RemoteCategoryReading()
-            updated.absorb([property: table], at: Date(), fromAir: true)
-            readings[.peerNodes] = updated
-        }
-    }
-
-    // MARK: - Following the device's own announcements
-
-    /// Fold values the device announces on its own into whatever is on
-    /// screen, for as long as the caller keeps this running.
-    ///
-    /// Local links only—the backend says whether there is anything to
-    /// hear. A push merges like a write's echo: the affected readings
-    /// redecode around it, clean fields on an editor follow it, and a
-    /// field the operator is editing keeps the edit. It deliberately does
-    /// not care whether an operation is in flight; the device's latest
-    /// word wins whichever order the two land in.
-    /// Held by the model rather than by the view that starts it.
-    ///
-    /// A `task` modifier is cancelled when its view disappears, and in a
-    /// navigation stack pushing a category screen makes the device screen
-    /// disappear—so a subscription held there would be dropped by the
-    /// very act of opening the screen that most wants it. This one lives
-    /// as long as the device is being managed, which is what a device's
-    /// running commentary is scoped to.
-    /// Not isolated, so the deinitializer can cancel it: everything that
-    /// touches it otherwise is on the main actor.
-    private nonisolated(unsafe) var pushObserver: Task<Void, Never>?
-
-    func observePushes() {
-        guard pushObserver == nil, let pushes = management.propertyPushes else { return }
-        pushObserver = Task { [weak self] in
-            for await event in pushes() {
-                guard let self else { return }
-                switch event {
-                case let .push(push):
-                    await absorb(push)
-                case .resync:
-                    await rereadShown()
-                }
-            }
-        }
-    }
-
-    deinit { pushObserver?.cancel() }
-
-    /// Read again every category on screen: pushes were lost, and any of
-    /// them could have changed what it shows.
-    private func rereadShown() async {
-        for category in Array(readings.keys) {
-            await refreshCategory(category)
-        }
-    }
-
-    private func absorb(_ push: UlcpPropertyPushRecord) async {
-        // A scan arrives an access point at a time, so the whole value the
-        // rest of this method merges never exists on the air. It has its
-        // own accumulator, and nothing about it reaches a reading.
-        if push.propertyId == ulcpProperties.wifiScanResults {
-            absorbScanResult(push)
-            return
-        }
-        // Nothing else here is streamed, so an item notification for one
-        // says the device changed a table without saying what the table now
-        // holds. Reading it back is the only honest answer, and every such
-        // notification here follows an edit this phone asked for.
-        guard push.kind == .is else { return }
-        if push.propertyId == ulcpProperties.alert,
-           let reported = try? inspectUlcpAlert(value: push.value)
-        {
-            alert = RadioAlertState(reported)
-        }
-        var affected = false
-        for (category, var reading) in readings
-        where reading.propertyIDs.contains(push.propertyId) {
-            reading.absorb([push.propertyId: push.value], at: Date(), fromAir: true)
-            readings[category] = reading
-            affected = true
-        }
-        // Remembered only when some screen holds it: a category never
-        // opened will read itself fresh on first sight, and pushes exist
-        // only on the links where that read is cheap.
-        if affected {
-            await cache([push.propertyId: push.value])
-        }
+    func setKeys(_ desired: Set<Data>, table: MobileKeyTable) async {
+        await forward { try await $0.setKeys(table: table, desired: Array(desired)) }
     }
 
     // MARK: - Wi-Fi
 
-    /// What a scan has heard, by access point.
-    ///
-    /// Kept apart from the readings because a scan is an event rather than
-    /// a setting: it arrives an item at a time, it is never cached, and it
-    /// describes where the device is standing. Keyed by BSSID, which is
-    /// what a device re-reports an access point under when its signal
-    /// moves, and the only thing that tells two nameless ones apart.
-    private(set) var scanResults: [Data: UlcpWifiScanResultRecord] = [:]
+    func scanNetworks() async { await forward { try await $0.scanNetworks() } }
 
-    /// What a scan heard, strongest first.
-    var heardNetworks: [UlcpWifiScanResultRecord] {
-        scanResults.values.sorted { $0.rssiDbm > $1.rssiDbm }
-    }
-
-    /// Fold one announcement about the scan into the accumulator.
-    ///
-    /// The device says `Inserted` per access point while a scan runs and
-    /// `Is` with an empty value to clear the table before one starts, so
-    /// the two commands mean different things and the kind is what tells
-    /// them apart.
-    private func absorbScanResult(_ push: UlcpPropertyPushRecord) {
-        switch push.kind {
-        case .is:
-            // The whole table, which at the start of a scan is empty.
-            scanResults = Self.scanTable(inValue: push.value)
-        case .inserted:
-            guard let result = try? inspectUlcpWifiScanResult(item: push.value) else { return }
-            scanResults[result.bssid] = result
-        case .removed:
-            guard let result = try? inspectUlcpWifiScanResult(item: push.value) else { return }
-            scanResults[result.bssid] = nil
-        }
-    }
-
-    /// The accumulator a whole-value read of the scan table amounts to.
-    private static func scanTable(
-        inValue value: Data
-    ) -> [Data: UlcpWifiScanResultRecord] {
-        let decoded = inspectUlcpProperties(
-            responses: [
-                ulcpPropertyRecord(
-                    propertyId: ulcpProperties.wifiScanResults,
-                    value: value
-                )
-            ]
-        )
-        return (decoded.wifiScanResults ?? []).reduce(into: [:]) { table, result in
-            table[result.bssid] = result
-        }
-    }
-
-    /// Ask the device to look for networks, and follow the scan to its end.
-    ///
-    /// Written on its own rather than through Apply because a scan is not
-    /// an edit: nothing about the device changes, and an operator who taps
-    /// Scan has not left a form half-filled.
-    ///
-    /// On a local link the results arrive as the device hears them. Across
-    /// the mesh nothing is pushed, so the flag is watched instead and the
-    /// table read once the device says it has stopped—which is the whole
-    /// reason the flag is a property rather than a command.
-    func scanForNetworks() async {
-        scanResults.removeAll()
-        await write([
-            MobileMeshPropertyWriteRecord(
-                propertyId: ulcpProperties.wifiScanning,
-                value: Data([1])
+    func joinNetwork(
+        ssid: Data, security: UInt8, hidden: Bool, credential: Data, offered: UInt16?
+    ) async -> MobileWifiOutcome {
+        await forward(failed: .cancelled) {
+            try await $0.joinNetwork(
+                ssid: ssid, security: security, hidden: hidden,
+                credential: credential, offered: offered
             )
-        ])
-        guard problem == nil, management.propertyPushes == nil else { return }
-        await followScanOverMesh()
-    }
-
-    /// Watch a scan the mesh will not announce the end of.
-    ///
-    /// Bounded rather than open-ended: a device that stops answering, or
-    /// one that never clears the flag, must not leave a screen watching it
-    /// forever. Twenty asks at two seconds is longer than any scan the
-    /// chapter contemplates and short enough to give up on.
-    private func followScanOverMesh() async {
-        for _ in 0..<20 {
-            try? await Task.sleep(for: .seconds(2))
-            guard !relinquished else { return }
-            await refreshCategory(.wifi)
-            guard problem == nil else { return }
-            if readings[.wifi]?.properties.wifiScanning != true {
-                if let value = readings[.wifi]?.values[ulcpProperties.wifiScanResults] {
-                    scanResults = Self.scanTable(inValue: value)
-                }
-                return
-            }
         }
     }
 
-    /// Store a network, turn the station on if it is off, join the network
-    /// now, and save. The save keeps the network and the switch; which
-    /// network the device is on is live state and is never saved.
-    ///
-    /// Returns the refusal status where there was one, so the join sheet
-    /// can offer a weaker security mode against `STATUS_UNIMPLEMENTED`
-    /// rather than making the operator start again.
-    func joinNetwork(item: Data, ssid: Data) async -> UInt32? {
-        let refusal = Reported<UInt32?>(nil)
-        let enabled = readings[.wifi]?.properties.wifiEnabled == true
-        await run(changesDevice: true) { [self] in
-            do {
-                try await management.insertNetwork(address, item)
-                var writes: [MobileMeshPropertyWriteRecord] = []
-                if !enabled {
-                    writes.append(MobileMeshPropertyWriteRecord(
-                        propertyId: ulcpProperties.wifiEnabled,
-                        value: Data([1])
-                    ))
-                }
-                writes.append(MobileMeshPropertyWriteRecord(
-                    propertyId: ulcpProperties.wifiNetwork,
-                    value: ssid
-                ))
-                let answers = try await management.write(address, writes)
-                if let refused = answers.first(where: { $0.value == nil }) {
-                    throw RemoteManagementError.refused(status: refused.statusCode ?? 0)
-                }
-            } catch let error as RemoteManagementError {
-                guard case let .refused(status) = error else { throw error }
-                refusal.value = status
-                return
-            }
-            try await management.save(address)
+    func updateNetwork(
+        ssid: Data, security: UInt8, hidden: Bool, autoJoin: Bool, credential: Data
+    ) async -> MobileWifiOutcome {
+        await forward(failed: .cancelled) {
+            try await $0.updateNetwork(
+                ssid: ssid, security: security, hidden: hidden,
+                autoJoin: autoJoin, credential: credential
+            )
         }
-        if refusal.value == nil, problem == nil {
-            await refreshCategory(.wifi)
-        }
-        return refusal.value
     }
 
-    /// Replace a network the device already knows with `item`, and save.
-    ///
-    /// An item with the stored security and no credential keeps the
-    /// password the device holds, which this phone may never have had.
-    /// Returns the refusal status where there was one, so the edit sheet
-    /// can say what about the change the device would not take.
-    func updateNetwork(item: Data) async -> UInt32? {
-        let refusal = Reported<UInt32?>(nil)
-        await run(changesDevice: true) { [self] in
-            do {
-                try await management.insertNetwork(address, item)
-            } catch let error as RemoteManagementError {
-                guard case let .refused(status) = error else { throw error }
-                refusal.value = status
-                return
-            }
-            try await management.save(address)
-        }
-        if refusal.value == nil, problem == nil {
-            await refreshCategory(.wifi)
-        }
-        return refusal.value
-    }
-
-    /// Join a network the device already knows, now.
     func joinKnownNetwork(ssid: Data) async {
-        await write([
-            MobileMeshPropertyWriteRecord(propertyId: ulcpProperties.wifiNetwork, value: ssid)
-        ])
+        await forward { try await $0.joinKnownNetwork(ssid: ssid) }
     }
-
-    /// Leave the current network and stay off every network until one is
-    /// joined or the station is turned off and on.
-    func disconnectNetwork() async {
-        await write([
-            MobileMeshPropertyWriteRecord(propertyId: ulcpProperties.wifiNetwork, value: Data())
-        ])
-    }
-
-    /// Let the device choose a known network by itself, or not, and save.
-    ///
-    /// The insert carries an empty password, which keeps the one the
-    /// device holds: this phone may never have had it.
+    func disconnectNetwork() async { await forward { try await $0.disconnectNetwork() } }
     func setAutoJoin(_ network: UlcpWifiNetworkRecord, _ autoJoin: Bool) async {
-        await run(changesDevice: true) { [self] in
-            let item = try ulcpWifiNetworkItem(
-                ssid: network.ssid,
-                security: network.security,
-                hidden: network.hidden,
-                autoJoin: autoJoin,
-                credential: Data()
-            )
-            try await management.insertNetwork(address, item)
-            try await management.save(address)
-        }
-        guard problem == nil else { return }
-        await refreshCategory(.wifi)
+        await forward { try await $0.setAutoJoin(ssid: network.ssid, autoJoin: autoJoin) }
     }
-
-    /// Forget one network by name, and save.
     func forgetNetwork(ssid: Data) async {
-        await run(changesDevice: true) { [self] in
-            try await management.removeNetwork(address, ssid)
-            try await management.save(address)
-        }
-        guard problem == nil else { return }
-        await refreshCategory(.wifi)
-    }
-
-    /// Write properties outside the Apply batch, reporting refusals as
-    /// problems rather than per-row: the callers here are buttons, not
-    /// fields, and there is no row to put a rejection on.
-    private func write(_ writes: [MobileMeshPropertyWriteRecord]) async {
-        await run(changesDevice: true) { [self] in
-            let answers = try await management.write(address, writes)
-            let echoed = Self.values(in: answers)
-            readings[.wifi]?.absorb(echoed, at: Date(), fromAir: true)
-            if let refused = answers.first(where: { $0.value == nil }) {
-                throw RemoteManagementError.refused(status: refused.statusCode ?? 0)
-            }
-        }
-    }
-
-    // MARK: - Finding the device
-
-    /// Make the device conspicuous, or stop it.
-    ///
-    /// The one control here that acts on the device rather than on its
-    /// configuration, and the one worth the round trip: a node whose last
-    /// known position is a week-old fix is found by making it beep.
-    func setAlert(_ state: RadioAlertState) async {
-        await run(changesDevice: true) { [self] in
-            alert = try await management.setAlert(address, state)
-        }
+        await forward { try await $0.forgetNetwork(ssid: ssid) }
     }
 
     // MARK: - Acting on the device
 
-    /// Stop management only after the device has confirmed entry.
-    func enterDfu(_ mode: UlcpDfuMode) async {
-        await run(changesDevice: true) { [self] in
-            try await management.enterDfu(address, mode)
-            enteredDfu = true
-        }
+    func setAlert(_ state: RadioAlertState) async {
+        await forward { try await $0.setAlert(state: state.wire) }
     }
-
-    /// Restart while preserving saved settings; refresh the sensor inventory.
-    func restart() async {
-        await run(changesDevice: true) { [self] in
-            try await management.reset(address, .reboot)
-            readings[.sensors] = nil
-        }
+    func enterDfu(_ mode: UlcpDfuMode) async { await forward { try await $0.enterDfu(mode: mode) } }
+    func restart() async { await forward { try await $0.restart() } }
+    func announce(_ kind: MobileAnnouncementKind, reach: MobileAnnouncementReach) async {
+        await forward { try await $0.announce(kind: kind, reach: reach) }
     }
-
-    /// Ask the device to announce itself now, outside either schedule.
-    ///
-    /// The source form and the channel stay at the command's defaults:
-    /// what this screen offers is the choice between the two kinds of
-    /// announcement and how far each travels.
-    func announce(_ kind: MobileAnnouncementKind, floodHops: UInt8) async {
-        await run(changesDevice: true) { [self] in
-            try await management.announce(
-                address,
-                MobileAnnouncementRecord(
-                    kind: kind,
-                    floodHops: floodHops,
-                    fullSource: nil,
-                    channelIdentifier: nil
-                )
-            )
-        }
-    }
-
-    /// Forget every host paired with the device, along with its pairing PIN.
-    ///
-    /// The bond count on screen is stale the moment this returns, and on a
-    /// local link the value the device pushes back cannot arrive—clearing
-    /// bonds drops the very link it would arrive on. Refresh the reading
-    /// from what the write means rather than from what the device says
-    /// next, so the screen is not left reporting hosts that no longer exist.
     func clearBluetoothPairings() async {
-        await run(changesDevice: true) { [self] in
-            try await management.clearBluetoothBonds(address)
+        await forward { try await $0.clearBluetoothPairings() }
+    }
+    func factoryReset() async { await forward { try await $0.factoryReset() } }
+
+    // MARK: - Control
+
+    /// The operator's Cancel: everything asked of the device and not yet
+    /// finished, whichever screen asked.
+    func cancel() { device.cancel() }
+
+    func dismissProblem() {
+        refusedCall = nil
+        device.dismissProblem()
+        deviceChanged()
+    }
+
+    /// Run one call on the device, then read what it published.
+    @discardableResult
+    private func forward(
+        _ call: @Sendable (MobileManagedDevice) async throws -> MobileManagementOutcome
+    ) async -> MobileManagementOutcome {
+        await forward(failed: .cancelled, call)
+    }
+
+    private func forward<Outcome: Sendable>(
+        failed: Outcome,
+        _ call: @Sendable (MobileManagedDevice) async throws -> Outcome
+    ) async -> Outcome {
+        refusedCall = nil
+        let outcome: Outcome
+        do {
+            outcome = try await call(device)
+        } catch {
+            refusedCall = Self.problem(for: error)
+            outcome = failed
         }
-        guard problem == nil else { return }
-        await absorb(
-            UlcpPropertyPushRecord(
-                propertyId: ulcpProperties.bleBondCount,
-                value: Data([0]),
-                kind: .is
-            )
-        )
-        // Clearing opens a pairing window, and the window is a property
-        // this screen shows as a toggle—reflect what the write means.
-        await absorb(
-            UlcpPropertyPushRecord(
-                propertyId: ulcpProperties.blePairing,
-                value: Data([1]),
-                kind: .is
-            )
-        )
+        deviceChanged()
+        return outcome
     }
 
-    /// Return the device to a blank factory state.
-    ///
-    /// It comes back as a different node—a factory reset takes the device
-    /// identity with it—so everything cached under this address describes
-    /// something that no longer exists. Drop it rather than let the next
-    /// open present a dead device's settings as current.
-    func factoryReset() async {
-        await run(changesDevice: true) { [self] in
-            try await management.reset(address, .factory)
+    /// A call the device object itself refused, as the status bar words it.
+    static func problem(for error: any Error) -> MobileManagementProblem {
+        switch error as? MobileAppError {
+        case .Busy: .busy
+        case .Stopped: .stopped
+        case .InvalidRequest: .invalidRequest
+        case .NoOwner: .noOwner
+        case .NotRunning: .notRunning
+        case .NoRadio: .noRadio
+        default: .other
         }
-        await forgetCache()
+    }
+}
+
+/// What a managed device's change notice reaches.
+@MainActor
+protocol ManagedDeviceObserver: AnyObject {
+    nonisolated var deviceID: UInt64 { get }
+    func deviceChanged()
+}
+
+/// The live models, by the device they show, so the drain can tell each
+/// that its device changed. Weak: a model lives as long as its screen.
+@MainActor
+final class ManagedDeviceRoutes {
+    private struct Entry {
+        weak var observer: (any ManagedDeviceObserver)?
     }
 
-    /// Forget everything cached about this device, so the next open asks it
-    /// afresh. For an operator who suspects the cache rather than the radio.
-    func forgetCache() async {
-        await management.forgetCache(address)
-        card = nil
-        cardAsOf = nil
-        readings.removeAll()
-        writeRefusals.removeAll()
+    private var entries: [UInt64: [Entry]] = [:]
+
+    func register(_ observer: any ManagedDeviceObserver) {
+        let id = observer.deviceID
+        entries[id, default: []].removeAll { $0.observer == nil }
+        entries[id, default: []].append(Entry(observer: observer))
     }
 
-    // MARK: - Running one operation at a time
-
-    /// What a read asks for, so an automatic one is not asked twice.
-    enum Reading: Equatable {
-        case card
-        case category(UlcpManageCategory)
-    }
-
-    /// Something an operation learns for the caller that asked for it,
-    /// read once the operation has run.
-    @MainActor
-    private final class Reported<Value> {
-        var value: Value
-        init(_ value: Value) { self.value = value }
-    }
-
-    private struct Operation {
-        let id = UUID()
-        let task: Task<Void, Never>
-        /// Whether this changes the device, as opposed to only asking it.
-        let changesDevice: Bool
-        let reading: Reading?
-    }
-
-    /// What this phone has asked of the device and is still waiting on,
-    /// oldest first. The first is running; the rest wait their turn, as
-    /// they would in the device's own queue.
-    private var operations: [Operation] = []
-
-    /// Whether the screens managing this device have all gone.
-    private var relinquished = false
-
-    private func isReading(_ reading: Reading) -> Bool {
-        operations.contains { $0.reading == reading }
-    }
-
-    /// Run one operation against the device once everything asked before
-    /// it has finished, turning whatever went wrong into a sentence.
-    ///
-    /// Held as a task rather than awaited in place, so it can be canceled:
-    /// by the operator, or—for a read—by every screen managing the device
-    /// going away.
-    private func run(
-        changesDevice: Bool = false,
-        reading: Reading? = nil,
-        _ body: @escaping @MainActor () async throws -> Void
-    ) async {
-        guard !enteredDfu, changesDevice || !relinquished else { return }
-        // Asking again is what an operator does about the last failure.
-        problem = nil
-        let previous = operations.last?.task
-        let task = Task { @MainActor [self] in
-            await previous?.value
-            guard !Task.isCancelled, !enteredDfu else { return }
-            do {
-                try await body()
-            } catch is CancellationError {
-                // Asked for, so there is nothing to report.
-            } catch {
-                problem = Self.text(for: error)
+    /// Tell every live model on each of `ids` to read its device again.
+    func route(_ ids: [UInt64]) {
+        for id in Set(ids) {
+            guard let live = entries[id] else { continue }
+            let observers = live.compactMap(\.observer)
+            if observers.isEmpty {
+                entries[id] = nil
+            } else {
+                entries[id] = observers.map { Entry(observer: $0) }
+                for observer in observers { observer.deviceChanged() }
             }
-            propertiesRemaining = nil
-        }
-        let operation = Operation(task: task, changesDevice: changesDevice, reading: reading)
-        operations.append(operation)
-        await task.value
-        operations.removeAll { $0.id == operation.id }
-    }
-
-    /// Stop everything asked of the device and not yet finished.
-    ///
-    /// A request already on the air may still be acted on: this ends the
-    /// waiting, not what was sent.
-    func cancel() {
-        for operation in operations {
-            operation.task.cancel()
-        }
-    }
-
-    /// Every screen managing the device has gone. Reads stop, since
-    /// nobody is left to show them to; changes run to the end, since
-    /// stopping one between its write and its save would leave the device
-    /// running settings it has not kept.
-    func relinquish() {
-        relinquished = true
-        for operation in operations where !operation.changesDevice {
-            operation.task.cancel()
-        }
-    }
-
-    private func fetch(
-        _ properties: [UInt32],
-        multiHint: Bool
-    ) async throws -> [MobileMeshManagementAnswerRecord] {
-        try await management.fetch(address, properties, multiHint) { [weak self] remaining in
-            Task { @MainActor in self?.propertiesRemaining = remaining }
-        }
-    }
-
-    /// Remember what the device said, minus what has no business
-    /// outliving the moment it was said in.
-    ///
-    /// A scan is a list of the access points around the device right now,
-    /// which is a fingerprint of where it is standing; a signal strength is
-    /// a number about one instant. Neither is a setting, neither would be
-    /// true an hour later, and a screen showing either as "last read
-    /// yesterday" would be showing a place the device may have left. They
-    /// are read fresh or not shown. The known-network table caches
-    /// normally: its reported form carries no credential.
-    private func cache(_ values: [UInt32: Data]) async {
-        let keepable = values.filter { isPersistentManagedProperty($0.key) }
-        guard !keepable.isEmpty else { return }
-        await management.saveValues(address, keepable)
-    }
-
-    /// The answers that carried a value, which are the ones worth keeping.
-    private static func values(
-        in answers: [MobileMeshManagementAnswerRecord]
-    ) -> [UInt32: Data] {
-        answers.reduce(into: [:]) { values, answer in
-            if let value = answer.value { values[answer.propertyId] = value }
-        }
-    }
-
-    /// What went wrong, in terms an operator can act on.
-    ///
-    /// Silence after an acknowledgment is the case worth explaining: a
-    /// device answers nothing at all to a node it does not list, so "no
-    /// reply" and "not an administrator" arrive identically and the copy
-    /// has to carry both.
-    static func text(for error: any Error) -> String {
-        if let error = error as? DfuEntryError { return error.localizedDescription }
-        if let error = error as? MobileAppError { return error.message }
-        return switch error as? RemoteManagementError {
-        case .noAnswer:
-            String(
-                localized: "No answer. This phone may not be one of its administrators.",
-                comment: "Managing a node: it acknowledged a request but never answered."
-            )
-        case .unreachable:
-            String(
-                localized: "Couldn't reach the device.",
-                comment: "Managing a node: a request was never acknowledged."
-            )
-        case let .refused(status):
-            String(
-                localized: "The device refused the request: \(ulcpStatusName(status: status)).",
-                comment: "Managing a node: it refused. The placeholder is a protocol status name, not translated."
-            )
-        case .unreadable:
-            String(
-                localized: "The device's answer couldn't be read. Its firmware may be newer than this app.",
-                comment: "Managing a node: its reply did not decode."
-            )
-        case .unavailable:
-            String(
-                localized: "No radio to send through.",
-                comment: "Managing a node: no companion radio is attached."
-            )
-        // Anything else is this app failing to build the request rather
-        // than the device failing to answer it. Saying "no radio" here
-        // sent one such bug looking for a Bluetooth problem.
-        case nil:
-            "This app could not make that change: \(error)."
         }
     }
 }

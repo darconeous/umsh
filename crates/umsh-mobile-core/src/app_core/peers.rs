@@ -6,8 +6,9 @@
 //! reads as bad input.
 
 use super::bootstrap::{CHANNEL_ADDRESS_PREFIX, advertises_mobile};
+use super::limits::DISCOVERY_COOLDOWN_MS;
 use super::pipeline::{link_identity_replaces, node_kind};
-use super::records::MobileAppChangesRecord;
+use super::records::{MobileAppChangesRecord, MobileAppLifecycle};
 use super::routes::{checked_address, checked_conversation_address};
 use super::worker::Worker;
 use super::{MobileAppCore, MobileAppError, mesh_error};
@@ -339,6 +340,44 @@ impl Worker {
     }
 }
 
+/// How long until `ready_at_ms`, from `now_ms`.
+fn discovery_wait(ready_at_ms: Option<i64>, now_ms: i64) -> u64 {
+    ready_at_ms.map_or(0, |ready| {
+        u64::try_from(ready.saturating_sub(now_ms)).unwrap_or(0)
+    })
+}
+
+/// An unnarrowed ask's hold on the discovery cooldown: what it set, and
+/// what it replaced.
+pub(super) struct DiscoveryCooldown {
+    previous: Option<i64>,
+    set: i64,
+}
+
+impl Worker {
+    /// Start the discovery cooldown, or `InvalidRequest` inside it. Read
+    /// and written under one lock, so two asks cannot both pass.
+    fn begin_discovery(&self) -> Result<DiscoveryCooldown, MobileAppError> {
+        let now = self.clock.monotonic_ms();
+        let mut snapshot = self.shared.snapshot();
+        if discovery_wait(snapshot.discovery_ready_at_ms, now) > 0 {
+            return Err(MobileAppError::InvalidRequest);
+        }
+        let set = now.saturating_add(DISCOVERY_COOLDOWN_MS as i64);
+        let previous = snapshot.discovery_ready_at_ms.replace(set);
+        Ok(DiscoveryCooldown { previous, set })
+    }
+
+    /// An ask that never went gives its cooldown back, unless a later one
+    /// has started its own since.
+    fn abandon_discovery(&self, cooldown: DiscoveryCooldown) {
+        let mut snapshot = self.shared.snapshot();
+        if snapshot.discovery_ready_at_ms == Some(cooldown.set) {
+            snapshot.discovery_ready_at_ms = cooldown.previous;
+        }
+    }
+}
+
 /// A route of 2-byte router hints, and a node hint of 2 or 3 bytes.
 fn checked_discovery(node_hint: Option<&[u8]>, route: &[Vec<u8>]) -> Result<(), MobileAppError> {
     let hint_fits = node_hint.is_none_or(|hint| matches!(hint.len(), 2 | 3));
@@ -531,6 +570,11 @@ impl MobileAppCore {
     /// identities: those with `role`, or with a node hint starting with
     /// `node_hint` (2 or 3 bytes). Each hop of `route` is a 2-byte router
     /// hint. Answers arrive as peers changes.
+    ///
+    /// An ask without `node_hint` draws every node in range, so one goes
+    /// at most once per `mobile_limits().discovery_cooldown_ms`, whatever
+    /// its role or route; one sooner is `InvalidRequest`, and
+    /// `discovery_wait_ms` says how long is left.
     pub async fn discover(
         &self,
         role: Option<u8>,
@@ -540,12 +584,37 @@ impl MobileAppCore {
         checked_discovery(node_hint.as_deref(), &route)?;
         self.command(move |worker| async move {
             let session = worker.radio_session()?;
-            session
+            let cooldown = match node_hint {
+                Some(_) => None,
+                None => Some(worker.begin_discovery()?),
+            };
+            let asked = session
                 .discover_identities(role, None, node_hint, route)
-                .await
-                .map_err(mesh_error)
+                .await;
+            // Unsaved counters fail an ask that still went on the air.
+            let went = matches!(
+                asked,
+                Ok(()) | Err(MobileMeshError::CounterPersistenceFailed)
+            );
+            if !went && let Some(cooldown) = cooldown {
+                worker.abandon_discovery(cooldown);
+            }
+            asked.map_err(mesh_error)
         })
         .await
+    }
+
+    /// Milliseconds until an unnarrowed `discover` may go; 0 when it may
+    /// now.
+    pub fn discovery_wait_ms(&self) -> Result<u64, MobileAppError> {
+        let snapshot = self.shared.snapshot();
+        if snapshot.lifecycle == MobileAppLifecycle::Stopped {
+            return Err(MobileAppError::Stopped);
+        }
+        Ok(discovery_wait(
+            snapshot.discovery_ready_at_ms,
+            self.clock.monotonic_ms(),
+        ))
     }
 
     /// Ask the member of a channel conversation known by its 3-byte hint

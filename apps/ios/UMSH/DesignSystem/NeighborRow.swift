@@ -130,10 +130,11 @@ struct NeighborRow<Trailing: View>: View {
     /// one.
     private static func heardText(_ neighbor: PeerRepeaterNeighbor) -> String? {
         if let heardAt = neighbor.lastHeardAt {
-            return "heard \(heardAt.formatted(.relative(presentation: .named)))"
+            let age = AgePresentation.text(since: heardAt)
+            return String(localized: "heard \(age)", comment: "When a node was last heard. The placeholder is an age, such as 5 min. ago or just now.")
         }
         if neighbor.lastHeardMinutes != nil {
-            return "heard long ago"
+            return String(localized: "heard long ago", comment: "A repeater heard this neighbor longer ago than it can count.")
         }
         return nil
     }

@@ -708,8 +708,11 @@ content.
 
 Acceptance criteria:
 
-- The export preview lists messages, public addresses, locations, device IDs,
-  and key material as separate data classes.
-- Secrets and message bodies are excluded by default.
-- The user can cancel before the system share sheet.
+- The Diagnostics page is the export's preview: it shows every log line the
+  export carries.
+- Message bodies, addresses, locations, radio names, and key material should be
+  logged as private values.
+- Private values are redacted at the source, so the export has no per-class
+  switches: a redacted value cannot be added back.
+- The user can cancel in the system share sheet.
 - The report includes app, protocol, radio firmware, and capability versions.

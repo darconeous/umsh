@@ -192,9 +192,11 @@ final class RadioAccessories {
         }
     }
 
-    /// Exact names are diagnostic data: expose them only in Debug builds.
-    /// Peripheral labels are local to this trace; object tokens distinguish
-    /// preauthorization reports whose Bluetooth identifier is still nil.
+    /// Exact names are diagnostic data: trace them only in Debug builds, and
+    /// as private values, so a Diagnostics export never carries them; the
+    /// Xcode console still shows them. Peripheral labels are local to this
+    /// trace; object tokens distinguish preauthorization reports whose
+    /// Bluetooth identifier is still nil.
     private func traceNames(
         _ event: String, accessory: ASAccessory? = nil, peripheralID: UUID? = nil,
         details: @autoclosure () -> String = ""
@@ -214,7 +216,7 @@ final class RadioAccessories {
         let elapsed = Int64((ProcessInfo.processInfo.systemUptime - nameTraceStarted) * 1_000)
         nameTraceSequence += 1
         let detail = details()
-        Self.nameTraceLogger.notice("radio name trace: session=\(self.nameTraceSession, privacy: .public) seq=\(self.nameTraceSequence) elapsedMs=\(elapsed) event=\(event, privacy: .public) object=\(object, privacy: .public) peripheral=\(peripheral, privacy: .public) state=\(state, privacy: .public) displayName=\(displayName, privacy: .public) \(detail, privacy: .public)")
+        Self.nameTraceLogger.notice("radio name trace: session=\(self.nameTraceSession, privacy: .public) seq=\(self.nameTraceSequence) elapsedMs=\(elapsed) event=\(event, privacy: .public) object=\(object, privacy: .public) peripheral=\(peripheral, privacy: .public) state=\(state, privacy: .public) displayName=\(displayName, privacy: .private) \(detail, privacy: .private)")
         #endif
     }
 

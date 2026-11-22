@@ -855,7 +855,7 @@ impl Worker {
                 continue;
             };
             let deadline = self.clock.monotonic_ms() + MANAGEMENT_BACKSTOP_MS;
-            let Ok(event) = self.await_management(id, None, deadline).await else {
+            let Ok(event) = self.await_management(id, deadline).await else {
                 continue;
             };
             // Revoked when the device echoes the empty key.

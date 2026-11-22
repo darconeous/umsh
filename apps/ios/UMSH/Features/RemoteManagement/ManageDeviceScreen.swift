@@ -20,42 +20,66 @@ struct ManageDeviceScreen: View {
     /// The node's neighbor listing, which is asked for over the mesh.
     /// Nil for the attached radio, which is not reached that way.
     private let neighbors: AnyView?
-    @State private var model: ManageDeviceModel
-    @State private var lease: ManagementLease
+    /// How to reach the device: the core hands back a handle on it.
+    private let open: @MainActor () async throws -> ManageDeviceModel
+    @State private var model: ManageDeviceModel?
+    @State private var failure: String?
+    @State private var lease = ManagementLease()
+
+    init(
+        browsing: RemotePeerBrowsing,
+        neighbors: AnyView? = nil,
+        open: @escaping @MainActor () async throws -> ManageDeviceModel
+    ) {
+        self.browsing = browsing
+        self.neighbors = neighbors
+        self.open = open
+    }
+
+    var body: some View {
+        Group {
+            if let model {
+                ManageDeviceContent(model: model, browsing: browsing, neighbors: neighbors)
+            } else if let failure {
+                ContentUnavailableView {
+                    Label(
+                        LocalizedStringResource(
+                            "Can't Manage This Device",
+                            comment: "Managing a node: title shown when a device's settings could not be opened."
+                        ),
+                        systemImage: "exclamationmark.triangle"
+                    )
+                } description: {
+                    Text(verbatim: failure)
+                }
+                .navigationTitle("Manage Device")
+                .navigationBarTitleDisplayMode(.inline)
+            } else {
+                ProgressView()
+                    .navigationTitle("Manage Device")
+                    .navigationBarTitleDisplayMode(.inline)
+            }
+        }
+        .task {
+            guard model == nil else { return }
+            do {
+                let opened = try await open()
+                lease.hold(opened)
+                model = opened
+            } catch {
+                failure = MobileAppError.message(for: error)
+            }
+        }
+    }
+}
+
+private struct ManageDeviceContent: View {
+    let model: ManageDeviceModel
+    let browsing: RemotePeerBrowsing
+    let neighbors: AnyView?
     @State private var confirmsRestart = false
     @State private var confirmsFactoryReset = false
     @State private var confirmsDfu = false
-
-    init(peer: PeerSummary, management: DeviceManagementBackend, browsing: RemotePeerBrowsing,
-         neighbors: AnyView? = nil) {
-        self.init(
-            model: ManageDeviceModel(peer: peer, management: management),
-            browsing: browsing,
-            neighbors: neighbors
-        )
-    }
-
-    /// The attached radio, which may hold no identity to be a peer under.
-    init(companionAddress: String?, name: String, management: DeviceManagementBackend,
-         browsing: RemotePeerBrowsing) {
-        self.init(
-            model: ManageDeviceModel(
-                address: companionAddress ?? "",
-                fallbackName: name,
-                management: management
-            ),
-            browsing: browsing,
-            neighbors: nil
-        )
-    }
-
-    private init(model: ManageDeviceModel, browsing: RemotePeerBrowsing,
-                 neighbors: AnyView?) {
-        self.browsing = browsing
-        self.neighbors = neighbors
-        _model = State(initialValue: model)
-        _lease = State(initialValue: ManagementLease(model))
-    }
 
     var body: some View {
         Form {
@@ -127,10 +151,6 @@ struct ManageDeviceScreen: View {
             }
         }
         .task { await model.loadCard() }
-        // Started here, held by the model: a category screen pushed on
-        // top makes this one disappear, and a subscription owned by this
-        // view would be cancelled with it.
-        .onAppear { model.observePushes() }
     }
 }
 
@@ -174,7 +194,8 @@ private struct DfuEntrySheet: View {
                     }
                     if model.isBusy { ProgressView("Waiting for confirmation…") }
                     if let problem = model.problem {
-                        Text(problem).foregroundStyle(.red)
+                        Text(verbatim: ManagementProblemText.text(for: problem))
+                            .foregroundStyle(.red)
                     }
                 }
             }
@@ -191,21 +212,19 @@ private struct DfuEntrySheet: View {
     }
 }
 
-/// Stops a device's reads once the screen managing it is gone for good.
+/// Lets go of a device once the screen managing it is gone for good.
 ///
 /// Held in that screen's state, which outlives every category screen pushed
-/// over it and goes when it is popped. The model itself cannot tell: each
-/// operation it is running holds it, so it lives until they end.
+/// over it and goes when it is popped. The model itself cannot tell: the
+/// screens and the calls in flight hold it.
 final class ManagementLease {
-    private let model: ManageDeviceModel
+    private var model: ManageDeviceModel?
 
-    init(_ model: ManageDeviceModel) {
+    func hold(_ model: ManageDeviceModel) {
         self.model = model
     }
 
-    deinit {
-        Task { @MainActor [model] in model.relinquish() }
-    }
+    deinit { model?.release() }
 }
 
 /// The nodes this phone has saved, and how to open one.
@@ -325,8 +344,11 @@ struct RemoteCategoryChrome: ViewModifier {
     let title: String
     /// What Apply does, and whether there is anything to apply. Read-only
     /// screens leave it nil and get a Refresh button alone.
-    var apply: (() async -> Void)?
-    var hasEdits = false
+    var apply: (() async -> MobileApplyOutcome)?
+    /// What the screen's draft would do: Apply is offered for its edits,
+    /// and leaving asks first while it holds edits or a value that cannot
+    /// be applied—either is something the operator typed.
+    var review: MobileDraftReviewRecord?
     /// What to warn about before applying, on a screen whose changes can
     /// put the device out of reach.
     ///
@@ -340,6 +362,11 @@ struct RemoteCategoryChrome: ViewModifier {
     @State private var isConfirmingApply = false
     /// Whether the apply now being confirmed was reached on the way out.
     @State private var leavesAfterApply = false
+
+    private var hasEdits: Bool { review?.hasEdits == true }
+    private var asksBeforeLeaving: Bool {
+        hasEdits || review?.problems.isEmpty == false
+    }
 
     func body(content: Content) -> some View {
         content
@@ -369,19 +396,19 @@ struct RemoteCategoryChrome: ViewModifier {
                 // on this screen has reached the device, and a form that
                 // silently discarded a change made three hops from a mast
                 // would be the wrong kind of quiet.
-                if hasEdits {
+                if asksBeforeLeaving {
                     ToolbarItem(placement: .topBarLeading) {
                         Button("Back") { isConfirmingExit = true }
                     }
                 }
             }
-            .navigationBarBackButtonHidden(hasEdits)
+            .navigationBarBackButtonHidden(asksBeforeLeaving)
             .confirmationDialog(
                 "You have unapplied changes.",
                 isPresented: $isConfirmingExit,
                 titleVisibility: .visible
             ) {
-                if apply != nil {
+                if apply != nil, hasEdits {
                     Button("Apply and Go Back") { beginApply(leaving: true) }
                 }
                 Button("Discard Changes", role: .destructive) { dismiss() }
@@ -392,7 +419,7 @@ struct RemoteCategoryChrome: ViewModifier {
                 isPresented: $isConfirmingApply,
                 titleVisibility: .visible
             ) {
-                Button(applyWarning?.title ?? "Apply", role: .destructive) { runApply() }
+                Button(applyWarning?.title ?? String(localized: "Apply"), role: .destructive) { runApply() }
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text(applyWarning?.message ?? "")
@@ -410,11 +437,19 @@ struct RemoteCategoryChrome: ViewModifier {
         }
     }
 
+    /// Apply, and leave if that was asked for and the edits are safely on
+    /// the device. A refused apply stays so the row's refusal can be read
+    /// beside the device's value; a failed or canceled one stays because
+    /// the screen holds the only copy of the edits.
     private func runApply() {
         guard let apply else { return }
         Task {
-            await apply()
-            if leavesAfterApply { dismiss() }
+            let outcome = await apply()
+            guard leavesAfterApply else { return }
+            switch outcome.result {
+            case .applied, .nothingToApply: dismiss()
+            case .invalid, .refused, .cancelled, .skipped, .failed: break
+            }
         }
     }
 }
@@ -424,8 +459,8 @@ extension View {
         model: ManageDeviceModel,
         category: UlcpManageCategory,
         title: String,
-        apply: (() async -> Void)? = nil,
-        hasEdits: Bool = false,
+        apply: (() async -> MobileApplyOutcome)? = nil,
+        review: MobileDraftReviewRecord? = nil,
         applyWarning: (title: String, message: String)? = nil
     ) -> some View {
         modifier(
@@ -434,7 +469,7 @@ extension View {
                 category: category,
                 title: title,
                 apply: apply,
-                hasEdits: hasEdits,
+                review: review,
                 applyWarning: applyWarning
             )
         )

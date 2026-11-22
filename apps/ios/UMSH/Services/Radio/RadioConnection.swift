@@ -34,27 +34,6 @@ protocol RadioConnection: AnyObject, Sendable {
     /// down and the app's binding to it is deliberately kept, because what
     /// comes back is the same radio.
     func reboot() async throws
-    func enterDfu(mode: UlcpDfuMode) async throws
-    /// Ask the radio to announce itself now (`CMD_ANNOUNCE`)—an
-    /// advertisement or a beacon, outside either schedule. The radio
-    /// answers once it has the announcement queued; channel access and
-    /// its duty limit decide when it actually goes out.
-    func announce(_ request: MobileAnnouncementRecord) async throws
-    /// Forget every host paired with the radio, along with its pairing PIN
-    ///—`PROP_BLE_BOND_COUNT` written to zero. The radio answers before
-    /// it acts on the link, then drops this phone with the rest and opens
-    /// a pairing window—so returning normally means it was done, and the
-    /// disconnect that follows is expected rather than a failure.
-    func clearBluetoothBonds() async throws
-    /// Start or stop the radio's locate alert (`PROP_ALERT`) so a
-    /// misplaced radio announces itself. What the radio does is up to its
-    /// hardware—a buzzer, an indicator LED, or both—and the alert
-    /// overrides a silenced buzzer.
-    ///
-    /// It deliberately keeps running when the phone walks out of range;
-    /// the radio ends it on a button press or its own deadline, reported
-    /// back through `RadioSnapshot.alert`.
-    func setAlert(_ state: RadioAlertState) async throws
     func refresh() async throws -> RadioSnapshot
     /// Sample where the radio is, and how well it knows.
     ///
@@ -68,51 +47,6 @@ protocol RadioConnection: AnyObject, Sendable {
     ///
     /// Throws on a radio without `CAP_GNSS`, which has nothing to sample.
     func refreshPositioning() async throws -> RadioSnapshot
-    /// Store a peer public key on the radio's device identity
-    /// (`PROP_DEV_PEERS`), persisting it with a chained save. Idempotent:
-    /// a key the radio already holds resolves as success.
-    func addDevicePeer(_ publicKey: Data) async throws
-    /// Remove a peer public key from the radio's device identity.
-    /// Idempotent: a key the radio does not hold resolves as success.
-    func removeDevicePeer(_ publicKey: Data) async throws
-    /// Let a node manage the radio over the mesh, by storing its public key
-    /// on `PROP_DEV_ADMINS` and persisting it with a chained save.
-    /// Idempotent, like the peer list.
-    ///
-    /// Separate from `addDevicePeer` because the two lists answer different
-    /// questions: a peer is someone the radio can talk to, an administrator
-    /// is someone it takes orders from.
-    func addDeviceAdmin(_ publicKey: Data) async throws
-    /// Take a node's authority to manage the radio away again. Idempotent.
-    func removeDeviceAdmin(_ publicKey: Data) async throws
-    /// Store a Wi-Fi network on the radio (`PROP_WIFI_NETWORKS`), given the
-    /// encoded entry a credential has already been folded into.
-    ///
-    /// Named rather than left to a general insert for the reason the
-    /// administrator list is: the item carries a passphrase, and a caller
-    /// that could name the property could send one somewhere it would be
-    /// echoed back. An entry whose SSID the radio already holds replaces
-    /// that one, which is how a mistyped passphrase is corrected.
-    func addDeviceWifiNetwork(_ item: Data) async throws
-    /// Forget a Wi-Fi network by name. Idempotent: an SSID the radio does
-    /// not hold resolves as success.
-    func removeDeviceWifiNetwork(ssid: Data) async throws
-    /// Read named properties from the companion radio itself, over the
-    /// local link, and answer with what it said about each—values and
-    /// refusals alike. The local counterpart of `fetchRemoteProperties`,
-    /// with the same shape of answer, so the same screens read both.
-    func fetchCompanionProperties(
-        _ propertyIDs: [UInt32]
-    ) async throws -> [MobileMeshManagementAnswerRecord]
-    /// Write properties to the companion radio, in the given order, and
-    /// answer with what it says each is now worth. The order is the
-    /// caller's plan—a radio-parameter write brackets the PHY—and is
-    /// preserved on the air.
-    func writeCompanionProperties(
-        _ writes: [MobileMeshPropertyWriteRecord]
-    ) async throws -> [MobileMeshManagementAnswerRecord]
-    /// Persist the companion radio's live configuration.
-    func saveCompanionDevice() async throws
     func disconnect() async
     /// Unbind from the remembered radio entirely: revoke any standing connect
     /// and clear the persisted `connectedUUID`. The app stops offering
@@ -167,8 +101,8 @@ extension RadioConnectionError {
     }
 }
 
-/// Failures of managing a device across the mesh, shaped for the copy the
-/// remote-management screen shows.
+/// The words for a firmware update entry that did not happen, shared by the
+/// management status bar and the core's error presentation.
 enum DfuEntryError: Error, LocalizedError, Sendable {
     case unconfirmed
     case unsupported
@@ -193,57 +127,4 @@ enum DfuEntryError: Error, LocalizedError, Sendable {
             )
         }
     }
-
-    static func perform(_ operation: () async throws -> UInt32?) async throws {
-        let status: UInt32?
-        do { status = try await operation() }
-        catch { throw DfuEntryError.unconfirmed }
-        switch status {
-        case 0: return
-        case 2, 5: throw DfuEntryError.unsupported
-        case let .some(status): throw DfuEntryError.refused(status)
-        case nil: throw DfuEntryError.unconfirmed
-        }
-    }
-}
-
-enum RemoteManagementError: Error, Equatable, Sendable {
-    /// The device acknowledged the request, then said nothing.
-    ///
-    /// Deliberately one case for two causes: a device that lost its answer
-    /// on the way back and a device that does not list this phone as an
-    /// administrator are indistinguishable from here, because an
-    /// unauthorized request is answered with silence rather than a refusal.
-    /// The screen says both.
-    case noAnswer
-    /// The request never reached the device: nothing acknowledged it.
-    case unreachable
-    /// The device answered, and the answer was a refusal. Carries the ULCP
-    /// status so the screen can name it.
-    case refused(status: UInt32)
-    /// The device answered something this exchange cannot make sense of—
-    /// a value where a status belonged, or a read that ended with nothing
-    /// read.
-    case unreadable
-    /// The companion radio's own link could not carry the exchange.
-    case unavailable
-}
-
-/// Failures of device-identity peer mutations, shaped for the UI's
-/// disabled-state and inline-error copy.
-enum DevicePeerError: Error, Equatable, Sendable {
-    /// No attached radio configured for this phone.
-    case radioUnavailable
-    /// The radio's peer list is full; the device's `NOMEM` is authoritative.
-    case deviceFull
-    /// The radio does not advertise a device identity domain.
-    case unsupported
-    /// The radio answered the change in a form this app could not read:
-    /// firmware reporting the table's items in a shape this app does not
-    /// know. The radio acted on the request; what it reports having done is
-    /// not something this app can check, so its table has been read back
-    /// and the snapshot shows whatever of it this app can read.
-    case unrecognizedAnswer
-    /// Any other rejection, carrying the radio's status name.
-    case failed(String)
 }

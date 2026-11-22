@@ -167,7 +167,7 @@ struct RouteScreen: View {
         if offersAsk || offersReset || offersClear {
             Section {
                 if let askNearbyIdentities {
-                    let vantage = SolicitVantage(peer: peer, route: route)
+                    let vantage = SolicitVantage(peer: peer, vantage: route.discoveryVantage)
                     Button {
                         askNearbyIdentities(vantage)
                     } label: {

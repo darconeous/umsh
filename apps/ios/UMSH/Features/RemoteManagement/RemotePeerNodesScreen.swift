@@ -39,22 +39,20 @@ struct RemotePeerNodesScreen: View {
 
     // MARK: - Peers
 
-    private var peers: [DeviceAdministrator] {
-        (reading?.properties.devPeerKeys ?? []).map {
-            DeviceAdministrator(publicKey: $0, isThisPhone: $0 == model.phoneNodeKey)
-        }
+    private var peers: [Entry] {
+        Entry.all(model.snapshot.peers)
     }
 
     private var peersSection: some View {
         Section {
             ForEach(peers) { peer in
-                row(peer, removable: true) { setPeers(removing: peer.publicKey) }
+                row(peer.node, removable: peer.removable) { setPeers(removing: peer.node.publicKey) }
             }
             if peers.isEmpty {
                 Text(reading?.asOf == nil ? "Not read" : "None")
                     .foregroundStyle(.secondary)
             }
-            addMenu(listed: Set(peers.map(\.publicKey))) { setPeers(adding: $0) }
+            addMenu(listed: Set(peers.map(\.node.publicKey))) { setPeers(adding: $0) }
         } header: {
             Text("Peers")
         } footer: {
@@ -63,18 +61,16 @@ struct RemotePeerNodesScreen: View {
     }
 
     private func setPeers(adding key: Data? = nil, removing removed: Data? = nil) {
-        var desired = Set(peers.map(\.publicKey))
+        var desired = Set(peers.map(\.node.publicKey))
         if let key { desired.insert(key) }
         if let removed { desired.remove(removed) }
-        Task { await model.setKeys(desired, administrators: false) }
+        Task { await model.setKeys(desired, table: .peers) }
     }
 
     // MARK: - Administrators
 
-    private var administrators: [DeviceAdministrator] {
-        (reading?.properties.devAdminKeys ?? []).map {
-            DeviceAdministrator(publicKey: $0, isThisPhone: $0 == model.phoneNodeKey)
-        }
+    private var administrators: [Entry] {
+        Entry.all(model.snapshot.administrators)
     }
 
     /// This phone's own entry is never removable here.
@@ -89,15 +85,15 @@ struct RemotePeerNodesScreen: View {
                 // This phone's own entry offers no Remove, and neither does
                 // the last one standing; the footer says why.
                 row(
-                    administrator,
-                    removable: !administrator.isThisPhone && administrators.count > 1
-                ) { setAdministrators(removing: administrator.publicKey) }
+                    administrator.node,
+                    removable: administrator.removable
+                ) { setAdministrators(removing: administrator.node.publicKey) }
             }
             if administrators.isEmpty {
                 Text(reading?.asOf == nil ? "Not read" : "None")
                     .foregroundStyle(.secondary)
             }
-            addMenu(listed: Set(administrators.map(\.publicKey))) {
+            addMenu(listed: Set(administrators.map(\.node.publicKey))) {
                 setAdministrators(adding: $0)
             }
         } header: {
@@ -109,22 +105,36 @@ struct RemotePeerNodesScreen: View {
 
     private var footer: String {
         var footer = "These nodes can read and change this device's settings over the mesh."
-        if administrators.contains(where: \.isThisPhone) {
+        if administrators.contains(where: \.node.isThisPhone) {
             footer += " This phone cannot remove itself—connect over Bluetooth to do that."
         }
         return footer
     }
 
     private func setAdministrators(adding key: Data? = nil, removing removed: Data? = nil) {
-        var desired = Set(administrators.map(\.publicKey))
+        var desired = Set(administrators.map(\.node.publicKey))
         if let key { desired.insert(key) }
-        if let removed, removed != model.phoneNodeKey, desired.count > 1 {
-            desired.remove(removed)
-        }
-        Task { await model.setKeys(desired, administrators: true) }
+        if let removed { desired.remove(removed) }
+        Task { await model.setKeys(desired, table: .administrators) }
     }
 
     // MARK: - Rows
+
+    /// One key a device holds, with whether the core lets it be removed.
+    private struct Entry: Identifiable {
+        let node: DeviceAdministrator
+        let removable: Bool
+        var id: Data { node.publicKey }
+
+        static func all(_ table: MobileKeyTableRecord?) -> [Entry] {
+            (table?.entries ?? []).map {
+                Entry(
+                    node: DeviceAdministrator(publicKey: $0.key, isThisPhone: $0.isThisPhone),
+                    removable: $0.removable
+                )
+            }
+        }
+    }
 
     /// One key a device holds, as a node.
     ///

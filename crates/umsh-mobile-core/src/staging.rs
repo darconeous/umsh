@@ -18,7 +18,7 @@ mod air;
 
 use std::sync::Arc;
 
-pub use air::{MobileStagingAir, MobileStagingAirError};
+pub use air::{MobileStagedDeviceRecord, MobileStagingAir, MobileStagingAirError};
 use umsh_core::ChannelKey;
 use umsh_crypto::{
     Sha256Provider,
@@ -178,7 +178,7 @@ struct Node {
 /// The cell staged nodes disclose: five bytes is roughly 38 m, what a
 /// tracker sharing a useful position reports, and fine enough that markers
 /// separate at trail scale.
-const LOCATION_PRECISION: u8 = 5;
+const LOCATION_PRECISION: u8 = crate::app_core::DEFAULT_LOCATION_PRECISION;
 
 /// Every node, in the order the roster reads best. They work around
 /// Desolation Wilderness, west of Lake Tahoe, so the map has real terrain
@@ -522,17 +522,20 @@ impl Seeder<'_> {
 
     /// Turn a script into store rows. `resolve` is how a speaker's name
     /// becomes an address and a hint; `named_senders` is whether messages
-    /// carry their sender's name, as a group message does.
+    /// carry their sender's name and hint, as a group message does. A
+    /// direct message carries neither, as a real one stores none.
     fn staged_messages<'r>(
         &self,
         lines: &[Line],
         named_senders: bool,
         resolve: impl Fn(&str) -> Option<&'r Resolved>,
     ) -> Vec<MobileStagedChatMessageRecord> {
+        let wire_ids = staged_wire_ids(lines);
         lines
             .iter()
+            .zip(wire_ids)
             .enumerate()
-            .map(|(index, line)| {
+            .map(|(index, (line, wire_id))| {
                 let sender = line.speaker.and_then(&resolve);
                 let outbound = line.speaker.is_none();
                 MobileStagedChatMessageRecord {
@@ -541,7 +544,9 @@ impl Seeder<'_> {
                     outbound,
                     created_at_ms: self.ago(line.minutes_ago),
                     sender_address: sender.map(|sender| sender.address.clone()),
-                    sender_hint: sender.map(|sender| sender.hint.clone()),
+                    sender_hint: sender
+                        .filter(|_| named_senders)
+                        .map(|sender| sender.hint.clone()),
                     sender_handle: line.speaker.filter(|_| named_senders).map(str::to_owned),
                     delivery_state: outbound.then_some(MobileStoredChatDeliveryState::Acknowledged),
                     reception: (!outbound).then(|| reception(index)),
@@ -555,7 +560,9 @@ impl Seeder<'_> {
                                 outbound: reaction.from.is_none(),
                                 created_at_ms: self.ago(reaction.minutes_ago),
                                 sender_address: from.map(|from| from.address.clone()),
-                                sender_hint: from.map(|from| from.hint.clone()),
+                                sender_hint: from
+                                    .filter(|_| named_senders)
+                                    .map(|from| from.hint.clone()),
                             }
                         })
                         .collect(),
@@ -566,10 +573,50 @@ impl Seeder<'_> {
                         Reply::Missing => MobileStagedChatRegarding::Missing,
                     }),
                     is_deleted: line.deleted,
+                    wire_id,
+                    epoch: outbound.then_some(STAGED_OUTBOUND_EPOCH),
                 }
             })
             .collect()
     }
+}
+
+/// The epoch every outbound stream holds: a fresh stream starts at 0, and
+/// nothing moves it on.
+const STAGED_OUTBOUND_EPOCH: u16 = 0;
+
+/// Each line's wire ID within its sender's stream (ours, or one speaker's),
+/// numbered in script order so the stream's newest is 255. The phone's next
+/// message is then 0, continuing the stream; a peer's real messages start
+/// at 0 in a session of its own, far from these. A stream longer than a
+/// peer's 128-message window gets no IDs, leaving its rows unnameable; the
+/// seeding tests catch a script edit that does that.
+fn staged_wire_ids(lines: &[Line]) -> Vec<Option<u8>> {
+    let stream_len =
+        |speaker: Option<&str>| lines.iter().filter(|line| line.speaker == speaker).count();
+    let mut seen: Vec<(Option<&str>, usize)> = Vec::new();
+    lines
+        .iter()
+        .map(|line| {
+            let rank = match seen
+                .iter_mut()
+                .find(|(speaker, _)| *speaker == line.speaker)
+            {
+                Some((_, count)) => {
+                    *count += 1;
+                    *count - 1
+                }
+                None => {
+                    seen.push((line.speaker, 1));
+                    0
+                }
+            };
+            let len = stream_len(line.speaker);
+            (len <= 128)
+                .then(|| u8::try_from(256 - len + rank).ok())
+                .flatten()
+        })
+        .collect()
 }
 
 /// Plausible link metrics, varied per message: a transcript where every

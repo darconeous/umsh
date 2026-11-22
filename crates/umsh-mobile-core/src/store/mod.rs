@@ -56,7 +56,7 @@ pub use conversations::{
     MobileApplicationRecords, MobileStoredChannelConversationRecord,
     MobileStoredConversationPreviewRecord, MobileStoredDirectConversationRecord,
 };
-pub use management::{MobileStoredCachedPropertyRecord, MobileStoredManagementCardRecord};
+pub(crate) use management::MobileStoredManagementCardRecord;
 pub use peers::{
     MobilePeerUpsertRecord, MobileStoredNodeKind, MobileStoredNodeRecord, MobileStoredSystemRole,
 };

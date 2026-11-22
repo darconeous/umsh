@@ -629,3 +629,120 @@ async fn a_reset_rebuilds_the_repeaters() {
         .await;
     assert_eq!(reply.outcome, MobileMeshPingOutcome::Reply);
 }
+
+/// The administered device that forwards, or the one that does not.
+fn administered(forwards: bool) -> &'static Administered {
+    ADMINISTERED
+        .iter()
+        .find(|staged| staged.forwards == forwards)
+        .unwrap()
+}
+
+#[tokio::test]
+async fn the_administered_devices_are_listed_forwarding_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let air = MobileStagingAir::start(dir.path().display().to_string(), false).unwrap();
+    let listed = air.administered_devices();
+    let expected: Vec<_> = [true, false]
+        .map(administered)
+        .iter()
+        .map(|staged| MobileStagedDeviceRecord {
+            link_id: staged.link_id.to_owned(),
+            name: staged.name.to_owned(),
+        })
+        .collect();
+    assert_eq!(listed, expected);
+}
+
+#[tokio::test]
+async fn an_administered_device_attaches_whole_and_lazily() {
+    let dir = tempfile::tempdir().unwrap();
+    let air = MobileStagingAir::start(dir.path().display().to_string(), false).unwrap();
+    for forwards in [false, true] {
+        let staged = administered(forwards);
+        let driver = air
+            .administered_device(staged.link_id.to_owned(), None, false)
+            .unwrap();
+        let state = driver.attached().await.unwrap();
+        assert_eq!(state.phase, MobileRadioPhase::Attached);
+        assert_eq!(state.name.as_deref(), Some(staged.name));
+        assert_eq!(state.link_id.as_deref(), Some(staged.link_id));
+        assert_eq!(
+            state.device_key,
+            Some(public_identity_bytes(address_of(staged.seed)).unwrap()),
+        );
+        assert!(!driver.lazy_inspection);
+        let sync = state.provisioning.expect("read whole");
+        assert!(sync.supports_device_identity);
+        assert_eq!(sync.supports_repeater, forwards);
+        assert_eq!(sync.repeater.is_some(), forwards);
+        driver.stop();
+
+        let driver = air
+            .administered_device(staged.link_id.to_owned(), None, true)
+            .unwrap();
+        let state = driver.attached().await.unwrap();
+        assert_eq!(state.phase, MobileRadioPhase::Attached);
+        assert!(driver.lazy_inspection);
+        driver.stop();
+    }
+}
+
+#[tokio::test]
+async fn each_administered_device_starts_afresh() {
+    let dir = tempfile::tempdir().unwrap();
+    let air = MobileStagingAir::start(dir.path().display().to_string(), false).unwrap();
+    let link_id = administered(false).link_id.to_owned();
+    let driver = air
+        .administered_device(link_id.clone(), None, false)
+        .unwrap();
+    driver.attached().await.unwrap();
+    driver
+        .write_properties(vec![crate::mobile_mesh::MobileMeshPropertyWriteRecord {
+            property_id: prop::DEV_NAME,
+            value: b"Pika".to_vec(),
+        }])
+        .await
+        .unwrap();
+    assert_eq!(
+        driver.refresh().await.unwrap().name.as_deref(),
+        Some("Pika")
+    );
+    driver.stop();
+    let driver = air.administered_device(link_id, None, false).unwrap();
+    let state = driver.attached().await.unwrap();
+    assert_eq!(state.name.as_deref(), Some(administered(false).name));
+    driver.stop();
+}
+
+#[tokio::test]
+async fn a_stopped_air_has_no_administered_device() {
+    let dir = tempfile::tempdir().unwrap();
+    let air = MobileStagingAir::start(dir.path().display().to_string(), false).unwrap();
+    air.stop();
+    assert_eq!(
+        air.administered_device(administered(true).link_id.to_owned(), None, false)
+            .err(),
+        Some(MobileStagingAirError::Stopped)
+    );
+}
+
+#[tokio::test]
+async fn an_administered_device_needs_a_staged_link_and_a_well_formed_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let air = MobileStagingAir::start(dir.path().display().to_string(), false).unwrap();
+    assert_eq!(
+        air.administered_device(RADIO_LINK_ID.to_owned(), None, false)
+            .err(),
+        Some(MobileStagingAirError::NoSuchDevice)
+    );
+    assert_eq!(
+        air.administered_device(
+            administered(true).link_id.to_owned(),
+            Some(vec![7; 3]),
+            false
+        )
+        .err(),
+        Some(MobileStagingAirError::InvalidHostKey)
+    );
+}

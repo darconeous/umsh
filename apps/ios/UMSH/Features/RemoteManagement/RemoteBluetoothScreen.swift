@@ -11,11 +11,10 @@ import UMSHMobileCore
 /// the copy says so rather than leaving the operator to find out.
 struct RemoteBluetoothScreen: View {
     let model: ManageDeviceModel
-    @State private var edits = Edits()
+    @State private var draft: MobileBluetoothDraft?
     @State private var isConfirmingClear = false
 
     private var reading: RemoteCategoryReading? { model.readings[.bluetooth] }
-    private var problems: [UInt32: String] { model.writeRefusals[.bluetooth] ?? [:] }
 
     /// Whether this phone is talking to the device over the Bluetooth this
     /// screen configures. On the mesh it is not: the device is reached
@@ -24,15 +23,16 @@ struct RemoteBluetoothScreen: View {
     private var overThisLink: Bool { model.usesBluetooth }
 
     var body: some View {
+        let review = model.review(draft)
+        let problems = RemoteRowProblems(refusals: model.writeRefusals[.bluetooth] ?? [:], review: review)
         Form {
             Section {
-                if edits.enabled.isKnown {
-                    Toggle(isOn: $edits.enabled.edited.replacingNil(with: false)) {
-                        RemoteFieldTitle(
-                            "Bluetooth enabled",
-                            problem: problems[edits.enabled.property]
-                        )
-                    }
+                if let draft = Binding($draft) {
+                    RemoteToggleField(
+                        "Bluetooth enabled",
+                        field: draft.enabled,
+                        problem: problems[draft.wrappedValue.enabled.propertyId]
+                    )
                 } else {
                     RemoteReadOnlyToggle("Bluetooth enabled", isOn: nil)
                 }
@@ -49,7 +49,7 @@ struct RemoteBluetoothScreen: View {
                     if let count = reading?.properties.bleBondCount {
                         RemoteValueRow("Paired phones", value: "\(count)")
                     } else {
-                        RemoteValueRow("Paired phones", value: "Not read")
+                        RemoteNotRead(title: "Paired phones")
                     }
                 }
                 RemoteValueRow("Currently Connected", value: connectionSummary)
@@ -61,13 +61,12 @@ struct RemoteBluetoothScreen: View {
 
             if model.supportsBluetoothPairing {
                 Section {
-                    if edits.pairing.isKnown {
-                        Toggle(isOn: $edits.pairing.edited.replacingNil(with: false)) {
-                            RemoteFieldTitle(
-                                "Pairing mode",
-                                problem: problems[edits.pairing.property]
-                            )
-                        }
+                    if let draft = Binding($draft) {
+                        RemoteToggleField(
+                            "Pairing mode",
+                            field: draft.pairing,
+                            problem: problems[draft.wrappedValue.pairing.propertyId]
+                        )
                     } else {
                         RemoteReadOnlyToggle("Pairing mode", isOn: nil)
                     }
@@ -96,12 +95,11 @@ struct RemoteBluetoothScreen: View {
             model: model,
             category: .bluetooth,
             title: "Bluetooth",
-            apply: { await apply() },
-            hasEdits: !edits.dirty.isEmpty,
-            applyWarning: applyWarning
+            apply: { await model.applyAndRebuild($draft) },
+            review: review,
+            applyWarning: applyWarning(review?.warning)
         )
-        .onChange(of: reading?.asOf) { edits = Edits(reading, preserving: edits) }
-        .onAppear { if edits.isEmpty { edits = Edits(reading) } }
+        .draft($draft, from: model, revision: reading?.revision)
     }
 
     /// Whether anyone is on the device's Bluetooth right now.
@@ -118,128 +116,92 @@ struct RemoteBluetoothScreen: View {
     /// The one confirmation Apply gets. Stranding the device outranks the
     /// pairing window: a change that does both is confirmed for the harm
     /// it can do, not the door it opens.
-    private var applyWarning: (title: String, message: String)? {
-        if overThisLink, edits.disablesBluetooth { return disableWarning }
-        if edits.opensPairing {
-            return (
-                title: "Turn On Pairing Mode",
-                message: """
-                    While pairing mode is on, any phone nearby can pair with \
-                    this device. A phone that pairs can manage it and read \
-                    everything it holds.
-                    """
+    private func applyWarning(_ warning: MobileApplyWarning?) -> (title: String, message: String)? {
+        switch warning {
+        case .disablesBluetooth:
+            disableWarning
+        case .opensPairing:
+            (
+                title: String(
+                    localized: "Turn On Pairing Mode",
+                    comment: "Confirmation title and button: open a managed device's Bluetooth pairing window."
+                ),
+                message: String(
+                    localized: """
+                        While pairing mode is on, any phone nearby can pair with \
+                        this device. A phone that pairs can manage it and read \
+                        everything it holds.
+                        """,
+                    comment: "Confirmation message before opening a managed device's Bluetooth pairing window."
+                )
             )
+        case .strandsRadio, .disablesWifi, .changesStaticAddressing, nil:
+            nil
         }
-        return nil
     }
 
     /// What clearing costs, which is not the same question on every link.
     private var clearWarning: String {
-        let paired = reading?.properties.bleBondCount
-        let subject = switch paired {
-        case .some(let count) where count == 1: "The one phone paired with this device"
-        case .some(let count) where count > 1: "All \(count) phones paired with this device"
-        default: "Every phone paired with this device"
+        let paired = reading?.properties.bleBondCount.map(Int.init) ?? 0
+        return switch (overThisLink, paired) {
+        case (true, 0):
+            String(
+                localized: "Every phone paired with this device, including this one, will be forgotten. The device then opens a pairing window so you can pair again.",
+                comment: "Clear Pairings confirmation, over the device's own Bluetooth, when the count of paired phones is unknown."
+            )
+        case (true, let count):
+            String(
+                localized: "All \(count) phones paired with this device, including this one, will be forgotten. The device then opens a pairing window so you can pair again.",
+                comment: "Clear Pairings confirmation, over the device's own Bluetooth: the count of paired phones. Has plural variants."
+            )
+        case (false, 0):
+            String(
+                localized: "Every phone paired with this device will be forgotten. The device then opens a pairing window so someone can pair again.",
+                comment: "Clear Pairings confirmation, device reached some other way than its own Bluetooth, when the count of paired phones is unknown."
+            )
+        case (false, let count):
+            String(
+                localized: "All \(count) phones paired with this device will be forgotten. The device then opens a pairing window so someone can pair again.",
+                comment: "Clear Pairings confirmation, device reached some other way than its own Bluetooth: the count of paired phones. Has plural variants."
+            )
         }
-        return overThisLink
-            ? "\(subject), including this one, will be forgotten. The device then opens a pairing window so you can pair again."
-            : "\(subject) will be forgotten. The device then opens a pairing window so someone can pair again."
     }
 
     /// The stranding warning, in the terms of the link it would strand.
+    /// The core asks for it only when the device is reached over its own
+    /// Bluetooth: the companion radio, or a device being set up.
     ///
     /// Modeled on the Radio screen's: a change that can put a device out of
     /// reach is confirmed once, on every route into Apply.
     private var disableWarning: (title: String, message: String) {
-        switch model.link {
-        case .companion:
-            (
-                title: "Disconnect This Radio",
-                message: """
-                    Turning Bluetooth off disconnects the radio this phone is \
-                    using, and the mesh goes with it. The only way back is the \
-                    controls on the device itself.
-                    """
+        model.link == .administrative
+            ? (
+                title: String(
+                    localized: "End This Session",
+                    comment: "Confirmation title and button: turn off Bluetooth on a device being set up over it."
+                ),
+                message: String(
+                    localized: """
+                        Turning Bluetooth off disconnects the device and ends this \
+                        setup session. The only way back is the controls on the \
+                        device itself.
+                        """,
+                    comment: "Confirmation message before turning off Bluetooth on a device being set up over it."
+                )
             )
-        case .administrative:
-            (
-                title: "End This Session",
-                message: """
-                    Turning Bluetooth off disconnects the device and ends this \
-                    setup session. The only way back is the controls on the \
-                    device itself.
-                    """
+            : (
+                title: String(
+                    localized: "Disconnect This Radio",
+                    comment: "Confirmation title and button: turn off Bluetooth on the radio this phone is using."
+                ),
+                message: String(
+                    localized: """
+                        Turning Bluetooth off disconnects the radio this phone is \
+                        using, and the mesh goes with it. The only way back is the \
+                        controls on the device itself.
+                        """,
+                    comment: "Confirmation message before turning off Bluetooth on the radio this phone is using."
+                )
             )
-        case .mesh:
-            (
-                title: "Turn Bluetooth Off",
-                message: """
-                    The device stays on the mesh, but no phone will be able to \
-                    connect to it directly until Bluetooth is turned back on.
-                    """
-            )
-        }
-    }
-
-    private func apply() async {
-        // Rebuilt from what the device answered—but only if it answered.
-        // A write that never left the phone leaves these fields as the only
-        // copy of what the operator asked for.
-        if await model.apply(.bluetooth, desired: edits.desired, dirty: edits.dirty) {
-            edits = Edits(model.readings[.bluetooth])
-        }
-    }
-
-    /// The two settings on this screen. The link is a reading, and the
-    /// bond count is written only by Clear Pairings—a destructive act
-    /// with its own confirmation—so neither is part of Apply.
-    private struct Edits {
-        var enabled = RemoteField<Bool>(0, nil)
-        var pairing = RemoteField<Bool>(0, nil)
-        var isEmpty = true
-        /// What the device last said, in full.
-        var held = UlcpDevicePropertiesRecord.empty
-
-        init() {}
-
-        init(_ reading: RemoteCategoryReading?) {
-            let id = ulcpProperties
-            held = reading?.properties ?? UlcpDevicePropertiesRecord.empty
-            enabled = RemoteField(id.bleEnabled, held.bleEnabled)
-            pairing = RemoteField(id.blePairing, held.blePairing)
-            isEmpty = reading == nil
-        }
-
-        /// The new reading as the baseline, with the operator's standing
-        /// edits carried over—see ``RemoteField/preserving(_:)``.
-        init(_ reading: RemoteCategoryReading?, preserving old: Edits) {
-            self.init(reading)
-            guard !old.isEmpty else { return }
-            enabled = enabled.preserving(old.enabled)
-            pairing = pairing.preserving(old.pairing)
-        }
-
-        /// Whether Apply would turn Bluetooth off. Only an edit counts: a
-        /// device already unreachable over Bluetooth is not being made so.
-        var disablesBluetooth: Bool { enabled.isDirty && enabled.value == false }
-
-        /// Whether Apply would open the pairing window.
-        var opensPairing: Bool { pairing.isDirty && pairing.value == true }
-
-        var dirty: Set<UInt32> {
-            var dirty: Set<UInt32> = []
-            if enabled.isDirty { dirty.insert(enabled.property) }
-            if pairing.isDirty { dirty.insert(pairing.property) }
-            return dirty
-        }
-
-        var desired: UlcpDevicePropertiesRecord {
-            // Only the dirty set is written; the rest of the record is
-            // carried for completeness and never reaches the air.
-            var desired = held
-            desired.bleEnabled = enabled.value
-            desired.blePairing = pairing.value
-            return desired
-        }
     }
 }

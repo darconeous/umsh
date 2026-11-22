@@ -29,7 +29,7 @@ extension MobileAppError {
             )
         case .InvalidInput:
             String(localized: "That isn't a valid address.", comment: "A node's address did not decode.")
-        case .InvalidRequest, .OperationReused:
+        case .InvalidRequest:
             String(
                 localized: "This request can't be made.",
                 comment: "The phone's mesh session would not make a request as asked."
@@ -94,11 +94,6 @@ extension MobileAppError {
             String(
                 localized: "The device's answer couldn't be read. Its firmware may be newer than this app.",
                 comment: "Managing a node: its reply did not decode."
-            )
-        case let .Refused(status):
-            String(
-                localized: "The device refused the request: \(ulcpStatusName(status: status)).",
-                comment: "Managing a node: it refused. The placeholder is a protocol status name, not translated."
             )
         case .Cancelled:
             String(localized: "The operation was canceled.", comment: "A request the person stopped.")

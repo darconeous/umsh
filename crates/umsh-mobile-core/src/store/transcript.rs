@@ -357,6 +357,23 @@ impl MobileAppStore {
             )
             .optional()?)
     }
+
+    /// [`Self::chat_message`], with its live reactions, folded as a page's
+    /// are.
+    pub(crate) fn chat_message_with_reactions(
+        &self,
+        owner_identity_id: &str,
+        conversation_address: &str,
+        message: &MobileStoredChatMessageRefRecord,
+    ) -> Result<Option<MobileStoredChatMessageRecord>, MobileStoreError> {
+        let Some(row) = self.chat_message(owner_identity_id, conversation_address, message)? else {
+            return Ok(None);
+        };
+        let mut rows = [row];
+        attach_reactions(&self.connection(), owner_identity_id, &mut rows)?;
+        let [row] = rows;
+        Ok(Some(row))
+    }
 }
 
 /// The columns every transcript read selects. [`stored_chat_message`]

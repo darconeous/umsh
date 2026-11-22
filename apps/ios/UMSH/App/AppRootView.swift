@@ -131,7 +131,6 @@ struct AppRootView: View {
                         delete: runtime.deleteChannelConversation,
                         requestMemberIdentity: runtime.requestMemberIdentity,
                         setNotifications: runtime.setChannelNotifications,
-                        emergencyCertified: { runtime.emergencyCertified },
                         certifyEmergency: { try runtime.certifyEmergency() }
                     ),
                     channelManagementActions: channelManagementActions,
@@ -233,6 +232,7 @@ struct AppRootView: View {
                     selectRadio: runtime.selectRadio,
                     stopDiscovery: runtime.stopRadioDiscovery,
                     saveDevicePeer: runtime.saveAdministeredDevice,
+                    deviceSetupServices: runtime.deviceSetupServices,
                     isPeerSaved: { address in
                         runtime.peers.contains { $0.identity.canonicalAddress == address && $0.isSaved }
                     },
@@ -362,6 +362,7 @@ struct AppRootView: View {
                 advertisedName: runtime.advertisedName,
                 clearDiscoveredNodes: runtime.clearDiscoveredNodes,
                 solicitNearbyIdentities: runtime.solicitNearbyIdentities,
+                discoveryWait: runtime.discoveryWait,
                 vantage: $discoveryVantage,
                 openConversation: { conversation in
                     showsDiscovery = false

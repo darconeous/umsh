@@ -299,29 +299,11 @@ struct BoundaryTests {
         #expect(named.leaveMessage == publicChannel.leaveMessage)
     }
 
-    @Test func driverErrorsReachTableEditsAsTheirOwnCopy() {
-        func mapped(_ error: MobileRadioError) -> DevicePeerError? {
-            RadioDriverAdapter.devicePeerError(error) as? DevicePeerError
-        }
-        #expect(mapped(.DeviceFull) == .deviceFull)
-        #expect(mapped(.Unsupported) == .unsupported)
-        #expect(mapped(.RadioUnavailable) == .radioUnavailable)
-        #expect(mapped(.UnrecognizedAnswer) == .unrecognizedAnswer)
-        #expect(mapped(.OperationRejected(operation: "renamed", statusCode: 5,
-            statusName: "STATUS_NAME")) == .failed("STATUS_NAME"))
-        #expect(RadioDriverAdapter.devicePeerError(.OperationInProgress)
-            as? RadioConnectionError == .operationInProgress)
-    }
-
     @Test func aRefusedConfigurationThrowsTheSessionsOwnCause() {
         let refused = RadioDriverAdapter.connectionError(.Refused(error: .UlcpUnexpectedFrame))
         #expect(refused as? MobileError == .UlcpUnexpectedFrame)
         #expect(RadioDriverAdapter.connectionError(.TimedOut)
             as? RadioConnectionError == .operationTimedOut)
-        #expect(RadioDriverAdapter.managementError(.TimedOut)
-            as? RemoteManagementError == .noAnswer)
-        #expect(RadioDriverAdapter.managementError(.Refused(error: .UlcpUnexpectedFrame))
-            as? RemoteManagementError == .unavailable)
     }
 
     @Test func transportProblemsKeepTheirCodes() {
@@ -502,6 +484,25 @@ struct MapNodeTests {
         #expect(MapTierFilter.all.widened(toInclude: nil) == .all)
     }
 
+    /// The pin says whether its claims may be attributed to the node by the
+    /// core's flag, not by the advertisement's signature read here.
+    @Test func aPinIsAttributableOnlyWhenTheCoreSaysSo() {
+        func placed(attributable: Bool) -> PeerSummary {
+            var summary = peer(id: 3)
+            summary.advertisedIdentity = MeshNodeIdentity(
+                roleCode: 3, capabilityBits: [.mobile], forwards: false, name: nil,
+                latitude: 38.9, longitude: -120.1, locationPrecision: nil,
+                altitudeMeters: nil, timestamp: nil, signature: .valid
+            )
+            summary.advertisedIdentityIsAttributable = attributable
+            return summary
+        }
+        let unattributed = MapNode.nodes(peers: [placed(attributable: false)], neighborReports: [])
+        #expect(unattributed.map(\.isAttributable) == [false])
+        let attributed = MapNode.nodes(peers: [placed(attributable: true)], neighborReports: [])
+        #expect(attributed.map(\.isAttributable) == [true])
+    }
+
     @Test func aRouterPlacesANodeThatHasNotSpokenSinceItAnswered() {
         let router = peer(id: 2)
         let neighbor = peer(id: 1, ownAdvertisementAt: now.addingTimeInterval(-7_200))
@@ -652,5 +653,42 @@ struct RepeatCaptionTests {
     @Test func countsRepeatersThatNamedNobody() {
         #expect(RepeatCaption.text(lead: nil, count: 1) == "Heard a repeat")
         #expect(RepeatCaption.text(lead: nil, count: 3) == "Heard 3 repeats")
+    }
+}
+
+@Suite
+struct TranscriptActionExpiryTests {
+    private static func message(
+        _ row: Int64,
+        reviseUntil: Int64?,
+        actions: MessageActions
+    ) -> ChatMessageSummary {
+        ChatMessageSummary(
+            id: "s:\(row)", body: "m\(row)", isOutbound: true, deliveryState: nil,
+            isDeleted: false, isEdited: false, sessionID: "s", handle: UInt32(row),
+            wireID: nil, epoch: nil,
+            cursor: ChatMessageCursor(createdAtMilliseconds: row, rowID: row),
+            createdAtMilliseconds: row,
+            reviseUntilMilliseconds: reviseUntil,
+            actions: actions
+        )
+    }
+
+    @Test func theWindowIsReadAgainWhenTheFirstOfferLapses() {
+        var window = TranscriptWindow()
+        window.replace(with: TranscriptPage(messages: [
+            // Past its window: it offers nothing timed, so it sets nothing.
+            Self.message(1, reviseUntil: 500, actions: MessageActions(delete: true)),
+            Self.message(2, reviseUntil: 3_000, actions: MessageActions(edit: true, delete: true)),
+            Self.message(3, reviseUntil: 2_000, actions: MessageActions(resend: .inPlace)),
+            // Going as new does not lapse.
+            Self.message(4, reviseUntil: 1_000, actions: MessageActions(resend: .asNew)),
+        ]), revision: 1)
+        #expect(window.nextActionExpiry == Date(storeMilliseconds: 2_000))
+
+        window.replace(with: TranscriptPage(messages: [
+            Self.message(1, reviseUntil: 500, actions: MessageActions(delete: true)),
+        ]), revision: 2)
+        #expect(window.nextActionExpiry == nil)
     }
 }

@@ -48,21 +48,6 @@ enum RegionCodeText {
     static func code(of region: String) -> Data? {
         try? regionCodeFromString(text: region)
     }
-
-    /// The form a region's code derives from: ASCII `A`–`Z` folded to
-    /// lowercase, every other character left alone. Folding no further
-    /// than the derivation does is what keeps this screen's idea of "the
-    /// same region" identical to the device's.
-    static func folded(_ region: String) -> String {
-        String(region.map { $0.isASCII ? Character($0.lowercased()) : $0 })
-    }
-
-    /// Where `region` sits in `regions`, comparing as the derivation does:
-    /// two spellings that differ only in ASCII case are one region.
-    static func index(of region: String, in regions: [String]) -> Int? {
-        let target = folded(region)
-        return regions.firstIndex { folded($0) == target }
-    }
 }
 
 /// The repeater forwarding policy for one device.
@@ -72,13 +57,19 @@ enum RegionCodeText {
 /// radio section and are a separate question entirely. The wording here
 /// keeps that line visible, because conflating them produces a repeater
 /// that is silent for reasons nobody can find.
+///
+/// The list, the tag and their rules are the core's, the same ones the
+/// management screen's repeater editor uses: adding goes through
+/// `draftAddRepeaterRegion`, a suggestion through `draftAdoptRegions`, and
+/// the tag is chosen from the core's taggable regions.
 struct RepeaterSettingsSection: View {
-    /// `PROP_MAC_REPEATER_MODE`: 0 off, 1 on, 2 adaptive.
-    @Binding var mode: UInt8
-    @Binding var regions: [String]
-    @Binding var defaultRegion: Data?
-    @Binding var minRssiDBm: Int16?
-    @Binding var minSnrDB: Int8?
+    @Binding var repeater: MobileRepeaterDraft
+    /// The default-region picker's rows besides "None".
+    let taggableRegions: [String]
+    /// The device would tag untagged traffic with a region it does not relay.
+    let defaultRegionUnlisted: Bool
+    let minRssiChoices: MobileChoiceList?
+    let minSnrChoices: MobileChoiceList?
     /// Where the device says it is, as it reported at attach.
     var advertisedPosition: UlcpIdentPositionRecord?
     /// What the device's receiver reports, when it has one.
@@ -106,15 +97,18 @@ struct RepeaterSettingsSection: View {
     /// Accepted in the suggestion sheet, adopted from its onDismiss.
     @State private var pendingSuggestion: MobileRegionOutcomeRecord?
 
+    private var mode: Int64 { repeater.mode.value ?? 0 }
+    private var regions: [String] { repeater.regions.value }
+
     var body: some View {
         Section {
-            Picker("Forward other nodes' traffic", selection: $mode) {
+            Picker("Forward other nodes' traffic", selection: $repeater.mode.value) {
                 Text("Off", comment: "Forwarding mode: the device does not forward.")
-                    .tag(UInt8(0))
+                    .choiceTag(0)
                 Text("Adaptive", comment: "Forwarding mode: the device forwards only what no repeater carried.")
-                    .tag(UInt8(2))
+                    .choiceTag(2)
                 Text("On", comment: "Forwarding mode: the device is a repeater.")
-                    .tag(UInt8(1))
+                    .choiceTag(1)
             }
         } header: {
             Text("Repeater")
@@ -131,7 +125,7 @@ struct RepeaterSettingsSection: View {
         .sheet(isPresented: $showsSuggestion, onDismiss: adoptPendingSuggestion) {
             RegionSuggestionSheet(
                 currentRegions: regions,
-                currentDefaultRegion: defaultRegion,
+                currentDefaultRegion: currentDefaultRegion,
                 sources: positionSources,
                 // Over Bluetooth the phone is within a few meters of the
                 // device, so where it is stands for where the device is.
@@ -155,13 +149,7 @@ struct RepeaterSettingsSection: View {
                         // keys an animation on this list).
                         .transition(.asymmetric(insertion: .identity, removal: .opacity))
                 }
-                .onDelete { offsets in
-                    let removed = offsets.compactMap { RegionCodeText.code(of: regions[$0]) }
-                    regions.remove(atOffsets: offsets)
-                    if let defaultRegion, removed.contains(defaultRegion) {
-                        self.defaultRegion = nil
-                    }
-                }
+                .onDelete { repeater.regions.value.remove(atOffsets: $0) }
                 HStack {
                     TextField("Short code, name, or 0x1234", text: $regionInput)
                         .textInputAutocapitalization(.never)
@@ -180,8 +168,8 @@ struct RepeaterSettingsSection: View {
                 }
                 if let suggested, displaces(suggested) {
                     Button("Undo", role: .destructive) {
-                        regions = suggested.displacedRegions
-                        defaultRegion = suggested.displacedDefaultRegion
+                        repeater.regions.value = suggested.displacedRegions
+                        repeater.defaultRegion.text = suggested.displacedDefaultRegion
                     }
                 }
             } header: {
@@ -190,7 +178,7 @@ struct RepeaterSettingsSection: View {
                 if let regionProblem {
                     Text(regionProblem).foregroundStyle(.red)
                 } else if let suggested {
-                    Text(suggestionNote(suggested))
+                    suggestionNote(suggested)
                 } else if isSuggesting {
                     Text("Looking up the regions around this phone…")
                 } else if regions.isEmpty {
@@ -201,16 +189,20 @@ struct RepeaterSettingsSection: View {
             }
 
             Section {
-                Picker("Tag untagged traffic", selection: $defaultRegion) {
-                    Text("None—don't tag").tag(Data?.none)
-                    ForEach(defaultRegionChoices, id: \.self) { region in
-                        Text(defaultRegionLabel(region)).tag(Data?.some(region))
+                Picker("Tag untagged traffic", selection: $repeater.defaultRegion.text) {
+                    Text("None—don't tag").tag("")
+                    // The device's own tag is offered whether or not it is
+                    // still in the list above: deleting a region the device
+                    // tags with should not leave the picker with nothing to
+                    // show for what the device actually holds.
+                    ForEach(taggableRegions, id: \.self) { region in
+                        Text(verbatim: defaultRegionLabel(region)).tag(region)
                     }
                 }
-                .disabled(defaultRegionChoices.isEmpty)
+                .disabled(taggableRegions.isEmpty)
             } footer: {
-                if let defaultRegion, !regionCodes.contains(defaultRegion) {
-                    Text("This device tags untagged traffic with a region it does not relay. Add \(RegionCodeText.label(defaultRegion)) to the list above, or choose a different tag.")
+                if defaultRegionUnlisted {
+                    Text("This device tags untagged traffic with a region it does not relay. Add \(RegionCodeText.label(region: repeater.defaultRegion.text)) to the list above, or choose a different tag.")
                 } else if regions.isEmpty {
                     Text("Add a routing region to be able to tag traffic that arrives without one.")
                 } else {
@@ -219,17 +211,13 @@ struct RepeaterSettingsSection: View {
             }
 
             Section {
-                Picker("Minimum signal", selection: $minRssiDBm) {
-                    Text("Off").tag(Int16?.none)
-                    ForEach(rssiChoices, id: \.self) { value in
-                        Text("\(value) dBm").tag(Int16?.some(value))
-                    }
+                Picker("Minimum signal", selection: $repeater.minRssi.value) {
+                    Text("Off").noChoiceTag()
+                    ChoiceListRows(list: minRssiChoices) { SignalPresentation.rssiText(Int16(clamping: $0)) }
                 }
-                Picker("Minimum quality", selection: $minSnrDB) {
-                    Text("Off").tag(Int8?.none)
-                    ForEach(snrChoices, id: \.self) { value in
-                        Text("\(value) dB").tag(Int8?.some(value))
-                    }
+                Picker("Minimum quality", selection: $repeater.minSnr.value) {
+                    Text("Off").noChoiceTag()
+                    ChoiceListRows(list: minSnrChoices) { SignalPresentation.decibelsText(Int(clamping: $0)) }
                 }
             } header: {
                 Text("Forwarding thresholds")
@@ -249,7 +237,12 @@ struct RepeaterSettingsSection: View {
         /// by Undo—the suggestion replaced both, so half of it back would
         /// be a third configuration nobody chose.
         let displacedRegions: [String]
-        let displacedDefaultRegion: Data?
+        let displacedDefaultRegion: String
+    }
+
+    /// The tag the draft holds, as the code a suggestion compares against.
+    private var currentDefaultRegion: Data? {
+        repeater.defaultRegion.text.isEmpty ? nil : RegionCodeText.code(of: repeater.defaultRegion.text)
     }
 
     /// The places this device's regions could be proposed from.
@@ -292,20 +285,23 @@ struct RepeaterSettingsSection: View {
         guard let proposal = try? await regionService.propose(
             position: position,
             currentRegions: regions,
-            currentDefaultRegion: defaultRegion
+            currentDefaultRegion: currentDefaultRegion
         ) else { return }
         suggested = AutomaticSuggestion(
             datasetVersion: proposal.lookup.datasetVersion,
             cellMeters: proposal.cellMeters,
             displacedRegions: regions,
-            displacedDefaultRegion: defaultRegion
+            displacedDefaultRegion: repeater.defaultRegion.text
         )
         adopt(proposal.replace)
     }
 
     private func adopt(_ outcome: MobileRegionOutcomeRecord) {
-        regions = outcome.regions
-        defaultRegion = outcome.defaultRegion
+        repeater = draftAdoptRegions(
+            draft: repeater,
+            regions: outcome.regions,
+            defaultRegion: outcome.defaultRegion
+        )
     }
 
     /// Adopt what the suggestion sheet accepted, deferred to its dismissal
@@ -320,79 +316,51 @@ struct RepeaterSettingsSection: View {
     /// is the only state Undo means anything in.
     private func displaces(_ suggestion: AutomaticSuggestion) -> Bool {
         suggestion.displacedRegions != regions
-            || suggestion.displacedDefaultRegion != defaultRegion
+            || suggestion.displacedDefaultRegion != repeater.defaultRegion.text
     }
 
-    private func suggestionNote(_ suggestion: AutomaticSuggestion) -> String {
-        guard !regions.isEmpty else {
-            return """
-                The region database knows of no regions around this phone, so \
-                this device forwards traffic from everywhere.
-                """
-        }
-        var note = """
-            Filled in from where this phone is, using region data \
-            \(suggestion.datasetVersion). Edit them freely—nothing is sent \
-            until you apply.
-            """
-        if !suggestion.displacedRegions.isEmpty, displaces(suggestion) {
-            note += " Undo puts back what the device was already holding."
-        }
-        return note
-    }
-
-    /// The regions offered as a tag.
-    ///
-    /// A default the device already holds that is not in its forwarding list
-    /// stays on this list rather than being hidden. The device does not
-    /// cross-check the two, so that state is reachable—and hiding it would
-    /// show **None** over a value still on the device, leave no way to clear
-    /// it, and write it back unchanged on the next apply.
-    /// The codes the listed regions derive to, which is the form the
-    /// default-region tag is stored and compared in.
-    private var regionCodes: [Data] {
-        regions.compactMap(RegionCodeText.code(of:))
-    }
-
-    private var defaultRegionChoices: [Data] {
-        let codes = regionCodes
-        guard let defaultRegion, !codes.contains(defaultRegion) else { return codes }
-        return codes + [defaultRegion]
-    }
-
-    private func defaultRegionLabel(_ region: Data) -> String {
-        regionCodes.contains(region)
-            ? RegionCodeText.label(region)
-            : "\(RegionCodeText.label(region))—not relayed"
-    }
-
-    private var rssiChoices: [Int16] {
-        stride(from: Int16(-130), through: Int16(-60), by: 5).map { $0 }
-    }
-
-    private var snrChoices: [Int8] {
-        stride(from: Int8(-20), through: Int8(10), by: 2).map { $0 }
-    }
-
-    private func addRegion() {
-        let text = regionInput.trimmingCharacters(in: .whitespaces)
-        guard !text.isEmpty else { return }
-        // Any string within the length bound is a region—a short code, a
-        // name, or a literal code—so the only rejection left is one the
-        // device would refuse to store.
-        guard RegionCodeText.code(of: text) != nil else {
-            regionProblem = "That region name is too long. Use up to 24 characters—a short code like SJC or WA, a region name, or 0x followed by four hex digits."
-            return
-        }
-        regionProblem = nil
-        regionInput = ""
-        // A region already listed is not added twice. A different
-        // capitalization of one is the same region—it derives the same
-        // code—so it respells the entry rather than joining it.
-        if let index = RegionCodeText.index(of: text, in: regions) {
-            regions[index] = text
+    @ViewBuilder
+    private func suggestionNote(_ suggestion: AutomaticSuggestion) -> some View {
+        if regions.isEmpty {
+            Text("The region database knows of no regions around this phone, so this device forwards traffic from everywhere.")
         } else {
-            regions.append(text)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Filled in from where this phone is, using region data \(suggestion.datasetVersion). Edit them freely—nothing is sent until you apply.", comment: "Device setup: footer after region suggestions were filled in. The placeholder is the region database's version, not translated.")
+                if !suggestion.displacedRegions.isEmpty, displaces(suggestion) {
+                    Text("Undo puts back what the device was already holding.")
+                }
+            }
+        }
+    }
+
+    /// A tag row's label, marked when it is the device's own tag and not in
+    /// the forwarding list.
+    private func defaultRegionLabel(_ region: String) -> String {
+        let label = RegionCodeText.label(region: region)
+        guard defaultRegionUnlisted, region == repeater.defaultRegion.text else { return label }
+        return String(
+            localized: "\(label)—not relayed",
+            comment: "Device setup: the region a repeater tags untagged traffic with, when it is not one the repeater relays. The placeholder is the region."
+        )
+    }
+
+    /// Add the typed region, or respell one the list already holds.
+    private func addRegion() {
+        do {
+            repeater = try draftAddRepeaterRegion(draft: repeater, text: regionInput)
+            regionProblem = nil
+            regionInput = ""
+        } catch MobileRegionEntryProblem.Invalid {
+            regionProblem = String(
+                localized: "That region name is too long. Use up to 24 characters—a short code like SJC or WA, a region name, or 0x followed by four hex digits.",
+                comment: "Managing a repeater: a region typed into its flood region list cannot be used."
+            )
+        } catch MobileRegionEntryProblem.AlreadyListed {
+            regionProblem = nil
+            regionInput = ""
+        } catch {
+            // Nothing else is thrown; what was typed stays.
+            assertionFailure("adding a region failed: \(error)")
         }
     }
 }

@@ -8,8 +8,8 @@ use umsh_ulcp::ids::prop;
 
 use super::test_support::{Core, NOW_MS, identity};
 use super::{
-    MobileAppChangesRecord, MobileAppError, MobileAppLearnedPathOffer, MobileAppPingResult,
-    MobileNotificationEventRecord, MobileOperation, MobilePositionRecord,
+    MobileAppChangesRecord, MobileAppLearnedPathOffer, MobileAppPingResult,
+    MobileNotificationEventRecord, MobilePositionRecord,
 };
 use crate::mobile_mesh::{MobileMeshExplicitPath, MobileMeshRouteKind};
 use crate::radio_driver::MobileRadioPhase;
@@ -373,66 +373,259 @@ async fn a_manual_path_is_held_kept_and_cleared() {
     assert_eq!(route.hold_remaining_ms, None);
 }
 
-#[tokio::test]
-async fn the_managed_repeater_is_read_under_an_operation() {
-    let staged = Staged::new().await;
-    let tallac = address_of(MANAGED_SEED);
-    let operation = MobileOperation::new();
-    let answers = staged
+/// The managed repeater, across the mesh, with its card read.
+async fn managed_repeater(staged: &Staged) -> Arc<crate::MobileManagedDevice> {
+    let device = staged
         .core
         .core
-        .remote_fetch(
-            operation.clone(),
-            tallac.clone(),
-            vec![prop::DEV_KEY, prop::DEV_NAME],
-            true,
-        )
+        .manage_device(address_of(MANAGED_SEED), false)
         .await
         .unwrap();
-    let key = answers
-        .iter()
-        .find(|answer| answer.property_id == prop::DEV_KEY)
-        .and_then(|answer| answer.value.clone());
     assert_eq!(
-        key,
-        Some(crate::public_identity_bytes(tallac.clone()).unwrap())
+        device.load_card().await,
+        Ok(crate::MobileManagementOutcome::Done)
     );
-    assert_eq!(
-        staged
-            .core
-            .core
-            .remote_fetch(operation, tallac, vec![prop::DEV_NAME], true)
-            .await,
-        Err(MobileAppError::OperationReused)
-    );
+    device
 }
 
 #[tokio::test]
-async fn a_cancelled_operation_ends_at_once() {
+async fn a_canceled_mesh_exchange_ends_at_once() {
+    use crate::MobileManagementOutcome;
+    use crate::ulcp::UlcpManageCategory;
     let staged = Staged::new().await;
-    let tallac = address_of(MANAGED_SEED);
+    let device = managed_repeater(&staged).await;
 
-    let early = MobileOperation::new();
-    early.cancel();
-    assert_eq!(
-        staged.core.core.remote_save(early, tallac.clone()).await,
-        Err(MobileAppError::Cancelled),
-        "cancelled before it began, nothing is sent"
-    );
-
-    // Unreachable, so the save would wait out the MAC's retries.
+    // Unreachable, so the read would wait out the MAC's retries.
     staged.air.set_remote_device_reachable(false);
-    let operation = MobileOperation::new();
     let started = tokio::time::Instant::now();
-    let (saved, ()) = tokio::join!(
-        staged.core.core.remote_save(operation.clone(), tallac),
+    let (read, ()) = tokio::join!(
+        device.refresh_category(UlcpManageCategory::Identity),
         async {
             tokio::time::sleep(Duration::from_millis(300)).await;
-            operation.cancel();
+            device.cancel();
         }
     );
-    assert_eq!(saved, Err(MobileAppError::Cancelled));
+    assert_eq!(read, Ok(MobileManagementOutcome::Cancelled));
     assert!(started.elapsed() < Duration::from_secs(5));
+}
+
+/// Firmware update entry across the mesh: the soft device refuses with
+/// `UNIMPLEMENTED`, and an unreachable device never confirms. The
+/// statuses the soft device cannot answer are `dfu_outcome`'s own table
+/// test.
+#[tokio::test]
+async fn mesh_dfu_entry_answers_by_the_device_status() {
+    use crate::{MobileManagementOutcome, MobileManagementProblem, UlcpDfuMode};
+    let staged = Staged::new().await;
+    let device = managed_repeater(&staged).await;
+    assert_eq!(
+        device.enter_dfu(UlcpDfuMode::Default).await,
+        Ok(MobileManagementOutcome::Failed {
+            problem: MobileManagementProblem::DfuUnsupported
+        })
+    );
+
+    staged.air.set_remote_device_reachable(false);
+    assert_eq!(
+        device.enter_dfu(UlcpDfuMode::Ble).await,
+        Ok(MobileManagementOutcome::Failed {
+            problem: MobileManagementProblem::DfuUnconfirmed
+        })
+    );
+}
+
+/// Bond clearing across the mesh: the managed repeater clears its bonds
+/// and echoes the count, and an unreachable device is unreachable. The
+/// soft device cannot refuse a zero bond count it supports, so a refusal
+/// is `bonds_cleared`'s own table test.
+#[tokio::test]
+async fn mesh_bond_clearing_answers_by_the_device_echo() {
+    use crate::ulcp::UlcpManageCategory;
+    use crate::{MobileManagementOutcome, MobileManagementProblem};
+    let staged = Staged::new().await;
+    let device = managed_repeater(&staged).await;
+    assert_eq!(
+        device.clear_bluetooth_pairings().await,
+        Ok(MobileManagementOutcome::Done)
+    );
+    // Read again from the device, not from what the write meant.
+    assert_eq!(
+        device.refresh_category(UlcpManageCategory::Bluetooth).await,
+        Ok(MobileManagementOutcome::Done)
+    );
+    let bluetooth = device
+        .snapshot()
+        .readings
+        .into_iter()
+        .find(|reading| reading.category == UlcpManageCategory::Bluetooth)
+        .unwrap();
+    assert!(bluetooth.is_fresh);
+    assert_eq!(
+        bluetooth.properties.ble_bond_count,
+        Some(0),
+        "the bonds are gone"
+    );
+
+    staged.air.set_remote_device_reachable(false);
+    assert_eq!(
+        device.clear_bluetooth_pairings().await,
+        Ok(MobileManagementOutcome::Failed {
+            problem: MobileManagementProblem::Unreachable
+        })
+    );
+}
+
+/// The managed repeater through the managed-device engine: read, applied
+/// and saved, opened again from the cache without asking, scanned by
+/// polling, joined to a network, and unreachable.
+#[tokio::test]
+async fn the_managed_repeater_is_managed_across_the_mesh() {
+    use crate::ulcp::{UlcpDevicePropertiesRecord, UlcpManageCategory};
+    use crate::{
+        MobileApplyOutcome, MobileApplyResult, MobileManagementLink, MobileManagementOutcome,
+        MobileManagementProblem, MobileWifiOutcome,
+    };
+
+    let staged = Staged::new().await;
+    let tallac = address_of(MANAGED_SEED);
+    let identity_name = |device: &crate::MobileManagedDevice| {
+        device
+            .snapshot()
+            .readings
+            .into_iter()
+            .find(|reading| reading.category == UlcpManageCategory::Identity)
+            .map(|reading| (reading.properties.device_name, reading.is_fresh))
+    };
+    let device = staged
+        .core
+        .core
+        .manage_device(tallac.clone(), false)
+        .await
+        .unwrap();
+    assert_eq!(device.snapshot().link, MobileManagementLink::Mesh);
+    assert_eq!(device.load_card().await, Ok(MobileManagementOutcome::Done));
+    assert!(device.snapshot().card_is_fresh);
+    assert_eq!(
+        device.refresh_category(UlcpManageCategory::Identity).await,
+        Ok(MobileManagementOutcome::Done)
+    );
+    assert_eq!(
+        device
+            .apply_properties(
+                UlcpManageCategory::Identity,
+                UlcpDevicePropertiesRecord {
+                    device_name: Some("Ridge Camp".to_owned()),
+                    ..UlcpDevicePropertiesRecord::default()
+                },
+                vec![prop::DEV_NAME],
+                true,
+            )
+            .await,
+        Ok(MobileApplyOutcome {
+            answered: true,
+            result: MobileApplyResult::Applied
+        })
+    );
+    device.release();
+
+    // Opened again, it comes from the cache and asks nothing.
+    let device = staged
+        .core
+        .core
+        .manage_device(tallac.clone(), false)
+        .await
+        .unwrap();
+    assert_eq!(device.load_card().await, Ok(MobileManagementOutcome::Done));
+    assert!(device.snapshot().card.is_some());
+    assert!(!device.snapshot().card_is_fresh, "the card is the cache's");
+    device
+        .load_category(UlcpManageCategory::Identity)
+        .await
+        .unwrap();
+    assert_eq!(
+        identity_name(&device),
+        Some((Some("Ridge Camp".to_owned()), false))
+    );
+
+    // A scan is followed by reading its flag; the core's clock paces it.
+    // The station scans only while it is on.
+    device
+        .refresh_category(UlcpManageCategory::Wifi)
+        .await
+        .unwrap();
+    assert_eq!(
+        device
+            .apply_properties(
+                UlcpManageCategory::Wifi,
+                UlcpDevicePropertiesRecord {
+                    wifi_enabled: Some(true),
+                    ..UlcpDevicePropertiesRecord::default()
+                },
+                vec![prop::WIFI_ENABLED],
+                false,
+            )
+            .await
+            .map(|outcome| outcome.result),
+        Ok(MobileApplyResult::Applied)
+    );
+    let scan = device.scan_networks();
+    tokio::pin!(scan);
+    let scanned = loop {
+        tokio::select! {
+            scanned = &mut scan => break scanned,
+            () = tokio::time::sleep(Duration::from_millis(50)) => staged.core.clock.advance(2_000),
+        }
+    };
+    assert_eq!(scanned, Ok(MobileManagementOutcome::Done));
+    let heard = device.snapshot().heard_networks;
+    assert!(
+        heard
+            .iter()
+            .any(|heard| heard.result.ssid == b"Field Office"),
+        "the table the flag's end delivered: {heard:?}"
+    );
+    let offered = heard
+        .iter()
+        .find(|heard| heard.result.ssid == b"Field Office")
+        .map(|heard| heard.result.modes);
+    assert_eq!(
+        device
+            .join_network(
+                b"Field Office".to_vec(),
+                2,
+                false,
+                b"fieldwork".to_vec(),
+                offered
+            )
+            .await,
+        Ok(MobileWifiOutcome::Done)
+    );
+    let wifi = device
+        .snapshot()
+        .readings
+        .into_iter()
+        .find(|reading| reading.category == UlcpManageCategory::Wifi)
+        .unwrap();
+    assert_eq!(wifi.properties.wifi_enabled, Some(true));
+    assert!(
+        wifi.properties
+            .wifi_networks
+            .unwrap_or_default()
+            .iter()
+            .any(|network| network.ssid == b"Field Office")
+    );
+
+    staged.air.set_remote_device_reachable(false);
+    assert_eq!(
+        device.refresh_category(UlcpManageCategory::Identity).await,
+        Ok(MobileManagementOutcome::Failed {
+            problem: MobileManagementProblem::Unreachable
+        })
+    );
+    assert_eq!(
+        device.snapshot().problem,
+        Some(MobileManagementProblem::Unreachable)
+    );
 }
 
 /// The staged named channel's ID and conversation address.
@@ -772,6 +965,169 @@ async fn a_lost_channel_message_is_asked_for_and_arrives() {
         .unwrap();
     until_stored(&staged, &channel, "the lost message", |message| {
         message.body == "Lost"
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn the_phone_s_first_message_continues_the_staged_stream() {
+    use super::MobileAppChatRequest;
+    let staged = Staged::new().await;
+    let speaker = staged_speaker_address();
+    staged
+        .core
+        .core
+        .send_chat(
+            speaker.clone(),
+            MobileAppChatRequest::Typed {
+                text: "Back at the trailhead".into(),
+                forward_secret: None,
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    let sent = until_stored(&staged, &speaker, "the message", |message| {
+        message.outbound && message.body == "Back at the trailhead"
+    })
+    .await;
+    // The staged messages of ours end at 255; no Sequence Reset between.
+    assert_eq!((sent.wire_id, sent.epoch), (Some(0), Some(0)));
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    while staged.air.peer_reacts("+1".to_owned()).await
+        == Err(MobileStagingAirError::NothingToAnswer)
+    {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the peer never heard it"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+#[tokio::test]
+async fn staged_messages_are_answered_edited_and_taken_back() {
+    use super::{MobileAppChatRequest, MobileReaction};
+    let staged = Staged::new().await;
+    let core = &staged.core.core;
+    let speaker = staged_speaker_address();
+    let trail_crew = core
+        .state(true)
+        .unwrap()
+        .channel_conversations
+        .into_iter()
+        .find(|conversation| conversation.channel.name.as_deref() == Some("Trail Crew"))
+        .unwrap()
+        .conversation_address;
+    let direct = stored_messages(&staged, &speaker);
+    let newest = |outbound: bool| {
+        direct
+            .iter()
+            .rev()
+            .find(|message| message.outbound == outbound && !message.is_deleted)
+            .unwrap()
+            .reference
+            .clone()
+    };
+    let (theirs, ours) = (newest(false), newest(true));
+    let older_ours = direct
+        .iter()
+        .rev()
+        .filter(|message| message.outbound && !message.is_deleted)
+        .nth(1)
+        .unwrap()
+        .reference
+        .clone();
+    let member = stored_messages(&staged, &trail_crew)
+        .into_iter()
+        .rev()
+        .find(|message| !message.outbound && message.sender_hint.is_some())
+        .unwrap()
+        .reference;
+
+    // A reaction to theirs, ours and a member's, each under its row.
+    for (address, message, reaction) in [
+        (&speaker, &theirs, MobileReaction::ThumbsUp),
+        (&speaker, &ours, MobileReaction::Heart),
+        (&trail_crew, &member, MobileReaction::Heart),
+    ] {
+        core.send_chat(
+            address.clone(),
+            MobileAppChatRequest::React {
+                message: message.clone(),
+                reaction: Some(reaction.clone()),
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        let page = core.transcript_newest(address.clone(), 100).unwrap();
+        let row = page
+            .messages
+            .iter()
+            .find(|row| &row.stored.reference == message)
+            .unwrap();
+        let mine: Vec<_> = row
+            .stored
+            .reactions
+            .iter()
+            .filter(|stored| stored.outbound)
+            .map(|stored| crate::app_core::chat::reaction_from_body(&stored.body))
+            .collect();
+        assert_eq!(mine, [Some(reaction)], "{message:?}");
+    }
+
+    // A reply quotes what it answers.
+    core.send_chat(
+        speaker.clone(),
+        MobileAppChatRequest::Reply {
+            target: theirs.clone(),
+            text: "Copy that".into(),
+            forward_secret: None,
+        },
+        None,
+    )
+    .await
+    .unwrap();
+    let reply = until_stored(&staged, &speaker, "the reply", |message| {
+        message.outbound && message.body == "Copy that"
+    })
+    .await;
+    assert!(reply.is_reply);
+    assert_eq!(
+        reply
+            .quote
+            .and_then(|quote| quote.original)
+            .map(|original| original.reference),
+        Some(theirs)
+    );
+
+    // Ours are edited and taken back.
+    core.send_chat(
+        speaker.clone(),
+        MobileAppChatRequest::Edit {
+            message: ours.clone(),
+            text: "Agreed. Flag both approaches.".into(),
+        },
+        None,
+    )
+    .await
+    .unwrap();
+    until_stored(&staged, &speaker, "the edit", |message| {
+        message.reference == ours && message.is_edited
+    })
+    .await;
+    core.send_chat(
+        speaker.clone(),
+        MobileAppChatRequest::Delete {
+            message: older_ours.clone(),
+        },
+        None,
+    )
+    .await
+    .unwrap();
+    until_stored(&staged, &speaker, "the deletion", |message| {
+        message.reference == older_ours && message.is_deleted
     })
     .await;
 }

@@ -85,37 +85,6 @@ struct StoredNode: Equatable, Sendable {
     let advertisementReceivedAt: Date?
 }
 
-/// What a remote device said it is, kept between openings of its settings.
-///
-/// The four things worth learning once: a device's capabilities and firmware
-/// version change only when it is reflashed, its hardware never, and its name
-/// rarely. Holding them means the second and every later open of a device's
-/// settings puts nothing on the air at all—which over five flood hops is
-/// the difference between instant and half a minute of everyone's airtime.
-struct StoredManagementCard: Equatable, Sendable {
-    /// `PROP_CAPS` verbatim, planned against without asking the device
-    /// again.
-    let capabilities: Data
-    /// `PROP_DEV_VERSION`. The key the cached values hang from: different
-    /// firmware may hold different properties, so a change here discards
-    /// them.
-    let deviceVersion: String?
-    let deviceModel: String?
-    let deviceName: String?
-    let fetchedAt: Date
-}
-
-/// One property as a device last reported it, and when.
-///
-/// Stored as the octets that came off the air: what they mean is settled by
-/// the ULCP decoders rather than here, so a value cached by one build reads
-/// the same in the next. The instant is what lets a screen date a reading
-/// rather than present it as current.
-struct StoredCachedProperty: Equatable, Sendable {
-    let value: Data
-    let fetchedAt: Date
-}
-
 /// One neighbor a router reported, as the page carried it.
 ///
 /// Stored decoded rather than as the wire entry: the fields are few and
@@ -680,14 +649,6 @@ extension Date {
     }
 }
 
-fileprivate extension Date {
-    /// This instant to the nearest millisecond, which is how the management
-    /// cache has always stamped its card, so stored rows keep meaning the same.
-    var roundedStoreMilliseconds: Int64 {
-        Int64((timeIntervalSince1970 * 1_000).rounded())
-    }
-}
-
 extension StoredNode {
     init(_ record: MobileStoredNodeRecord) {
         self.init(
@@ -707,36 +668,6 @@ extension StoredNode {
             notifyWhenHeard: record.notifyWhenHeard,
             advertisementReceivedAt: record.advertisementReceivedAtMs.map(Date.init(storeMilliseconds:))
         )
-    }
-}
-
-extension StoredManagementCard {
-    init(_ record: MobileStoredManagementCardRecord) {
-        self.init(
-            capabilities: record.capabilities,
-            deviceVersion: record.deviceVersion,
-            deviceModel: record.deviceModel,
-            deviceName: record.deviceName,
-            fetchedAt: Date(storeMilliseconds: record.fetchedAtMs)
-        )
-    }
-}
-
-extension MobileStoredManagementCardRecord {
-    init(_ card: StoredManagementCard) {
-        self.init(
-            capabilities: card.capabilities,
-            deviceVersion: card.deviceVersion,
-            deviceModel: card.deviceModel,
-            deviceName: card.deviceName,
-            fetchedAtMs: card.fetchedAt.roundedStoreMilliseconds
-        )
-    }
-}
-
-extension StoredCachedProperty {
-    init(_ record: MobileStoredCachedPropertyRecord) {
-        self.init(value: record.value, fetchedAt: Date(storeMilliseconds: record.fetchedAtMs))
     }
 }
 

@@ -1,5 +1,6 @@
 #if DEBUG
 import SwiftUI
+import UMSHMobileCore
 
 /// Static fixtures only: opening this gallery starts no service and performs
 /// no reads or writes. The same examples can be previewed without an app runtime.
@@ -36,8 +37,9 @@ struct ComponentGalleryView: View {
 
 struct ComponentGalleryExamples: View {
     let page: ComponentGalleryView.Page
-    @State private var frequency = "917500"
+    @State private var frequency = MobileIntegerField(propertyId: 0, known: true, reported: 917_500, value: 917_500)
     @State private var name = "Ridge relay"
+    @State private var nameField = MobileTextField(propertyId: 0, known: true, reported: "Ridge relay", text: "Ridge relay")
 
     static let hint = MeshNodeHint(bytes: Data([0xA1, 0xB2, 0x03]), text: "BtC5")
     static let purpleHint = MeshNodeHint(bytes: Data([0x8B, 0x60, 0xF5]), text: "AP5R")
@@ -152,10 +154,10 @@ struct ComponentGalleryExamples: View {
     private var fieldExamples: some View {
         Group {
             Section {
-                RemoteNumberField("Frequency", unit: "kHz", text: $frequency, isKnown: true)
-                RemoteNumberField("Transmit power", unit: "dBm", text: .constant("30"), isKnown: true, signed: true, problem: "The device rejected this value.")
-                RemoteNumberField("Bandwidth", unit: "Hz", text: .constant(""), isKnown: false)
-                RemoteTextField("Name", text: $name, isKnown: true)
+                RemoteIntegerField("Frequency", unit: "kHz", field: $frequency)
+                RemoteIntegerField("Transmit power", unit: "dBm", field: .constant(MobileIntegerField(propertyId: 0, known: true, reported: 30, value: 30)), signed: true, problem: "The device rejected this value.")
+                RemoteIntegerField("Bandwidth", unit: "Hz", field: .constant(MobileIntegerField(propertyId: 0, known: false, reported: 0, value: 0)))
+                RemoteTextField("Name", field: $nameField)
                 RemoteReadOnlyToggle("Radio enabled", isOn: true)
                 RemoteReadOnlyToggle("Bluetooth enabled", isOn: nil)
             } header: {
@@ -219,7 +221,8 @@ struct MapCardGalleryExample: View {
         let reporter = PeerSummary(
             id: 10,
             identity: MeshPublicIdentity(canonicalAddress: "Gallery reporter", hint: ComponentGalleryExamples.hint),
-            alias: "Ridge relay", advertisedName: nil, systemRole: nil, storedRole: .repeater
+            alias: "Ridge relay", advertisedName: nil, systemRole: nil, storedRole: .repeater,
+            isLikelyRepeater: true
         )
         return [
             node(1, title: "Ridge relay", isFavorite: true),

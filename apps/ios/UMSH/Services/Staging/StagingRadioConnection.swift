@@ -18,6 +18,9 @@ final class StagingRadioConnection: RadioDriverAdapter, RadioConnection, @unchec
 
     private let displayName: String
 
+    /// The staged devices beside the phone, for device setup.
+    let administeredDevices: StagedAdministeredDevices
+
     init(stateDirectory: URL, wifiScanOnly: Bool) throws {
         try FileManager.default.createDirectory(
             at: stateDirectory,
@@ -30,6 +33,7 @@ final class StagingRadioConnection: RadioDriverAdapter, RadioConnection, @unchec
         // The core's own constant, so a malformed one is a build mistake.
         identifier = UUID(uuidString: air.radioLinkId())!
         displayName = air.radioName()
+        administeredDevices = StagedAdministeredDevices(air: air)
         super.init(
             sessionQueue: DispatchQueue(label: "com.voria.umsh.radio.staging", qos: .userInitiated),
             driver: air.radio()
@@ -158,6 +162,54 @@ final class StagingRadioConnection: RadioDriverAdapter, RadioConnection, @unchec
                 "staging control failed: \(String(describing: error), privacy: .public)"
             )
         }
+    }
+}
+
+/// The staged devices beside the phone: one that forwards and one that
+/// does not. Device setup lists them with the devices it finds over
+/// Bluetooth and attaches to them through the staging air instead.
+struct StagedAdministeredDevices: Sendable {
+    private let air: MobileStagingAir
+    /// The link identifier each row's id stands for.
+    private let linkIds: [UUID: String]
+
+    /// One row for each, in the core's order.
+    let radios: [DiscoveredRadio]
+
+    init(air: MobileStagingAir) {
+        self.air = air
+        let devices = air.administeredDevices()
+        radios = devices.map { device in
+            DiscoveredRadio(
+                // The core's own constant, so a malformed one is a build
+                // mistake.
+                id: UUID(uuidString: device.linkId)!,
+                name: device.name,
+                // No signal to report.
+                rssiDBm: 127,
+                isRemembered: false
+            )
+        }
+        linkIds = Dictionary(uniqueKeysWithValues: devices.map {
+            (UUID(uuidString: $0.linkId)!, $0.linkId)
+        })
+    }
+
+    func offers(_ id: UUID) -> Bool {
+        linkIds[id] != nil
+    }
+
+    /// A driver for a fresh copy of the device `id` names, holding
+    /// `hostKey` and attaching as it returns.
+    func driver(for id: UUID, hostKey: Data?, lazyInspection: Bool) throws -> MobileRadioDriver {
+        guard let linkId = linkIds[id] else {
+            throw RadioConnectionError.radioNotFound
+        }
+        return try air.administeredDevice(
+            linkId: linkId,
+            hostKey: hostKey,
+            lazyInspection: lazyInspection
+        )
     }
 }
 #endif

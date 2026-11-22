@@ -4,7 +4,8 @@
 
 use std::rc::Rc;
 
-use super::mapping::router_hint_text;
+use super::mapping::{self, router_hint_text};
+use super::records::MobileRepeaterEvidence;
 use super::settings::MobilePositionRecord;
 use super::worker::Worker;
 use super::{MobileAppCore, MobileAppError, mesh_error};
@@ -41,6 +42,22 @@ pub struct MobileAppRouteRecord {
     pub confirmed_age_ms: Option<u64>,
     /// The route the session learned while a path was held.
     pub candidate: Option<MobileAppRouteCandidateRecord>,
+    /// Where an ask for identities near this peer can be steered; `None`
+    /// when there is no honest way.
+    #[uniffi(default)]
+    pub discovery_vantage: Option<MobileAppDiscoveryVantageRecord>,
+}
+
+/// Where an ask for identities can be steered to reach a peer's
+/// neighborhood.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct MobileAppDiscoveryVantageRecord {
+    /// Router hints to steer through, in send order. Never empty.
+    pub repeaters: Vec<RouterHintRecord>,
+    /// The ask ends at the peer; otherwise at the last of `repeaters`.
+    pub lands_at_peer: bool,
+    /// What the peer's own advertisement said; native code hedges by it.
+    pub evidence: MobileRepeaterEvidence,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -71,6 +88,44 @@ pub enum MobileAppPositionReading {
     Unavailable,
 }
 
+/// Where an ask for identities near a peer can be steered over `route`.
+///
+/// Through a learned source route, the ask goes to the peer itself only
+/// when the peer is known to forward (a node that does not would drop it)
+/// and the path has room for one more hint; otherwise it lands at the last
+/// repeater, one hop short. A peer heard directly is asked through unless
+/// it is known not to forward. A flood route names no repeaters to steer
+/// by.
+pub(super) fn discovery_vantage(
+    route: &MobileAppRouteRecord,
+    peer_hint: RouterHintRecord,
+    evidence: MobileRepeaterEvidence,
+) -> Option<MobileAppDiscoveryVantageRecord> {
+    match route.kind {
+        MobileMeshRouteKind::Source if !route.hints.is_empty() => {
+            let lands_at_peer = evidence == MobileRepeaterEvidence::Yes
+                && route.hints.len() < umsh_mac::CachedRoute::MAX_HINTS;
+            let mut repeaters = route.hints.clone();
+            if lands_at_peer {
+                repeaters.push(peer_hint);
+            }
+            Some(MobileAppDiscoveryVantageRecord {
+                repeaters,
+                lands_at_peer,
+                evidence,
+            })
+        }
+        MobileMeshRouteKind::Direct | MobileMeshRouteKind::Source => {
+            (evidence != MobileRepeaterEvidence::No).then(|| MobileAppDiscoveryVantageRecord {
+                repeaters: vec![peer_hint],
+                lands_at_peer: true,
+                evidence,
+            })
+        }
+        MobileMeshRouteKind::Flood | MobileMeshRouteKind::Unknown => None,
+    }
+}
+
 impl MobileAppRouteRecord {
     fn rendered(route: MobileMeshRouteRecord) -> Self {
         let candidate = route
@@ -91,6 +146,7 @@ impl MobileAppRouteRecord {
             fallback_acks: route.fallback_acks,
             confirmed_age_ms: route.confirmed_age_ms,
             candidate,
+            discovery_vantage: None,
         }
     }
 }
@@ -184,7 +240,27 @@ impl Worker {
             .peer_route(address.to_owned())
             .await
             .map_err(mesh_error)?;
-        Ok(MobileAppRouteRecord::rendered(route))
+        let mut route = MobileAppRouteRecord::rendered(route);
+        // A peer with no row is one nothing is known about. The evidence
+        // only steers a discovery ask, so a row that cannot be read costs
+        // the hint, never the route.
+        let evidence = match self.owner() {
+            Some(owner) => match self.store.node(&owner, address) {
+                Ok(row) => row
+                    .and_then(mapping::peer)
+                    .map_or(MobileRepeaterEvidence::Unknown, |peer| {
+                        peer.repeater_evidence
+                    }),
+                Err(error) => {
+                    log::warn!(error:? = error; "a peer's repeater evidence could not be read");
+                    MobileRepeaterEvidence::Unknown
+                }
+            },
+            None => MobileRepeaterEvidence::Unknown,
+        };
+        route.discovery_vantage =
+            peer_router_hint(address).and_then(|hint| discovery_vantage(&route, hint, evidence));
+        Ok(route)
     }
 
     async fn set_manual_path(
@@ -258,6 +334,11 @@ impl Worker {
         let route = self.route_to(&address).await?;
         Ok(learned_path_decision(&record, route, position))
     }
+}
+
+/// A peer's own router hint, from its address.
+fn peer_router_hint(address: &str) -> Option<RouterHintRecord> {
+    mapping::peer_router_hint(&crate::public_identity_bytes(address.to_owned()).ok()?)
 }
 
 /// Checks an address before the session sees it, so a bad one reads as
@@ -424,6 +505,7 @@ mod tests {
                 hints: Vec::new(),
                 hop_count: Some(1),
             }),
+            discovery_vantage: None,
         }
     }
 

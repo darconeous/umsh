@@ -37,7 +37,11 @@ extension PeerSummary {
             isSaved: stored.isSaved,
             isFavorite: stored.isFavorite,
             isOnDeviceIdentity: stored.onDeviceIdentity,
-            notifyWhenHeard: stored.notifyWhenHeard
+            notifyWhenHeard: stored.notifyWhenHeard,
+            isLikelyRepeater: record.likelyRepeater,
+            advertisedIdentityIsAttributable: record.advertisementAttributable,
+            repeaterEvidence: record.repeaterEvidence,
+            routerHint: MeshRouterHint(record.routerHint)
         )
     }
 }
@@ -119,7 +123,8 @@ extension ChannelConversationSummary {
             lastMessage: record.lastMessage.map(ConversationPreviewMessage.init),
             unreadCount: Int(record.unreadCount),
             createdAtMilliseconds: record.createdAtMs,
-            messageRevision: revision
+            messageRevision: revision,
+            needsEmergencyAgreement: record.needsEmergencyAgreement
         )
     }
 }
@@ -281,7 +286,21 @@ extension ChatMessageSummary {
                     progressAt: repeats.progressAt
                 )
             },
-            reviseUntilMilliseconds: record.reviseUntilMs
+            reviseUntilMilliseconds: record.reviseUntilMs,
+            actions: MessageActions(record.actions)
+        )
+    }
+}
+
+extension MessageActions {
+    init(_ record: MobileMessageActionsRecord) {
+        self.init(
+            edit: record.edit,
+            delete: record.delete,
+            resend: record.resend,
+            react: record.react,
+            reply: record.reply,
+            requestMissing: record.requestMissing
         )
     }
 }
@@ -356,7 +375,8 @@ extension PeerPingReply {
             rssiDBm: record.rssiDbm,
             signalToNoiseCentibels: record.snrCentibels,
             linkQuality: record.lqi,
-            viaRouteRetry: record.viaRouteRetry
+            viaRouteRetry: record.viaRouteRetry,
+            unnamedHops: record.unnamedHops
         )
     }
 }
@@ -387,6 +407,13 @@ extension PeerRoute {
             lastAcknowledged: record.confirmedAgeMs.map { now.addingTimeInterval(-Double($0) / 1000) },
             candidate: record.candidate.map {
                 Candidate(kind: Kind($0.kind), hints: $0.hints.map(MeshRouterHint.init), hopCount: $0.hopCount)
+            },
+            discoveryVantage: record.discoveryVantage.map {
+                DiscoveryVantage(
+                    repeaters: $0.repeaters.map(MeshRouterHint.init),
+                    landsAtPeer: $0.landsAtPeer,
+                    evidence: $0.evidence
+                )
             }
         )
     }

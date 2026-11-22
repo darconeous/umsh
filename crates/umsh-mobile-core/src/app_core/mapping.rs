@@ -5,12 +5,12 @@ use std::collections::HashMap;
 
 use umsh_core::{NodeHint, PublicKey, RouterHint};
 
-use super::chat::{REVISE_WINDOW_MS, reaction_from_body};
+use super::chat::{REVISE_WINDOW_MS, is_emergency_channel, message_actions, reaction_from_body};
 use super::records::{
     MobileAppChannelConversationRecord, MobileAppChannelRecord, MobileAppDirectConversationRecord,
     MobileAppMessageRecord, MobileAppMessageRepeaterRecord, MobileAppNeighborReportRecord,
     MobileAppPeerRecord, MobileAppPreviewRecord, MobileAppRepeaterListingRecord,
-    MobileAppRepeaterNeighborRecord, MobileAppTranscriptPageRecord,
+    MobileAppRepeaterNeighborRecord, MobileAppTranscriptPageRecord, MobileRepeaterEvidence,
 };
 use crate::store::{
     MobileApplicationRecords, MobileStoredChannelConversationRecord,
@@ -19,7 +19,10 @@ use crate::store::{
     MobileStoredNodeKind, MobileStoredNodeRecord, MobileStoredPeerRepeaterEntryRecord,
     MobileStoredPeerRepeaterListingRecord,
 };
-use crate::{node_identity_record, public_identity_record};
+use crate::{
+    IdentitySignatureState, NodeIdentityRecord, RouterHintRecord, node_identity_record,
+    public_identity_record,
+};
 
 /// A peer, mapped; `None` when its address does not decode, which leaves
 /// it out of every list along with its conversations and reports.
@@ -29,11 +32,59 @@ pub(super) fn peer(stored: MobileStoredNodeRecord) -> Option<MobileAppPeerRecord
         .advertisement
         .as_deref()
         .and_then(|payload| node_identity_record(&key, payload).ok());
+    let identity = public_identity_record(&key);
+    let router_hint = peer_router_hint(&identity.hint.bytes)?;
     Some(MobileAppPeerRecord {
-        identity: public_identity_record(&key),
+        likely_repeater: likely_repeater(
+            advertised_identity
+                .as_ref()
+                .map(|identity| identity.forwards),
+            stored.node_kind,
+        ),
+        advertisement_attributable: advertised_identity.as_ref().is_some_and(|identity| {
+            attributable(identity.signature, stored.advertisement_authenticated)
+        }),
+        repeater_evidence: repeater_evidence(advertised_identity.as_ref(), stored.node_kind),
+        router_hint,
+        identity,
         advertised_identity,
         stored,
     })
+}
+
+/// Whether an advertised identity may be attributed to the key it names:
+/// a valid signature, or none in a frame the MAC authenticated. A
+/// signature that fails never is, however the bundle arrived.
+pub(super) fn attributable(signature: IdentitySignatureState, authenticated: bool) -> bool {
+    match signature {
+        IdentitySignatureState::Valid => true,
+        IdentitySignatureState::Unsigned => authenticated,
+        IdentitySignatureState::Invalid => false,
+    }
+}
+
+/// What is known of whether a peer forwards: yes when it is likely to;
+/// otherwise unknown when nothing names its role (an advertised role this
+/// build has no name for, or none stored), else no.
+pub(super) fn repeater_evidence(
+    identity: Option<&NodeIdentityRecord>,
+    kind: Option<MobileStoredNodeKind>,
+) -> MobileRepeaterEvidence {
+    if likely_repeater(identity.map(|identity| identity.forwards), kind) {
+        return MobileRepeaterEvidence::Yes;
+    }
+    let unknown = match identity {
+        Some(identity) => matches!(
+            umsh_node::NodeRole::from_byte(identity.role_code),
+            umsh_node::NodeRole::Unspecified | umsh_node::NodeRole::Unknown(_)
+        ),
+        None => matches!(kind, None | Some(MobileStoredNodeKind::Unknown)),
+    };
+    if unknown {
+        MobileRepeaterEvidence::Unknown
+    } else {
+        MobileRepeaterEvidence::No
+    }
 }
 
 /// A node hint's text, for exactly three bytes.
@@ -44,6 +95,16 @@ pub(super) fn node_hint_text(bytes: &[u8]) -> Option<String> {
 /// A router hint's text, for exactly two bytes.
 pub(super) fn router_hint_text(bytes: &[u8]) -> Option<String> {
     Some(RouterHint(bytes.try_into().ok()?).to_string())
+}
+
+/// A peer's own router hint: the first two bytes of its key, or of its
+/// node hint, which a repeater carrying its traffic puts on the wire.
+pub(super) fn peer_router_hint(key_or_hint: &[u8]) -> Option<RouterHintRecord> {
+    let bytes = key_or_hint.get(..2)?.to_vec();
+    Some(RouterHintRecord {
+        text: router_hint_text(&bytes)?,
+        bytes,
+    })
 }
 
 /// A neighbor's hint, as a node hint when it is one, else as the router
@@ -110,12 +171,7 @@ impl PeerIndex {
                     Some(Indexed {
                         address: peer.identity.canonical_address.clone(),
                         hint: peer.identity.hint.bytes.as_slice().try_into().ok()?,
-                        likely_repeater: Evidence::Settled(likely_repeater(
-                            peer.advertised_identity
-                                .as_ref()
-                                .map(|identity| identity.forwards),
-                            peer.stored.node_kind,
-                        )),
+                        likely_repeater: Evidence::Settled(peer.likely_repeater),
                     })
                 })
                 .collect(),
@@ -215,7 +271,13 @@ pub(super) struct Lists {
     pub neighbor_reports: Option<Vec<MobileAppNeighborReportRecord>>,
 }
 
-pub(super) fn lists(records: MobileApplicationRecords, conversations_only: bool) -> Lists {
+/// `certified` is whether the user agreed to `EMERGENCY`'s warning under
+/// this owner.
+pub(super) fn lists(
+    records: MobileApplicationRecords,
+    conversations_only: bool,
+    certified: bool,
+) -> Lists {
     let MobileApplicationRecords {
         peers,
         channels,
@@ -307,9 +369,11 @@ pub(super) fn lists(records: MobileApplicationRecords, conversations_only: bool)
                 last_message,
                 unread_count,
             } = conversation;
+            let channel = joined.get(channel_id.as_str())?.stored.clone();
             Some(MobileAppChannelConversationRecord {
                 id,
-                channel: joined.get(channel_id.as_str())?.stored.clone(),
+                needs_emergency_agreement: !certified && is_emergency_channel(&channel),
+                channel,
                 conversation_address,
                 draft_text,
                 last_read_at_ms,
@@ -339,15 +403,17 @@ pub(super) fn names_repeaters(page: &MobileStoredChatMessagePageRecord) -> bool 
     })
 }
 
+/// `now_ms` is the instant the actions are decided at.
 pub(super) fn page(
     page: MobileStoredChatMessagePageRecord,
     peers: Option<&PeerIndex>,
+    now_ms: i64,
 ) -> MobileAppTranscriptPageRecord {
     MobileAppTranscriptPageRecord {
         messages: page
             .messages
             .into_iter()
-            .map(|stored| message(stored, peers))
+            .map(|stored| message(stored, peers, now_ms))
             .collect(),
         has_older: page.has_older,
         has_newer: page.has_newer,
@@ -357,6 +423,7 @@ pub(super) fn page(
 fn message(
     stored: MobileStoredChatMessageRecord,
     peers: Option<&PeerIndex>,
+    now_ms: i64,
 ) -> MobileAppMessageRecord {
     let repeaters = stored
         .repeats
@@ -383,6 +450,7 @@ fn message(
     let revise_until_ms = (stored.outbound && !stored.is_deleted)
         .then(|| stored.created_at_ms.saturating_add(REVISE_WINDOW_MS));
     MobileAppMessageRecord {
+        actions: message_actions(&stored, now_ms),
         reactions,
         revise_until_ms,
         sender_node_hint: stored.sender_hint.as_deref().and_then(node_hint_text),

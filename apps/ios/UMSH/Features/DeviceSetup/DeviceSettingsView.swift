@@ -3,23 +3,18 @@ import UMSHMobileCore
 
 /// The commissioning sheet for one device, rendered from a list of sections.
 ///
-/// Every goal's sheet is this same view: the goal's plan decides which
+/// Every goal's sheet is this same view: the core's setup decides which
 /// sections appear, and nothing else about them differs. Two views over the
 /// same settings would be two things to keep in step, and the short one would
 /// be the one that fell behind. Changing a device's settings afterward is not
 /// this screen—it is the management screens every device gets.
 ///
-/// The draft is owned by the flow rather than by this screen, so what is
-/// edited here is the same configuration another screen may have started—
-/// see `DeviceConfigDraft`.
+/// The setup is owned by the flow rather than by this screen, so what is
+/// edited here is the same draft another screen may have started—see
+/// `DeviceSetupModel`.
 struct DeviceSettingsView: View {
     let controller: any DeviceAdministering
-    @Bindable var draft: DeviceConfigDraft
-    let sections: [DeviceSetupSection]
-    let title: String
-    let applyTitle: String
-    /// What the goal will not manage on this device, if anything.
-    let note: String?
+    @Bindable var model: DeviceSetupModel
     let isPeerSaved: (String) -> Bool
     let peerActions: PeerActions
     let finish: () -> Void
@@ -31,14 +26,31 @@ struct DeviceSettingsView: View {
     /// act here.
     @State private var afterResult: (() -> Void)?
 
-    private var sync: UlcpSyncRecord { draft.sync }
+    private var setup: MobileDeviceSetupRecord { model.snapshot }
+    private var review: MobileSetupReviewRecord? { model.review }
     private var snapshot: AdministeredDeviceSnapshot { controller.snapshot }
 
     var body: some View {
         Form {
-            ForEach(sections, id: \.self) { section in
+            LinkNoticesSection(
+                connectionProblem: snapshot.linkState == .failed
+                    ? (snapshot.problemDescription
+                        ?? String(localized: "Connection lost", comment: "Device setup: the link to the device being set up dropped."))
+                    : nil,
+                unreadable: setup.unreadable
+            )
+            ForeignRadioSection(hostState: snapshot.hostState)
+            if !setup.notes.isEmpty {
+                SetupNoteSection(notes: setup.notes)
+            }
+            ForEach(setup.sections, id: \.self) { section in
                 view(for: section)
             }
+            ApplyStatusSection(
+                result: setup.lastResult,
+                unshownProblems: review?.unshownProblems ?? [],
+                applied: review?.applied == true
+            )
         }
         // Adding a routing region reflows the repeater section: the blank
         // input row and everything below it slide down to make room. The
@@ -47,33 +59,39 @@ struct DeviceSettingsView: View {
         // added row itself is exempted (its transition is .identity in
         // RepeaterSettingsSection)—the typed text is already on screen
         // where the row lands.
-        .animation(UMSHAnimation.list, value: draft.regions)
+        .animation(UMSHAnimation.list, value: model.draft.repeater.regions.value)
         // Administrators are different: an entry comes out of a menu, not
         // out of text already sitting where the row lands, so here the new
         // row itself animates in (and out, on Remove).
-        .animation(UMSHAnimation.list, value: draft.adminKeys)
-        .navigationTitle(title)
+        .animation(UMSHAnimation.list, value: model.draft.administrators.value)
+        .navigationTitle(Text(setup.goal.sheetTitle))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
-                if draft.applied {
+                if review?.applied == true {
                     Button("Done") { finish() }
                 } else {
-                    Button(applyTitle) {
-                        Task { await draft.apply() }
+                    Button {
+                        Task { await model.apply() }
+                    } label: {
+                        Text(setup.goal.applyTitle)
                     }
-                    .disabled(!canApply)
+                    .disabled(!model.canApply(linkDown: isLinkDown))
                 }
             }
         }
-        .sheet(isPresented: $draft.isPresentingResult, onDismiss: runAfterResult) {
-            if let phase = draft.applyPhase {
+        .sheet(isPresented: $model.isPresentingResult, onDismiss: runAfterResult) {
+            if let phase = model.phase {
                 DeviceSetupResultView(
                     phase: phase,
-                    deviceNoun: draft.plan.deviceNoun,
+                    goal: setup.goal,
                     deviceName: snapshot.name,
                     savePeer: controller.canSavePeer && snapshot.deviceIdentity != nil
-                        ? { try await controller.savePeer(role: draft.advertisedPeerRole) }
+                        ? { [model, controller] in
+                            try await controller.savePeer(
+                                role: model.snapshot.advertisedRole.map(PeerRole.init(roleCode:))
+                            )
+                        }
                         : nil,
                     isPeerSaved: snapshot.deviceIdentity
                         .map { isPeerSaved($0.canonicalAddress) } ?? false,
@@ -90,7 +108,7 @@ struct DeviceSettingsView: View {
 
     private func dismissResult(then action: (() -> Void)?) {
         afterResult = action
-        draft.dismissResult()
+        model.isPresentingResult = false
     }
 
     private func runAfterResult() {
@@ -99,116 +117,82 @@ struct DeviceSettingsView: View {
         action?()
     }
 
-    private var canApply: Bool {
-        draft.configuration != nil
-            && draft.profileChosen
-            && !draft.isSaving
-            && !isLinkDown
-    }
-
-    /// Which sections a device supports is a separate question from which ones
-    /// the goal asks about: a plan naming a section the device cannot answer
-    /// for renders nothing, rather than the plan having to know every device.
     @ViewBuilder
-    private func view(for section: DeviceSetupSection) -> some View {
+    private func view(for section: MobileSetupSection) -> some View {
         switch section {
-        case .link:
-            LinkNoticesSection(
-                connectionProblem: snapshot.linkState == .failed
-                    ? (snapshot.problemDescription ?? "Connection lost")
-                    : nil,
-                unreadableSettings: draft.unreadableSettings
+        case .name:
+            DeviceNameSection(
+                name: $model.draft.name.text,
+                problem: model.problem(for: model.draft.name.propertyId)
             )
 
-        case .note:
-            if let note {
-                SetupNoteSection(note: note)
-            }
-
-        case .ownershipWarning:
-            ForeignRadioSection(hostState: snapshot.hostState)
-
-        case .name:
-            if sync.supportsDeviceName {
-                DeviceNameSection(name: $draft.deviceName)
-            }
-
         case .radioProfile:
-            if let resolution = draft.resolvedProfile {
+            if let profile = setup.profile {
                 RadioProfileSection(
-                    resolution: resolution,
-                    chosen: draft.profileChosen,
-                    presetName: draft.presetName,
-                    summary: draft.profileSummary,
-                    destination: { RadioProfileEditorView(draft: draft) }
+                    profile: profile,
+                    chosen: review?.profileChosen ?? true,
+                    presetName: review?.presetId.flatMap { id in
+                        RadioPreset.vetted.first { $0.id == id }?.name
+                    },
+                    summary: RadioProfileSummary.text(
+                        model.draft.radio,
+                        showsModem: setup.showsModem
+                    ),
+                    destination: { RadioProfileEditorView(model: model) }
                 )
             }
 
         case .discoverability:
-            if draft.showsDiscoverable {
-                DiscoverabilitySection(discoverable: $draft.devDiscoverable)
-            }
+            DiscoverabilitySection(discoverable: $model.draft.discoverable.value)
 
-        case .positioningPolicy:
-            if draft.showsPositioning {
-                PositioningSection(
-                    enabled: $draft.gnssEnabled,
-                    identUpdate: $draft.gnssIdentUpdate,
-                    identPrecision: $draft.gnssIdentPrecision,
-                    timeTrust: $draft.gnssTimeTrust
-                )
-            }
+        case .positioning:
+            PositioningSection(
+                enabled: $model.draft.gnssEnabled.value,
+                identUpdate: $model.draft.sharePosition.value,
+                identPrecision: $model.draft.precision.value,
+                precisions: review?.choices.precisions,
+                timeTrust: $model.draft.timeTrust.value
+            )
 
         case .announcements:
-            if draft.showsAnnouncements {
-                AnnouncementsSection(
-                    beaconIntervalSeconds: $draft.beaconIntervalSeconds,
-                    advertIntervalSeconds: $draft.advertIntervalSeconds,
-                    startupBeacon: $draft.startupBeacon
-                )
-            }
+            AnnouncementsSection(
+                beaconInterval: $model.draft.beaconInterval.value,
+                beaconChoices: review?.choices.beaconIntervalsS,
+                advertInterval: $model.draft.advertInterval.value,
+                advertChoices: review?.choices.advertIntervalsS,
+                startupBeacon: $model.draft.startupBeacon.value
+            )
 
         case .forwarding:
-            if draft.showsRepeater {
-                RepeaterSettingsSection(
-                    mode: $draft.repeaterMode,
-                    regions: $draft.regions,
-                    defaultRegion: $draft.defaultRegion,
-                    minRssiDBm: $draft.minRssiDBm,
-                    minSnrDB: $draft.minSnrDB,
-                    // Read live rather than off the draft: the device's
-                    // position is a reading, not a setting this form edits.
-                    advertisedPosition: draft.reported.identPosition,
-                    devicePosition: snapshot.position,
-                    // A repeater being commissioned is being placed, so it
-                    // is offered the regions covering where the phone
-                    // placing it is standing.
-                    suggestsFromPhone: draft.plan.goal == .repeaterNode
-                )
-            }
+            RepeaterSettingsSection(
+                repeater: $model.draft.repeater,
+                taggableRegions: review?.taggableRegions ?? [],
+                defaultRegionUnlisted: review?.defaultRegionUnlisted == true,
+                minRssiChoices: review?.choices.minRssiDbm,
+                minSnrChoices: review?.choices.minSnrDb,
+                // Read from what the device reports rather than off the
+                // draft: its position is a reading, not a setting this form
+                // edits.
+                advertisedPosition: setup.reported?.identPosition,
+                devicePosition: snapshot.position,
+                suggestsFromPhone: setup.suggestsRegionsFromPhone
+            )
 
         case .administrators:
-            if draft.showsAdmins {
-                DeviceAdministratorsSection(
-                    administrators: draft.administrators,
-                    phoneAdministers: Binding(
-                        get: { draft.phoneAdministers },
-                        set: { draft.setPhoneAdministers($0) }
-                    ),
-                    phoneKeyKnown: draft.phoneNodeKey != nil,
-                    isFull: draft.administratorListFull,
-                    knownPeers: peerActions.knownPeers,
-                    add: { draft.add(administrator: $0) },
-                    remove: { administrator in
-                        draft.adminKeys.removeAll { $0 == administrator.publicKey }
-                    }
-                )
-            }
-
-        case .applyStatus:
-            ApplyStatusSection(
-                problem: controller.problem ?? draft.verificationProblem,
-                applied: draft.applied
+            DeviceAdministratorsSection(
+                administrators: (review?.administrators ?? []).map {
+                    DeviceAdministrator(publicKey: $0.key, isThisPhone: $0.isThisPhone)
+                },
+                phoneAdministers: Binding(
+                    get: { model.review?.phoneAdministers == true },
+                    set: { model.setPhoneAdministers($0) }
+                ),
+                phoneKeyKnown: setup.phoneNodeKey != nil,
+                phoneSwitchEnabled: review?.phoneSwitchEnabled == true,
+                isFull: review?.administratorsFull == true,
+                knownPeers: peerActions.knownPeers,
+                add: { model.addAdministrator($0) },
+                remove: { model.removeAdministrator($0.publicKey) }
             )
         }
     }

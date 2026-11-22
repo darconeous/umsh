@@ -37,18 +37,10 @@ struct RemoteSensorsScreen: View {
     }
 
     private var lightReading: String {
-        if reading?.failures[ulcpProperties.illuminance] != nil
-            || reading?.refused.contains(ulcpProperties.illuminance) == true
-                && reading?.statuses[ulcpProperties.illuminance] == nil { return "Read failed" }
-        if let status = reading?.statuses[ulcpProperties.illuminance] {
-            return "Read failed (\(ulcpStatusName(status: status)))"
-        }
-        guard let bytes = reading?.values[ulcpProperties.illuminance] else {
-            return "Not read"
-        }
-        if bytes.isEmpty { return "Unavailable" }
+        let state = reading?.state(ulcpProperties.illuminance) ?? .notRead
+        if let text = PropertyStateText.text(state) { return text }
         guard let millilux = reading?.properties.illuminanceMillilux else {
-            return "Invalid reading"
+            return PropertyStateText.invalid
         }
         let lux = Double(millilux) / 1_000
         let digits = lux < 1 ? 3 : 2
@@ -130,10 +122,11 @@ struct RemotePowerScreen: View {
         _ title: String, fields: [(UInt32, String)], footer: String
     ) -> some View {
         let visible = fields.filter { property, _ in
-            // Only PROP_NOT_FOUND means unsupported. Empty successes and
+            // Only a missing property means unsupported. Empty successes and
             // temporary failures remain on screen and are fetched again.
-            reading?.statuses[property] != 13 &&
-                (reading?.values[property] != nil || reading?.statuses[property] != nil)
+            if reading?.values[property] != nil { return true }
+            guard case let .refused(refusal) = reading?.state(property) else { return false }
+            return refusal.reason != .noSuchProperty && refusal.status != nil
         }
         if !visible.isEmpty {
             Section {
@@ -149,15 +142,15 @@ struct RemotePowerScreen: View {
     }
 
     private func diagnosticText(_ property: UInt32) -> String {
-        if let status = reading?.statuses[property] {
-            return "Read failed (\(ulcpStatusName(status: status)))"
+        if case let .refused(refusal) = reading?.state(property) {
+            return PropertyStateText.failed(status: refusal.status)
         }
-        guard let bytes = reading?.values[property] else { return "Not read" }
+        guard let bytes = reading?.values[property] else { return PropertyStateText.notRead }
         guard let value = try? inspectUlcpBatteryDiagnostic(propertyId: property, value: bytes)
-        else { return "Invalid reading" }
+        else { return PropertyStateText.invalid }
         switch value {
         case .unavailable:
-            return "Unavailable"
+            return PropertyStateText.unavailable
         case let .current(milliamps):
             return "\(milliamps > 0 ? "+" : "")\(milliamps) mA"
         case let .unsigned(value):
@@ -186,21 +179,21 @@ struct RemotePowerScreen: View {
 /// decision, so those two are settings.
 struct RemoteGnssScreen: View {
     let model: ManageDeviceModel
-    @State private var edits = Edits()
+    @State private var draft: MobileGnssDraft?
 
     private var reading: RemoteCategoryReading? { model.readings[.gnss] }
-    private var problems: [UInt32: String] { model.writeRefusals[.gnss] ?? [:] }
 
     var body: some View {
+        let review = model.review(draft)
+        let problems = RemoteRowProblems(refusals: model.writeRefusals[.gnss] ?? [:], review: review)
         Form {
             Section("Receiver") {
-                if edits.enabled.isKnown {
-                    Toggle(isOn: $edits.enabled.edited.replacingNil(with: false)) {
-                        RemoteFieldTitle(
-                            "Receiver enabled",
-                            problem: problems[edits.enabled.property]
-                        )
-                    }
+                if let draft = Binding($draft) {
+                    RemoteToggleField(
+                        "Receiver enabled",
+                        field: draft.enabled,
+                        problem: problems[draft.wrappedValue.enabled.propertyId]
+                    )
                 } else {
                     RemoteReadOnlyToggle("Receiver enabled", isOn: nil)
                 }
@@ -235,61 +228,10 @@ struct RemoteGnssScreen: View {
             model: model,
             category: .gnss,
             title: "GNSS",
-            apply: { await apply() },
-            hasEdits: !edits.dirty.isEmpty
+            apply: { await model.applyAndRebuild($draft) },
+            review: review
         )
-        .onChange(of: reading?.asOf) { edits = Edits(reading, preserving: edits) }
-        .onAppear { if edits.isEmpty { edits = Edits(reading) } }
-    }
-
-    private func apply() async {
-        // Rebuilt from what the device answered—but only if it answered.
-        // A write that never left the phone leaves these fields as the only
-        // copy of what the operator asked for.
-        if await model.apply(.gnss, desired: edits.desired, dirty: edits.dirty) {
-            edits = Edits(model.readings[.gnss])
-        }
-    }
-
-    /// The one setting on this screen. The fix is not among them: it is
-    /// what the receiver reports, not something to ask it for. Whether the
-    /// receiver may set the clock lives on the Time screen, with the clock.
-    private struct Edits {
-        var enabled = RemoteField<Bool>(0, nil)
-        var isEmpty = true
-        /// What the device last said, in full.
-        var held = UlcpDevicePropertiesRecord.empty
-
-        init() {}
-
-        init(_ reading: RemoteCategoryReading?) {
-            let id = ulcpProperties
-            held = reading?.properties ?? UlcpDevicePropertiesRecord.empty
-            enabled = RemoteField(id.gnssEnabled, held.gnssEnabled)
-            isEmpty = reading == nil
-        }
-
-        /// The new reading as the baseline, with the operator's standing
-        /// edit carried over—see ``RemoteField/preserving(_:)``.
-        init(_ reading: RemoteCategoryReading?, preserving old: Edits) {
-            self.init(reading)
-            guard !old.isEmpty else { return }
-            enabled = enabled.preserving(old.enabled)
-        }
-
-        var dirty: Set<UInt32> {
-            var dirty: Set<UInt32> = []
-            if enabled.isDirty { dirty.insert(enabled.property) }
-            return dirty
-        }
-
-        var desired: UlcpDevicePropertiesRecord {
-            // Only the dirty set is written; the rest of the record is
-            // carried for completeness and never reaches the air.
-            var desired = held
-            desired.gnssEnabled = enabled.value
-            return desired
-        }
+        .draft($draft, from: model, revision: reading?.revision)
     }
 
     private func label(for fix: UlcpFixKind) -> String {
@@ -316,12 +258,13 @@ struct RemoteGnssScreen: View {
 /// settings, and go through Apply like any other.
 struct RemoteTimeScreen: View {
     let model: ManageDeviceModel
-    @State private var edits = Edits()
+    @State private var draft: MobileTimeDraft?
 
     private var reading: RemoteCategoryReading? { model.readings[.time] }
-    private var problems: [UInt32: String] { model.writeRefusals[.time] ?? [:] }
 
     var body: some View {
+        let review = model.review(draft)
+        let problems = RemoteRowProblems(refusals: model.writeRefusals[.time] ?? [:], review: review)
         Form {
             if let uptime {
                 Section {
@@ -376,32 +319,34 @@ struct RemoteTimeScreen: View {
             }
 
             Section {
-                if let rule = edits.tzRule.value {
+                if let draft = Binding($draft), draft.wrappedValue.tzRule.known {
                     NavigationLink {
-                        RemoteTimeZonePicker(rule: $edits.tzRule.edited.replacingNil(with: rule))
+                        RemoteTimeZonePicker(rule: draft.tzRule.text)
                     } label: {
                         LabeledContent {
-                            Text(formattedTimeZoneRule(rule))
+                            Text(formattedTimeZoneRule(draft.wrappedValue.tzRule.text))
                         } label: {
-                            RemoteFieldTitle("Time zone", problem: problems[edits.tzRule.property])
+                            RemoteFieldTitle(
+                                "Time zone",
+                                problem: problems[draft.wrappedValue.tzRule.propertyId]
+                            )
+                        }
+                    }
+                    if draft.wrappedValue.tzRule.text != phoneTimeZoneRule {
+                        Button("Use This iPhone's Time Zone") {
+                            draft.wrappedValue.tzRule.text = phoneTimeZoneRule
                         }
                     }
                 } else {
-                    LabeledContent("Time zone", value: "Not read")
+                    RemoteNotRead(title: "Time zone")
                         .labeledContentStyle(SettingsFieldStyle())
                 }
-                if edits.tzRule.isKnown, edits.tzRule.value != phoneTimeZoneRule {
-                    Button("Use This iPhone's Time Zone") {
-                        edits.tzRule.edited = phoneTimeZoneRule
-                    }
-                }
-                if edits.time24h.isKnown {
-                    Toggle(isOn: $edits.time24h.edited.replacingNil(with: true)) {
-                        RemoteFieldTitle(
-                            "24-hour clock",
-                            problem: problems[edits.time24h.property]
-                        )
-                    }
+                if let draft = Binding($draft) {
+                    RemoteToggleField(
+                        "24-hour clock",
+                        field: draft.time24h,
+                        problem: problems[draft.wrappedValue.time24h.propertyId]
+                    )
                 } else {
                     RemoteReadOnlyToggle("24-hour clock", isOn: nil)
                 }
@@ -413,13 +358,12 @@ struct RemoteTimeScreen: View {
 
             if model.card?.supportsGnss == true {
                 Section {
-                    if edits.timeTrust.isKnown {
-                        Toggle(isOn: $edits.timeTrust.edited.replacingNil(with: false)) {
-                            RemoteFieldTitle(
-                                "Trust the receiver's clock",
-                                problem: problems[edits.timeTrust.property]
-                            )
-                        }
+                    if let draft = Binding($draft) {
+                        RemoteToggleField(
+                            "Trust the receiver's clock",
+                            field: draft.timeTrust,
+                            problem: problems[draft.wrappedValue.timeTrust.propertyId]
+                        )
                     } else {
                         RemoteReadOnlyToggle("Trust the receiver's clock", isOn: nil)
                     }
@@ -432,11 +376,10 @@ struct RemoteTimeScreen: View {
             model: model,
             category: .time,
             title: "Time",
-            apply: { await apply() },
-            hasEdits: !edits.dirty.isEmpty
+            apply: { await model.applyAndRebuild($draft) },
+            review: review
         )
-        .onChange(of: reading?.asOf) { edits = Edits(reading, preserving: edits) }
-        .onAppear { if edits.isEmpty { edits = Edits(reading) } }
+        .draft($draft, from: model, revision: reading?.revision)
     }
 
     /// Uptime as of the last read, carried with the instant it was
@@ -474,69 +417,7 @@ struct RemoteTimeScreen: View {
     /// Not an edit awaiting Apply: a clock staged in a form is wrong by
     /// the time it is applied, by however long the operator took.
     private func setFromPhone() async {
-        var desired = reading?.properties ?? .empty
-        desired.time = UlcpTimeRecord(
-            epochSeconds: UInt32(clamping: Int(Date.now.timeIntervalSince1970))
-        )
-        await model.apply(.time, desired: desired, dirty: [ulcpProperties.time], save: false)
-    }
-
-    private func apply() async {
-        // Only rebuilt when the device answered: see RemoteGnssScreen.
-        if await model.apply(.time, desired: edits.desired, dirty: edits.dirty) {
-            edits = Edits(model.readings[.time])
-        }
-    }
-
-    /// The settings here. The clock is deliberately not among them—
-    /// see the screen comment.
-    private struct Edits {
-        var tzRule = RemoteField<String>(0, nil)
-        var time24h = RemoteField<Bool>(0, nil)
-        var timeTrust = RemoteField<Bool>(0, nil)
-        var isEmpty = true
-        /// What the device last said, in full.
-        var held = UlcpDevicePropertiesRecord.empty
-
-        init() {}
-
-        init(_ reading: RemoteCategoryReading?) {
-            let id = ulcpProperties
-            held = reading?.properties ?? UlcpDevicePropertiesRecord.empty
-            tzRule = RemoteField(id.tzRule, held.tzRule)
-            time24h = RemoteField(id.time24h, held.time24h)
-            timeTrust = RemoteField(id.gnssTimeTrust, held.gnssTimeTrust)
-            isEmpty = reading == nil
-        }
-
-        /// The new reading as the baseline, with the operator's standing
-        /// edits carried over—see ``RemoteField/preserving(_:)``.
-        init(_ reading: RemoteCategoryReading?, preserving old: Edits) {
-            self.init(reading)
-            guard !old.isEmpty else { return }
-            tzRule = tzRule.preserving(old.tzRule)
-            time24h = time24h.preserving(old.time24h)
-            timeTrust = timeTrust.preserving(old.timeTrust)
-        }
-
-        var dirty: Set<UInt32> {
-            var dirty: Set<UInt32> = []
-            if tzRule.isDirty { dirty.insert(tzRule.property) }
-            if time24h.isDirty { dirty.insert(time24h.property) }
-            if timeTrust.isDirty { dirty.insert(timeTrust.property) }
-            return dirty
-        }
-
-        var desired: UlcpDevicePropertiesRecord {
-            // Only the dirty set is written; the rest of the record is
-            // carried for completeness and never reaches the air.
-            var desired = held
-            desired.time = nil
-            desired.tzRule = tzRule.value
-            desired.time24h = time24h.value
-            desired.gnssTimeTrust = timeTrust.value
-            return desired
-        }
+        await model.setClockNow()
     }
 }
 
@@ -617,28 +498,9 @@ struct RemoteStatisticsScreen: View {
         reading?.properties ?? .empty
     }
 
-    private var counterIDs: [UInt32] {
-        let id = ulcpProperties
-        return [
-            id.statTxPackets,
-            id.statTxChannelBusy,
-            id.statRxPackets,
-            id.statRxBadCrc,
-            id.statRxNonUmsh,
-            id.statRxAccepted,
-            id.statRadioResets,
-            id.statForwarded,
-            id.statForwardDropped,
-            id.statForwardCancelled,
-            id.statMeshcoreSeen,
-            id.statMeshcoreForwardedRouted,
-            id.statMeshcoreForwardedFlood,
-            id.statMeshcoreDeclined,
-        ]
-    }
-
-    private var answeredCounterIDs: Set<UInt32> {
-        Set(counterIDs.filter { reading?.answered($0) == true })
+    /// Whether Reset Counters would zero anything.
+    private var hasCounters: Bool {
+        reading?.record.canResetCounters ?? false
     }
 
     private var hasForwarding: Bool {
@@ -752,7 +614,7 @@ struct RemoteStatisticsScreen: View {
                 Button("Reset Counters…", role: .destructive) {
                     confirmsReset = true
                 }
-                .disabled(answeredCounterIDs.isEmpty)
+                .disabled(!hasCounters)
             } footer: {
                 RemoteReadingFooter(reading: reading, isBusy: model.isBusy)
             }
@@ -791,15 +653,7 @@ struct RemoteStatisticsScreen: View {
     }
 
     private func resetCounters() async {
-        guard !answeredCounterIDs.isEmpty else { return }
-        if await model.apply(
-            .statistics,
-            desired: .empty,
-            dirty: answeredCounterIDs,
-            save: false
-        ) {
-            await model.refreshCategory(.statistics)
-        }
+        await model.resetCounters()
     }
 }
 

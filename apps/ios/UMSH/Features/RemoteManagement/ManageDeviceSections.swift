@@ -26,7 +26,9 @@ struct ManageDeviceIdentitySection: View {
             }
         } footer: {
             if let asOf = model.cardAsOf {
-                Text("Asked \(asOf.formatted(.relative(presentation: .named))).")
+                AgeLabel(since: asOf) { age in
+                    Text("Asked \(age).", comment: "When the device was last asked what it is. The placeholder is an age, such as 5 min. ago or just now.")
+                }
             }
         }
     }

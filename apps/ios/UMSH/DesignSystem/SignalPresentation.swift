@@ -8,18 +8,31 @@ import Foundation
 enum SignalPresentation {
     /// Received signal strength: "−97 dBm".
     static func rssiText(_ dBm: Int16, locale: Locale = .current) -> String {
-        let number = Int(dBm).formatted(.number.locale(locale))
+        powerText(Int(dBm), locale: locale)
+    }
+
+    /// A power level, received or transmitted: "20 dBm".
+    static func powerText(_ dBm: Int, locale: Locale = .current) -> String {
+        let number = dBm.formatted(.number.locale(locale))
         return String(
             localized: "\(number) dBm",
             locale: locale,
-            comment: "Received signal strength, in decibel-milliwatts. The placeholder is a number."
+            comment: "A power level, such as a signal strength or a transmit power, in decibel-milliwatts. The placeholder is a number."
         )
     }
 
     /// A signal-to-noise ratio as a bare value: "6.5 dB".
     static func decibelsText(_ decibels: Double, locale: Locale = .current) -> String {
-        let number = decibels.formatted(.number.precision(.fractionLength(1)).locale(locale))
-        return String(
+        decibelsText(number: decibels.formatted(.number.precision(.fractionLength(1)).locale(locale)), locale: locale)
+    }
+
+    /// A signal-to-noise ratio in whole decibels, such as a threshold: "6 dB".
+    static func decibelsText(_ decibels: Int, locale: Locale = .current) -> String {
+        decibelsText(number: decibels.formatted(.number.locale(locale)), locale: locale)
+    }
+
+    private static func decibelsText(number: String, locale: Locale) -> String {
+        String(
             localized: "\(number) dB",
             locale: locale,
             comment: "A signal-to-noise ratio, in decibels. The placeholder is a number."

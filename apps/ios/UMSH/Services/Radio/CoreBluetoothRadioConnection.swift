@@ -1027,7 +1027,7 @@ final class CoreBluetoothRadioConnection: RadioDriverAdapter, RadioConnection, U
             Self.logger.notice(
                 """
                 revoke standing connect \(target.identifier, privacy: .public) \
-                name=\(target.name ?? "?", privacy: .public) \
+                name=\(target.name ?? "?", privacy: .private) \
                 state=\(Self.describe(target.state), privacy: .public)
                 """
             )
@@ -1066,7 +1066,7 @@ final class CoreBluetoothRadioConnection: RadioDriverAdapter, RadioConnection, U
         Self.logger.notice(
             """
             connect(\(target.identifier, privacy: .public)) \
-            name=\(target.name ?? "?", privacy: .public) \
+            name=\(target.name ?? "?", privacy: .private) \
             reason=\(reason, privacy: .public) \
             autoConnect=\(self.shouldAutoConnect) bound=\(self.rememberedPeripheralIdentifier?.uuidString ?? "nil", privacy: .public)
             """
@@ -1081,7 +1081,10 @@ final class CoreBluetoothRadioConnection: RadioDriverAdapter, RadioConnection, U
     private func reconcileStandingConnectionOnPoweredOn() {
         let connected = central?.retrieveConnectedPeripherals(withServices: [UUIDs.service]) ?? []
         let connectedSummary = connected
-            .map { "\($0.identifier.uuidString)(\($0.name ?? "?"))" }
+            .map(\.identifier.uuidString)
+            .joined(separator: ",")
+        let connectedNames = connected
+            .map { $0.name ?? "?" }
             .joined(separator: ",")
         let boundName = rememberedPeripheralIdentifier
             .flatMap { central?.retrievePeripherals(withIdentifiers: [$0]).first?.name }
@@ -1089,9 +1092,10 @@ final class CoreBluetoothRadioConnection: RadioDriverAdapter, RadioConnection, U
             """
             reconcile autoConnect=\(self.shouldAutoConnect) \
             bound=\(self.rememberedPeripheralIdentifier?.uuidString ?? "nil", privacy: .public)\
-            (\(boundName ?? "?", privacy: .public)) \
+            (\(boundName ?? "?", privacy: .private)) \
             restored=\(self.restoredPeripherals.count) \
-            connectedForService=[\(connectedSummary, privacy: .public)]
+            connectedForService=[\(connectedSummary, privacy: .public)]\
+            (\(connectedNames, privacy: .private))
             """
         )
         if shouldAutoConnect {
@@ -1514,7 +1518,7 @@ extension CoreBluetoothRadioConnection: CBCentralManagerDelegate {
         Self.logger.notice(
             """
             event: didConnect \(peripheral.identifier, privacy: .public) \
-            name=\(peripheral.name ?? "?", privacy: .public) \
+            name=\(peripheral.name ?? "?", privacy: .private) \
             adopted=\(self.peripheral === peripheral)
             """
         )
@@ -1539,7 +1543,7 @@ extension CoreBluetoothRadioConnection: CBCentralManagerDelegate {
         Self.logger.notice(
             """
             event: didFailToConnect \(peripheral.identifier, privacy: .public) \
-            name=\(peripheral.name ?? "?", privacy: .public) \
+            name=\(peripheral.name ?? "?", privacy: .private) \
             error=\(error?.localizedDescription ?? "none", privacy: .public)
             """
         )
@@ -1574,7 +1578,7 @@ extension CoreBluetoothRadioConnection: CBCentralManagerDelegate {
         Self.logger.notice(
             """
             event: didDisconnect \(peripheral.identifier, privacy: .public) \
-            name=\(peripheral.name ?? "?", privacy: .public) \
+            name=\(peripheral.name ?? "?", privacy: .private) \
             error=\(error?.localizedDescription ?? "none", privacy: .public)
             """
         )

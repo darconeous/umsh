@@ -51,7 +51,7 @@ struct AddHopScreen: View {
                 }
                 if isFull {
                     Section {
-                        Text("The path holds \(ManualPathDraft.maximumHops) repeaters, the most it can carry.")
+                        Text("The path holds \(Int(CoreLimits.current.maxRouteHints)) repeaters, the most it can carry.")
                             .foregroundStyle(.secondary)
                     }
                 } else {
@@ -106,7 +106,7 @@ struct AddHopScreen: View {
 
     // MARK: - Where the path stands
 
-    private var isFull: Bool { hops.count >= ManualPathDraft.maximumHops }
+    private var isFull: Bool { hops.count >= Int(CoreLimits.current.maxRouteHints) }
 
     private var breadcrumb: String {
         let names = hops.map { hop in
@@ -249,14 +249,15 @@ struct AddHopScreen: View {
             ForEach(knownRepeaters) { peer in
                 let inPath = isInPath(peer)
                 Button {
-                    Task { await choose(peer) }
+                    choose(peer)
                 } label: {
                     PeerRow(
                         hint: peer.identity.hint,
                         shape: peer.avatarShape,
                         title: peer.displayName,
                         subtitle: peer.lastHeard.map {
-                            "heard \($0.formatted(.relative(presentation: .named)))"
+                            let age = AgePresentation.text(since: $0)
+                            return String(localized: "heard \(age)", comment: "When a node was last heard. The placeholder is an age, such as 5 min. ago or just now.")
                         },
                         size: .compact,
                         showsFavoriteStar: peer.isFavorite,
@@ -285,8 +286,8 @@ struct AddHopScreen: View {
         append(hop)
     }
 
-    private func choose(_ peer: PeerSummary) async {
-        guard let bytes = peer.routerHintBytes, let hint = await routerHint(bytes) else { return }
+    private func choose(_ peer: PeerSummary) {
+        guard let hint = peer.routerHint else { return }
         append(ManualPathHop(hint: hint, node: peer))
     }
 

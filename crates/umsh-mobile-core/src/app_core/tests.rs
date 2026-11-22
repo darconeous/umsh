@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
@@ -175,10 +174,7 @@ fn while_stopping_queries_are_busy_and_status_answers() {
     fixture.core.shared.enter(MobileAppLifecycle::Stopping);
     assert_eq!(fixture.core.state(false), Err(MobileAppError::Busy));
     assert_eq!(fixture.core.claimed_radios(), Err(MobileAppError::Busy));
-    assert_eq!(
-        fixture.core.forget_management_cache(address(2)),
-        Err(MobileAppError::Busy)
-    );
+    assert_eq!(fixture.core.phone_node_key(), Err(MobileAppError::Busy));
     assert_eq!(
         fixture.core.status(),
         Ok(MobileAppStatusRecord {
@@ -442,21 +438,6 @@ fn an_owner_change_says_to_read_the_stranded_radios_again() {
 }
 
 #[test]
-fn cached_properties_are_stamped_by_the_clock() {
-    let fixture = Fixture::new();
-    let device = address(2);
-    fixture.peer(&device, None, None);
-    fixture
-        .core
-        .save_cached_properties(device.clone(), HashMap::from([(7, vec![1, 2])]))
-        .unwrap();
-    let cached = fixture.core.cached_properties(device, vec![7, 8]).unwrap();
-    assert_eq!(cached.len(), 1);
-    assert_eq!(cached[&7].value, [1, 2]);
-    assert_eq!(cached[&7].fetched_at_ms, NOW_MS);
-}
-
-#[test]
 fn the_phone_node_key_is_the_owner_address_decoded() {
     let fixture = Fixture::new();
     assert_eq!(
@@ -574,4 +555,237 @@ async fn the_phones_own_contact_is_not_recorded() {
     assert_eq!(changes.exchanged_peer, None);
     assert!(!changes.peers_changed);
     assert!(fixture.core.state(false).unwrap().peers.unwrap().is_empty());
+}
+
+// --- What a peer record says about the peer. ---
+
+/// An advertised identity with `role_code`, forwarding or not.
+fn advertised(role_code: u8, forwards: bool) -> crate::NodeIdentityRecord {
+    crate::NodeIdentityRecord {
+        role_code,
+        capability_bits: 0,
+        forwards,
+        name: None,
+        latitude: None,
+        longitude: None,
+        location_precision: None,
+        altitude_m: None,
+        timestamp: None,
+        signature: crate::IdentitySignatureState::Valid,
+    }
+}
+
+#[test]
+fn an_advertisement_is_attributable_when_signed_or_authenticated() {
+    use super::mapping::attributable;
+    use crate::IdentitySignatureState::{Invalid, Unsigned, Valid};
+    for (signature, authenticated, expected) in [
+        (Valid, false, true),
+        (Valid, true, true),
+        (Unsigned, false, false),
+        (Unsigned, true, true),
+        (Invalid, false, false),
+        (Invalid, true, false),
+    ] {
+        assert_eq!(
+            attributable(signature, authenticated),
+            expected,
+            "{signature:?}, authenticated {authenticated}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_mapped_peer_says_whether_its_advertisement_is_attributable() {
+    let fixture = Fixture::new();
+    let signed = address(5);
+    let bundle = signed_node_identity_bundle(
+        &umsh_crypto::software::SoftwareIdentity::from_secret_bytes(&[5; 32]),
+        NodeIdentityProfileRecord {
+            role_code: umsh_node::NodeRole::Chat.as_byte(),
+            capability_bits: 0,
+            name: None,
+            latitude: None,
+            longitude: None,
+            location_precision: None,
+            altitude_m: None,
+            timestamp: None,
+        },
+    )
+    .await
+    .unwrap();
+    fixture.peer(&signed, None, Some(bundle));
+    // None at all, and one that does not decode.
+    fixture.peer(&address(6), Some(MobileStoredNodeKind::Chat), None);
+    fixture.peer(
+        &address(7),
+        Some(MobileStoredNodeKind::Chat),
+        Some(vec![0xFF]),
+    );
+    let peers = fixture.core.state(false).unwrap().peers.unwrap();
+    let of = |address: &str| {
+        peers
+            .iter()
+            .find(|peer| peer.identity.canonical_address == address)
+            .unwrap()
+    };
+    assert!(of(&signed).advertisement_attributable);
+    assert!(!of(&address(6)).advertisement_attributable);
+    assert!(of(&address(7)).advertised_identity.is_none());
+    assert!(!of(&address(7)).advertisement_attributable);
+    // Each peer's router hint is the first two bytes of its node hint.
+    for peer in &peers {
+        assert_eq!(peer.router_hint.bytes, peer.identity.hint.bytes[..2]);
+        assert_eq!(
+            Some(peer.router_hint.text.clone()),
+            super::mapping::router_hint_text(&peer.identity.hint.bytes[..2])
+        );
+    }
+}
+
+#[test]
+fn what_says_a_peer_forwards() {
+    use super::mapping::repeater_evidence;
+    use MobileRepeaterEvidence::{No, Unknown, Yes};
+    use MobileStoredNodeKind::{Bridge, Chat, Repeater};
+    // Advertised: forwarding by capability or role says yes, whatever
+    // is stored; otherwise the role byte decides.
+    for (role, forwards, kind, expected) in [
+        (2, true, Some(Chat), Yes),
+        (1, true, None, Yes),
+        (0, false, Some(Repeater), Unknown),
+        (2, false, Some(Repeater), No),
+        (7, false, None, No),
+        (8, false, None, Unknown),
+        (200, false, Some(Bridge), Unknown),
+    ] {
+        let identity = advertised(role, forwards);
+        assert_eq!(
+            repeater_evidence(Some(&identity), kind),
+            expected,
+            "role {role}, forwards {forwards}, {kind:?}"
+        );
+    }
+    // Nothing advertised: the stored kind.
+    for (kind, expected) in [
+        (None, Unknown),
+        (Some(MobileStoredNodeKind::Unknown), Unknown),
+        (Some(Repeater), Yes),
+        (Some(Bridge), Yes),
+        (Some(Chat), No),
+        (Some(MobileStoredNodeKind::Tracker), No),
+    ] {
+        assert_eq!(repeater_evidence(None, kind), expected, "{kind:?}");
+    }
+}
+
+#[test]
+fn a_mapped_peer_carries_its_likely_repeater_and_evidence() {
+    let fixture = Fixture::new();
+    fixture.peer(&address(2), Some(MobileStoredNodeKind::Bridge), None);
+    fixture.peer(&address(3), Some(MobileStoredNodeKind::Chat), None);
+    fixture.peer(&address(4), None, None);
+    let peers = fixture.core.state(false).unwrap().peers.unwrap();
+    let of = |seed: u8| {
+        let address = address(seed);
+        peers
+            .iter()
+            .find(|peer| peer.identity.canonical_address == address)
+            .map(|peer| (peer.likely_repeater, peer.repeater_evidence))
+            .unwrap()
+    };
+    assert_eq!(of(2), (true, MobileRepeaterEvidence::Yes));
+    assert_eq!(of(3), (false, MobileRepeaterEvidence::No));
+    assert_eq!(of(4), (false, MobileRepeaterEvidence::Unknown));
+}
+
+// --- Where an ask near a peer can be steered. ---
+
+fn hint(byte: u8) -> crate::RouterHintRecord {
+    let bytes = vec![byte, byte];
+    crate::RouterHintRecord {
+        text: super::mapping::router_hint_text(&bytes).unwrap(),
+        bytes,
+    }
+}
+
+fn route(kind: crate::MobileMeshRouteKind, hints: usize) -> MobileAppRouteRecord {
+    MobileAppRouteRecord {
+        kind,
+        hints: (1..=hints).map(|index| hint(index as u8)).collect(),
+        hop_count: None,
+        flood_hops: None,
+        flood_regions: Vec::new(),
+        hold_remaining_ms: None,
+        hold_flood_hops: None,
+        fallback_acks: 0,
+        confirmed_age_ms: None,
+        candidate: None,
+        discovery_vantage: None,
+    }
+}
+
+#[test]
+fn an_ask_is_steered_by_the_route_and_what_the_peer_said() {
+    use super::routes::discovery_vantage;
+    use crate::MobileMeshRouteKind::{Direct, Flood, Source, Unknown};
+    use MobileRepeaterEvidence as Evidence;
+    let peer = hint(0xEE);
+    let vantage = |kind, hints, evidence| {
+        discovery_vantage(&route(kind, hints), peer.clone(), evidence).map(|vantage| {
+            assert_eq!(vantage.evidence, evidence);
+            (
+                vantage
+                    .repeaters
+                    .iter()
+                    .map(|hint| hint.bytes[0])
+                    .collect::<Vec<_>>(),
+                vantage.lands_at_peer,
+            )
+        })
+    };
+    for evidence in [Evidence::Yes, Evidence::Unknown, Evidence::No] {
+        for kind in [Flood, Unknown] {
+            assert_eq!(vantage(kind, 0, evidence), None, "{kind:?} {evidence:?}");
+        }
+        // Heard directly: through the peer, unless it is known not to
+        // forward.
+        for (kind, hints) in [(Direct, 0), (Source, 0)] {
+            assert_eq!(
+                vantage(kind, hints, evidence),
+                (evidence != Evidence::No).then(|| (vec![0xEE], true)),
+                "{kind:?} {evidence:?}"
+            );
+        }
+        // Through a learned path: to the peer only when it forwards.
+        assert_eq!(
+            vantage(Source, 2, evidence),
+            Some(if evidence == Evidence::Yes {
+                (vec![1, 2, 0xEE], true)
+            } else {
+                (vec![1, 2], false)
+            }),
+            "{evidence:?}"
+        );
+    }
+    // A full path has no room for the peer: it lands one short.
+    let full = vantage(Source, 15, Evidence::Yes).unwrap();
+    assert_eq!(full.0, (1..=15).collect::<Vec<u8>>());
+    assert!(!full.1);
+    let fourteen = vantage(Source, 14, Evidence::Yes).unwrap();
+    assert_eq!(fourteen.0.len(), 15);
+    assert!(fourteen.1);
+}
+
+#[test]
+fn a_reply_counts_the_repeaters_its_route_does_not_name() {
+    use super::commands::unnamed_hops;
+    // No count, direct, traced in full, truncated, and a count below the
+    // hints named.
+    assert_eq!(unnamed_hops(None, 0), None);
+    assert_eq!(unnamed_hops(Some(1), 0), Some(0));
+    assert_eq!(unnamed_hops(Some(3), 2), Some(0));
+    assert_eq!(unnamed_hops(Some(5), 2), Some(2));
+    assert_eq!(unnamed_hops(Some(2), 3), Some(0));
+    assert_eq!(unnamed_hops(Some(0), 0), Some(0));
 }

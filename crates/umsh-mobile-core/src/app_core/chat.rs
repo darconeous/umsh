@@ -16,7 +16,7 @@ use umsh_text::reaction::Reaction;
 
 use super::bootstrap::CHANNEL_ADDRESS_PREFIX;
 use super::pipeline::carries_this_phone;
-use super::records::{MobileAppChangesRecord, MobileAppLifecycle};
+use super::records::{MobileAppChangesRecord, MobileAppLifecycle, MobileMessageActionsRecord};
 use super::routes::checked_conversation_address;
 use super::worker::{InFlight, Worker};
 use super::{MobileAppCore, MobileAppError, mesh_error};
@@ -26,7 +26,8 @@ use crate::mobile_chat::{
 use crate::mobile_mesh::{MobileChatSendError, MobileChatSendRequest};
 use crate::radio_driver::MobileRadioStateRecord;
 use crate::store::{
-    MobileStoredChatDeliveryState, MobileStoredChatMessageRecord, MobileStoredChatMessageRefRecord,
+    MobileStoredChannelRecord, MobileStoredChatDeliveryState, MobileStoredChatMessageRecord,
+    MobileStoredChatMessageRefRecord,
 };
 use crate::{MobileMeshError, MobileWellKnownChannel, SecretVaultError};
 
@@ -132,6 +133,12 @@ pub enum MobileAppChatRequest {
         message: MobileStoredChatMessageRefRecord,
         reaction: Option<MobileReaction>,
     },
+    /// This phone's reaction to either party's message: `reaction`, unless
+    /// this phone's stored reaction already reads as it, which withdraws it.
+    ToggleReaction {
+        message: MobileStoredChatMessageRefRecord,
+        reaction: MobileReaction,
+    },
 }
 
 impl MobileAppChatRequest {
@@ -169,6 +176,10 @@ impl MobileAppChatRequest {
             Self::React {
                 message: _,
                 reaction: Some(reaction),
+            } if reaction_body(&reaction).is_none() => return Err(MobileAppError::InvalidRequest),
+            Self::ToggleReaction {
+                message: _,
+                reaction,
             } if reaction_body(&reaction).is_none() => return Err(MobileAppError::InvalidRequest),
             request => request,
         })
@@ -222,6 +233,78 @@ fn delivery_failed(row: &MobileStoredChatMessageRecord) -> bool {
                 MobileStoredChatDeliveryState::Failed | MobileStoredChatDeliveryState::Undelivered
             )
         )
+}
+
+/// Whether a message written at `created_at_ms` may still be revised at
+/// `now_ms`. The boundary itself is inside.
+pub(super) fn within_revise_window(now_ms: i64, created_at_ms: i64) -> bool {
+    now_ms <= created_at_ms.saturating_add(REVISE_WINDOW_MS)
+}
+
+/// Whether the row stands as a message here, rather than a gap.
+fn present(row: &MobileStoredChatMessageRecord) -> bool {
+    row.presence == MobileChatPresence::Present
+}
+
+/// A message of ours, standing and not taken back, that can be named as
+/// ours: what an edit and a deletion need.
+fn revisable(row: &MobileStoredChatMessageRecord) -> bool {
+    row.outbound && !row.is_deleted && present(row) && original_ref(row).is_ok()
+}
+
+fn may_edit(row: &MobileStoredChatMessageRecord, now_ms: i64) -> bool {
+    revisable(row) && within_revise_window(now_ms, row.created_at_ms)
+}
+
+fn may_delete(row: &MobileStoredChatMessageRecord) -> bool {
+    revisable(row)
+}
+
+/// How a resend of the row would first go, or `None` when it may not be
+/// resent: in place while its wire ID still names it, else as new.
+fn may_resend(row: &MobileStoredChatMessageRecord, now_ms: i64) -> Option<MobileAppResent> {
+    if !delivery_failed(row) || row.is_deleted || !present(row) {
+        return None;
+    }
+    Some(
+        if row.wire_id.is_some() && within_revise_window(now_ms, row.created_at_ms) {
+            MobileAppResent::InPlace
+        } else {
+            MobileAppResent::AsNew
+        },
+    )
+}
+
+/// A standing message that went out or arrived: what a reply and a
+/// reaction are about.
+fn may_reply(row: &MobileStoredChatMessageRecord) -> bool {
+    !row.is_deleted && !delivery_failed(row) && present(row)
+}
+
+fn may_react(row: &MobileStoredChatMessageRecord) -> bool {
+    may_reply(row) && (engine_session(row).is_some() || row.wire_id.is_some())
+}
+
+/// What the row offers at `now_ms`, by the rules the commands apply.
+pub(super) fn message_actions(
+    row: &MobileStoredChatMessageRecord,
+    now_ms: i64,
+) -> MobileMessageActionsRecord {
+    MobileMessageActionsRecord {
+        edit: may_edit(row, now_ms),
+        delete: may_delete(row),
+        resend: may_resend(row, now_ms),
+        react: may_react(row),
+        reply: may_reply(row),
+        request_missing: row.presence == MobileChatPresence::GapIdle,
+    }
+}
+
+/// Whether a stored channel is `EMERGENCY`, by its canonical name, the
+/// rule every app reads.
+pub(super) fn is_emergency_channel(channel: &MobileStoredChannelRecord) -> bool {
+    crate::well_known_channel(channel.canonical_name.clone())
+        .is_some_and(|known| known.channel == MobileWellKnownChannel::Emergency)
 }
 
 /// The engine session a row names, when its session ID is a number. A row
@@ -314,9 +397,7 @@ impl Worker {
             return Ok(false);
         };
         let channel = self.store.channel_by_id(owner, &channel_id)?;
-        Ok(channel
-            .and_then(|channel| crate::well_known_channel(channel.canonical_name))
-            .is_some_and(|known| known.channel == MobileWellKnownChannel::Emergency))
+        Ok(channel.as_ref().is_some_and(is_emergency_channel))
     }
 
     /// `EmergencyNotCertified` for a transmission the user starts on
@@ -371,7 +452,7 @@ impl Worker {
 
     /// Whether a message written at `created_at_ms` may still be revised.
     fn within_revise_window(&self, created_at_ms: i64) -> bool {
-        self.clock.now_ms() <= created_at_ms.saturating_add(REVISE_WINDOW_MS)
+        within_revise_window(self.clock.now_ms(), created_at_ms)
     }
 
     /// The stored row a request names, in this conversation.
@@ -403,26 +484,28 @@ impl Worker {
                 forward_secret,
             },
             // A reply goes whether or not its target can still be named:
-            // with no row, as what was written.
+            // with no row, or one that can no longer be answered, as what
+            // was written.
             MobileAppChatRequest::Reply {
                 target,
                 text,
                 forward_secret,
             } => match self.store.chat_message(owner, address, &target)? {
-                Some(row) => MobileChatSendRequest::Reply {
+                Some(row) if may_reply(&row) => MobileChatSendRequest::Reply {
                     target: regarding_ref(&row),
                     body: text,
                     forward_secret,
                 },
-                None => MobileChatSendRequest::Typed {
+                _ => MobileChatSendRequest::Typed {
                     text,
                     forward_secret,
                 },
             },
             MobileAppChatRequest::Edit { message, text } => {
                 let row = self.named_row(owner, address, &message)?;
-                if !row.outbound || row.is_deleted || !self.within_revise_window(row.created_at_ms)
-                {
+                // Compared untrimmed, as stored: an edit that changes
+                // nothing is no edit.
+                if !may_edit(&row, self.clock.now_ms()) || text == row.body {
                     return Err(MobileAppError::InvalidRequest);
                 }
                 MobileChatSendRequest::Edit {
@@ -432,7 +515,7 @@ impl Worker {
             }
             MobileAppChatRequest::Delete { message } => {
                 let row = self.named_row(owner, address, &message)?;
-                if !row.outbound || row.is_deleted {
+                if !may_delete(&row) {
                     return Err(MobileAppError::InvalidRequest);
                 }
                 MobileChatSendRequest::Delete {
@@ -441,10 +524,7 @@ impl Worker {
             }
             MobileAppChatRequest::React { message, reaction } => {
                 let row = self.named_row(owner, address, &message)?;
-                if row.is_deleted
-                    || delivery_failed(&row)
-                    || (engine_session(&row).is_none() && row.wire_id.is_none())
-                {
+                if !may_react(&row) {
                     return Err(MobileAppError::InvalidRequest);
                 }
                 MobileChatSendRequest::Reaction {
@@ -453,6 +533,32 @@ impl Worker {
                         .as_ref()
                         .and_then(reaction_body)
                         .unwrap_or_default(),
+                }
+            }
+            MobileAppChatRequest::ToggleReaction { message, reaction } => {
+                let row = self
+                    .store
+                    .chat_message_with_reactions(owner, address, &message)?
+                    .ok_or(MobileAppError::NotFound)?;
+                if !may_react(&row) {
+                    return Err(MobileAppError::InvalidRequest);
+                }
+                // Both read as a kind, so another spelling of the same
+                // emote withdraws it too.
+                let wanted = reaction_body(&reaction).ok_or(MobileAppError::InvalidRequest)?;
+                let ours = row
+                    .reactions
+                    .iter()
+                    .find(|stored| stored.outbound)
+                    .and_then(|stored| reaction_from_body(&stored.body));
+                let body = if ours.is_some() && ours == reaction_from_body(&wanted) {
+                    String::new()
+                } else {
+                    wanted
+                };
+                MobileChatSendRequest::Reaction {
+                    target: regarding_ref(&row),
+                    body,
                 }
             }
         })
@@ -496,8 +602,19 @@ impl Worker {
     ) -> Result<(), MobileAppError> {
         self.emergency_refusal(owner, address)?;
         let session = self.radio_session()?;
+        // A toggle reads the reaction the one before it stored: held from
+        // the read through the store's write.
+        let toggle = if matches!(request, MobileAppChatRequest::ToggleReaction { .. }) {
+            Some(self.reaction_toggles.lock().await)
+        } else {
+            None
+        };
         let request = self.compose_request(owner, address, request)?;
         let sent = session.send_chat(address.to_owned(), request).await;
+        if toggle.is_some() {
+            session.flush_chat().await;
+        }
+        drop(toggle);
         let kept = matches!(
             sent,
             Ok(())
@@ -555,7 +672,7 @@ impl Worker {
             return Err(MobileAppError::NotRunning);
         };
         let row = self.named_row(&owner, &address, &message)?;
-        if !delivery_failed(&row) {
+        if may_resend(&row, self.clock.now_ms()).is_none() {
             return Err(MobileAppError::InvalidRequest);
         }
         // Claimed before the first await, so a second resend of the row
@@ -768,9 +885,11 @@ impl Worker {
 #[uniffi::export]
 impl MobileAppCore {
     /// Send into a stored conversation: typed text, a reply, an edit, a
-    /// deletion or a reaction. The message is stored before anything goes
-    /// on the air, and the send runs to its end whatever becomes of the
-    /// caller.
+    /// deletion or a reaction. An edit that changes nothing, and an edit,
+    /// deletion or reaction its target's `actions` do not offer, is
+    /// `InvalidRequest`; a reply to a message that offers none goes as
+    /// plain text. The message is stored before anything goes on the air,
+    /// and the send runs to its end whatever becomes of the caller.
     ///
     /// `clear_draft`, with `Typed` and `Reply` only, is the composer's text
     /// as submitted: it is stored as the draft first, in every state but
@@ -802,7 +921,8 @@ impl MobileAppCore {
     /// within its revise window and while its frames can still land, or
     /// otherwise as a new message that replaces it. `forward_secret` is
     /// what the user chose; a channel has none. `InvalidRequest` for a
-    /// message that is not failed, or that another resend is sending.
+    /// message whose `actions` offer no resend, or that another resend is
+    /// sending.
     pub async fn resend(
         &self,
         address: String,
@@ -891,8 +1011,10 @@ impl MobileAppCore {
                 refused = Some(MobileAppError::NoOwner);
             } else if !snapshot.emergency_certified {
                 snapshot.emergency_certified = true;
+                // Each channel conversation says whether it needs it.
                 return MobileAppChangesRecord {
                     emergency_certified: Some(true),
+                    conversations_changed: true,
                     ..MobileAppChangesRecord::default()
                 };
             }

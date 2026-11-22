@@ -93,6 +93,7 @@ struct PeerVerbTests {
 struct PingPathTests {
     private func reply(
         hopCount: UInt8?,
+        unnamed: UInt8?,
         hints: [MeshRouterHint] = [],
         trace: [MeshLegSignal] = [],
         rssi: Int16? = -97,
@@ -106,12 +107,13 @@ struct PingPathTests {
             rssiDBm: rssi,
             signalToNoiseCentibels: snr,
             linkQuality: nil,
-            viaRouteRetry: false
+            viaRouteRetry: false,
+            unnamedHops: unnamed
         )
     }
 
     @Test func aDirectReplyIsOneLegWithThePhonesReading() {
-        let path = PingPath(reply: reply(hopCount: 1))
+        let path = PingPath(reply: reply(hopCount: 1, unnamed: 0))
         #expect(path.stops == [.phone, .peer])
         #expect(path.legs == [.reading(MeshLegSignal(rssiDBm: -97, signalToNoiseCentibels: 65))])
     }
@@ -121,7 +123,7 @@ struct PingPathTests {
         let far = hint("7N*", 0x03, 0x04)
         let first = MeshLegSignal(rssiDBm: -108, signalToNoiseCentibels: -25)
         let second = MeshLegSignal(rssiDBm: -92, signalToNoiseCentibels: 80)
-        let path = PingPath(reply: reply(hopCount: 3, hints: [near, far], trace: [first, second]))
+        let path = PingPath(reply: reply(hopCount: 3, unnamed: 0, hints: [near, far], trace: [first, second]))
         #expect(path.stops == [.phone, .repeater(near, preceding: []), .repeater(far, preceding: [near]), .peer])
         #expect(path.legs == [
             .reading(MeshLegSignal(rssiDBm: -97, signalToNoiseCentibels: 65)),
@@ -133,24 +135,24 @@ struct PingPathTests {
     @Test func aBridgedHopKeepsItsEmptyReading() {
         let bridge = hint("Br1", 0x05, 0x06)
         let bridged = MeshLegSignal(rssiDBm: nil, signalToNoiseCentibels: nil)
-        let path = PingPath(reply: reply(hopCount: 2, hints: [bridge], trace: [bridged]))
+        let path = PingPath(reply: reply(hopCount: 2, unnamed: 0, hints: [bridge], trace: [bridged]))
         #expect(path.legs.last == .reading(bridged))
     }
 
     @Test func repeatersCountedButNotNamedAreOneDashedStretch() {
-        let path = PingPath(reply: reply(hopCount: 3))
+        let path = PingPath(reply: reply(hopCount: 3, unnamed: 2))
         #expect(path.stops == [.phone, .peer])
         #expect(path.legs == [.unnamed(count: 2)])
     }
 
     @Test func aReplyWithNoHopCountEndsInAnUnknownStretch() {
-        let path = PingPath(reply: reply(hopCount: nil))
+        let path = PingPath(reply: reply(hopCount: nil, unnamed: nil))
         #expect(path.stops == [.phone, .peer])
         #expect(path.legs == [.unknown])
 
         let near = hint("BtC", 0x01, 0x02)
         let first = MeshLegSignal(rssiDBm: -108, signalToNoiseCentibels: -25)
-        let partial = PingPath(reply: reply(hopCount: nil, hints: [near], trace: [first]))
+        let partial = PingPath(reply: reply(hopCount: nil, unnamed: nil, hints: [near], trace: [first]))
         #expect(partial.stops == [.phone, .repeater(near, preceding: []), .peer])
         #expect(partial.legs == [
             .reading(MeshLegSignal(rssiDBm: -97, signalToNoiseCentibels: 65)),
@@ -181,6 +183,82 @@ struct RouteLegTests {
         let route = PeerRoute(kind: .flood, hints: [], hopCount: 3, floodHops: 2, floodRegions: [])
         #expect(RouteScreen.legs(for: route) == [.unnamed(count: 2)])
         #expect(RouteScreen.legs(for: .unknown) == [.pending])
+    }
+}
+
+@Suite
+struct SolicitVantageTests {
+    /// The route's one repeater.
+    private let routeHint = RouterHintRecord(bytes: Data([5, 6]), text: "BtC")
+    /// The peer's router hint: the first two bytes of its key, as the core
+    /// derives it.
+    private let peerHint = RouterHintRecord(bytes: Data([1, 2]), text: "Rm7")
+
+    private func route(_ vantage: MobileAppDiscoveryVantageRecord?) -> PeerRoute {
+        PeerRoute(MobileAppRouteRecord(
+            kind: .source,
+            hints: [routeHint],
+            hopCount: 2,
+            floodHops: nil,
+            floodRegions: [],
+            holdRemainingMs: nil,
+            holdFloodHops: nil,
+            fallbackAcks: 0,
+            confirmedAgeMs: nil,
+            candidate: nil,
+            discoveryVantage: vantage
+        ))
+    }
+
+    @Test func anAskThatStopsShortNamesWhereItLands() throws {
+        // The core sends the route's hints alone when the peer is not known
+        // to repeat.
+        let stops = route(MobileAppDiscoveryVantageRecord(
+            repeaters: [routeHint],
+            landsAtPeer: false,
+            evidence: .unknown
+        ))
+        let vantage = try #require(SolicitVantage(peer: node(), vantage: stops.discoveryVantage))
+        #expect(vantage.repeaters == [Data([5, 6])])
+        #expect(vantage.landingRepeater == hint("BtC", 5, 6))
+        #expect(!vantage.landsAtPeer)
+        #expect(vantage.evidence == .unknown)
+        #expect(vantage.peerAddress == node().identity.canonicalAddress)
+    }
+
+    @Test func anAskAimedAtThePeerHasNoLandingRepeater() throws {
+        // The core sends the route's hints and then the peer's own.
+        let lands = route(MobileAppDiscoveryVantageRecord(
+            repeaters: [routeHint, peerHint],
+            landsAtPeer: true,
+            evidence: .yes
+        ))
+        let vantage = try #require(SolicitVantage(peer: node(), vantage: lands.discoveryVantage))
+        #expect(vantage.repeaters == [Data([5, 6]), node().identity.hint.bytes.prefix(2)])
+        #expect(vantage.landingRepeater == nil)
+        #expect(vantage.landsAtPeer)
+        #expect(vantage.evidence == .yes)
+    }
+
+    @Test func aRepeaterAtTheEndOfAFullPathStopsOneShort() throws {
+        // A peer known to repeat whose route already holds 15 hints: the
+        // core cannot add the peer's own, so the ask lands one short.
+        let hints = (0..<15).map { RouterHintRecord(bytes: Data([0x10, UInt8($0)]), text: "h\($0)") }
+        let full = route(MobileAppDiscoveryVantageRecord(
+            repeaters: hints,
+            landsAtPeer: false,
+            evidence: .yes
+        ))
+        let vantage = try #require(SolicitVantage(peer: node(), vantage: full.discoveryVantage))
+        #expect(vantage.repeaters.count == 15)
+        #expect(vantage.landingRepeater == hint("h14", 0x10, 14))
+        #expect(!vantage.landsAtPeer)
+        #expect(vantage.evidence == .yes)
+    }
+
+    @Test func noVantageFromTheCoreOffersNoAsk() {
+        #expect(SolicitVantage(peer: node(), vantage: route(nil).discoveryVantage) == nil)
+        #expect(SolicitVantage(peer: node(), vantage: PeerRoute.unknown.discoveryVantage) == nil)
     }
 }
 
@@ -225,6 +303,17 @@ struct PresentationTests {
         #expect(RoutePresentation.briefText(held, locale: english) == "Manual")
     }
 
+    @Test func discoverWaitsRoundUpToWholeSeconds() {
+        func footer(_ wait: Duration, askedHere: Bool = false) -> String? {
+            DiscoverPeersView.waitFooter(wait: wait, askedHere: askedHere, locale: english)
+        }
+        #expect(footer(.zero) == nil)
+        #expect(footer(.milliseconds(200)) == "Ask again in 1 sec.")
+        #expect(footer(.seconds(40)) == "Ask again in 40 sec.")
+        #expect(footer(.milliseconds(39_001)) == "Ask again in 40 sec.")
+        #expect(footer(.seconds(40), askedHere: true) == "Asked—replies appear below. Ask again in 40 sec.")
+    }
+
     @Test func cellSizesUseTheLocalesNumbers() {
         #expect(LocationPresentation.cellSizeText(meters: 611, locale: english) == "611 m")
         #expect(LocationPresentation.cellSizeText(meters: 4.5, locale: german) == "4,5 m")
@@ -246,6 +335,21 @@ struct PresentationTests {
         #expect(age(3 * 3_600 + 59 * 60) != age(4 * 3_600))
         // A clock a little behind the node's still reads as now.
         #expect(age(-5) == "just now")
+    }
+
+    @Test func compactAgesSayNowThenNarrowWholeUnits() {
+        let since = Date(timeIntervalSinceReferenceDate: 0)
+        func age(_ seconds: TimeInterval, _ style: AgeStyle = .compact) -> String {
+            AgePresentation.text(since: since, now: since.addingTimeInterval(seconds), style: style, locale: english)
+        }
+        #expect(age(0) == "now")
+        #expect(age(59) == "now")
+        // A stamp a hair ahead of this phone's clock: never "in 0s".
+        #expect(age(-0.4) == "now")
+        #expect(age(-30) == "now")
+        #expect(age(3_600) == "1h ago")
+        #expect(age(3_600 + 59 * 60) == age(3_600))
+        #expect(age(3_600) != age(3_600, .standard))
     }
 
     @Test func agesRedrawOnlyWhenTheirWordsChange() {
@@ -270,5 +374,37 @@ struct PresentationTests {
         #expect(abs(southwest - 225) < 0.1)
         #expect(LocationPresentation.compassText(degrees: 44, locale: english) == "northeast")
         #expect(LocationPresentation.compassText(degrees: 350, locale: english) == "north")
+    }
+}
+
+@Suite
+struct CoreLimitsTests {
+    @Test func settingsNeverStoredStartAtTheCoresValues() {
+        let limits = mobileLimits()
+        #expect(CoreLimits.current == limits)
+        #expect(CoreLimits.floodHops(stored: nil) == limits.recommendedFloodHops)
+        #expect(CoreLimits.beaconFloodHops(stored: nil) == limits.recommendedBeaconFloodHops)
+        #expect(CoreLimits.locationPrecision(stored: nil) == limits.defaultLocationPrecision)
+    }
+
+    @Test func storedSettingsAreKeptAndUnusableOnesStartOver() {
+        let limits = mobileLimits()
+        #expect(CoreLimits.floodHops(stored: 12) == 12)
+        #expect(CoreLimits.beaconFloodHops(stored: 0) == 0)
+        #expect(CoreLimits.locationPrecision(stored: 3) == 3)
+        #expect(CoreLimits.floodHops(stored: -1) == limits.recommendedFloodHops)
+        #expect(CoreLimits.beaconFloodHops(stored: 256) == limits.recommendedBeaconFloodHops)
+    }
+
+    @Test func intervalPickersOfferTheCoresChoicesInsideItsRange() {
+        let limits = mobileLimits()
+        #expect(advertisementIntervalChoices == limits.advertIntervalChoicesS)
+        #expect(beaconIntervalChoices == limits.beaconIntervalChoicesS)
+        for seconds in advertisementIntervalChoices + beaconIntervalChoices where seconds != 0 {
+            #expect((limits.minAnnounceIntervalS...limits.maxAnnounceIntervalS).contains(seconds))
+        }
+        #expect(formattedAnnouncementInterval(0, locale: english) == "Off")
+        #expect(formattedAnnouncementInterval(4 * 3_600, locale: english) == "Every 4 hours")
+        #expect(formattedAnnouncementInterval(1_200, locale: english) == "Every 20 minutes")
     }
 }

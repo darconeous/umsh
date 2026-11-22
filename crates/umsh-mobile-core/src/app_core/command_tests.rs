@@ -1453,6 +1453,274 @@ async fn asking_the_air_needs_this_phone_s_radio() {
     );
 }
 
+/// Report a radio attached as this phone's.
+async fn attached(core: &Core) {
+    core.core
+        .on_worker(|worker| async move {
+            worker.shared.publish(|snapshot| {
+                snapshot.radio = Some(MobileRadioStateRecord {
+                    phase: MobileRadioPhase::Attached,
+                    host: UlcpHostOwnership::Ours,
+                    ..MobileRadioStateRecord::idle()
+                });
+                MobileAppChangesRecord::default()
+            });
+            Ok(())
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn an_unnarrowed_ask_goes_once_per_cooldown() {
+    let (core, _) = running().await;
+    let wait = || core.core.discovery_wait_ms().unwrap();
+    let ask = |role: Option<u8>, route: Vec<Vec<u8>>| core.core.discover(role, None, route);
+    // Refused before the radio is asked for, so a refusal starts none.
+    assert_eq!(ask(None, Vec::new()).await, Err(MobileAppError::NoRadio));
+    assert_eq!(wait(), 0);
+    attached(&core).await;
+    // One the session refuses (more hints than a route carries) starts none
+    // either.
+    assert_eq!(
+        ask(None, vec![vec![1, 2]; 16]).await,
+        Err(MobileAppError::InvalidRequest)
+    );
+    assert_eq!(wait(), 0);
+
+    ask(None, Vec::new()).await.unwrap();
+    assert_eq!(wait(), 40_000);
+    assert_eq!(
+        ask(None, Vec::new()).await,
+        Err(MobileAppError::InvalidRequest)
+    );
+    // Whatever its role or route.
+    assert_eq!(
+        ask(Some(1), vec![vec![1, 2]]).await,
+        Err(MobileAppError::InvalidRequest)
+    );
+    // An ask narrowed to one node is not held back, and does not restart
+    // the wait.
+    core.clock.advance(1_000);
+    core.core
+        .discover(None, Some(vec![1, 2, 3]), Vec::new())
+        .await
+        .unwrap();
+    assert_eq!(wait(), 39_000);
+    // The wall clock moving does not move it.
+    core.clock.set_wall(NOW_MS - 3_600_000);
+    assert_eq!(wait(), 39_000);
+    core.clock.advance(38_999);
+    assert_eq!(wait(), 1);
+    assert_eq!(
+        ask(None, Vec::new()).await,
+        Err(MobileAppError::InvalidRequest)
+    );
+    core.clock.advance(1);
+    assert_eq!(wait(), 0);
+    ask(None, Vec::new()).await.unwrap();
+    assert_eq!(wait(), 40_000);
+
+    core.core.stop().await;
+    assert_eq!(core.core.discovery_wait_ms(), Err(MobileAppError::Stopped));
+}
+
+#[tokio::test]
+async fn two_unnarrowed_asks_at_once_send_one() {
+    let (core, _) = running().await;
+    attached(&core).await;
+    let (first, second) = tokio::join!(
+        core.core.discover(None, None, Vec::new()),
+        core.core.discover(Some(1), None, Vec::new()),
+    );
+    let mut answers = [first, second];
+    answers.sort_by_key(Result::is_err);
+    assert_eq!(answers, [Ok(()), Err(MobileAppError::InvalidRequest)]);
+}
+
+#[tokio::test]
+async fn an_ask_held_back_by_another_s_radio_starts_no_cooldown() {
+    let (core, _) = running().await;
+    core.core
+        .on_worker(|worker| async move {
+            worker.shared.publish(|snapshot| {
+                snapshot.radio = Some(MobileRadioStateRecord {
+                    phase: MobileRadioPhase::Attached,
+                    host: UlcpHostOwnership::OtherHost,
+                    ..MobileRadioStateRecord::idle()
+                });
+                MobileAppChangesRecord::default()
+            });
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        core.core.discover(None, None, Vec::new()).await,
+        Err(MobileAppError::NotThisPhone)
+    );
+    assert_eq!(core.core.discovery_wait_ms().unwrap(), 0);
+}
+
+#[tokio::test]
+async fn two_hops_that_share_a_hint_are_a_path() {
+    let (core, _) = running().await;
+    let peer = address_of(0x4E);
+    let held = core
+        .core
+        .set_manual_path(
+            peer.clone(),
+            crate::mobile_mesh::MobileMeshExplicitPath {
+                hints: vec![vec![0x2A, 0xE1], vec![0x2A, 0xE1]],
+                flood_hops: 1,
+            },
+            60_000,
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(held);
+    let route = core.core.peer_route(peer).await.unwrap();
+    assert_eq!(route.hints.len(), 2);
+}
+
+#[tokio::test]
+async fn a_route_says_where_an_ask_near_its_peer_can_be_steered() {
+    let (core, owner) = running().await;
+    let hold = |peer: String, hints: Vec<Vec<u8>>| {
+        let app = core.core.clone();
+        async move {
+            assert!(
+                app.set_manual_path(
+                    peer,
+                    crate::mobile_mesh::MobileMeshExplicitPath {
+                        hints,
+                        flood_hops: 1
+                    },
+                    60_000,
+                    None,
+                )
+                .await
+                .unwrap()
+            );
+        }
+    };
+    let vantage = |peer: String| {
+        let app = core.core.clone();
+        async move {
+            app.peer_route(peer)
+                .await
+                .unwrap()
+                .discovery_vantage
+                .map(|vantage| {
+                    (
+                        vantage
+                            .repeaters
+                            .into_iter()
+                            .map(|hint| hint.bytes)
+                            .collect::<Vec<_>>(),
+                        vantage.lands_at_peer,
+                        vantage.evidence,
+                    )
+                })
+        }
+    };
+    let router_hint =
+        |peer: &str| crate::public_identity_bytes(peer.to_owned()).unwrap()[..2].to_vec();
+
+    // Nothing learned yet.
+    let unstored = address_of(0x4E);
+    assert_eq!(vantage(unstored.clone()).await, None);
+    // Heard directly, and nothing stored about it: asked through.
+    hold(unstored.clone(), Vec::new()).await;
+    assert_eq!(
+        vantage(unstored.clone()).await,
+        Some((
+            vec![router_hint(&unstored)],
+            true,
+            super::MobileRepeaterEvidence::Unknown
+        ))
+    );
+    // Stored as something that does not forward: not asked through, and a
+    // learned path ends one short of it.
+    let chat = address_of(0x4F);
+    core.store
+        .upsert_peer(
+            owner.clone(),
+            chat.clone(),
+            MobilePeerUpsertRecord {
+                node_kind: Some(MobileStoredNodeKind::Chat),
+                ..MobilePeerUpsertRecord::default()
+            },
+        )
+        .unwrap();
+    hold(chat.clone(), Vec::new()).await;
+    assert_eq!(vantage(chat.clone()).await, None);
+    hold(chat.clone(), vec![vec![0x2A, 0xE1]]).await;
+    assert_eq!(
+        vantage(chat).await,
+        Some((
+            vec![vec![0x2A, 0xE1]],
+            false,
+            super::MobileRepeaterEvidence::No
+        ))
+    );
+    // A stored repeater is asked at, past the path.
+    let repeater = address_of(0x50);
+    core.store
+        .upsert_peer(
+            owner,
+            repeater.clone(),
+            MobilePeerUpsertRecord {
+                node_kind: Some(MobileStoredNodeKind::Repeater),
+                ..MobilePeerUpsertRecord::default()
+            },
+        )
+        .unwrap();
+    hold(repeater.clone(), vec![vec![0x2A, 0xE1]]).await;
+    assert_eq!(
+        vantage(repeater.clone()).await,
+        Some((
+            vec![vec![0x2A, 0xE1], router_hint(&repeater)],
+            true,
+            super::MobileRepeaterEvidence::Yes
+        ))
+    );
+}
+
+#[tokio::test]
+async fn announcement_intervals_are_held_to_the_device_bounds() {
+    let (core, _) = running().await;
+    let policy = |advert: u32, beacon: u32| super::MobileAppPolicyRecord {
+        advert_interval_seconds: advert,
+        beacon_interval_seconds: beacon,
+        discoverable: true,
+        flood_hops: 1,
+        beacon_flood_hops: 0,
+        location_precision: None,
+        test_message_alerts: false,
+    };
+    let kept = || async {
+        core.core
+            .on_worker(|worker| async move {
+                let settings = worker.settings.borrow();
+                let policy = settings.policy.as_ref().unwrap();
+                Ok((
+                    policy.advert_interval_seconds,
+                    policy.beacon_interval_seconds,
+                ))
+            })
+            .await
+            .unwrap()
+    };
+    core.core.set_policy(policy(1, 0)).await.unwrap();
+    assert_eq!(kept().await, (20 * 60, 0), "nothing shorter than 20 min");
+    core.core.set_policy(policy(0, u32::MAX)).await.unwrap();
+    assert_eq!(kept().await, (0, 24 * 60 * 60));
+    core.core.set_policy(policy(3_600, 1_800)).await.unwrap();
+    assert_eq!(kept().await, (3_600, 1_800));
+}
+
 #[tokio::test]
 async fn commands_need_a_running_identity() {
     let core = Core::new();

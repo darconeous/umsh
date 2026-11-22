@@ -8,7 +8,8 @@
 //! mapped record; their mapping destructures the stored record whole.
 //! Display text (names and their fallbacks, labels) is native.
 
-use super::chat::MobileReaction;
+use super::chat::{MobileAppResent, MobileReaction};
+use crate::RouterHintRecord;
 use crate::meet::MobileMeetStateRecord;
 use crate::radio_driver::MobileRadioStateRecord;
 use crate::store::{
@@ -16,7 +17,6 @@ use crate::store::{
     MobileStoredConversationPreviewRecord, MobileStoredNodeRecord,
     MobileStoredPeerRepeaterEntryRecord,
 };
-use crate::ulcp::UlcpPropertyPushRecord;
 use crate::{ChannelPreviewRecord, NodeIdentityRecord, PublicIdentityRecord};
 
 /// Where a core is in its life.
@@ -84,11 +84,6 @@ pub struct MobileAppChangesRecord {
     /// The attached radio's latest state, when it changed. `use_radio`
     /// with no radio reports `idle`.
     pub radio: Option<MobileRadioStateRecord>,
-    /// Properties the radio pushed, oldest first.
-    pub property_pushes: Vec<UlcpPropertyPushRecord>,
-    /// Pushes let go of past the newest kept. Nonzero means read the
-    /// properties again.
-    pub property_pushes_dropped: u64,
     /// Read the peers again, and the conversation lists too: each direct
     /// conversation carries its peer whole.
     pub peers_changed: bool,
@@ -112,8 +107,6 @@ pub struct MobileAppChangesRecord {
     /// The address of the peer an exchange just recorded, once it is
     /// stored. Read the peers first.
     pub exchanged_peer: Option<String>,
-    /// The newest progress of each running operation.
-    pub operation_progress: Vec<MobileAppOperationProgressRecord>,
     /// Read `claimed_radios()` and `stranded_radios()` again.
     pub claimed_radios_changed: bool,
     /// Whether claimed radios are being revoked, when that changed.
@@ -121,15 +114,10 @@ pub struct MobileAppChangesRecord {
     /// Whether the user agreed to `EMERGENCY`'s warning, when that
     /// changed.
     pub emergency_certified: Option<bool>,
-}
-
-/// How far a remote operation has come.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
-pub struct MobileAppOperationProgressRecord {
-    /// The `MobileOperation`'s ID.
-    pub operation: u64,
-    /// Properties still to come, when the operation counts them.
-    pub remaining: Option<u32>,
+    /// Managed devices whose snapshot changed, by `MobileManagedDevice`
+    /// id. Read `snapshot()` again on the ones held.
+    #[uniffi(default)]
+    pub managed_devices: Vec<u64>,
 }
 
 /// What to tell the user. Native code words it, after reading again what
@@ -182,8 +170,6 @@ pub struct MobileNotificationReactionRecord {
     pub target_body: String,
 }
 
-/// The most pushes a changes record keeps while nothing polls.
-const PUSHES_KEPT: usize = 64;
 /// The most notifications a changes record keeps while nothing polls.
 const NOTIFICATIONS_KEPT: usize = 64;
 /// Past this many, transcripts collapse to all of them.
@@ -208,8 +194,6 @@ impl MobileAppChangesRecord {
         let Self {
             lifecycle,
             radio,
-            property_pushes,
-            property_pushes_dropped,
             peers_changed,
             channels_changed,
             conversations_changed,
@@ -221,10 +205,10 @@ impl MobileAppChangesRecord {
             meet_changed,
             meet,
             exchanged_peer,
-            operation_progress,
             claimed_radios_changed,
             revoking_claimed_radios,
             emergency_certified,
+            managed_devices,
         } = later;
         if lifecycle.is_some() {
             self.lifecycle = lifecycle;
@@ -232,13 +216,6 @@ impl MobileAppChangesRecord {
         if radio.is_some() {
             self.radio = radio;
         }
-        self.property_pushes.extend(property_pushes);
-        let excess = self.property_pushes.len().saturating_sub(PUSHES_KEPT);
-        self.property_pushes.drain(..excess);
-        self.property_pushes_dropped = self
-            .property_pushes_dropped
-            .saturating_add(property_pushes_dropped)
-            .saturating_add(excess as u64);
         self.peers_changed |= peers_changed;
         self.channels_changed |= channels_changed;
         self.conversations_changed |= conversations_changed;
@@ -276,10 +253,11 @@ impl MobileAppChangesRecord {
         if emergency_certified.is_some() {
             self.emergency_certified = emergency_certified;
         }
-        for progress in operation_progress {
-            self.operation_progress
-                .retain(|kept| kept.operation != progress.operation);
-            self.operation_progress.push(progress);
+        // Uncapped: no more than the live managed devices.
+        for device in managed_devices {
+            if !self.managed_devices.contains(&device) {
+                self.managed_devices.push(device);
+            }
         }
     }
 }
@@ -293,6 +271,30 @@ pub struct MobileAppPeerRecord {
     /// The stored advertisement, decoded; `None` when there is none or it
     /// does not decode.
     pub advertised_identity: Option<NodeIdentityRecord>,
+    /// Whether it plausibly forwards: what it advertised when that decodes,
+    /// else a stored repeater or bridge.
+    #[uniffi(default)]
+    pub likely_repeater: bool,
+    /// Its advertised identity may be attributed to it: signed and valid,
+    /// or unsigned in a frame the MAC authenticated. `false` without one.
+    #[uniffi(default)]
+    pub advertisement_attributable: bool,
+    /// What it advertised says about forwarding, for steering an ask.
+    pub repeater_evidence: MobileRepeaterEvidence,
+    /// Its two-byte router hint, rendered.
+    pub router_hint: RouterHintRecord,
+}
+
+/// What is known of whether a peer forwards.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, uniffi::Enum)]
+pub enum MobileRepeaterEvidence {
+    /// It advertised forwarding, or is stored as a repeater or bridge.
+    Yes,
+    /// Nothing says what it is.
+    #[default]
+    Unknown,
+    /// It advertised, or is stored as, something that does not forward.
+    No,
 }
 
 /// A channel, with the address its conversation is kept under.
@@ -340,6 +342,10 @@ pub struct MobileAppChannelConversationRecord {
     pub created_at_ms: i64,
     pub last_message: Option<MobileAppPreviewRecord>,
     pub unread_count: i64,
+    /// The channel is `EMERGENCY` and its warning has not been agreed to
+    /// under this owner: every transmission here is refused until it is.
+    #[uniffi(default)]
+    pub needs_emergency_agreement: bool,
 }
 
 /// One neighbor a router reported.
@@ -398,6 +404,30 @@ pub struct MobileAppMessageRecord {
     /// Until when a message of ours, not deleted, may be edited or resent
     /// in place; `None` for any other.
     pub revise_until_ms: Option<i64>,
+    /// What the row offers now. Read again once `revise_until_ms` passes.
+    #[uniffi(default)]
+    pub actions: MobileMessageActionsRecord,
+}
+
+/// What may be done to one message, as the core would take it when it was
+/// read. Copying, details and the original text are always native's.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, uniffi::Record)]
+pub struct MobileMessageActionsRecord {
+    #[uniffi(default)]
+    pub edit: bool,
+    #[uniffi(default)]
+    pub delete: bool,
+    /// How a resend would first go; `None` when it cannot be resent.
+    /// `InPlace` may still end `AsNew`: `resend`'s answer says which.
+    #[uniffi(default)]
+    pub resend: Option<MobileAppResent>,
+    #[uniffi(default)]
+    pub react: bool,
+    #[uniffi(default)]
+    pub reply: bool,
+    /// A gap the session may be asked to fill.
+    #[uniffi(default)]
+    pub request_missing: bool,
 }
 
 /// One slice of a transcript, oldest first. The flags say whether storage

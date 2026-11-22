@@ -25,6 +25,8 @@ fn staged(
         reactions: vec![],
         regarding: None,
         is_deleted: false,
+        wire_id: None,
+        epoch: None,
     }
 }
 
@@ -184,7 +186,7 @@ fn generated_messages_span_days_and_end_now() {
     assert_eq!(rows.last().unwrap().created_at_ms, NOW);
     assert!(
         rows.iter()
-            .all(|row| row.reference.session_id == format!("9{}", NOW % 1_000_000))
+            .all(|row| row.reference.session_id == format!("generated-{}", NOW % 1_000_000))
     );
     let handles: Vec<u32> = rows.iter().map(|row| row.reference.handle).collect();
     assert_eq!(handles, (0..60).collect::<Vec<_>>());
@@ -222,4 +224,115 @@ fn generated_messages_span_days_and_end_now() {
         store.chat_message_count(OWNER.into(), "empty".into()),
         Ok(0)
     );
+}
+
+/// The stream checkpoints held, as `(conversation, next ID, epoch)`.
+fn checkpoints(store: &MobileAppStore) -> Vec<(String, u8, u16)> {
+    store
+        .chat_checkpoints(OWNER.into())
+        .unwrap()
+        .into_iter()
+        .map(|checkpoint| {
+            (
+                checkpoint.conversation_address,
+                checkpoint.next_id,
+                checkpoint.epoch,
+            )
+        })
+        .collect()
+}
+
+/// A message of ours under `wire_id` in epoch 0.
+fn ours_on_the_wire(handle: u32, wire_id: u8, created_at_ms: i64) -> MobileStagedChatMessageRecord {
+    MobileStagedChatMessageRecord {
+        wire_id: Some(wire_id),
+        epoch: Some(0),
+        reactions: vec![reaction("<3", false, created_at_ms + 1)],
+        ..staged(handle, "Ours", true, created_at_ms)
+    }
+}
+
+#[test]
+fn staged_wire_fields_are_written_as_given_and_reactions_carry_none() {
+    let (_directory, store) = open();
+    let messages = vec![
+        MobileStagedChatMessageRecord {
+            wire_id: Some(254),
+            ..staged(1, "Theirs", false, 1_000)
+        },
+        ours_on_the_wire(2, 255, 2_000),
+    ];
+    store
+        .seed_staged_transcript(OWNER.into(), ADDRESS.into(), "staged".into(), messages)
+        .unwrap();
+    let rows = transcript(&store, ADDRESS);
+    let wire: Vec<_> = rows.iter().map(|row| (row.wire_id, row.epoch)).collect();
+    assert_eq!(wire, [(Some(254), None), (Some(255), Some(0))]);
+    let reaction = &rows[1].reactions[0];
+    assert_eq!((reaction.wire_id, reaction.epoch), (None, None));
+}
+
+#[test]
+fn ours_on_the_wire_set_the_stream_to_continue_after_the_newest() {
+    let (_directory, store) = open();
+    store
+        .seed_staged_transcript(
+            OWNER.into(),
+            ADDRESS.into(),
+            "staged".into(),
+            vec![
+                ours_on_the_wire(1, 254, 1_000),
+                // Newest by time, whatever its handle.
+                ours_on_the_wire(3, 255, 3_000),
+                ours_on_the_wire(2, 253, 2_000),
+            ],
+        )
+        .unwrap();
+    assert_eq!(checkpoints(&store), [(ADDRESS.to_owned(), 0, 0)], "wrapped");
+}
+
+#[test]
+fn a_reseed_never_rewinds_a_stream_already_moved_on() {
+    let (_directory, store) = open();
+    let seed = || {
+        store
+            .seed_staged_transcript(
+                OWNER.into(),
+                ADDRESS.into(),
+                "staged".into(),
+                vec![ours_on_the_wire(1, 255, 1_000)],
+            )
+            .unwrap();
+    };
+    seed();
+    // Real sends moved the stream on.
+    store
+        .connection()
+        .execute(
+            "UPDATE chat_stream_checkpoint SET next_id = 7 WHERE conversation_address = ?",
+            [ADDRESS],
+        )
+        .unwrap();
+    seed();
+    assert_eq!(checkpoints(&store), [(ADDRESS.to_owned(), 7, 0)]);
+}
+
+#[test]
+fn a_staged_transcript_with_nothing_of_ours_on_the_wire_sets_no_stream() {
+    let (_directory, store) = open();
+    store
+        .seed_staged_transcript(
+            OWNER.into(),
+            ADDRESS.into(),
+            "staged".into(),
+            vec![
+                staged(1, "Ours, unnamed", true, 1_000),
+                MobileStagedChatMessageRecord {
+                    wire_id: Some(255),
+                    ..staged(2, "Theirs", false, 2_000)
+                },
+            ],
+        )
+        .unwrap();
+    assert!(checkpoints(&store).is_empty());
 }

@@ -24,7 +24,7 @@ struct LearnedPathPromptSheet: View {
                     )
                     .foregroundStyle(.orange)
                 } header: {
-                    header("Manual", hops: route.heldFloodFromStart.map(Int.init) ?? route.hints.count + 1)
+                    header(LocalizedStringResource("Manual", comment: "Route kind: a path chosen by hand."), hops: route.heldFloodFromStart ?? route.hopCount)
                 }
                 if let candidate = route.candidate {
                     Section {
@@ -32,7 +32,7 @@ struct LearnedPathPromptSheet: View {
                         Label("Carried the flooded acks", systemImage: "checkmark.circle")
                             .foregroundStyle(.green)
                     } header: {
-                        header("Learned", hops: candidate.hopCount.map(Int.init) ?? candidate.hints.count + 1)
+                        header(LocalizedStringResource("Learned", comment: "Section header: the path learned while a manual one was held."), hops: candidate.hopCount)
                     }
                 }
             }
@@ -69,11 +69,13 @@ struct LearnedPathPromptSheet: View {
         }
     }
 
-    private func header(_ title: String, hops: Int) -> some View {
+    private func header(_ title: LocalizedStringResource, hops: UInt8?) -> some View {
         HStack {
             Text(title)
             Spacer()
-            Text(verbatim: RoutePresentation.hopsText(hops))
+            if let hops {
+                Text(verbatim: RoutePresentation.hopsText(Int(hops)))
+            }
         }
     }
 

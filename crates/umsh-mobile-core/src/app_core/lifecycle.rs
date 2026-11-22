@@ -6,6 +6,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use super::MobileAppError;
+use super::manage::Retired;
 use super::records::{MobileAppChangesRecord, MobileAppLifecycle, MobileAppStartFailure};
 use super::worker::{SessionWake, Worker};
 use crate::radio_driver::{MobileRadioDriver, MobileRadioError, MobileRadioStateRecord};
@@ -93,20 +94,46 @@ impl Worker {
         });
         // Whatever the session reported while starting.
         self.signals.raise_session();
-        self.policy_triggered();
-        // A radio that attached before the session existed found nothing
-        // to open the meet on.
-        self.settle_meet();
+        // An erase waiting on this start takes the session down next, and
+        // the identity's secret is already gone: nothing goes on the air.
+        if self.erases_waiting.get() == 0 {
+            #[cfg(test)]
+            self.hooks
+                .starts_announced
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.policy_triggered();
+            // A radio that attached before the session existed found
+            // nothing to open the meet on.
+            self.settle_meet();
+        }
         Ok(())
     }
 
     /// Take the identity down. See `MobileAppCore::erase`.
     pub(super) async fn erase(self: &Rc<Self>, also_content: bool) -> Result<(), MobileAppError> {
-        self.may_transition(false)?;
-        let _transition = self.transitions.lock().await;
+        match self.lifecycle() {
+            MobileAppLifecycle::Erasing | MobileAppLifecycle::Stopping => {
+                return Err(MobileAppError::Busy);
+            }
+            MobileAppLifecycle::Stopped => return Err(MobileAppError::Stopped),
+            _ => {}
+        }
+        // A start under way holds the transition lock until it has run or
+        // failed, so waiting for the lock waits it out, as `stop` does.
+        let _transition = {
+            let _waiting = ErasesWaiting::count(self);
+            self.transitions.lock().await
+        };
+        // A stop that held the lock first has run whole: the core is
+        // finishing, whatever its lifecycle says until the worker ends.
+        if self.lifecycle() == MobileAppLifecycle::Stopping {
+            return Err(MobileAppError::Stopped);
+        }
         self.may_transition(false)?;
 
         self.shared.enter(MobileAppLifecycle::Erasing);
+        // Managed devices read for the owner being erased.
+        self.retire_managed(Retired::Erased);
         if let Some(driver) = self.driver()
             && driver.core_set_host_key(None).is_err()
         {
@@ -141,6 +168,7 @@ impl Worker {
             return;
         }
         self.shared.enter(MobileAppLifecycle::Stopping);
+        self.retire_managed(Retired::Stopped);
         self.take_session_down().await;
         if let Some(driver) = self.driver.borrow_mut().take() {
             driver.release_hold();
@@ -341,5 +369,21 @@ impl Worker {
         });
         self.channels.borrow_mut().clear();
         self.reset_policy();
+    }
+}
+
+/// An erase counted as waiting for the transition lock until it drops.
+struct ErasesWaiting<'a>(&'a Worker);
+
+impl<'a> ErasesWaiting<'a> {
+    fn count(worker: &'a Worker) -> Self {
+        worker.erases_waiting.set(worker.erases_waiting.get() + 1);
+        Self(worker)
+    }
+}
+
+impl Drop for ErasesWaiting<'_> {
+    fn drop(&mut self) {
+        self.0.erases_waiting.set(self.0.erases_waiting.get() - 1);
     }
 }
