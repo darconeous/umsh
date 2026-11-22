@@ -46902,7 +46902,7 @@ public func generateChannelKey() -> Data  {
 /**
  * Generate a fresh 32-octet secret for a new local identity.
  *
- * Redrawn while the hint filter matches its key.
+ * Redrawn until `admits_identity` accepts its key.
  */
 public func generateIdentitySecret() -> Data  {
     return try!  FfiConverterData.lift(try! rustCall() {
@@ -47995,7 +47995,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_generate_channel_key() != 31413) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_generate_identity_secret() != 48507) {
+    if (uniffi_umsh_mobile_core_checksum_func_generate_identity_secret() != 36875) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_inspect_channel_name() != 40184) {
