@@ -519,6 +519,54 @@ fn a_forged_unsigned_multicast_cannot_silence_its_claimed_sender() {
     );
 }
 
+/// A broadcast whose signature verifies teaches a route to its signer, on
+/// the copy replay detection accepts; an unsigned one from the same peer
+/// teaches none.
+#[test]
+fn a_signed_broadcast_teaches_a_route() {
+    let mut mac = receiver();
+    let from = key_of(SEED);
+    let peer_id = mac.add_peer(from).unwrap();
+
+    let mut buf = [0u8; 256];
+    let unsigned = PacketBuilder::new(&mut buf)
+        .broadcast()
+        .source_full(&from)
+        .payload(b"advert")
+        .build()
+        .unwrap()
+        .to_vec();
+    assert!(receive(&mut mac, &unsigned).is_some());
+    assert_eq!(mac.peer_registry().get(peer_id).unwrap().route, None);
+
+    let signed = broadcast_from(SEED, 1, true);
+    assert_eq!(
+        receive(&mut mac, &signed),
+        verified(RxAcceptance::FirstContact, from)
+    );
+    assert_eq!(
+        mac.peer_registry().get(peer_id).unwrap().route,
+        Some(CachedRoute::Direct)
+    );
+}
+
+/// The first-copy acceptance cache keeps an unsigned multicast for an
+/// hour, past the forwarding cache's lifetime: a late copy is never
+/// delivered a second time while the forwarding entry has gone.
+#[test]
+fn an_unsigned_multicast_is_accepted_once_for_an_hour() {
+    let mut mac = receiver();
+    let frame = unsigned_multicast_from(SEED, &CHANNEL, 5, b"hello");
+    assert!(receive(&mut mac, &frame).is_some());
+    mac.clock().advance_ms(crate::DUP_CACHE_TTL_MS);
+    assert_eq!(receive(&mut mac, &frame), None);
+    mac.clock()
+        .advance_ms(crate::FIRST_COPY_CACHE_TTL_MS - crate::DUP_CACHE_TTL_MS - 1);
+    assert_eq!(receive(&mut mac, &frame), None);
+    mac.clock().advance_ms(1);
+    assert!(receive(&mut mac, &frame).is_some());
+}
+
 /// Past the displacement quota a new signer is accepted with no window
 /// kept, and the strangers' windows stay where they are.
 #[test]

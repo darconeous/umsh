@@ -95,6 +95,9 @@ pub(super) struct SendShape {
     pub route_retry: bool,
     /// A Frame Signature option on a broadcast, `D` on anything else.
     pub signed: bool,
+    /// The send follows the peer's provisional route
+    /// ([`Mac::provisional_send_route`]).
+    pub provisional: bool,
 }
 
 /// A broadcast or multicast between choosing its shape and being queued.
@@ -401,6 +404,7 @@ impl<
             region_code: options.region_code,
             route_retry: false,
             signed: options.signed,
+            provisional: false,
         };
         let mut chain = ShapeChain::new();
         let mut push = |shape: SendShape| {
@@ -429,13 +433,38 @@ impl<
             None if strangers => None,
             None => return Err(SendError::PeerMissing),
         };
-        let route = self.effective_source_route(peer_id, options);
-        let flood_hops = self.effective_flood_hops(peer_id, options, route.as_ref());
+        let provisional = self.provisional_send_route(destination, peer_id, options);
+        let (route, flood_hops) = match provisional {
+            // The margin past the route's end, or as the only flood hops of
+            // a direct route, within what the send allows.
+            Some(route) => (
+                match route {
+                    CachedRoute::Source(hints) => Some(hints.clone()),
+                    CachedRoute::Direct | CachedRoute::Flood { .. } => None,
+                },
+                options.flood_hops.map(|requested| {
+                    requested
+                        .min(
+                            crate::ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS
+                                .max(options.route_slack.unwrap_or(0)),
+                        )
+                        .min(MAX_FLOOD_HOPS)
+                }),
+            ),
+            None => {
+                let route = self.effective_source_route(peer_id, options);
+                let flood_hops = self.effective_flood_hops(peer_id, options, route.as_ref());
+                (route, flood_hops)
+            }
+        };
         // A caller asking for a trace is asking for a path to be recorded,
         // not for an empty option: a frame no repeater may carry has no path
         // to record, and the request is dropped rather than honored blind.
+        // A provisional route is no route for discovery's purposes.
         let trace = Self::frame_is_repeatable(flood_hops, route.as_deref())
-            && (options.trace || self.needs_route_discovery(peer_id, route.as_ref()));
+            && (options.trace
+                || provisional.is_some()
+                || self.needs_route_discovery(peer_id, route.as_ref()));
         // Planning asks whether a retry could ever happen, so the inputs only
         // known at timeout are taken as true.
         let route_retry =
@@ -445,6 +474,7 @@ impl<
             source_route: route.clone(),
             trace,
             route_retry,
+            provisional: provisional.is_some(),
             ..base
         };
         push(primary.clone());
@@ -453,6 +483,26 @@ impl<
             ..primary
         };
         push(without_ack_mic.clone());
+        if primary.provisional {
+            // A provisional route is followed only with a trace; a frame too
+            // large to carry one goes as if there were no such route.
+            let route = self.effective_source_route(peer_id, options);
+            let flood_hops = self.effective_flood_hops(peer_id, options, route.as_ref());
+            let unrouted = SendShape {
+                flood_hops,
+                trace: Self::frame_is_repeatable(flood_hops, route.as_deref())
+                    && (options.trace || self.needs_route_discovery(peer_id, route.as_ref())),
+                source_route: route,
+                provisional: false,
+                ..without_ack_mic
+            };
+            push(unrouted.clone());
+            push(SendShape {
+                trace: false,
+                ..unrouted
+            });
+            return Ok(chain);
+        }
         let without_trace = SendShape {
             trace: false,
             ..without_ack_mic
@@ -469,6 +519,7 @@ impl<
                 push(SendShape {
                     flood_hops: flooded,
                     source_route: None,
+                    provisional: false,
                     ..without_trace
                 });
             }

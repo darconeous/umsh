@@ -57,7 +57,7 @@ this phone does not mean losing who I am on the mesh.
 Acceptance criteria:
 
 - Export is an explicit action inside Identity settings, available only when
-  the protected export format (`docs/protocol/src/identity-export.md`) is
+  the protected export format (`docs/protocol-legacy/src/identity-export.md`) is
   implemented.
 - Export requires choosing a passphrase, with guidance that the export is
   only as strong as the passphrase.

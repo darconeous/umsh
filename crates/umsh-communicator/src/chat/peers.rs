@@ -278,7 +278,7 @@ impl<S: ChatStore> Chats<S> {
 
     /// How a repeater that forwarded under `hint` is shown: as the node it
     /// most plausibly is, else by the hint alone.
-    pub(super) fn repeater(&self, hint: RouterHint) -> Option<model::Repeater> {
+    pub fn repeater(&self, hint: RouterHint) -> Option<model::Repeater> {
         let (name, avatar, known) = match self.name_router_hint(hint) {
             Some(kept) => (
                 name(&kept.key, Some(&kept)),
@@ -407,6 +407,7 @@ impl<S: ChatStore> Chats<S> {
                 .map(long_age)
                 .unwrap_or_default(),
             forward_secrecy: kept.forward_secrecy,
+            forwards: forwards(&kept),
             alias: kept.alias.as_deref().map(cut),
             advertised: kept.name.as_deref().map(cut),
         })
@@ -452,7 +453,7 @@ impl<S: ChatStore> Chats<S> {
         let kept = self.saved_peer(peer)?;
         self.store.update_peer(&kept.key, PeerChange::Unsave).ok()?;
         self.saved.retain(|key| *key != kept.key.0);
-        self.forget_way(&kept.key);
+        self.forget_way(&kept.key, events);
         events(NodeEvent::PeerRemoved(peer));
         Some(kept.key)
     }
@@ -628,6 +629,39 @@ impl<S: ChatStore> Chats<S> {
             .with_full_source()
             .with_trace()
             .with_mic_size(PING_MIC_SIZE);
+        self.commands.push_back(Command::Ping {
+            peer: kept.key,
+            options,
+        });
+    }
+
+    /// Asks the device node to ping `peer` along `hints`, flooding
+    /// `flood_hops` past the last of them, without holding that route.
+    pub fn ping_along(
+        &mut self,
+        peer: model::PeerId,
+        hints: &[[u8; 2]],
+        flood_hops: u8,
+        now_ms: u64,
+    ) {
+        let Some(kept) = self.saved_peer(peer) else {
+            return;
+        };
+        let route: Vec<RouterHint, { model::MAX_PATH }> =
+            hints.iter().copied().map(RouterHint).collect();
+        // Given even when empty: no route at all would let the MAC send by
+        // the route it holds, and an empty one is direct.
+        let Ok(options) = SendOptions::default()
+            .with_full_source()
+            .with_mic_size(PING_MIC_SIZE)
+            .try_with_source_route(&route)
+        else {
+            return;
+        };
+        self.pinged(kept.key, now_ms);
+        // Last: a source route back-fills a flood budget, and a path that
+        // does not work should say so rather than flood further than asked.
+        let options = options.with_trace().with_route_slack(flood_hops);
         self.commands.push_back(Command::Ping {
             peer: kept.key,
             options,
@@ -879,7 +913,8 @@ impl<S: ChatStore> Chats<S> {
                 .heard_ago(key, kept.as_ref(), now_ms, wall)
                 .map(short_age)
                 .unwrap_or_default(),
-            saved: kept.is_some_and(|kept| kept.saved),
+            saved: kept.as_ref().is_some_and(|kept| kept.saved),
+            forwards: kept.as_ref().is_some_and(forwards),
         }
     }
 
@@ -978,7 +1013,7 @@ impl<S: ChatStore> Chats<S> {
 
 /// How a node is drawn: its hint's color, its address's first characters,
 /// and the shape of what it says it is.
-fn avatar(key: &PublicKey, kept: Option<&PeerRecord>) -> AvatarStyle {
+pub(super) fn avatar(key: &PublicKey, kept: Option<&PeerRecord>) -> AvatarStyle {
     let lettering = address(&key.0);
     AvatarStyle::peer(
         key.hint().0,
@@ -989,7 +1024,7 @@ fn avatar(key: &PublicKey, kept: Option<&PeerRecord>) -> AvatarStyle {
 
 /// What a node is called: its alias or its name, else its address's
 /// first characters.
-fn name(key: &PublicKey, kept: Option<&PeerRecord>) -> String<32> {
+pub(super) fn name(key: &PublicKey, kept: Option<&PeerRecord>) -> String<32> {
     match kept.and_then(PeerRecord::shown_name) {
         Some(name) => cut(name),
         None => cut(address(&key.0).get(..4).unwrap_or_default()),
@@ -998,7 +1033,7 @@ fn name(key: &PublicKey, kept: Option<&PeerRecord>) -> String<32> {
 
 /// Whether a node forwards others' traffic, by the identity it is kept
 /// with.
-fn forwards(kept: &PeerRecord) -> bool {
+pub(super) fn forwards(kept: &PeerRecord) -> bool {
     let Some(&[role, capabilities]) = kept.identity.get(..2) else {
         return false;
     };

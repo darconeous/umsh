@@ -726,10 +726,7 @@ impl PfsSessionManager {
         {
             return Some(session.local_ephemeral);
         }
-        let session = self
-            .sessions
-            .iter()
-            .find(|session| session.peer_long_term == *from)?;
+        let session = self.status_of(from)?;
         if counter_after(counter, session.handshake_counter) {
             return Some(session.local_ephemeral);
         }
@@ -819,29 +816,61 @@ impl PfsSessionManager {
             .map(|session| (session.local_ephemeral_id, session.peer_ephemeral))
     }
 
-    /// Put `session` in the table in place of any held with the same peer,
-    /// which comes back to be released.
-    fn install<M: MacBackend>(
-        &mut self,
-        session: PfsSession,
-    ) -> Result<Option<PfsSession>, NodeError<M>> {
-        if let Some(existing) = self
-            .sessions
-            .iter_mut()
-            .find(|existing| existing.peer_long_term == session.peer_long_term)
-        {
-            let displaced = core::mem::replace(existing, session);
-            self.note_removed(&displaced);
-            return Ok(Some(displaced));
+    /// Put the [`Requested`](PfsState::Requested) `session` in the table in
+    /// place of any request already waiting with the same peer. A session
+    /// established with them stays usable beside it until this one is
+    /// established in turn, so a peer counts against the table's capacity
+    /// once, whatever it holds.
+    fn install<M: MacBackend>(&mut self, session: PfsSession) -> Result<(), NodeError<M>> {
+        let peer = session.peer_long_term;
+        if let Some(waiting) = self.sessions.iter_mut().find(|existing| {
+            existing.peer_long_term == peer && existing.state == PfsState::Requested
+        }) {
+            *waiting = session;
+            return Ok(());
         }
-        if self.sessions.len() >= self.max_sessions {
+        if !self.holds(&peer) && self.peer_count() >= self.max_sessions {
             return Err(NodeError::PfsSessionTableFull);
         }
         self.sessions.push(session);
-        Ok(None)
+        Ok(())
     }
 
-    /// Remove the session held with `peer`.
+    /// How many peers hold an entry in the table.
+    fn peer_count(&self) -> usize {
+        self.sessions
+            .iter()
+            .enumerate()
+            .filter(|(index, session)| {
+                !self.sessions[..*index]
+                    .iter()
+                    .any(|earlier| earlier.peer_long_term == session.peer_long_term)
+            })
+            .count()
+    }
+
+    /// Remove the session established with `peer`, if any, to make way for
+    /// the one being established in its place.
+    fn take_established(&mut self, peer: &PublicKey) -> Option<PfsSession> {
+        let index = self
+            .sessions
+            .iter()
+            .position(|session| session.peer_long_term == *peer && session.state.has_keys())?;
+        let session = self.sessions.swap_remove(index);
+        self.note_removed(&session);
+        Some(session)
+    }
+
+    /// The session held with `peer` that best describes where things stand
+    /// with them: the established one, while a request to replace it waits.
+    pub(crate) fn status_of(&self, peer: &PublicKey) -> Option<&PfsSession> {
+        self.sessions
+            .iter()
+            .filter(|session| session.peer_long_term == *peer)
+            .max_by_key(|session| session.state.has_keys())
+    }
+
+    /// Remove a session held with `peer`, whether established or waiting.
     fn take_peer(&mut self, peer: &PublicKey) -> Option<PfsSession> {
         let index = self
             .sessions
@@ -874,12 +903,12 @@ impl PfsSessionManager {
         Some(session)
     }
 
-    /// Take the local identity of the session held with `peer`, if it is
-    /// waiting to be activated.
+    /// Take the local identity of the session held with `peer` that is
+    /// waiting to be activated, if any.
     fn take_pending(&mut self, peer: &PublicKey) -> Option<SoftwareIdentity> {
         self.sessions
             .iter_mut()
-            .find(|session| session.peer_long_term == *peer)?
+            .find(|session| session.peer_long_term == *peer && session.pending_local.is_some())?
             .pending_local
             .take()
     }
@@ -1192,7 +1221,8 @@ pub(crate) async fn accept_end<M: MacBackend>(
     Some(*from)
 }
 
-/// End one session and optionally notify the peer.
+/// End the session held with `peer`, and any request waiting to replace
+/// it, and optionally notify the peer.
 #[cfg(feature = "software-crypto")]
 pub(crate) async fn end_session<M: MacBackend>(
     state: &RefCell<LocalNodeState>,
@@ -1202,9 +1232,14 @@ pub(crate) async fn end_session<M: MacBackend>(
     notify_peer: bool,
     options: &SendOptions,
 ) -> Result<bool, NodeError<M>> {
-    let session = state.borrow_mut().pfs.take_peer(peer);
-    if let Some(session) = session {
+    let mut held = false;
+    loop {
+        let session = state.borrow_mut().pfs.take_peer(peer);
+        let Some(session) = session else { break };
+        held = true;
         release(state, mac, session).await;
+    }
+    if held {
         state.borrow_mut().pfs.reopen_requests(peer);
     } else {
         // A session lost to a reboot ends the same way, and the peer's
@@ -1364,10 +1399,10 @@ pub(crate) async fn settle_retired<M: MacBackend>(
 }
 
 /// Put a [`Requested`](PfsState::Requested) session with `peer` in the table
-/// under a fresh key, and return that key. A session already held with them
-/// is released first, so that its slot in the MAC is free for this one's.
-/// `answering` says this node is answering the peer's request with
-/// `duration_minutes`, sent under frame counter `handshake_counter`.
+/// under a fresh key, and return that key. A session already established
+/// with them goes on being used until this one is established; see
+/// [`establish`]. `answering` says this node is answering the peer's request
+/// with `duration_minutes`, sent under frame counter `handshake_counter`.
 #[cfg(feature = "software-crypto")]
 async fn begin_session<M: MacBackend>(
     state: &RefCell<LocalNodeState>,
@@ -1384,7 +1419,7 @@ async fn begin_session<M: MacBackend>(
     let local_public = *local_ephemeral.public_key();
     let now_ms = mac.now_ms().await;
     let request_deadline_ms = now_ms.saturating_add(PFS_REQUEST_TIMEOUT_MS);
-    let displaced = state.borrow_mut().pfs.install(PfsSession {
+    state.borrow_mut().pfs.install(PfsSession {
         peer_long_term: *peer,
         local_ephemeral_id: LocalIdentityId(u8::MAX),
         local_ephemeral: local_public,
@@ -1400,9 +1435,6 @@ async fn begin_session<M: MacBackend>(
     })?;
     // A request nobody answers has to be noticed on a quiet radio.
     mac.wake_by(request_deadline_ms).await;
-    if let Some(displaced) = displaced {
-        release(state, mac, displaced).await;
-    }
     // A new session with the peer replaces a retired one too.
     let retired = state.borrow_mut().pfs.take_retired_peer(peer);
     if let Some(address) = retired {
@@ -1415,6 +1447,11 @@ async fn begin_session<M: MacBackend>(
 /// `None` if none is waiting or it left the table while its identity was
 /// being registered. `handshake_counter` is the frame counter of the peer's
 /// half of the handshake.
+///
+/// This is where a new session replaces one already established with the
+/// peer: on accepting the response, or on answering the request. The old
+/// one is released first, so that its slot in the MAC is free for this
+/// one's.
 #[cfg(feature = "software-crypto")]
 async fn establish<M: MacBackend>(
     state: &RefCell<LocalNodeState>,
@@ -1429,6 +1466,10 @@ async fn establish<M: MacBackend>(
         return Ok(None);
     };
     let local_public = *local_ephemeral.public_key();
+    let replaced = state.borrow_mut().pfs.take_established(peer);
+    if let Some(replaced) = replaced {
+        release(state, mac, replaced).await;
+    }
     let activated = activate_identity(
         mac,
         parent,

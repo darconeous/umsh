@@ -1,0 +1,47 @@
+title = "Identity Options"
+created-by = 11
+anchor = "registry-considerations"
+min = 0
+max = 65535
+policy = "Values 0 to 65535, allocated by a standards UEP."
+
+[[range]]
+from = 60000
+to = 65535
+use = "experimental"
+
+[[value]]
+value = 0
+name = "Name"
+uep = 11
+anchor = "name"
+
+[[value]]
+value = 1
+name = "Location"
+uep = 11
+anchor = "location"
+
+[[value]]
+value = 2
+name = "Altitude"
+uep = 11
+anchor = "altitude"
+
+[[value]]
+value = 3
+name = "Timestamp"
+uep = 11
+anchor = "timestamp"
+
+[[value]]
+value = 4
+name = "Supported Regions"
+uep = 14
+anchor = "supported-regions"
+
+[[value]]
+value = 5
+name = "Nonce"
+uep = 11
+anchor = "nonce"

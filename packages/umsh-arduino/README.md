@@ -4,7 +4,7 @@ A sketch wired to a UMSH radio's serial port sends and receives mesh
 messages through the radio's own node. The radio encrypts, routes,
 retries, and collects acknowledgements under its device identity; the
 sketch hands it payloads and destinations, and receives the payloads of
-the types it claims ([ULCP Node Messaging](../../docs/protocol/src/ulcp-node-messaging.md)).
+the types it claims ([ULCP Node Messaging](../../docs/protocol-legacy/src/ulcp-node-messaging.md)).
 
 Plain C++11 with no heap, no STL, and no `String`. The one Arduino
 dependency is `Stream`, so it runs on a small AVR and builds on a desktop
@@ -123,7 +123,7 @@ hops, source route, transmit power).
 
 ## Text
 
-`UmshText` decodes and encodes the [text payload](../../docs/protocol/src/app-text-messages.md)
+`UmshText` decodes and encodes the [text payload](../../docs/protocol-legacy/src/app-text-messages.md)
 as pure functions. `replyText()` and `react()` build the reference to a
 received message. What needs history is the sketch's: each fragment of a
 long message is delivered as it comes, marked as one; a body too long for

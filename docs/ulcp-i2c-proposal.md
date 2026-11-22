@@ -5,7 +5,7 @@ feature. The original Pager implementation was hardware-validated over USB
 and the mesh on 2026-09-16; the BSP migration, shared display buses, and newly
 enabled nRF buses still need bench verification. This document
 records the approved design; the normative definitions are in
-[ULCP I2C Bus Access](protocol/src/ulcp-i2c.md). Capability 60, commands
+[ULCP I2C Bus Access](protocol-legacy/src/ulcp-i2c.md). Capability 60, commands
 25–27, properties 4960–4961, and status codes 24–26 are allocated.
 
 Let a host issue raw I2C transactions to a device's peripherals over ULCP:
@@ -31,7 +31,7 @@ a node nobody can walk to.
   commands becoming `Effect` variants the session stages and the driver
   completes through `Session::respond_*`. `Effect` is `Copy`, so a command
   with variable data stages it in a session-owned buffer.
-- [Node Management](protocol/src/app-node-management.md#exchanges) carries
+- [Node Management](protocol-legacy/src/app-node-management.md#exchanges) carries
   one frame per exchange with no continuation for anything but multi-value
   reads, and answers a retransmitted token from its retained response.
 - esp-hal's `I2c::transaction` implements the embedded-hal 1.0 contract
@@ -42,7 +42,7 @@ a node nobody can walk to.
 
 ## Protocol additions
 
-One new subsystem chapter, [I2C Bus Access](protocol/src/ulcp-i2c.md), with
+One new subsystem chapter, [I2C Bus Access](protocol-legacy/src/ulcp-i2c.md), with
 its own capability. Nothing in it is saved or session state.
 
 ### Capability

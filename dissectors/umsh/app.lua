@@ -35,7 +35,7 @@ local PROTO_COLUMN = {
 }
 
 -- Which payload types each packet type may carry.
--- docs/protocol/src/payload-format.md, mirrored from
+-- docs/protocol-legacy/src/payload-format.md, mirrored from
 -- PayloadType::allowed_for in crates/umsh-core/src/packet.rs.
 local BCST, UACK, UNIC, UNAR, MCST, BUNI, BUAR = 0, 1, 2, 3, 4, 6, 7
 local ALLOWED_IN = {
@@ -92,7 +92,7 @@ f.ni_nonce     = ProtoField.bytes  ("umsh.app.ni.nonce",    "Nonce")
 f.ni_unknown   = ProtoField.bytes  ("umsh.app.ni.unk",      "Unknown Option")
 f.ni_sig       = ProtoField.bytes  ("umsh.app.ni.sig",      "EdDSA Signature")
 
--- Meet (docs/protocol/src/app-meet.md)
+-- Meet (docs/protocol-legacy/src/app-meet.md)
 local MEET_KINDS = {
   [0]="Hello", [1]="Request", [2]="Accept", [3]="Reveal", [4]="Identity", [5]="End",
 }
@@ -229,7 +229,7 @@ end
 -- ──────────────────────────────────────────────────────────────────────────
 -- Node Identity dissector (called with raw payload starting after type byte)
 --
--- Wire layout (see docs/protocol/src/node-identity.md):
+-- Wire layout (see docs/protocol-legacy/src/node-identity.md):
 --   [ROLE:1] [CAPS:1] [CoAP options...] [0xFF]? [SIG:64]?
 --
 -- Bits 6-7 of CAPS are reserved and have no field. The 0xFF marker is
@@ -612,7 +612,8 @@ local function dissect_mac_command(payload, subtree, tvb, ctx, pinfo)
     subtree:set_text("MAC Command: Signal Report Request")
 
   elseif cmd == 3 then
-    -- Signal Report Response: RSSI (u8 as negative dBm) + SNR (s8)
+    -- Signal Report Response: RSSI (u8 as negative dBm) + SNR (s8,
+    -- quarter-dB steps)
     if rest >= 2 then
       local rssi_raw = byte_at(payload, 2)
       local snr_raw  = byte_at(payload, 3)
@@ -620,8 +621,9 @@ local function dissect_mac_command(payload, subtree, tvb, ctx, pinfo)
       -- RSSI stored as unsigned negative dBm: display as negative
       subtree:add(f.mac_rssi, tvb(1, 1)):set_text(
         "RSSI: -" .. rssi_raw .. " dBm")
-      subtree:add(f.mac_snr, tvb(2, 1), snr)
-      detail = string.format("RSSI -%d dBm, SNR %d dB", rssi_raw, snr)
+      subtree:add(f.mac_snr, tvb(2, 1), snr):set_text(
+        string.format("SNR: %.2f dB", snr / 4))
+      detail = string.format("RSSI -%d dBm, SNR %.2f dB", rssi_raw, snr / 4)
     end
 
   elseif cmd == 4 or cmd == 5 then
@@ -903,7 +905,7 @@ end
 -- ──────────────────────────────────────────────────────────────────────────
 -- Chat-Room Message dissector
 --
--- Wire layout (docs/protocol/src/app-chat-rooms.md):
+-- Wire layout (docs/protocol-legacy/src/app-chat-rooms.md):
 --   [ACTION:1] [action-specific body]
 -- Most actions carry a CoAP-option-encoded body in their own namespace.
 -- ──────────────────────────────────────────────────────────────────────────
@@ -1007,7 +1009,7 @@ end
 -- ──────────────────────────────────────────────────────────────────────────
 -- Node Management dissector (ULCP frames carried over the mesh)
 --
--- Wire layout (docs/protocol/src/app-node-management.md):
+-- Wire layout (docs/protocol-legacy/src/app-node-management.md):
 --   [TOKEN:2] [OPTIONS] [0xFF] [FRAME]
 -- Direction is the payload type—8 is a request, 9 a response—and the one
 -- frame that follows the terminator runs to the end of the payload, which
@@ -1129,7 +1131,7 @@ end
 -- ──────────────────────────────────────────────────────────────────────────
 -- Meet dissector (contact exchange between session keys)
 --
--- Wire layout (docs/protocol/src/app-meet.md):
+-- Wire layout (docs/protocol-legacy/src/app-meet.md):
 --   [VERSION:1] [KIND:1] [BODY]
 -- Every body but Identity's has an exact length; Identity's is the sender's
 -- long-term key followed by a node identity payload to the end of the frame.

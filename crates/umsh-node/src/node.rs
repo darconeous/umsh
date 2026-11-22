@@ -1923,12 +1923,7 @@ impl<M: MacBackend> LocalNode<M> {
     pub async fn pfs_status(&self, peer: &PublicKey) -> Result<PfsStatus, NodeError<M>> {
         let now_ms = self.mac.now_ms().await;
         let state = self.state.borrow();
-        if let Some(session) = state
-            .pfs
-            .sessions()
-            .iter()
-            .find(|session| session.peer_long_term == *peer)
-        {
+        if let Some(session) = state.pfs.status_of(peer) {
             return Ok(match session.state {
                 PfsState::Requested | PfsState::Answered => PfsStatus::Requested,
                 PfsState::Active => PfsStatus::Active {

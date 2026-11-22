@@ -22,9 +22,10 @@ use umsh_ux_communicator::heapless::{String, Vec};
 use umsh_ux_communicator::model::Directions;
 use umsh_ux_communicator::model::{
     About, ChannelChats, ChannelEntry, ChatId, ChatSummary, Chats, ClockSettings, ClockSource,
-    ContactUri, Details, EventQueue, Forwarding, Heard, Invite, KeyboardSettings, MAX_HEARD,
-    MAX_PATH, MeetState, Member, Message, MessageId, NearbyId, Neighbor, Node, NodeEvent,
-    PeerDetail, PeerEntry, PeerId, PeerRoute, PeerSummary, PingView, RadioSettings, Reaction,
+    ContactUri, Details, EventQueue, Forwarding, Heard, HintRead, Invite, KeyboardSettings,
+    KnownRepeater, LearnedRoute, Listed, Listing, MAX_HEARD, MAX_HINT_READS, MAX_KNOWN, MAX_PATH,
+    MeetState, Member, Message, MessageId, NearbyId, Neighbor, Node, NodeEvent, PeerDetail,
+    PeerEntry, PeerId, PeerRoute, PeerSummary, PingView, RadioSettings, Reaction, Repeater,
     Setting, ShareUri, Shareable, Statistics, WifiReading, WifiSecurity,
 };
 use umsh_ux_communicator::picker::RecentText;
@@ -37,7 +38,7 @@ use crate::memory::MemoryStore;
 use crate::record::StoreError;
 use crate::settings::Settings;
 use crate::store::ChatStore;
-use crate::task::{Arrival, Command};
+use crate::task::{Arrival, AskWay, Command};
 
 /// How many events wait for the interface before they collapse into a
 /// resync.
@@ -68,6 +69,8 @@ pub struct CommunicatorNode<P, S = MemoryStore> {
     /// The saved peers in the order the list shows them, as of the last
     /// [`Node::sort_peers`].
     peer_order: RefCell<alloc::vec::Vec<PeerId>>,
+    /// The known repeaters of the last [`Node::gather_known`].
+    known: RefCell<Vec<KnownRepeater, MAX_KNOWN>>,
     /// Add peer's contact exchange.
     #[cfg(feature = "software-crypto")]
     meeting: RefCell<Meeting>,
@@ -96,6 +99,7 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
             settings: RefCell::new(Settings::new(port)),
             chats: RefCell::new(ChatHalf::new(store, crypto, heap)),
             peer_order: RefCell::new(alloc::vec::Vec::new()),
+            known: RefCell::new(Vec::new()),
             #[cfg(feature = "software-crypto")]
             meeting: RefCell::new(Meeting::new()),
             events: RefCell::new(EventQueue::new()),
@@ -193,6 +197,9 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
         };
         self.with_chats(|chats, now_ms, time, events| match arrival {
             Arrival::Text(inbound) => chats.receive(inbound, now_ms, time, events),
+            Arrival::Neighbors { router, body } => {
+                chats.neighbors_page(router, &body, now_ms, events)
+            }
             Arrival::Identity {
                 key,
                 identity,
@@ -208,13 +215,25 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
                 rx,
                 signal,
                 truncated,
-            } => chats.pong(peer, round_trip_ms, &rx, &signal, truncated, now_ms, events),
+                flooded,
+            } => chats.pong(
+                peer,
+                round_trip_ms,
+                &rx,
+                &signal,
+                truncated,
+                flooded,
+                now_ms,
+                events,
+            ),
             Arrival::PingTimeout { peer } => chats.ping_timed_out(peer, now_ms, events),
             Arrival::Route {
                 peer,
                 route,
                 confirmed_age_ms,
-            } => chats.route_read(peer, route, confirmed_age_ms, now_ms, events),
+                held,
+                changed,
+            } => chats.route_read(peer, route, confirmed_age_ms, held, changed, now_ms, events),
             Arrival::Secrecy { peer, change } => chats.secrecy(peer, change, now_ms, time, events),
             #[cfg(feature = "software-crypto")]
             Arrival::Meet { .. } | Arrival::MeetOpened(_) => {}
@@ -647,6 +666,58 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
         self.wake();
     }
 
+    fn listing(&self, address: &str) -> Option<Listing> {
+        self.chats.borrow().listing(address, self.clock.now_ms())
+    }
+
+    fn listed(&self, address: &str, index: usize) -> Option<Listed> {
+        self.chats.borrow().listed(address, index)
+    }
+
+    fn ask_listing(&self, address: &str, more: bool, shown: &[&str], along: Option<&[[u8; 2]]>) {
+        let way = match along {
+            _ if address == self.address().as_str() => AskWay::Here,
+            Some(hints) => AskWay::Along(
+                hints
+                    .iter()
+                    .copied()
+                    .map(RouterHint)
+                    .take(MAX_PATH)
+                    .collect(),
+            ),
+            None => AskWay::Routed,
+        };
+        self.with_chats(|chats, now_ms, _, events| {
+            chats.ask_listing(address, more, shown, way, now_ms, events);
+        });
+        self.wake();
+    }
+
+    fn listed_place(&self, router: &str, node: &str) -> Option<usize> {
+        self.chats.borrow().listed_place(router, node)
+    }
+
+    fn gather_known(&self, query: &str, router: &str, peer: &str) -> usize {
+        let known = self.chats.borrow().known_repeaters(
+            query,
+            router,
+            peer,
+            self.clock.now_ms(),
+            self.clock.wall(),
+        );
+        let count = known.len();
+        *self.known.borrow_mut() = known;
+        count
+    }
+
+    fn known_repeater(&self, index: usize) -> Option<KnownRepeater> {
+        self.known.borrow().get(index).cloned()
+    }
+
+    fn hint_reads(&self, text: &str) -> Vec<HintRead, MAX_HINT_READS> {
+        hint_reads(text)
+    }
+
     /// A new chat is drawn as the node it is with, whatever `avatar` says.
     fn direct_chat(&self, address: &str, name: &str, _avatar: &AvatarStyle) -> Option<ChatSummary> {
         self.with_chats(|chats, _, _, events| chats.direct_chat(address, name, events))
@@ -693,8 +764,17 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
         self.wake();
     }
 
+    fn ping_along(&self, peer: PeerId, hints: &[[u8; 2]], flood_hops: u8) {
+        self.with_chats(|chats, now_ms, _, _| chats.ping_along(peer, hints, flood_hops, now_ms));
+        self.wake();
+    }
+
     fn ping_view(&self, peer: PeerId) -> Option<PingView> {
         self.chats.borrow().ping_view(peer)
+    }
+
+    fn repeater(&self, hint: [u8; 2]) -> Option<Repeater> {
+        self.chats.borrow().repeater(RouterHint(hint))
     }
 
     fn load_route(&self, peer: PeerId) {
@@ -709,6 +789,26 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
     fn reset_route(&self, peer: PeerId) {
         self.chats.borrow_mut().reset_route(peer);
         self.wake();
+    }
+
+    fn hold_route(&self, peer: PeerId, hints: &[[u8; 2]], flood_hops: u8, hold_ms: u32) {
+        self.chats
+            .borrow_mut()
+            .hold_route(peer, hints, flood_hops, hold_ms);
+        self.wake();
+    }
+
+    fn learned_route(&self, peer: PeerId) -> Option<LearnedRoute> {
+        self.chats.borrow().learned_route(peer, self.clock.now_ms())
+    }
+
+    fn adopt_learned_route(&self, peer: PeerId) {
+        self.chats.borrow_mut().adopt_learned_route(peer);
+        self.wake();
+    }
+
+    fn keep_manual_route(&self, peer: PeerId) {
+        self.chats.borrow_mut().keep_manual_route(peer);
     }
 
     fn clock(&self) -> ClockSettings {
@@ -1214,4 +1314,25 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
             });
         }
     }
+}
+
+/// The router hints `text` fixes: as the start of an address in Base58,
+/// which can straddle two, then as four hexadecimal digits.
+pub(crate) fn hint_reads(text: &str) -> Vec<HintRead, MAX_HINT_READS> {
+    let mut reads = Vec::new();
+    if let Ok(prefix) = RouterHint::candidates_from_base58_prefix(text) {
+        for hint in core::iter::once(prefix.first).chain(prefix.second) {
+            _ = reads.push(HintRead {
+                hint: hint.0,
+                hex: false,
+            });
+        }
+    }
+    if let Ok(hint) = RouterHint::from_hex(text) {
+        _ = reads.push(HintRead {
+            hint: hint.0,
+            hex: true,
+        });
+    }
+    reads
 }

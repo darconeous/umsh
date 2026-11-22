@@ -464,11 +464,17 @@ impl IdentityResponder {
         // Freshness gate: one reply per solicitation, however many copies of
         // it arrive. A plain broadcast request carries no frame counter, so
         // nothing below the node layer can recognize a second copy of one;
-        // the echoed nonce is the only thing that names the question.
+        // the echoed nonce is the only thing that names the question. A
+        // unicast request is the MAC's to deduplicate, and one that gets
+        // here again is the requester retrying.
+        let solicitation = matches!(
+            ctx.family,
+            PacketFamily::Broadcast | PacketFamily::Multicast
+        );
         let nonce = ctx.filters.nonce().ok().flatten();
         let requester = requester_id(&ctx.from_key);
         self.expire_answered(now_ms);
-        if self.already_answered(&requester, nonce) {
+        if solicitation && self.already_answered(&requester, nonce) {
             return None;
         }
 
@@ -490,14 +496,12 @@ impl IdentityResponder {
             self.rate_limited = self.rate_limited.saturating_add(1);
             return None;
         }
-        let solicitation = matches!(
-            ctx.family,
-            crate::PacketFamily::Broadcast | crate::PacketFamily::Multicast
-        );
         // Recorded only now that there is a reply to send: a request the
         // policy declined or the encoder could not frame was never answered,
         // and must not suppress a later attempt that would succeed.
-        self.record_answered(requester, nonce, now_ms);
+        if solicitation {
+            self.record_answered(requester, nonce, now_ms);
+        }
         // Repeaters prepend as they forward, so a complete trace already
         // reads as the path back and is copied verbatim rather than reversed.
         let route = ctx

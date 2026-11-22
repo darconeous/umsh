@@ -440,7 +440,10 @@ impl ChatSummary {
             last_activity: None,
             unread: false,
             muted: false,
-            kind: ChatKind::Peer { hops: None },
+            kind: ChatKind::Peer {
+                hops: None,
+                manual: false,
+            },
             forward_secret: false,
             secret_draft: false,
             draft: EditBuffer::with_text(DraftText::new(heap)),
@@ -532,6 +535,9 @@ pub struct PeerDetail {
     pub alias: Option<String<32>>,
     /// What they call themselves, when they have said.
     pub advertised: Option<String<32>>,
+    /// They say they forward others' frames: they can be asked what they
+    /// hear.
+    pub forwards: bool,
 }
 
 /// A node heard nearby but not saved, as Find shows it.
@@ -1011,8 +1017,9 @@ pub struct PeerSummary {
 /// Whom a chat is with.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChatKind {
-    /// One peer, and how many hops away it is when that is known.
-    Peer { hops: Option<u8> },
+    /// One peer, and how many hops away it is when that is known: how
+    /// far the route chosen by hand goes, while one is held (`manual`).
+    Peer { hops: Option<u8>, manual: bool },
     /// Everyone holding the channel's key.
     Channel { access: ChannelAccess },
 }
@@ -1067,6 +1074,9 @@ pub struct Member {
     pub heard: String<6>,
     /// They are among my peers.
     pub saved: bool,
+    /// They say they forward others' frames: they can be asked what they
+    /// hear.
+    pub forwards: bool,
 }
 
 /// How many devices Nearby lists.
@@ -1188,6 +1198,9 @@ pub enum Delivery {
     /// The peer's radio acknowledged every fragment. That says it arrived,
     /// never that it was read.
     Delivered,
+    /// Delivered, but only by the flood that followed a miss on the peer's
+    /// route: the route may be failing.
+    Flooded,
     /// A fragment was not acknowledged: it may not have arrived.
     Unconfirmed,
     /// A fragment never went where the peer could read it, as when the
@@ -1197,6 +1210,11 @@ pub enum Delivery {
 }
 
 impl Delivery {
+    /// Whether the peer's radio acknowledged every fragment, however.
+    pub fn delivered(self) -> bool {
+        matches!(self, Self::Delivered | Self::Flooded)
+    }
+
     /// Whether it came out short of delivered, to be sent again or
     /// deleted.
     pub fn failed(self) -> bool {
@@ -1528,6 +1546,97 @@ pub struct Repeater {
     pub address: Option<SharedText>,
 }
 
+/// The most repeaters a router's listing holds.
+pub const MAX_LISTED: usize = 16;
+
+/// What a router reports hearing, as far as it has been read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Listing {
+    /// How many repeaters are held.
+    pub count: u8,
+    /// How many the router said it hears.
+    pub total: Option<u8>,
+    /// The router has more to give.
+    pub more: bool,
+    /// How long ago the top of it was read; `None` before it has been.
+    pub read_ms_ago: Option<u64>,
+    /// What is being asked for.
+    pub asking: Option<ListingAsk>,
+    /// The last ask went unanswered.
+    pub no_answer: bool,
+    /// The router's own router hint: an ask about a repeater it hears goes
+    /// by way of it.
+    pub hint: [u8; 2],
+}
+
+/// What a router is asked for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ListingAsk {
+    /// The top of its listing, again.
+    Top,
+    /// The page after the last one held.
+    More,
+}
+
+/// A repeater a router reports hearing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Listed {
+    /// The node it most plausibly is, by name, else its hint.
+    pub name: String<24>,
+    pub avatar: AvatarStyle,
+    /// The address of the node it most plausibly is, when one is known.
+    pub address: Option<String<44>>,
+    /// The router hint it forwards under.
+    pub hint: [u8; 2],
+    /// How the router heard it; `None` when over a link with no radio.
+    pub signal: Option<Signal>,
+    /// How many minutes ago the router last heard it.
+    pub heard_min: Option<u16>,
+    /// How far it is from the router, when both placed themselves.
+    pub distance_m: Option<u32>,
+}
+
+/// A known node that forwards others' frames, as Add hop offers it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KnownRepeater {
+    pub address: String<44>,
+    pub name: String<24>,
+    pub avatar: AvatarStyle,
+    /// The router hint it forwards under.
+    pub hint: [u8; 2],
+    /// How long ago it was last heard, such as `2h`.
+    pub age: String<6>,
+}
+
+/// The most known repeaters Add hop offers.
+pub const MAX_KNOWN: usize = 5;
+
+/// A router hint that typed text fixes: as the start of an address in
+/// Base58, or as four hexadecimal digits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HintRead {
+    pub hint: [u8; 2],
+    /// Read as hexadecimal digits.
+    pub hex: bool,
+}
+
+/// The most router hints typed text fixes: two that a Base58 prefix
+/// straddles, and its reading as hexadecimal.
+pub const MAX_HINT_READS: usize = 3;
+
+/// How far apart two places are, each a latitude and longitude in
+/// degrees, in meters, along the earth's surface.
+#[must_use]
+pub fn meters_between(a: (f32, f32), b: (f32, f32)) -> u32 {
+    const EARTH_RADIUS_M: f32 = 6_371_000.0;
+    let (lat_a, lat_b) = (a.0.to_radians(), b.0.to_radians());
+    let half_lat = (lat_b - lat_a) / 2.0;
+    let half_lon = (b.1 - a.1).to_radians() / 2.0;
+    let haversine = libm::sinf(half_lat) * libm::sinf(half_lat)
+        + libm::cosf(lat_a) * libm::cosf(lat_b) * libm::sinf(half_lon) * libm::sinf(half_lon);
+    (2.0 * EARTH_RADIUS_M * libm::asinf(libm::sqrtf(haversine.clamp(0.0, 1.0)))) as u32
+}
+
 /// The most repeaters a path names: as many as a source route can.
 pub const MAX_PATH: usize = 15;
 
@@ -1566,13 +1675,37 @@ pub struct PeerRoute {
     pub confirmed: Option<String<12>>,
     /// How this device heard the peer, when the route is direct.
     pub signal: Option<Signal>,
+    /// While it is a route chosen by hand, held against learned ones.
+    pub manual: Option<ManualRoute>,
+}
+
+/// A route chosen by hand, while it is held.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ManualRoute {
+    /// How many hops a message may flood past the last repeater.
+    pub flood_hops: u8,
+    /// How long it is held for yet, such as `52 min left`.
+    pub left: String<12>,
+}
+
+/// A route the mesh taught while another was held by hand, offered in
+/// its place.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LearnedRoute {
+    /// Its hops; a direct route is one.
+    pub hops: u8,
+    /// The repeater nearest this device, when it names one.
+    pub via: Option<SharedText>,
 }
 
 /// How far `route` goes, and how: such as `Direct`, `3 hops`, `Flood ·
-/// 4 hops`, or `Not learned`.
+/// 4 hops`, `Manual · 3 hops`, or `Not learned`.
 #[must_use]
 pub fn route_text(route: &PeerRoute) -> String<24> {
     let mut text = String::new();
+    if route.manual.is_some() {
+        _ = text.push_str("Manual \u{B7} ");
+    }
     match (route.kind, route.hops) {
         (RouteKind::Unknown, _) => _ = text.push_str("Not learned"),
         (RouteKind::Flood, Some(hops)) => {
@@ -1582,6 +1715,19 @@ pub fn route_text(route: &PeerRoute) -> String<24> {
         (RouteKind::Flood, None) => _ = text.push_str("Flood"),
         (_, Some(hops)) => _ = text.push_str(&hops_text(hops)),
         (_, None) => {}
+    }
+    text
+}
+
+/// How far a route floods past its last repeater: `Off`, `1 hop`, or
+/// `4 hops`.
+#[must_use]
+pub fn flood_text(hops: u8) -> String<12> {
+    let mut text = String::new();
+    match hops {
+        0 => _ = text.push_str("Off"),
+        1 => _ = text.push_str("1 hop"),
+        n => _ = core::fmt::write(&mut text, format_args!("{n} hops")),
     }
     text
 }
@@ -1612,6 +1758,9 @@ pub struct PingReply {
     /// Its hops, in the same order: the first into this device, and each
     /// after it beyond the repeater before it.
     pub legs: Vec<Leg, { MAX_PATH + 1 }>,
+    /// It got through only by flooding, once the route it was sent along
+    /// had failed.
+    pub flooded: bool,
 }
 
 /// Where the latest ping to a saved peer stands.
@@ -1696,7 +1845,8 @@ pub enum NodeEvent {
         message: MessageId,
     },
     /// My `message` in `chat` became [`Delivery::Delivered`],
-    /// [`Delivery::Unconfirmed`], or [`Delivery::Undelivered`]: it changed, as
+    /// [`Delivery::Flooded`], [`Delivery::Unconfirmed`], or
+    /// [`Delivery::Undelivered`]: it changed, as
     /// [`NodeEvent::MessageChanged`] says, and that is how it came out.
     Settled {
         chat: ChatId,
@@ -1715,6 +1865,8 @@ pub enum NodeEvent {
     PingSettled(PeerId),
     /// The route to a saved peer changed.
     RouteChanged(PeerId),
+    /// What a router reports hearing changed, or how asking it goes.
+    ListingChanged,
     /// Settings were applied, as set or adjusted.
     SettingsChanged,
     /// A setting was refused, and stays as it was.
@@ -1750,6 +1902,7 @@ impl NodeEvent {
             Self::MeetChanged => (12, 0),
             Self::Settled { message, .. } => (13, message),
             Self::RouteChanged(peer) => (14, peer),
+            Self::ListingChanged => (15, 0),
         }
     }
 }
@@ -1950,8 +2103,19 @@ pub trait Node {
     /// Pings `peer`. How it went comes as [`NodeEvent::PingSettled`].
     fn ping(&self, peer: PeerId);
 
+    /// Pings `peer` along `hints`, the repeater nearest this device first,
+    /// flooding `flood_hops` past the last of them, without holding that
+    /// route. No hints is direct. How it went comes as
+    /// [`NodeEvent::PingSettled`].
+    fn ping_along(&self, peer: PeerId, hints: &[[u8; 2]], flood_hops: u8);
+
     /// Where the latest ping to `peer` stands; `None` when none was sent.
     fn ping_view(&self, peer: PeerId) -> Option<PingView>;
+
+    /// The repeater that forwards under `hint`, a router hint: the node it
+    /// most plausibly is, else the hint alone. `None` when there is no room
+    /// to say.
+    fn repeater(&self, hint: [u8; 2]) -> Option<Repeater>;
 
     /// Reads the route to `peer` the radio holds now. When it differs from
     /// what [`Node::peer_route`] says, that comes as
@@ -1961,9 +2125,66 @@ pub trait Node {
     /// The route to `peer` as last read; `None` before it has been.
     fn peer_route(&self, peer: PeerId) -> Option<PeerRoute>;
 
-    /// Forgets the route to `peer`, so that the next message floods. The
-    /// change comes as [`NodeEvent::RouteChanged`].
+    /// Forgets the route to `peer`, so that the next message floods. A
+    /// route held by hand is let go with it. The change comes as
+    /// [`NodeEvent::RouteChanged`].
     fn reset_route(&self, peer: PeerId);
+
+    /// Holds `hints`, the repeater nearest this device first, as the route
+    /// to `peer` for `hold_ms`, ahead of any route learned meanwhile, and
+    /// lets a message flood `flood_hops` past the last of them. No hints is
+    /// a direct route. The change comes as [`NodeEvent::RouteChanged`].
+    fn hold_route(&self, peer: PeerId, hints: &[[u8; 2]], flood_hops: u8, hold_ms: u32);
+
+    /// The route learned while the one to `peer` was held by hand, once it
+    /// is time to offer it: sends in a row have missed on the held route
+    /// and been carried by the flood after, and the offer has not been
+    /// turned down since the route was held.
+    fn learned_route(&self, peer: PeerId) -> Option<LearnedRoute>;
+
+    /// Switches the route held by hand to `peer` for the one learned
+    /// meanwhile. The change comes as [`NodeEvent::RouteChanged`].
+    fn adopt_learned_route(&self, peer: PeerId);
+
+    /// Keeps the route held by hand to `peer`, and stops offering the
+    /// learned one until the route is held again.
+    fn keep_manual_route(&self, peer: PeerId);
+
+    /// What the router at `address` reports hearing, as last read; `None`
+    /// when it has not been asked.
+    fn listing(&self, address: &str) -> Option<Listing>;
+
+    /// The `index`th repeater the router at `address` reports hearing, the
+    /// one it heard most recently first.
+    fn listed(&self, address: &str, index: usize) -> Option<Listed>;
+
+    /// Asks the router at `address` for the top of what it hears, or, when
+    /// `more`, the page after the last one held: by way of `along`, the
+    /// repeater nearest this device first, flooding no further, or as a
+    /// message to it would go when that is `None`. This device's own
+    /// address reads what it hears itself, sending nothing. How it goes
+    /// comes as [`NodeEvent::ListingChanged`]. The listings of the routers
+    /// at `shown`, whose screens are open, are kept.
+    fn ask_listing(&self, address: &str, more: bool, shown: &[&str], along: Option<&[[u8; 2]]>);
+
+    /// Where the node at `node` is in what the router at `router` reports
+    /// hearing, as last read.
+    fn listed_place(&self, router: &str, node: &str) -> Option<usize>;
+
+    /// Gathers up to [`MAX_KNOWN`] known nodes that forward others'
+    /// frames, whose names have a word starting with `query` (all, when it
+    /// is empty), the most recently heard first, one to a router hint,
+    /// leaving out the node at `peer` and those the router at `router`
+    /// reports hearing; returns how many there are.
+    /// [`Node::known_repeater`] reads them by place until the next
+    /// gathering.
+    fn gather_known(&self, query: &str, router: &str, peer: &str) -> usize;
+
+    /// The known repeater at `index` of the last gathering.
+    fn known_repeater(&self, index: usize) -> Option<KnownRepeater>;
+
+    /// The router hints `text` fixes, Base58 readings first.
+    fn hint_reads(&self, text: &str) -> Vec<HintRead, MAX_HINT_READS>;
 
     /// The clock's settings as they stand.
     fn clock(&self) -> ClockSettings;
@@ -2762,10 +2983,19 @@ impl State {
                 self.refresh_peer();
                 self.refresh_details(None);
             }
-            NodeEvent::PeerRemoved(peer) => self.remove_peer(peer),
+            NodeEvent::PeerRemoved(peer) => {
+                self.remove_peer(peer);
+                // An offer over the chat with them goes with them.
+                self.refresh_learned_route(true);
+            }
             NodeEvent::PingSettled(peer) => self.refresh_ping(Some(peer)),
             // The route screen reads the node as it is drawn.
-            NodeEvent::RouteChanged(_) => self.refresh_peer(),
+            NodeEvent::RouteChanged(_) => {
+                self.refresh_peer();
+                self.refresh_learned_route(true);
+            }
+            // So does the Neighbors screen.
+            NodeEvent::ListingChanged => self.listing_landed(),
             NodeEvent::SettingRefused(Setting::WifiFull) => {
                 self.banner = Some(Banner {
                     notice: Notice::WifiFull,
@@ -3032,7 +3262,7 @@ impl State {
     /// Sounds how my `message` in `chat` came out.
     fn settled(&mut self, chat: ChatId, message: MessageId) {
         match self.node.message(chat, message).map(|m| m.delivery) {
-            Some(Delivery::Delivered) => self.chime(Cue::Delivered),
+            Some(delivery) if delivery.delivered() => self.chime(Cue::Delivered),
             Some(delivery) if delivery.failed() => self.chime(Cue::Unconfirmed),
             _ => {}
         }

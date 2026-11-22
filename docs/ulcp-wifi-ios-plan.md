@@ -1,7 +1,7 @@
 # Wi-Fi and IP: the spec chapters and the iOS app
 
-How the surface specified in [ULCP: Wi-Fi](protocol/src/ulcp-wifi.md)
-and [ULCP: IP Connectivity](protocol/src/ulcp-ip.md) gets into the
+How the surface specified in [ULCP: Wi-Fi](protocol-legacy/src/ulcp-wifi.md)
+and [ULCP: IP Connectivity](protocol-legacy/src/ulcp-ip.md) gets into the
 phone, with nothing on the device side beyond what the phone needs to
 be tested against.
 Firmware support for the ESP32 boards and the T1000-E's sniffer is a
@@ -70,7 +70,7 @@ the second without the first.
 
 ### Files
 
-* `docs/protocol/src/ulcp-wifi.md`, `# ULCP: Wi-Fi Station`. The
+* `docs/protocol-legacy/src/ulcp-wifi.md`, `# ULCP: Wi-Fi Station`. The
   sketch's Model, Why No Commands, Capabilities, Properties, Mechanics,
   and Security sections, rewritten in the book's register: no "sketch",
   no "when this lands", no reviewer-facing argument that has already
@@ -78,15 +78,15 @@ the second without the first.
   section of one line per item, keeping only the reasons that tell an
   implementer what to do (the exact-mode rule, the enterprise
   placeholders) and dropping the ones that were for the reviewer.
-* `docs/protocol/src/ulcp-ip.md`, `# ULCP: IP Connectivity`. The IP
+* `docs/protocol-legacy/src/ulcp-ip.md`, `# ULCP: IP Connectivity`. The IP
   Connectivity section, with Alongside the Station as its closing
   section since it is the part an implementer of either chapter reads
   last.
-* `docs/protocol/src/SUMMARY.md`: both after Tethered Host Services and
+* `docs/protocol-legacy/src/SUMMARY.md`: both after Tethered Host Services and
   before Minimum Requirements. They are subsystem chapters, not
   bindings, so they do not follow ULCP over BLE's placement after the
   index.
-* `docs/protocol/src/ulcp.md`: the chapter list at lines 15–33 and the
+* `docs/protocol-legacy/src/ulcp.md`: the chapter list at lines 15–33 and the
   "five subsystems" paragraph at line 240 become seven, with one blurb
   each in the style of the existing five.
 

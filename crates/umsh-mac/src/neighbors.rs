@@ -5,7 +5,7 @@
 //! is close enough to hear and reach what this node does. Counting the
 //! distinct ones heard lately says how many others would forward a flood
 //! to the same ground, which an adaptive forwarder thins its own
-//! forwarding by (repeater-operation.md § Adaptive Forwarding).
+//! forwarding by (UEP-0018).
 //!
 //! A node is told apart by the first two bytes of its address, the part a
 //! router hint also carries.

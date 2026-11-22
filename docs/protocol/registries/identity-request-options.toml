@@ -1,0 +1,37 @@
+title = "Identity Request Options"
+created-by = 11
+anchor = "registry-considerations"
+min = 0
+max = 65535
+policy = """
+Values 0 to 65535, allocated by a standards UEP. An odd value is critical and \
+an even one elective."""
+
+[[range]]
+from = 60000
+to = 65535
+use = "experimental"
+
+[[value]]
+value = 1
+name = "NONCE"
+uep = 11
+anchor = "identity-request-options"
+
+[[value]]
+value = 3
+name = "FILTER_NODE_HINT"
+uep = 11
+anchor = "identity-request-options"
+
+[[value]]
+value = 5
+name = "FILTER_NODE_ROLE"
+uep = 11
+anchor = "identity-request-options"
+
+[[value]]
+value = 7
+name = "FILTER_NODE_CAPS"
+uep = 11
+anchor = "identity-request-options"

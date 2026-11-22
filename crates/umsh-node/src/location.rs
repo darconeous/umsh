@@ -40,9 +40,12 @@
 //!
 //! # Feature: `f64`
 //!
-//! By default all floating-point arithmetic uses `f32`, which is adequate for
-//! precisions 1–5 (cells ≥ 19 m). Enable the `f64` crate feature for accurate
-//! encoding and decoding at 6–7 byte precision.
+//! Every constructor taking degrees rounds them to the nearest 1e-7 degree
+//! and encodes that exactly, as `NodeLocation::from_e7` does. Decoding uses
+//! `f32` by default, which is adequate for precisions 1–5 (cells ≥ 19 m).
+//! Enable the `f64` crate feature for accurate decoding at 6–7 byte
+//! precision, and for `NodeLocation::from_lat_lon_f64`, whose input holds a
+//! position precisely enough to name a 6–7 byte cell.
 
 use core::fmt;
 
@@ -83,38 +86,32 @@ impl NodeLocation {
     /// `precision` is clamped to [`MAX_PRECISION`]. Inputs are clamped to valid
     /// ranges (`[-90, +90]` and `[-180, +180]`).
     ///
-    /// Internal arithmetic uses `f32` by default. Enable the `f64` crate feature
-    /// for accurate results at 6–7 byte precision.
+    /// The value is rounded to the nearest 1e-7 degree, exactly, and encoded
+    /// as [`from_e7`](Self::from_e7) does. An `f32` holds a position to about
+    /// a meter, so at 6–7 byte precision the cell is the one the `f32` names,
+    /// which can be a neighbor of the one its decimal digits name.
     pub fn from_lat_lon(lat: f32, lon: f32, precision: u8) -> Self {
-        let precision = precision.min(MAX_PRECISION);
-        if precision == 0 {
-            return Self::UNSPECIFIED;
-        }
-        let lat = lat.clamp(-90.0, 90.0);
-        let lon = lon.clamp(-180.0, 180.0);
-        let (lat_idx, lon_idx) = encode_indices(lat, lon, precision as u32);
-
-        let mut bytes = [0u8; MAX_PRECISION as usize];
-        for (k, byte) in bytes.iter_mut().enumerate().take(precision as usize) {
-            let shift = 4 * (precision as usize - 1 - k);
-            let hi = ((lat_idx >> shift) & 0xF) as u8;
-            let lo = ((lon_idx >> shift) & 0xF) as u8;
-            *byte = (hi << 4) | lo;
-        }
-        Self {
-            len: precision,
-            bytes,
-        }
+        Self::from_e7(
+            f32_to_e7(lat.clamp(-90.0, 90.0)),
+            f32_to_e7(lon.clamp(-180.0, 180.0)),
+            precision,
+        )
     }
 
-    /// Encode a `(latitude, longitude)` position in degrees at the given precision.
+    /// Encode a `(latitude, longitude)` position in degrees at the given
+    /// precision, rounded to the nearest 1e-7 degree and encoded as
+    /// [`from_e7`](Self::from_e7) does.
     ///
     /// Only available with the `f64` crate feature. Prefer this over
     /// [`from_lat_lon`](Self::from_lat_lon) when working with f64 coordinates and
     /// 6–7 byte precision.
     #[cfg(feature = "f64")]
     pub fn from_lat_lon_f64(lat: f64, lon: f64, precision: u8) -> Self {
-        Self::from_lat_lon(lat as f32, lon as f32, precision)
+        Self::from_e7(
+            f64_to_e7(lat.clamp(-90.0, 90.0)),
+            f64_to_e7(lon.clamp(-180.0, 180.0)),
+            precision,
+        )
     }
 
     /// Encode a `(latitude, longitude)` position given in units of 1e-7
@@ -124,7 +121,7 @@ impl NodeLocation {
     /// decimal digits—a GNSS receiver's `ddmm.mmmm` fields, most of
     /// all. [`from_lat_lon`](Self::from_lat_lon) has to round the value
     /// into a binary float first, which at 6–7 byte precision can land it
-    /// in the neighbouring cell; this cannot, at any precision, with or
+    /// in the neighboring cell; this cannot, at any precision, with or
     /// without the `f64` feature.
     ///
     /// `precision` is clamped to [`MAX_PRECISION`]; coordinates are
@@ -257,25 +254,40 @@ impl NodeLocation {
 
 // --- Internal float helpers (cfg-selected) ---
 
-/// Compute (lat_idx, lon_idx) from clamped f32 coordinates and precision.
-#[inline]
-fn encode_indices(lat: f32, lon: f32, n: u32) -> (u32, u32) {
-    #[cfg(feature = "f64")]
-    {
-        let scale = (1u64 << (4 * n)) as f64;
-        let lat_idx = ((lat as f64 + 90.0) * scale / 180.0) as u32;
-        let lon_idx = ((lon as f64 + 180.0) * scale / 360.0) as u32;
-        let max_idx = (scale as u32).saturating_sub(1);
-        (lat_idx.min(max_idx), lon_idx.min(max_idx))
+/// `degrees`, already clamped to ±180, in units of 1e-7 degree, rounded to
+/// nearest. Worked from the float's bits in integer arithmetic, so it is
+/// exact and brings in no `f64` code. NaN reads as 0.
+fn f32_to_e7(degrees: f32) -> i32 {
+    let bits = degrees.to_bits();
+    let exponent = (bits >> 23) & 0xFF;
+    if exponent == 0xFF {
+        return 0;
     }
-    #[cfg(not(feature = "f64"))]
-    {
-        let scale = (1u64 << (4 * n)) as f32;
-        let lat_idx = ((lat + 90.0) * scale / 180.0) as u32;
-        let lon_idx = ((lon + 180.0) * scale / 360.0) as u32;
-        let max_idx = (scale as u32).saturating_sub(1);
-        (lat_idx.min(max_idx), lon_idx.min(max_idx))
+    // |degrees| = mantissa × 2^(exponent − 150), the implicit leading bit
+    // included for a normal number.
+    let fraction = u64::from(bits & 0x7F_FFFF);
+    let (mantissa, exponent) = match exponent {
+        0 => (fraction, 1),
+        _ => (fraction | 0x80_0000, exponent),
+    };
+    // 180° has exponent 134, so the shift is at least 16; the product is
+    // under 2^48, and at a shift of 63 the result is 0 as it should be.
+    let shift = 150u32.saturating_sub(exponent).clamp(1, 63);
+    let magnitude = ((mantissa * 10_000_000 + (1 << (shift - 1))) >> shift) as i32;
+    if bits >> 31 == 0 {
+        magnitude
+    } else {
+        -magnitude
     }
+}
+
+/// `degrees`, already clamped to ±180, in units of 1e-7 degree, rounded to
+/// nearest. NaN reads as 0.
+#[cfg(feature = "f64")]
+fn f64_to_e7(degrees: f64) -> i32 {
+    let scaled = degrees * 1e7;
+    // `as` truncates toward zero, so rounding adds half away from it.
+    (scaled + if scaled < 0.0 { -0.5 } else { 0.5 }) as i32
 }
 
 /// Decode one axis: returns (cell_lo, cell_hi) in degrees.
@@ -348,7 +360,7 @@ impl From<(f32, f32)> for NodeLocation {
 #[cfg(feature = "f64")]
 impl From<(f64, f64)> for NodeLocation {
     fn from((lat, lon): (f64, f64)) -> Self {
-        Self::from_lat_lon(lat as f32, lon as f32, MAX_PRECISION)
+        Self::from_lat_lon_f64(lat, lon, MAX_PRECISION)
     }
 }
 
@@ -421,6 +433,43 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// At full precision, a float names the cell of the exact value it
+    /// holds, rounded to 1e-7 degree: an `f32` names its own value's cell,
+    /// and an `f64` names the cell of the decimal digits it was written as.
+    #[test]
+    fn the_float_paths_agree_with_from_e7_at_full_precision() {
+        // 37.331f32 is 37.33100128…, and −121.883f32 is −121.88300323….
+        let single = NodeLocation::from_lat_lon(37.331, -121.883, MAX_PRECISION);
+        assert_eq!(
+            single,
+            NodeLocation::from_e7(373_310_013, -1_218_830_032, MAX_PRECISION)
+        );
+        assert_eq!(
+            single.as_bytes(),
+            &[0xB2, 0x59, 0x15, 0x73, 0xCE, 0xD0, 0x85]
+        );
+        for (lat, lon) in [(0.0f32, -0.0f32), (1e-40, -1e-40), (90.0, -180.0)] {
+            let e7 = |degrees: f32| (f64::from(degrees) * 1e7).round() as i32;
+            assert_eq!(
+                NodeLocation::from_lat_lon(lat, lon, MAX_PRECISION),
+                NodeLocation::from_e7(e7(lat), e7(lon), MAX_PRECISION),
+                "at ({lat}, {lon})"
+            );
+        }
+        assert_eq!(
+            NodeLocation::from_lat_lon(f32::NAN, f32::NAN, MAX_PRECISION),
+            NodeLocation::from_e7(0, 0, MAX_PRECISION)
+        );
+    }
+
+    #[cfg(feature = "f64")]
+    #[test]
+    fn the_f64_path_encodes_the_spec_example_exactly() {
+        let loc = NodeLocation::from_lat_lon_f64(37.331, -121.883, MAX_PRECISION);
+        assert_eq!(loc.as_bytes(), &[0xB2, 0x59, 0x15, 0x73, 0xCE, 0xD0, 0x68]);
+        assert_eq!(NodeLocation::from((37.331f64, -121.883f64)), loc);
     }
 
     /// The truncation property has to survive the integer path too: a

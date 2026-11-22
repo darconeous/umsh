@@ -1,5 +1,5 @@
 -- Canonical UMSH address presentation.
--- Reference: crates/umsh-core/src/base58.rs, docs/protocol/src/addressing.md
+-- Reference: crates/umsh-core/src/base58.rs, docs/protocol-legacy/src/addressing.md
 
 local M = {}
 

@@ -52,7 +52,7 @@ SNR the radio reported, so the reception metadata survives into the capture.
 
 ## Capturing UMSH over IP Multicast
 
-[UMSH over IP multicast](../docs/protocol/src/ip-multicast.md) carries one raw UMSH
+[UMSH over IP multicast](../docs/protocol-legacy/src/ip-multicast.md) carries one raw UMSH
 frame per UDP datagram, with no additional framing, to an IPv4 multicast group
 (by default `239.255.134.121:15056`).
 
@@ -259,7 +259,7 @@ display filter for pulling every offending frame out of a capture.
 The `test_vectors.pcap` file contains every protocol test-vector packet
 (Examples 1–8 and 10–14) wrapped as UDP payloads on port 15056. Open it in Wireshark with the dissector
 installed to verify the plugin is working. Every frame in it is valid, and the
-bytes are the ones in `docs/protocol/src/test-vectors.md`. To regenerate it:
+bytes are the ones in `docs/protocol-legacy/src/test-vectors.md`. To regenerate it:
 
 ```sh
 python3 dissectors/make_test_pcap.py dissectors/test_vectors.pcap

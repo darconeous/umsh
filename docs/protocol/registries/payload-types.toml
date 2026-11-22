@@ -1,0 +1,38 @@
+title = "Payload Types"
+created-by = 5
+anchor = "payload-types-registry"
+min = 0
+max = 2097151
+policy = """
+Values 0 to 2,097,151, encoded as a packed unsigned integer, allocated by a \
+standards UEP whose definition states the packet types that may carry the \
+value. A value from 0 to 127 takes one byte, and is allocated only to a \
+payload type carried often enough that the byte matters."""
+
+[[range]]
+from = 60000
+to = 2097151
+use = "experimental"
+
+[[value]]
+value = 0
+name = "Unspecified"
+uep = 5
+anchor = "compatibility"
+
+[[value]]
+value = 1
+name = "Node Identity"
+uep = 11
+anchor = "payload"
+
+[[value]]
+value = 2
+name = "MAC Command"
+uep = 6
+anchor = "encoding"
+
+[[value]]
+value = 3
+name = "Text Message"
+uep = 20

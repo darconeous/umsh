@@ -5,13 +5,14 @@
 
 use buoyant::event::{Key, KeyResponse};
 use buoyant::focus::BoundaryBehavior;
+use buoyant::view::Lazy;
 use buoyant::view::prelude::*;
 use embedded_graphics::pixelcolor::Rgb565;
 use heapless::String;
 
 use super::conversation::header;
 use super::details::row;
-use super::label;
+use super::{label, line};
 use crate::avatar::AvatarStyle;
 use crate::board::Metrics;
 use crate::model::{Member, State};
@@ -89,6 +90,15 @@ pub fn view(
                         keys::SAVE_PEER,
                         State::save_member,
                         End::Nothing,
+                    )
+                }),
+                (known && member.forwards).then(|| {
+                    action(
+                        m,
+                        "Neighbors",
+                        keys::MEMBER_NEIGHBORS,
+                        State::open_neighbors,
+                        End::Chevron,
                     )
                 }),
                 // Once known, the address under the head shows the hint.
@@ -202,33 +212,60 @@ pub(super) fn action(
     end: End,
 ) -> impl View<Rgb565, State> + use<> {
     Button::new(act, move |button: ButtonState| {
-        let focused = button.is_focused();
-        let face = if focused { &font::BOLD } else { &font::REGULAR };
-        action_look(
-            HStack::new((
-                label::<24>(text, face, m.body, theme::TEXT),
-                Spacer::default(),
-                match end {
-                    End::Value(value) => Some(label::<16>(
-                        value,
-                        &font::REGULAR,
-                        m.secondary,
-                        theme::TEXT_SECONDARY,
-                    )),
-                    End::Nothing | End::Chevron => None,
-                },
-                matches!(end, End::Chevron).then(|| {
-                    Image::new(&icon::CHEVRON)
-                        .as_template()
-                        .foreground_color(theme::TEXT_TERTIARY)
-                }),
-            ))
-            .with_spacing(8)
-            .padding(Edges::Leading, INSET - 4),
-            focused,
+        Lazy::new(
+            ActionLook {
+                text,
+                end,
+                focused: button.is_focused(),
+                m,
+            },
+            action_row,
         )
     })
     .focus_key(key)
+}
+
+/// An action row, as [`action`] draws it.
+#[derive(Clone, Copy)]
+struct ActionLook {
+    text: &'static str,
+    end: End,
+    focused: bool,
+    m: &'static Metrics,
+}
+
+/// An action row's look. Built each time it is drawn ([`Lazy`]): kept in
+/// the view tree, each row would be compiled into every pass over it.
+fn action_row(look: &ActionLook) -> impl View<Rgb565, ()> + use<> {
+    let m = look.m;
+    let face = if look.focused {
+        &font::BOLD
+    } else {
+        &font::REGULAR
+    };
+    action_look(
+        HStack::new((
+            line(look.text, face, m.body, theme::TEXT),
+            Spacer::default(),
+            match look.end {
+                End::Value(value) => Some(line(
+                    value,
+                    &font::REGULAR,
+                    m.secondary,
+                    theme::TEXT_SECONDARY,
+                )),
+                End::Nothing | End::Chevron => None,
+            },
+            matches!(look.end, End::Chevron).then(|| {
+                Image::new(&icon::CHEVRON)
+                    .as_template()
+                    .foreground_color(theme::TEXT_TERTIARY)
+            }),
+        ))
+        .with_spacing(8)
+        .padding(Edges::Leading, INSET - 4),
+        look.focused,
+    )
 }
 
 /// An action row's look around `content`, which starts at its leading

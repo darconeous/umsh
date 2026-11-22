@@ -742,7 +742,7 @@ mod tests {
         for (trace, expected) in [
             (
                 &[0xAAu8, 0x01, 97, 65, 0xBB, 0x02, 0, 0][..],
-                vec![HopSignal::new(-97, 65), HopSignal::POINT_TO_POINT],
+                vec![HopSignal::from_bytes([97, 65]), HopSignal::POINT_TO_POINT],
             ),
             (&[0xFEu8, 0xAA, 0x01, 0xBB, 0x02][..], Vec::new()),
         ] {
@@ -1874,6 +1874,50 @@ mod tests {
         assert_eq!(node.pfs_local_keys(), local);
         assert_eq!(node.pfs_unwanted_responses(), 2);
         assert_eq!(node.pfs_refused_ephemeral_keys(), 0);
+    }
+
+    /// A request for a new session leaves the one already established
+    /// usable: it goes on carrying traffic while the request waits, and
+    /// survives the request going unanswered. Only the response that
+    /// establishes the new one replaces it.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn pfs_request_keeps_the_established_session_until_answered() {
+        let mac = FakeMac::new(vec![[7u8; 32], [8u8; 32], [9u8; 32]]);
+        let node = test_node(mac.clone());
+        let peer = PublicKey([0x55; 32]);
+        let options = SendOptions::default();
+        let response = |key: u8| OwnedMacCommand::PfsSessionResponse {
+            ephemeral_key: PublicKey([key; 32]),
+            duration_minutes: 60,
+        };
+        let route = |node: &crate::node::LocalNode<FakeMac>| {
+            let now_ms = mac.state.borrow().now_ms;
+            node.state().borrow().pfs.active_route(&peer, now_ms)
+        };
+
+        block_on_ready(node.request_pfs(&peer, 60, &options)).unwrap();
+        block_on_ready(node.handle_pfs_command(&peer, frame(), &response(0x44), &options)).unwrap();
+        let established = route(&node).unwrap();
+        assert_eq!(established.1, PublicKey([0x44; 32]));
+
+        // Asked again, and never answered.
+        block_on_ready(node.request_pfs(&peer, 60, &options)).unwrap();
+        assert_eq!(route(&node), Some(established));
+        assert!(matches!(
+            block_on_ready(node.pfs_status(&peer)).unwrap(),
+            crate::node::PfsStatus::Active { .. }
+        ));
+        assert_eq!(node.expire_pfs_requests(u64::MAX), vec![peer]);
+        assert_eq!(route(&node), Some(established));
+        assert!(mac.state.borrow().removed_ephemerals.is_empty());
+
+        // Asked again, and answered: the new session takes the old one's place.
+        block_on_ready(node.request_pfs(&peer, 60, &options)).unwrap();
+        block_on_ready(node.handle_pfs_command(&peer, frame(), &response(0x45), &options)).unwrap();
+        assert_eq!(route(&node).unwrap().1, PublicKey([0x45; 32]));
+        assert_eq!(node.state().borrow().pfs.sessions().len(), 1);
+        assert_eq!(mac.state.borrow().removed_ephemerals, vec![established.0]);
     }
 
     /// Two peers that ask each other for a session at once hold one: the
@@ -3629,6 +3673,34 @@ mod tests {
             .expect("suppression is a window, not a permanent refusal");
         block_on_ready(node.send_identity_response(plan));
         assert_eq!(mac.take_unicasts().len(), 1);
+    }
+
+    /// A unicast request is no solicitation: the MAC already drops a replayed
+    /// copy, so one that reaches the responder again is the requester
+    /// retrying, and is answered each time, with its nonce or without.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn responder_answers_every_retry_of_a_unicast_request() {
+        let mac = FakeMac::new(Vec::new());
+        let node = responder_node(&mac);
+        node.enable_identity_responder_default(test_profile(PublicKey([0x11; 32])));
+        let requester = PublicKey([0x41; 32]);
+        let packet = test_unicast_packet(requester, &[]);
+
+        let with_nonce = crate::mac_command::IdentityRequestBuilder::new()
+            .nonce(0x0000_BEEF)
+            .unwrap()
+            .build();
+        let without_nonce = crate::mac_command::IdentityRequestBuilder::new().build();
+        for options in [&with_nonce, &without_nonce] {
+            for now_ms in [1_000, 3_000] {
+                assert!(
+                    node.evaluate_identity_request(&packet, requester, options, now_ms)
+                        .is_some(),
+                    "a retried unicast request is answered"
+                );
+            }
+        }
     }
 
     /// Suppression names a solicitation, not a peer: two requesters asking at

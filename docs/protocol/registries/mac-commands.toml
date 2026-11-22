@@ -1,0 +1,79 @@
+title = "MAC Commands"
+created-by = 6
+anchor = "registry-considerations"
+min = 0
+max = 255
+policy = """
+Values 0 to 127, allocated by a standards UEP whose definition states \
+whether the command may be carried by multicast or broadcast."""
+
+[[range]]
+from = 128
+to = 255
+use = "reserved"
+
+[[value]]
+value = 1
+name = "Identity Request"
+uep = 11
+anchor = "identity-request"
+
+[[value]]
+value = 4
+name = "Echo Request"
+uep = 6
+anchor = "echo-request"
+
+[[value]]
+value = 5
+name = "Echo Response"
+uep = 6
+anchor = "echo-response"
+
+[[value]]
+value = 6
+name = "PFS Session Request"
+uep = 9
+anchor = "pfs-session-request"
+
+[[value]]
+value = 7
+name = "PFS Session Response"
+uep = 9
+anchor = "pfs-session-response"
+
+[[value]]
+value = 8
+name = "End PFS Session"
+uep = 9
+anchor = "end-pfs-session"
+
+[[value]]
+value = 9
+name = "No-Op"
+uep = 6
+anchor = "no-op"
+
+[[value]]
+value = 10
+name = "Peer Repeaters Request"
+uep = 16
+anchor = "peer-repeaters-request"
+
+[[value]]
+value = 11
+name = "Peer Repeaters Response"
+uep = 16
+anchor = "peer-repeaters-response"
+
+[[value]]
+value = 12
+name = "Verify Frame"
+uep = 7
+anchor = "verify-frame"
+
+[[value]]
+value = 13
+name = "Frame Verified"
+uep = 7
+anchor = "frame-verified"

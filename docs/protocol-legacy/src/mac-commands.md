@@ -165,7 +165,7 @@ Reports signal quality measurements in response to a Signal Report Request.
 | Field | Size | Description |
 |---|---:|---|
 | RSSI | 1 byte | Received signal strength as an unsigned value representing negative dBm (e.g. 130 = -130 dBm) |
-| SNR | 1 byte | Signal-to-noise ratio as a signed value in dB |
+| SNR | 1 byte | Signal-to-noise ratio as a signed value in quarter-dB steps |
 
 ## Echo Request (4)
 

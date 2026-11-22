@@ -36,7 +36,7 @@ misleading.
 - The spec already describes the device identity as existing for "repeater or
   bridge behavior" and already frames `CMD_SAVE` as the thing that "arms an
   unattended repeater across power cycles"
-  (`docs/protocol/src/companion-radio-full.md:914`).
+  (`docs/protocol-legacy/src/companion-radio-full.md:914`).
 
 What remains is finishing the trajectory, removing the assumptions that only
 made sense when "attached to a phone" was the normal state, and renaming.
@@ -679,7 +679,7 @@ workaround for a small buffer.** For the record, the mechanical cost of a raise
 is smaller than it first appears—the SAR header is two bits of state with no
 length field (`crates/umsh-ulcp/src/gatt.rs:16`), so there is no wire
 encoding to re-verify—but it is a normative spec change
-(`docs/protocol/src/companion-radio-ble.md:146` fixes 512 octets) and roughly 19
+(`docs/protocol-legacy/src/companion-radio-ble.md:146` fixes 512 octets) and roughly 19
 frame-sized buffers per NCP image make it real RAM. Neither is worth spending on
 a mechanism with a known replacement.
 
@@ -765,7 +765,7 @@ mechanical sweep. Regeneration is cheap; testability is not.
   dimensions in design decision 3.
 - Share the canonical unsigned payload builder with the Identity Request
   responder per design decision 10.
-- `docs/protocol/src/node-identity.md:32`: rename role value 3 from
+- `docs/protocol-legacy/src/node-identity.md:32`: rename role value 3 from
   "Tracker/Companion-Radio" to **"Tracker"**.
 - Allocate from the reserved 71–95 device-behavior range. No snapshot work is
   needed: increment 2 made saving these a matter of allocating option numbers.

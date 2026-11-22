@@ -95,6 +95,9 @@ pub struct Delivery {
     /// The failed fragments known not to have arrived: they never went
     /// where the peer could read them. A subset of `failed`.
     pub undelivered: u16,
+    /// The acknowledged fragments whose acknowledgment answered the flood
+    /// that followed a miss on the peer's route. A subset of `acked`.
+    pub flooded: u16,
     /// How many fragments the message went in, once word of one has said;
     /// 0 until then.
     pub fragments: u8,
@@ -111,7 +114,10 @@ impl Delivery {
         let bit = 1u16 << fragment.unwrap_or(0).min(15);
         match state {
             DeliveryState::Sent => self.sent |= bit,
-            DeliveryState::Acked => self.acked |= bit,
+            DeliveryState::Acked => {
+                self.acked |= bit;
+                self.flooded &= !bit;
+            }
             DeliveryState::Failed | DeliveryState::Undelivered if self.acked & bit != 0 => {}
             DeliveryState::Failed => self.failed |= bit,
             DeliveryState::Undelivered => {
@@ -125,6 +131,19 @@ impl Delivery {
         if state != DeliveryState::Undelivered {
             self.undelivered &= !bit;
         }
+    }
+
+    /// Notes that the acknowledgment of `fragment` answered the flood that
+    /// followed a miss on the peer's route.
+    pub fn flood(&mut self, fragment: Option<u8>) {
+        let bit = 1u16 << fragment.unwrap_or(0).min(15);
+        self.flooded |= bit & self.acked;
+    }
+
+    /// Whether a fragment got through only by the flood that followed a
+    /// miss on the peer's route.
+    pub fn flooded(&self) -> bool {
+        self.flooded & self.acked != 0
     }
 
     /// Whether some of the message is known not to have arrived.
@@ -525,6 +544,21 @@ mod tests {
         delivery.set(Some(2), 3, DeliveryState::Acked);
         assert!(delivery.delivered());
         assert!(!delivery.awaited(false));
+    }
+
+    /// A fragment carried by the flood after a miss says so until a later
+    /// acknowledgment of it does not.
+    #[test]
+    fn a_flooded_acknowledgment_is_kept_until_another_comes() {
+        let mut delivery = Delivery::default();
+        delivery.set(Some(0), 2, DeliveryState::Sent);
+        delivery.flood(Some(1));
+        assert!(!delivery.flooded(), "nothing acknowledged");
+        delivery.set(Some(0), 2, DeliveryState::Acked);
+        delivery.flood(Some(0));
+        assert!(delivery.flooded());
+        delivery.set(Some(0), 2, DeliveryState::Acked);
+        assert!(!delivery.flooded());
     }
 
     /// A resend reported without the count does not forget it.

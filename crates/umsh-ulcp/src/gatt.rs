@@ -1,7 +1,7 @@
 //! Service-agnostic frame segmentation and reassembly for GATT links.
 //!
 //! This implements the GATT Frame Transport from
-//! `docs/protocol/src/ulcp-ble.md`: one SAR header octet per ATT
+//! `docs/protocol-legacy/src/ulcp-ble.md`: one SAR header octet per ATT
 //! value, no HDLC escaping or checksum, and bounded reassembly state.
 
 /// SAR value for a frame contained in one segment.

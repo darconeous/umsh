@@ -1,7 +1,7 @@
 # Companion Radio Battery Capability—Implementation Plan
 
 Add implementation support for `CAP_BATTERY` (39) and `PROP_BATTERY` (69)
-from `docs/protocol/src/ulcp-full.md`: a single read-only
+from `docs/protocol-legacy/src/ulcp-full.md`: a single read-only
 property whose value is a battery status snapshot—a field-flags octet
 followed by the fields the platform supports (voltage `UINT16_LE` mV,
 level `UINT8` percent, charge state PUI)—or an empty value when the

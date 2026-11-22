@@ -11,14 +11,15 @@ use crate::model::{
     About, BatteryReading, Bluetooth, BluetoothReading, Card, ChannelAccess, ChannelChats,
     ChannelEntry, Charge, ChatId, ChatKind, ChatSummary, Chats, ClockSettings, ClockSource,
     Contact, ContactUri, Delivery, Details, Direction, EventQueue, Exchange, ExchangeEnd, Fix,
-    Forwarding, GaugeReading, Gnss, GnssReading, Heard, Invite, KeyboardFirmware, KeyboardSettings,
-    Leg, Links, MAX_CHATS, MAX_HEARD, MAX_NEARBY_NETWORKS, MAX_PATH, MAX_SAVED_NETWORKS,
-    MESSAGE_LEN, MeetState, Member, Message, MessageId, NearbyDevice, NearbyId, NearbyNetwork,
-    Neighbor, Node, NodeEvent, Parts, PeerDetail, PeerEntry, PeerId, PeerRoute, PeerSummary,
-    PingReply, PingView, Presence, Profile, Quote, RadioSettings, Reacted, Reaction, Reactions,
-    Reactor, Repeater, RouteKind, Rule, SavedNetwork, Sender, Setting, ShareUri, Shareable, Signal,
-    Ssid, State, Statistics, StatusStrip, TRANSMIT_POWER, Via, WifiReading, WifiSecurity,
-    WifiStatus, route_text, word_match,
+    Forwarding, GaugeReading, Gnss, GnssReading, Heard, HintRead, Invite, KeyboardFirmware,
+    KeyboardSettings, KnownRepeater, LearnedRoute, Leg, Links, Listed, Listing, ListingAsk,
+    MAX_CHATS, MAX_HEARD, MAX_HINT_READS, MAX_KNOWN, MAX_NEARBY_NETWORKS, MAX_PATH,
+    MAX_SAVED_NETWORKS, MESSAGE_LEN, ManualRoute, MeetState, Member, Message, MessageId,
+    NearbyDevice, NearbyId, NearbyNetwork, Neighbor, Node, NodeEvent, Parts, PeerDetail, PeerEntry,
+    PeerId, PeerRoute, PeerSummary, PingReply, PingView, Presence, Profile, Quote, RadioSettings,
+    Reacted, Reaction, Reactions, Reactor, Repeater, RouteKind, Rule, SavedNetwork, Sender,
+    Setting, ShareUri, Shareable, Signal, Ssid, State, Statistics, StatusStrip, TRANSMIT_POWER,
+    Via, WifiReading, WifiSecurity, WifiStatus, route_text, word_match,
 };
 use crate::models;
 use crate::picker::RecentText;
@@ -120,6 +121,7 @@ fn member_card(name: &str, identified: bool) -> Member {
             address: Some(s(address)),
             heard: s("2m"),
             saved: false,
+            forwards: false,
         };
     }
     Member {
@@ -128,6 +130,7 @@ fn member_card(name: &str, identified: bool) -> Member {
         address: address.map(s),
         heard: s("2m"),
         saved: false,
+        forwards: false,
     }
 }
 
@@ -179,7 +182,10 @@ fn mockup_chats(heap: TextHeap) -> [ChatRow; 7] {
             .flatten(),
         limit: None,
     };
-    let peer = |hops| ChatKind::Peer { hops: Some(hops) };
+    let peer = |hops| ChatKind::Peer {
+        hops: Some(hops),
+        manual: false,
+    };
     let channel = |access| ChatKind::Channel { access };
     [
         row(
@@ -382,6 +388,14 @@ const BALD_KNOB: Carrier = Carrier {
     known: false,
 };
 
+/// The repeater Riverbend hears furthest off.
+const RIDGE_RUNNER: Carrier = Carrier {
+    address: HEARD[1].address,
+    name: HEARD[1].name,
+    color: HEARD[1].color,
+    known: true,
+};
+
 /// The repeaters heard carrying my message `index` in `chat`, and how many
 /// more named none.
 fn carriers(chat: ChatId, index: usize) -> (&'static [Carrier], u16) {
@@ -417,6 +431,205 @@ fn router_hint(address: &str) -> Option<([u8; 2], String<8>)> {
     let mut text = String::new();
     core::fmt::write(&mut text, format_args!("{hint}")).ok()?;
     Some((hint.0, text))
+}
+
+/// How many routers' listings the fixture keeps.
+const LISTINGS: usize = 4;
+/// How long Riverbend takes to answer, and how long any other router is
+/// waited for before it goes unanswered.
+const LISTING_DELAY: u64 = 1_500;
+const NO_ANSWER_AFTER: u64 = 30_000;
+/// How long this device takes to read what it hears itself.
+const HERE_DELAY: u64 = 100;
+/// How many repeaters a page lists.
+const LISTING_PAGE: usize = 3;
+
+/// A router asked what it hears.
+struct FixtureListing {
+    address: String<44>,
+    /// How many pages of its listing are held.
+    pages: u8,
+    read_at: Option<u64>,
+    /// Whether the page after those held was asked for, and when it comes.
+    asking: Option<(bool, u64)>,
+    no_answer: bool,
+}
+
+impl FixtureListing {
+    fn count(&self) -> usize {
+        (usize::from(self.pages) * LISTING_PAGE).min(lists_of(&self.address).len())
+    }
+
+    /// Answers the ask whose time has come. Returns whether it did.
+    fn answer(&mut self, now: u64) -> bool {
+        let Some((more, at)) = self.asking.filter(|&(_, at)| at <= now) else {
+            return false;
+        };
+        self.asking = None;
+        if lists_of(&self.address).is_empty() {
+            self.no_answer = true;
+        } else if more {
+            self.pages += 1;
+        } else {
+            self.pages = 1;
+            self.read_at = Some(at);
+        }
+        true
+    }
+}
+
+/// What the router at `address` reports hearing: Riverbend and this
+/// device answer, and no other.
+fn lists_of(address: &str) -> &'static [ListsAs] {
+    match address {
+        _ if address == RIVERBEND.address => &RIVERBEND_LISTS,
+        ADDRESS => &HERE_LISTS,
+        _ => &[],
+    }
+}
+
+/// What this device hears: Riverbend, Pat, whose route can end there, and
+/// a repeater known by its hint.
+const HERE_LISTS: [ListsAs; 3] = [
+    ListsAs {
+        address: Some(RIVERBEND.address),
+        name: RIVERBEND.name,
+        color: RIVERBEND.color,
+        shape: PeerShape::Triangle,
+        hint: [0; 2],
+        signal: Some(Signal { rssi: -92, snr: 60 }),
+        heard_min: 3,
+        distance_m: None,
+    },
+    ListsAs {
+        address: Some(PEERS[0].address),
+        name: PEERS[0].name,
+        color: PEERS[0].color,
+        shape: PeerShape::Circle,
+        hint: [0x9d, 0x14],
+        signal: Some(Signal { rssi: -80, snr: 95 }),
+        heard_min: 5,
+        distance_m: None,
+    },
+    ListsAs {
+        address: None,
+        name: "Gateway North",
+        color: [0; 3],
+        shape: PeerShape::Triangle,
+        hint: [0x4b, 0x21],
+        signal: Some(Signal {
+            rssi: -112,
+            snr: -40,
+        }),
+        heard_min: 30,
+        distance_m: None,
+    },
+];
+
+/// The repeaters the fixture knows, as Add hop offers them, the most
+/// recently heard first.
+const KNOWN_REPEATERS: [(Carrier, PeerShape, &str); 3] = [
+    (RIVERBEND, PeerShape::Triangle, "12m"),
+    (BALD_KNOB, PeerShape::Triangle, "2h"),
+    (RIDGE_RUNNER, PeerShape::Circle, "1d"),
+];
+
+/// A repeater Riverbend reports hearing.
+struct ListsAs {
+    /// Its address, when the fixture knows it.
+    address: Option<&'static str>,
+    name: &'static str,
+    color: [u8; 3],
+    shape: PeerShape,
+    /// Its hint, for one with no address, or with one that is no key.
+    hint: [u8; 2],
+    signal: Option<Signal>,
+    heard_min: u16,
+    distance_m: Option<u32>,
+}
+
+/// What Riverbend reports hearing, most recently heard first.
+const RIVERBEND_LISTS: [ListsAs; 5] = [
+    ListsAs {
+        address: Some(BALD_KNOB.address),
+        name: BALD_KNOB.name,
+        color: BALD_KNOB.color,
+        shape: PeerShape::Triangle,
+        hint: [0; 2],
+        signal: Some(Signal { rssi: -88, snr: 75 }),
+        heard_min: 1,
+        distance_m: Some(4_200),
+    },
+    ListsAs {
+        address: Some(HEARD[1].address),
+        name: HEARD[1].name,
+        color: HEARD[1].color,
+        shape: HEARD[1].shape,
+        hint: [0; 2],
+        signal: Some(Signal {
+            rssi: -104,
+            snr: 20,
+        }),
+        heard_min: 6,
+        distance_m: Some(11_800),
+    },
+    ListsAs {
+        address: None,
+        name: "Gateway North",
+        color: [0; 3],
+        shape: PeerShape::Triangle,
+        hint: [0x4b, 0x21],
+        signal: None,
+        heard_min: 2,
+        distance_m: None,
+    },
+    ListsAs {
+        address: None,
+        name: "Cedar Lookout",
+        color: [0; 3],
+        shape: PeerShape::Triangle,
+        hint: [0x9e, 0x07],
+        signal: Some(Signal {
+            rssi: -117,
+            snr: -95,
+        }),
+        heard_min: 48,
+        distance_m: Some(23_500),
+    },
+    ListsAs {
+        address: None,
+        name: "",
+        color: [0; 3],
+        shape: PeerShape::Triangle,
+        hint: [0xd3, 0x5a],
+        signal: Some(Signal {
+            rssi: -121,
+            snr: -130,
+        }),
+        heard_min: 520,
+        distance_m: None,
+    },
+];
+
+/// A route held by hand: to whom, its hints, how far it floods past the
+/// last, and for how long it was held.
+type HeldRoute = (PeerId, Vec<[u8; 2], MAX_PATH>, u8, u32);
+
+/// A ping sent along a route not held: to whom, its hints, and how far it
+/// floods past the last.
+pub type PingAlong = (PeerId, Vec<[u8; 2], MAX_PATH>, u8);
+
+/// How long a route the fixture holds by hand has left: all of it, since
+/// the fixture's time stands still.
+fn held_for(hold_ms: u32) -> String<12> {
+    let minutes = hold_ms.div_ceil(60_000);
+    let mut left = String::new();
+    if minutes < 120 {
+        _ = core::fmt::write(&mut left, format_args!("{minutes} min left"));
+    } else {
+        _ = core::fmt::write(&mut left, format_args!("{} hr left", minutes / 60));
+    }
+    left
 }
 
 /// Messages that arrive after the fixture starts, in order.
@@ -746,6 +959,18 @@ pub struct Store {
     secrecy: RefCell<Vec<PeerId, KEPT>>,
     pinged: RefCell<Vec<(PeerId, u64, bool), KEPT>>,
     reset: RefCell<Vec<PeerId, KEPT>>,
+    held: RefCell<Vec<HeldRoute, KEPT>>,
+    /// My messages sent on a route held by hand, every one of which misses
+    /// and is carried by the flood after.
+    flooded: RefCell<Vec<MessageId, KEPT>>,
+    /// The peers whose held route's learned rival was turned down.
+    kept_manual: RefCell<Vec<PeerId, KEPT>>,
+    /// How many of my messages to each peer the flood carried since their
+    /// route was last held.
+    floods: RefCell<Vec<(PeerId, u8), KEPT>>,
+    /// The latest ping sent along a route not held: to whom, its hints,
+    /// and how far it floods past the last.
+    along: RefCell<Option<PingAlong>>,
     aliases: RefCell<Vec<(PeerId, String<32>), KEPT>>,
     forgotten: RefCell<Vec<PeerId, KEPT>>,
     /// The chat of message states' session with forward secrecy ended.
@@ -812,6 +1037,13 @@ pub struct Store {
     repeater_identified: Cell<bool>,
     /// The repeaters the last repeater asked who it is was asked by way of.
     repeater_route: RefCell<Vec<[u8; 2], MAX_PATH>>,
+    /// What routers were asked to list, and what they answered.
+    listings: RefCell<Vec<FixtureListing, LISTINGS>>,
+    /// The repeaters the last router asked to list was asked by way of,
+    /// when it was asked along a route.
+    listing_route: RefCell<Option<Vec<[u8; 2], MAX_PATH>>>,
+    /// The known repeaters of the last `gather_known`.
+    known: RefCell<Vec<KnownRepeater, MAX_KNOWN>>,
     wifi: RefCell<FakeWifi>,
 }
 
@@ -998,6 +1230,11 @@ impl Store {
             secrecy: RefCell::new(Vec::new()),
             pinged: RefCell::new(Vec::new()),
             reset: RefCell::new(Vec::new()),
+            held: RefCell::new(Vec::new()),
+            flooded: RefCell::new(Vec::new()),
+            kept_manual: RefCell::new(Vec::new()),
+            floods: RefCell::new(Vec::new()),
+            along: RefCell::new(None),
             aliases: RefCell::new(Vec::new()),
             forgotten: RefCell::new(Vec::new()),
             secrecy_ended: Cell::new(false),
@@ -1049,6 +1286,9 @@ impl Store {
             repeater_at: Cell::new(None),
             repeater_identified: Cell::new(false),
             repeater_route: RefCell::new(Vec::new()),
+            listings: RefCell::new(Vec::new()),
+            listing_route: RefCell::new(None),
+            known: RefCell::new(Vec::new()),
             wifi: RefCell::new(FakeWifi::new()),
         }
     }
@@ -1073,7 +1313,10 @@ impl Store {
                     avatar: AvatarStyle::peer([120, 120, 120], "qqqq", PeerShape::Circle),
                     name: s("Quiet"),
                     alias: None,
-                    kind: ChatKind::Peer { hops: Some(1) },
+                    kind: ChatKind::Peer {
+                        hops: Some(1),
+                        manual: false,
+                    },
                     unread: false,
                     muted: false,
                     activity: index,
@@ -1468,12 +1711,20 @@ impl Store {
                     && delivered_at <= now
                     && self
                         .message(chat, id)
-                        .is_some_and(|m| m.delivery == Delivery::Delivered);
+                        .is_some_and(|m| m.delivery.delivered());
                 self.queue(if settled {
                     NodeEvent::Settled { chat, message: id }
                 } else {
                     NodeEvent::MessageChanged { chat, message: id }
                 });
+                // What the flood carried has taught a route.
+                if settled
+                    && self.flooded.borrow().contains(&id)
+                    && let Some(peer) = self.chat_peer(chat)
+                {
+                    self.flooded_once(peer);
+                    self.queue(NodeEvent::RouteChanged(peer));
+                }
             }
         }
         for (peer, sent, settled) in self.pinged.borrow_mut().iter_mut() {
@@ -1481,6 +1732,13 @@ impl Store {
                 *settled = true;
                 self.queue(NodeEvent::PingSettled(*peer));
             }
+        }
+        let mut listed = false;
+        for listing in self.listings.borrow_mut().iter_mut() {
+            listed |= listing.answer(now);
+        }
+        if listed {
+            self.queue(NodeEvent::ListingChanged);
         }
         if self.repeater_at.get().is_some_and(|at| at <= now) {
             self.repeater_at.set(None);
@@ -1517,6 +1775,11 @@ impl Store {
             self.arrival_at.get(),
             self.identity_at.get(),
             self.repeater_at.get(),
+            self.listings
+                .borrow()
+                .iter()
+                .filter_map(|listing| listing.asking.map(|(_, at)| at))
+                .min(),
             self.pinged
                 .borrow()
                 .iter()
@@ -1547,6 +1810,7 @@ impl Store {
             Some(ago) if ago < SENT_AFTER => Delivery::Sending,
             Some(ago) if ago < CONFIRMING_AFTER => Delivery::Sent,
             Some(ago) if ago < DELIVERED_AFTER => Delivery::Confirming,
+            Some(_) if self.flooded.borrow().contains(&id) => Delivery::Flooded,
             Some(_) => Delivery::Delivered,
             None => delivery,
         }
@@ -1563,6 +1827,29 @@ impl Store {
         };
         let heard = CARRIED_AFTER.iter().filter(|&&after| ago >= after).count();
         (&SENT_CARRIERS[..heard], 0)
+    }
+
+    /// The latest ping sent along a route not held: to whom, its hints,
+    /// and how far it floods past the last.
+    #[must_use]
+    pub fn pinged_along(&self) -> Option<PingAlong> {
+        self.along.borrow().clone()
+    }
+
+    /// How many repeaters the router at `router` is held to report hearing.
+    fn listing_count(&self, router: &str) -> usize {
+        self.listings
+            .borrow()
+            .iter()
+            .find(|listing| listing.address == router)
+            .map_or(0, FixtureListing::count)
+    }
+
+    /// The repeaters the last router asked to list was asked by way of, in
+    /// the order they forward, when it was asked along a route.
+    #[must_use]
+    pub fn listing_route(&self) -> Option<Vec<[u8; 2], MAX_PATH>> {
+        self.listing_route.borrow().clone()
     }
 
     /// The repeaters the last repeater asked who it is was asked by way
@@ -1597,6 +1884,7 @@ impl Store {
             repeaters,
             unnamed: Some(unnamed),
             legs: legs.iter().copied().collect(),
+            flooded: false,
         })
     }
 
@@ -1622,6 +1910,99 @@ impl Store {
                 address: None,
             })
         }
+    }
+
+    /// That the route to `peer` changed, and with it their chat's header.
+    fn route_changed(&self, peer: PeerId) {
+        self.queue(NodeEvent::RouteChanged(peer));
+        if let Some(chat) = PEERS
+            .get(usize::try_from(peer).unwrap_or(usize::MAX).wrapping_sub(1))
+            .and_then(|saved| saved.chat)
+        {
+            self.queue(NodeEvent::ChatChanged(chat));
+        }
+    }
+
+    /// The route the fixture's mesh learns to `peer` on its own.
+    fn ordinary_route(&self, peer: PeerId) -> PeerRoute {
+        let unknown = PeerRoute {
+            kind: RouteKind::Unknown,
+            hops: None,
+            repeaters: Vec::new(),
+            unnamed: 0,
+            confirmed: None,
+            signal: None,
+            manual: None,
+        };
+        let confirmed = Some(s("4 min ago"));
+        match peer {
+            // Pat, heard directly.
+            1 => PeerRoute {
+                kind: RouteKind::Direct,
+                hops: Some(1),
+                confirmed,
+                signal: Some(DIRECT_SIGNAL),
+                ..unknown
+            },
+            // Jo, through the repeater nearby and the one known by its hint.
+            2 => PeerRoute {
+                kind: RouteKind::Source,
+                hops: Some(3),
+                repeaters: [RIVERBEND, BALD_KNOB]
+                    .iter()
+                    .filter_map(|carrier| self.repeater(carrier))
+                    .collect(),
+                confirmed,
+                ..unknown
+            },
+            // Rick, by flood.
+            3 => PeerRoute {
+                kind: RouteKind::Flood,
+                hops: Some(3),
+                unnamed: 2,
+                confirmed,
+                ..unknown
+            },
+            _ => unknown,
+        }
+    }
+
+    /// How many of my messages to `peer` the flood has carried since their
+    /// route was last held.
+    fn floods_since_held(&self, peer: PeerId) -> u8 {
+        self.floods
+            .borrow()
+            .iter()
+            .find(|(id, _)| *id == peer)
+            .map_or(0, |(_, floods)| *floods)
+    }
+
+    /// Counts one more message to `peer` carried by the flood.
+    fn flooded_once(&self, peer: PeerId) {
+        let mut floods = self.floods.borrow_mut();
+        match floods.iter_mut().find(|(id, _)| *id == peer) {
+            Some((_, count)) => *count = count.saturating_add(1),
+            None => _ = floods.push((peer, 1)),
+        }
+    }
+
+    /// The repeater on a route held by hand that `hint` names: one of the
+    /// fixture's carriers, else the hint alone.
+    fn held_repeater(&self, hint: [u8; 2]) -> Option<Repeater> {
+        if let Some(carrier) = [RIVERBEND, BALD_KNOB, RIDGE_RUNNER]
+            .iter()
+            .find(|carrier| router_hint(carrier.address).is_some_and(|(h, _)| h == hint))
+        {
+            return self.repeater(carrier);
+        }
+        let mut text: String<8> = String::new();
+        core::fmt::write(&mut text, format_args!("{}", umsh_core::RouterHint(hint))).ok()?;
+        Some(Repeater {
+            hint,
+            name: SharedText::new(self.heap, &text)?,
+            avatar: AvatarStyle::router_hint(&text),
+            address: None,
+        })
     }
 
     /// The repeaters heard carrying my message `id` in `chat`, as its
@@ -1804,6 +2185,7 @@ impl Store {
                 address: Some(s(address)),
                 heard: s(saved.heard),
                 saved: !self.forgotten.borrow().contains(&peer),
+                forwards: false,
             };
         }
         if let Some(carrier) = [RIVERBEND, BALD_KNOB]
@@ -1819,6 +2201,20 @@ impl Store {
                 address: Some(s(address)),
                 heard: s("12m"),
                 saved: false,
+                forwards: true,
+            };
+        }
+        if let Some(heard) = HEARD.iter().find(|heard| heard.address == address) {
+            return Member {
+                sender: Sender {
+                    name: s(heard.name),
+                    avatar: AvatarStyle::peer(heard.color, &address[..4], heard.shape),
+                },
+                hint: s(&address[..4]),
+                address: Some(s(address)),
+                heard: s(heard.age),
+                saved: self.saved_since(address).is_some(),
+                forwards: heard.shape == PeerShape::Triangle,
             };
         }
         let named = ["Sam", "Kit Moreno", "Lee Park", "Ranger Station"]
@@ -1838,6 +2234,7 @@ impl Store {
                     address: Some(s(address)),
                     heard: String::new(),
                     saved: false,
+                    forwards: false,
                 }
             }
         };
@@ -1920,6 +2317,18 @@ impl Store {
         let name = row.alias.as_ref().unwrap_or(&row.name);
         let mut summary = ChatSummary::new(row.id, row.avatar.clone(), name, self.heap);
         summary.kind = row.kind;
+        if let Some((_, hints, ..)) = self.chat_peer(row.id).and_then(|peer| {
+            self.held
+                .borrow()
+                .iter()
+                .find(|(id, ..)| *id == peer)
+                .cloned()
+        }) {
+            summary.kind = ChatKind::Peer {
+                hops: u8::try_from(hints.len() + 1).ok(),
+                manual: true,
+            };
+        }
         summary.unread = row.unread;
         summary.muted = row.muted;
         summary.last_activity = Some(row.activity);
@@ -2410,6 +2819,16 @@ impl Node for Store {
         }
         _ = sends.push((message.id, self.now.get()));
         drop(sends);
+        if self
+            .chat_peer(chat)
+            .is_some_and(|peer| self.held.borrow().iter().any(|(id, ..)| *id == peer))
+        {
+            let mut flooded = self.flooded.borrow_mut();
+            if flooded.is_full() {
+                flooded.remove(0);
+            }
+            _ = flooded.push(message.id);
+        }
         if let Some(mut row) = self.touch(chat) {
             row.draft = None;
         }
@@ -2527,7 +2946,15 @@ impl Node for Store {
                 direct.push(String::try_from(address).ok()?).ok()?;
                 let chat = FIRST_DIRECT + (direct.len() - 1) as ChatId;
                 drop(direct);
-                self.make_chat(chat, avatar.clone(), name, ChatKind::Peer { hops: None });
+                self.make_chat(
+                    chat,
+                    avatar.clone(),
+                    name,
+                    ChatKind::Peer {
+                        hops: None,
+                        manual: false,
+                    },
+                );
                 chat
             }
         };
@@ -2555,6 +2982,7 @@ impl Node for Store {
             route,
             heard: s(heard),
             forward_secrecy: self.secrecy.borrow().contains(&peer),
+            forwards: false,
             alias: self.alias(peer),
             advertised,
         })
@@ -2581,9 +3009,195 @@ impl Node for Store {
     }
 
     fn ping(&self, peer: PeerId) {
+        *self.along.borrow_mut() = None;
         let mut pinged = self.pinged.borrow_mut();
         pinged.retain(|(p, _, _)| *p != peer);
         _ = pinged.push((peer, self.now.get(), false));
+    }
+
+    fn ping_along(&self, peer: PeerId, hints: &[[u8; 2]], flood_hops: u8) {
+        self.ping(peer);
+        let hints = hints.iter().copied().take(MAX_PATH).collect();
+        *self.along.borrow_mut() = Some((peer, hints, flood_hops));
+    }
+
+    fn repeater(&self, hint: [u8; 2]) -> Option<Repeater> {
+        self.held_repeater(hint)
+    }
+
+    fn listing(&self, address: &str) -> Option<Listing> {
+        let listings = self.listings.borrow();
+        let listing = listings.iter().find(|listing| listing.address == address)?;
+        let count = listing.count();
+        let lists = lists_of(address);
+        let answered = !lists.is_empty() && listing.pages > 0;
+        Some(Listing {
+            count: count as u8,
+            total: answered.then_some(lists.len() as u8),
+            more: answered && count < lists.len(),
+            read_ms_ago: listing.read_at.map(|at| self.now.get().saturating_sub(at)),
+            asking: listing.asking.map(|(more, _)| {
+                if more {
+                    ListingAsk::More
+                } else {
+                    ListingAsk::Top
+                }
+            }),
+            no_answer: listing.no_answer,
+            hint: router_hint(address).map_or([0; 2], |(hint, _)| hint),
+        })
+    }
+
+    fn listed(&self, address: &str, index: usize) -> Option<Listed> {
+        let listings = self.listings.borrow();
+        let listing = listings.iter().find(|listing| listing.address == address)?;
+        if index >= listing.count() {
+            return None;
+        }
+        let entry = lists_of(address).get(index)?;
+        let known = match entry.address {
+            Some(address) if address != BALD_KNOB.address || self.repeater_identified.get() => {
+                Some(address)
+            }
+            _ => None,
+        };
+        // A made-up address that is no key goes by the hint given it.
+        let (hint, hint_text) = match entry.address.and_then(router_hint) {
+            Some(read) => read,
+            None => {
+                let mut text = String::new();
+                core::fmt::write(
+                    &mut text,
+                    format_args!("{}", umsh_core::RouterHint(entry.hint)),
+                )
+                .ok()?;
+                (entry.hint, text)
+            }
+        };
+        Some(match known {
+            Some(address) => Listed {
+                name: s(entry.name),
+                avatar: AvatarStyle::peer(entry.color, &address[..4], entry.shape),
+                address: Some(s(address)),
+                hint,
+                signal: entry.signal,
+                heard_min: Some(entry.heard_min),
+                distance_m: entry.distance_m,
+            },
+            None => Listed {
+                // Named as the router heard it, else by its hint.
+                name: if entry.address.is_some() || entry.name.is_empty() {
+                    s(&hint_text)
+                } else {
+                    s(entry.name)
+                },
+                avatar: AvatarStyle::router_hint(&hint_text),
+                address: None,
+                hint,
+                signal: entry.signal,
+                heard_min: Some(entry.heard_min),
+                distance_m: entry.distance_m,
+            },
+        })
+    }
+
+    fn ask_listing(&self, address: &str, more: bool, shown: &[&str], along: Option<&[[u8; 2]]>) {
+        let now = self.now.get();
+        *self.listing_route.borrow_mut() = along.map(|along| along.iter().copied().collect());
+        let mut listings = self.listings.borrow_mut();
+        let index = match listings
+            .iter()
+            .position(|listing| listing.address == address)
+        {
+            Some(index) => index,
+            None => {
+                if listings.is_full()
+                    && let Some(gone) = listings
+                        .iter()
+                        .position(|listing| !shown.contains(&listing.address.as_str()))
+                {
+                    listings.remove(gone);
+                }
+                _ = listings.push(FixtureListing {
+                    address: s(address),
+                    pages: 0,
+                    read_at: None,
+                    asking: None,
+                    no_answer: false,
+                });
+                listings.len() - 1
+            }
+        };
+        let listing = &mut listings[index];
+        if listing.asking.is_some() || (more && listing.count() >= lists_of(address).len()) {
+            return;
+        }
+        let wait = match address {
+            ADDRESS => HERE_DELAY,
+            _ if lists_of(address).is_empty() => NO_ANSWER_AFTER,
+            _ => LISTING_DELAY,
+        };
+        listing.asking = Some((more, now + wait));
+        listing.no_answer = false;
+        drop(listings);
+        self.queue(NodeEvent::ListingChanged);
+    }
+
+    fn listed_place(&self, router: &str, node: &str) -> Option<usize> {
+        let count = self.listing_count(router);
+        lists_of(router)[..count]
+            .iter()
+            .position(|entry| entry.address == Some(node))
+    }
+
+    fn gather_known(&self, query: &str, router: &str, peer: &str) -> usize {
+        let listed = &lists_of(router)[..self.listing_count(router)];
+        let known: Vec<KnownRepeater, MAX_KNOWN> = KNOWN_REPEATERS
+            .iter()
+            .filter(|(carrier, _, _)| {
+                carrier.address != peer
+                    && !listed
+                        .iter()
+                        .any(|entry| entry.address == Some(carrier.address))
+                    && (query.is_empty() || word_match(carrier.name, query).is_some())
+            })
+            .filter_map(|(carrier, shape, age)| {
+                Some(KnownRepeater {
+                    address: s(carrier.address),
+                    name: s(carrier.name),
+                    avatar: AvatarStyle::peer(carrier.color, &carrier.address[..4], *shape),
+                    hint: router_hint(carrier.address)?.0,
+                    age: s(age),
+                })
+            })
+            .take(MAX_KNOWN)
+            .collect();
+        let count = known.len();
+        *self.known.borrow_mut() = known;
+        count
+    }
+
+    fn known_repeater(&self, index: usize) -> Option<KnownRepeater> {
+        self.known.borrow().get(index).cloned()
+    }
+
+    fn hint_reads(&self, text: &str) -> Vec<HintRead, MAX_HINT_READS> {
+        let mut reads = Vec::new();
+        if let Ok(prefix) = umsh_core::RouterHint::candidates_from_base58_prefix(text) {
+            for hint in core::iter::once(prefix.first).chain(prefix.second) {
+                _ = reads.push(HintRead {
+                    hint: hint.0,
+                    hex: false,
+                });
+            }
+        }
+        if let Ok(hint) = umsh_core::RouterHint::from_hex(text) {
+            _ = reads.push(HintRead {
+                hint: hint.0,
+                hex: true,
+            });
+        }
+        reads
     }
 
     fn ping_view(&self, peer: PeerId) -> Option<PingView> {
@@ -2607,53 +3221,93 @@ impl Node for Store {
             unnamed: 0,
             confirmed: None,
             signal: None,
+            manual: None,
         };
         if self.forgotten.borrow().contains(&peer) {
             return None;
         }
+        if let Some((_, hints, flood_hops, hold_ms)) =
+            self.held.borrow().iter().find(|(id, ..)| *id == peer)
+        {
+            return Some(PeerRoute {
+                kind: if hints.is_empty() {
+                    RouteKind::Direct
+                } else {
+                    RouteKind::Source
+                },
+                hops: u8::try_from(hints.len() + 1).ok(),
+                repeaters: hints
+                    .iter()
+                    .filter_map(|&hint| self.held_repeater(hint))
+                    .collect(),
+                manual: Some(ManualRoute {
+                    flood_hops: *flood_hops,
+                    left: held_for(*hold_ms),
+                }),
+                ..unknown
+            });
+        }
         if self.reset.borrow().contains(&peer) {
             return Some(unknown);
         }
-        let confirmed = Some(s("4 min ago"));
-        Some(match peer {
-            // Pat, heard directly.
-            1 => PeerRoute {
-                kind: RouteKind::Direct,
-                hops: Some(1),
-                confirmed,
-                signal: Some(DIRECT_SIGNAL),
-                ..unknown
-            },
-            // Jo, through the repeater nearby and the one known by its hint.
-            2 => PeerRoute {
-                kind: RouteKind::Source,
-                hops: Some(3),
-                repeaters: [RIVERBEND, BALD_KNOB]
-                    .iter()
-                    .filter_map(|carrier| self.repeater(carrier))
-                    .collect(),
-                confirmed,
-                ..unknown
-            },
-            // Rick, by flood.
-            3 => PeerRoute {
-                kind: RouteKind::Flood,
-                hops: Some(3),
-                unnamed: 2,
-                confirmed,
-                ..unknown
-            },
-            _ => unknown,
-        })
+        Some(self.ordinary_route(peer))
     }
 
     fn reset_route(&self, peer: PeerId) {
+        self.held.borrow_mut().retain(|(id, ..)| *id != peer);
         let mut reset = self.reset.borrow_mut();
         if !reset.contains(&peer) {
             _ = reset.push(peer);
         }
         drop(reset);
-        self.queue(NodeEvent::RouteChanged(peer));
+        self.route_changed(peer);
+    }
+
+    fn hold_route(&self, peer: PeerId, hints: &[[u8; 2]], flood_hops: u8, hold_ms: u32) {
+        let mut held = self.held.borrow_mut();
+        held.retain(|(id, ..)| *id != peer);
+        let hints = hints.iter().take(MAX_PATH).copied().collect();
+        _ = held.push((peer, hints, flood_hops, hold_ms));
+        drop(held);
+        self.reset.borrow_mut().retain(|id| *id != peer);
+        // Held again, it starts over: floods counted, and the offer asked.
+        self.floods.borrow_mut().retain(|(id, _)| *id != peer);
+        self.kept_manual.borrow_mut().retain(|id| *id != peer);
+        self.route_changed(peer);
+    }
+
+    fn learned_route(&self, peer: PeerId) -> Option<LearnedRoute> {
+        if !self.held.borrow().iter().any(|(id, ..)| *id == peer)
+            || self.kept_manual.borrow().contains(&peer)
+            || self.floods_since_held(peer) < 2
+        {
+            return None;
+        }
+        // What the floods taught is the fixture's own route to them.
+        let learned = self.ordinary_route(peer);
+        Some(LearnedRoute {
+            hops: learned.hops?,
+            via: learned
+                .repeaters
+                .first()
+                .map(|repeater| repeater.name.clone()),
+        })
+    }
+
+    fn adopt_learned_route(&self, peer: PeerId) {
+        if self.learned_route(peer).is_none() {
+            return;
+        }
+        // The learned route is the fixture's own route to them.
+        self.held.borrow_mut().retain(|(id, ..)| *id != peer);
+        self.route_changed(peer);
+    }
+
+    fn keep_manual_route(&self, peer: PeerId) {
+        let mut kept = self.kept_manual.borrow_mut();
+        if !kept.contains(&peer) && !kept.is_full() {
+            _ = kept.push(peer);
+        }
     }
 
     fn clock(&self) -> ClockSettings {
@@ -2777,6 +3431,7 @@ impl Node for Store {
             saved: self.chat_peer(chat).is_some() || self.saved_since(&address).is_some(),
             address: Some(address),
             heard: s(listed.map_or("2m", |peer| peer.heard)),
+            forwards: false,
         })
     }
 

@@ -581,6 +581,13 @@ const ICONS: &[(&str, u32, f32, &[Layer])] = &[
     ("DOWN", 12, 1.0, &[stroke("M-4 -2 L0 2 L4 -2", 1.6)]),
     // Over and under a part of the date and time being changed.
     ("UP", 12, 1.0, &[stroke("M-4 2 L0 -2 L4 2", 1.6)]),
+    // A hop of a route being edited, which can be moved.
+    (
+        "GRIP",
+        16,
+        1.0,
+        &[stroke("M-7 -4 H7 M-7 0 H7 M-7 4 H7", 1.6)],
+    ),
     // A battery with only its last cell left: the banner's at 22, and the
     // screen's when it is empty at five times that.
     ("BATTERY_LOW", 22, 1.0, BATTERY),
@@ -592,6 +599,16 @@ const ICONS: &[(&str, u32, f32, &[Layer])] = &[
         &[
             stroke("M-14 0 A14 14 0 1 0 14 0 A14 14 0 1 0 -14 0 Z", 1.8),
             stroke("M-6 0 H6 M0 -6 V6", 2.2),
+        ],
+    ),
+    // The route editor's Add hop, on the rail where a hop's avatar sits.
+    (
+        "ADD_HOP",
+        24,
+        0.78,
+        &[
+            stroke("M-14 0 A14 14 0 1 0 14 0 A14 14 0 1 0 -14 0 Z", 2.2),
+            stroke("M-6 0 H6 M0 -6 V6", 2.6),
         ],
     ),
     (

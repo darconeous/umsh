@@ -310,7 +310,7 @@ local function bytes_to_hex(s)
   end))
 end
 
--- Canonical rendering, per docs/protocol/src/addressing.md: a 3-byte node
+-- Canonical rendering, per docs/protocol-legacy/src/addressing.md: a 3-byte node
 -- hint as its star-truncated base58 form, a full key as its 44 base58
 -- digits.
 --
@@ -366,7 +366,7 @@ end
 -- is what a hop that took the packet off a point-to-point link writes.
 local function signal_text(rssi, snr)
   if rssi == 0 and snr == 0 then return nil end
-  return string.format("-%d dBm, %.1f dB SNR", rssi, snr / 10)
+  return string.format("-%d dBm, %.2f dB SNR", rssi, snr / 4)
 end
 
 -- A region code is two bytes of ARNCE/HAM-16. Anything that decodes to one to
@@ -748,7 +748,7 @@ local function parse_options(buf, start_off, bound, tree, static_opts_out, pinfo
         -- Each forwarding hop prepends an entry, so entry 1 is the repeater
         -- nearest the receiver. With signal, an entry also carries what that
         -- hop heard: one byte of negative RSSI in dBm, one signed byte of
-        -- SNR in centibels. The hints-only forms keep the path and drop the
+        -- SNR in quarter-dB steps. The hints-only forms keep the path and drop the
         -- signal; a truncated one has also dropped its oldest hops.
         local trace = options.parse_trace(val)
         if not trace then

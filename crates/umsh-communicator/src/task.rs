@@ -62,25 +62,38 @@ pub enum Arrival {
     /// A peer answered a ping. `signal` is what each repeater the answer
     /// came by measured, the nearest first, when there is one for each.
     /// `truncated` says the answer's trace lost its farthest hops in
-    /// transit, so `rx.route_hints` names only the nearest.
+    /// transit, so `rx.route_hints` names only the nearest. `flooded`
+    /// says it got through only as a Route Retry, once the route it was
+    /// first sent along had failed.
     Pong {
         peer: PublicKey,
         round_trip_ms: u64,
         rx: RxSummary,
         signal: Vec<HopSignal>,
         truncated: bool,
+        flooded: bool,
     },
     /// A ping went unanswered, or could not be sent.
     PingTimeout { peer: PublicKey },
-    /// The route the device node holds to a peer, and how long ago a send
-    /// on it was last acknowledged.
+    /// The route the device node holds to a peer, how long ago a send on it
+    /// was last acknowledged, and whether it is a route chosen by hand and
+    /// held against learned ones. `changed` when it is read back after the
+    /// route was reset, held or switched, not merely read.
     Route {
         peer: PublicKey,
         route: Option<CachedRoute>,
         confirmed_age_ms: Option<u64>,
+        held: Option<HeldRoute>,
+        changed: bool,
     },
     /// A session with forward secrecy began, ended, or could not be had.
     Secrecy { peer: PublicKey, change: Secrecy },
+    /// A page of the repeaters `router` reports hearing: the body of its
+    /// Peer Repeaters Response, read by the chats.
+    Neighbors {
+        router: PublicKey,
+        body: NeighborsBody,
+    },
     /// A contact-exchange frame, after its payload-type byte, from the
     /// session key `from`.
     #[cfg(feature = "software-crypto")]
@@ -94,6 +107,68 @@ pub enum Arrival {
     /// or could not.
     #[cfg(feature = "software-crypto")]
     MeetOpened(Option<(PublicKey, [u8; 32])>),
+}
+
+/// The longest Peer Repeaters Response body kept. A device node writes at
+/// most 160 bytes; a longer one, from a responder that writes more, is
+/// dropped.
+pub const NEIGHBORS_BODY: usize = 168;
+
+/// A Peer Repeaters Response body, held inline: the tap that reads it runs
+/// in the device node's task, whose heap is internal memory.
+pub type NeighborsBody = umsh_ux_communicator::heapless::Vec<u8, NEIGHBORS_BODY, u8>;
+
+/// The longest paging cursor kept. A device node writes three bytes; a
+/// longer one ends the listing where it is.
+pub const NEIGHBORS_CURSOR: usize = 8;
+
+/// Where the next page of a listing starts, as its router wrote it.
+pub type NeighborsCursor = umsh_ux_communicator::heapless::Vec<u8, NEIGHBORS_CURSOR, u8>;
+
+/// How a router is asked what it hears.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AskWay {
+    /// As the device node sends to it.
+    Routed,
+    /// By way of these repeaters, flooding no further; none is direct.
+    Along(heapless::Vec<RouterHint, { CachedRoute::MAX_HINTS }>),
+    /// It is this device: its own list is read, and nothing is sent.
+    Here,
+}
+
+/// A route chosen by hand, while the device node holds it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HeldRoute {
+    /// How much longer it is held.
+    pub remaining_ms: u64,
+    /// How many hops a frame may flood past its last repeater.
+    pub flood_hops: u8,
+    /// How many sends in a row missed on it and were acknowledged by the
+    /// flood that followed.
+    pub fallback_acks: u8,
+    /// The best route those floods taught, which can take its place.
+    pub learned: Option<Learned>,
+}
+
+/// A route learned while another was held by hand.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Learned {
+    /// Its hops; a direct route is one.
+    pub hops: u8,
+    /// The repeater nearest this device, when it names one.
+    pub via: Option<RouterHint>,
+}
+
+impl Learned {
+    fn of(route: &CachedRoute) -> Self {
+        Self {
+            hops: route.hop_count(),
+            via: match route {
+                CachedRoute::Source(hints) => hints.first().copied(),
+                CachedRoute::Direct | CachedRoute::Flood { .. } => None,
+            },
+        }
+    }
 }
 
 /// What became of a session with forward secrecy.
@@ -135,8 +210,29 @@ pub enum Command {
     /// Read the route the device node holds to a peer.
     ReadRoute { peer: PublicKey },
     /// Have the device node forget its route to a peer, then read the one
-    /// it holds after.
+    /// it holds after. A held route is let go with it.
     ResetRoute { peer: PublicKey },
+    /// Hold `hints` as the route to a peer for `hold_ms`, ahead of any
+    /// route learned meanwhile, flooding `flood_hops` past the last of
+    /// them; no hints is a direct route. Then read it back.
+    HoldRoute {
+        peer: PublicKey,
+        hints: heapless::Vec<RouterHint, { CachedRoute::MAX_HINTS }>,
+        flood_hops: u8,
+        hold_ms: u32,
+    },
+    /// Have the device node switch the route it holds by hand to a peer for
+    /// the one learned meanwhile, then read it back.
+    AdoptRoute { peer: PublicKey },
+    /// Ask `router` for a page of the repeaters it hears, starting at
+    /// `cursor`, or at the top, the way `way` says. `nonce` pairs the
+    /// answer with this ask.
+    AskNeighbors {
+        router: PublicKey,
+        nonce: u16,
+        cursor: Option<NeighborsCursor>,
+        way: AskWay,
+    },
     /// Ask a channel for the identity of whoever holds a hint.
     AskChannel {
         channel: ChannelKey,
@@ -157,6 +253,14 @@ pub enum Command {
     #[cfg(feature = "software-crypto")]
     CloseMeet,
 }
+
+// Every queued arrival and command takes a slot the size of the largest
+// variant, so a variant that outgrows these grows them all. Raise a bound
+// only on purpose; something large travels in parts or behind a pointer.
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(size_of::<Arrival>() <= 208 && size_of::<Command>() <= 104);
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(size_of::<Arrival>() <= 264 && size_of::<Command>() <= 120);
 
 /// What a full [`Inbox`] has dropped since boot.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -211,6 +315,14 @@ impl<R: RawMutex> Inbox<R> {
             queue.push_back(arrival);
         });
         self.ready.signal(());
+    }
+
+    /// Counts an arrival dropped before it was queued.
+    fn drop_other(&self) {
+        self.arrivals.lock(|arrivals| {
+            let drops = &mut arrivals.borrow_mut().drops.others;
+            *drops = drops.saturating_add(1);
+        });
     }
 
     /// What the inbox has dropped for want of room.
@@ -303,9 +415,20 @@ where
                 },
                 signal: pong.trace_signal.clone(),
                 truncated: pong.trace_truncated,
+                flooded: pong.via_route_retry,
             });
         }),
         node.on_ping_timeout(move |peer| inbox.push(Arrival::PingTimeout { peer })),
+        node.on_mac_command(move |from, command| {
+            if let umsh_node::OwnedMacCommand::PeerRepeatersResponse { body } = command {
+                // One too long for the slot is dropped as the inbox drops
+                // what it has no room for.
+                match NeighborsBody::from_slice(body) {
+                    Ok(body) => inbox.push(Arrival::Neighbors { router: from, body }),
+                    Err(_) => inbox.drop_other(),
+                }
+            }
+        }),
         node.on_transmitted(|_| inbox.wake()),
         node.on_ack_received(|_, _| inbox.wake()),
         node.on_ack_timeout(|_, _| inbox.wake()),
@@ -473,6 +596,34 @@ async fn execute<P: LocalPort, S: ChatStore, M: MacBackend>(
             hint,
             options,
         } => ask_channel(mesh, &channel, &hint, &options).await,
+        Command::AskNeighbors {
+            router,
+            nonce,
+            cursor,
+            way,
+        } => {
+            // By full key, in case the router has not registered us; and
+            // along a route given, flooding no further, as a ping along
+            // one does.
+            let options = SendOptions::default().with_full_source();
+            let options = match way {
+                AskWay::Routed => Some(options),
+                // Given even when empty: no route at all would let the MAC
+                // send by the route it holds, and an empty one is direct.
+                AskWay::Along(route) => options
+                    .try_with_source_route(&route)
+                    .ok()
+                    .map(|options| options.with_trace().with_route_slack(0)),
+                AskWay::Here => {
+                    return own_neighbors(mesh, router, nonce, cursor.as_deref()).await;
+                }
+            };
+            if let (Some(options), Ok(connection)) = (options, mesh.peer(router).await) {
+                _ = connection
+                    .request_peer_repeaters(nonce, cursor.as_deref(), &options)
+                    .await;
+            }
+        }
         Command::AskRepeater { hint, route } => {
             let filter = umsh_node::IdentityFilter {
                 hint_prefix: Some(&hint.0),
@@ -480,10 +631,34 @@ async fn execute<P: LocalPort, S: ChatStore, M: MacBackend>(
             };
             _ = mesh.request_identities(&filter, &route).await;
         }
-        Command::ReadRoute { peer } => return Some(read_route(mesh, peer).await),
+        Command::ReadRoute { peer } => return Some(read_route(mesh, peer, false).await),
         Command::ResetRoute { peer } => {
             mesh.clear_peer_route(&peer).await;
-            return Some(read_route(mesh, peer).await);
+            return Some(read_route(mesh, peer, true).await);
+        }
+        Command::AdoptRoute { peer } => {
+            mesh.adopt_learned_peer_route(&peer).await;
+            return Some(read_route(mesh, peer, true).await);
+        }
+        Command::HoldRoute {
+            peer,
+            hints,
+            flood_hops,
+            hold_ms,
+        } => {
+            // The MAC holds routes to its registered peers alone, so the
+            // peer is registered first; one it has no room for is read
+            // back unheld.
+            if mesh.peer(peer).await.is_ok() {
+                let route = if hints.is_empty() {
+                    CachedRoute::Direct
+                } else {
+                    CachedRoute::Source(hints)
+                };
+                mesh.hold_peer_route(&peer, route, flood_hops, u64::from(hold_ms))
+                    .await;
+            }
+            return Some(read_route(mesh, peer, true).await);
         }
         #[cfg(feature = "software-crypto")]
         Command::OpenMeet => return Some(Arrival::MeetOpened(mesh.open_meet().await.ok())),
@@ -497,12 +672,63 @@ async fn execute<P: LocalPort, S: ChatStore, M: MacBackend>(
     None
 }
 
-/// The route the device node holds to `peer`.
-async fn read_route<M: MacBackend>(mesh: &LocalNode<M>, peer: PublicKey) -> Arrival {
+/// A page of the repeaters this device hears, from `cursor` on, written
+/// as a router answering `nonce` would write it, so that it is read as one.
+/// Its cursor is the place the next page starts.
+async fn own_neighbors<M: MacBackend>(
+    mesh: &LocalNode<M>,
+    own: PublicKey,
+    nonce: u16,
+    cursor: Option<&[u8]>,
+) -> Option<Arrival> {
+    use umsh_node::mac_command::{PeerRepeaterEntry, PeerRepeatersResponseBuilder};
+    let peers = mesh.peer_repeaters().await;
+    let start = cursor
+        .and_then(<[u8]>::first)
+        .map_or(0, |&at| usize::from(at));
+    let mut page = PeerRepeatersResponseBuilder::new(NEIGHBORS_BODY)
+        .nonce(nonce)
+        .total(u8::try_from(peers.len()).unwrap_or(u8::MAX))
+        .reserve_cursor(1);
+    let mut next = start;
+    for peer in peers.iter().skip(start) {
+        let entry = PeerRepeaterEntry {
+            hint: &peer.hint,
+            name: peer.name.as_deref(),
+            rssi_snr: peer.rssi_dbm.zip(peer.snr),
+            last_heard_min: peer.last_heard_min,
+            location: peer.location,
+            regions: &[],
+        };
+        // One too large for a page is passed over, as a router does.
+        match page.try_push(&entry) {
+            Ok(false) => break,
+            Ok(true) | Err(_) => next += 1,
+        }
+    }
+    if next < peers.len() {
+        page = page.cursor(&[u8::try_from(next).unwrap_or(u8::MAX)]);
+    }
+    let body = NeighborsBody::from_slice(&page.build().ok()?).ok()?;
+    Some(Arrival::Neighbors { router: own, body })
+}
+
+/// The route the device node holds to `peer`, read back after a change to
+/// it when `changed`.
+async fn read_route<M: MacBackend>(mesh: &LocalNode<M>, peer: PublicKey, changed: bool) -> Arrival {
     let status = mesh.peer_route_status(&peer).await;
     Arrival::Route {
         peer,
+        changed,
         confirmed_age_ms: status.as_ref().and_then(|status| status.confirmed_age_ms),
+        held: status.as_ref().and_then(|status| {
+            Some(HeldRoute {
+                remaining_ms: status.hold_remaining_ms?,
+                flood_hops: status.hold_flood_hops.unwrap_or(0),
+                fallback_acks: status.fallback_acks,
+                learned: status.candidate.as_ref().map(Learned::of),
+            })
+        }),
         route: status.and_then(|status| status.route),
     }
 }

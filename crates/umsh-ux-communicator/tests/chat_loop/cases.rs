@@ -15,14 +15,16 @@ use umsh_ux_communicator::picker::Pick;
 use umsh_ux_communicator::model::{
     BatteryReading, ChannelAccess, Charge, GaugeReading, ChannelEntry, ChatKind, ClockSource, Delivery, Details, Direction, Ending, Exchange,
     ExchangeEnd, FoundKind,
-    Glance, Node as _, NodeEvent, Notice, Presence, Profile, Reaction, Rule, Section, Shareable, State,
+    Glance, ListingAsk, Node as _, NodeEvent, Notice, Presence, Profile, Reaction, Rule, Section, Shareable, State,
     brightness_level,
 };
-use umsh_ux_communicator::nav::{ChatMenu, DevicePage, MemberFrom, Screen, Unsent, keys};
+use umsh_ux_communicator::nav::{
+    ChatMenu, DevicePage, EditOver, EditRow, MemberFrom, PickRow, RouteDraft, Screen, Unsent, keys,
+};
 use umsh_ux_communicator::model::Cue;
 use umsh_ux_communicator::model::WifiStatus;
 use umsh_ux_communicator::model::{LoraChoice, SPREADING_FACTORS, TRANSMIT_LIMITS};
-use umsh_ux_communicator::model::{Leg, PeerRoute, PingView, RouteKind};
+use umsh_ux_communicator::model::{Leg, PeerRoute, PingView, RouteKind, route_text};
 use umsh_ux_communicator::{fixture, ui, zones};
 
 /// The fixture's chats, in list order.
@@ -4512,8 +4514,8 @@ fn a_route_lists_its_repeaters_and_backspace_returns_to_the_peer() {
     let route = shown_route(app.state()).unwrap();
     assert_eq!(route.kind, RouteKind::Source);
     assert_eq!(route.repeaters.len(), 2);
-    // The wheel stops on the repeaters and Reset route, never on this
-    // device or the peer.
+    // The wheel stops on the repeaters, Edit route and Reset route, never
+    // on this device or the peer.
     let mut stops: Vec<_> = focus(app.state()).into_iter().collect();
     for _ in 0..6 {
         run(&mut app, &[Input::Turn(1)]);
@@ -4525,12 +4527,20 @@ fn a_route_lists_its_repeaters_and_backspace_returns_to_the_peer() {
     }
     for key in &stops {
         assert!(
-            [keys::path(0), keys::path(1), keys::ROUTE_RESET, keys::READING].contains(key),
+            [
+                keys::path(0),
+                keys::path(1),
+                keys::ROUTE_EDIT,
+                keys::ROUTE_RESET,
+                keys::READING
+            ]
+            .contains(key),
             "stopped on {key:?}"
         );
     }
     assert!(stops.contains(&keys::path(0)));
     assert!(stops.contains(&keys::path(1)));
+    assert!(stops.contains(&keys::ROUTE_EDIT));
     assert!(stops.contains(&keys::ROUTE_RESET));
     run(&mut app, &[Input::Backspace]);
     assert!(matches!(app.state().screen(), Screen::Peer { .. }));
@@ -4586,6 +4596,263 @@ fn a_route_reset_is_not_learned_and_offers_a_ping() {
     assert_eq!(shown_ping(app.state()), Some(PingView::Waiting));
     run(&mut app, &[Input::Backspace, Input::Backspace]);
     assert_eq!(peer_detail(app.state()).route.as_deref(), Some("Not learned"));
+}
+
+#[test]
+fn a_route_held_by_hand_says_so_until_it_is_cleared() {
+    let mut app = app!();
+    open_route_to(&mut app, "Jo Reyes");
+    let Screen::Route { peer, .. } = app.state().screen().clone() else {
+        unreachable!()
+    };
+    let hints: Vec<[u8; 2]> = shown_route(app.state())
+        .unwrap()
+        .repeaters
+        .iter()
+        .map(|repeater| repeater.hint)
+        .collect();
+    app.state().node.hold_route(peer, &hints, 1, 3_600_000);
+    input::events(&mut app, tick(0));
+    let route = shown_route(app.state()).unwrap();
+    assert_eq!(route.kind, RouteKind::Source);
+    assert_eq!(route.repeaters.len(), 2);
+    let manual = route.manual.as_ref().expect("held");
+    assert_eq!(manual.flood_hops, 1);
+    assert_eq!(manual.left.as_str(), "60 min left");
+    assert_eq!(route_text(&route).as_str(), "Manual \u{B7} 3 hops");
+
+    // Clear manual route stands where Reset route did, and lets it go.
+    turn_to(&mut app, keys::ROUTE_RESET);
+    run(&mut app, &[Input::Press]);
+    let route = shown_route(app.state()).unwrap();
+    assert_eq!(route.manual, None);
+    run(&mut app, &[Input::Backspace]);
+    assert_eq!(peer_detail(app.state()).route.as_deref(), Some("Not learned"));
+}
+
+#[test]
+fn a_direct_route_held_by_hand_is_manual_and_direct() {
+    let mut app = app!();
+    open_route_to(&mut app, "Jo Reyes");
+    let Screen::Route { peer, .. } = app.state().screen().clone() else {
+        unreachable!()
+    };
+    app.state().node.hold_route(peer, &[], 0, 4 * 3_600_000);
+    input::events(&mut app, tick(0));
+    let route = shown_route(app.state()).unwrap();
+    assert_eq!(route.kind, RouteKind::Direct);
+    assert_eq!(route.manual.as_ref().unwrap().left.as_str(), "4 hr left");
+    assert_eq!(route_text(&route).as_str(), "Manual \u{B7} Direct");
+    run(&mut app, &[Input::Backspace]);
+    assert_eq!(peer_detail(app.state()).route.as_deref(), Some("Manual \u{B7} Direct"));
+}
+
+/// The route being chosen on the Route screen shown.
+fn route_draft(state: &State) -> RouteDraft {
+    *state.route_draft().expect("a route being chosen")
+}
+
+/// Opens the editor on the route to `name`, returning the hints of the
+/// route it starts from.
+fn edit_route_to<V, F>(app: &mut App<V, State, F>, name: &str) -> Vec<[u8; 2]>
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    open_route_to(app, name);
+    let hints = shown_route(app.state())
+        .unwrap()
+        .repeaters
+        .iter()
+        .map(|repeater| repeater.hint)
+        .collect();
+    turn_to(app, keys::ROUTE_EDIT);
+    run(app, &[Input::Press]);
+    hints
+}
+
+#[test]
+fn a_route_edited_starts_from_the_route_and_saves_as_held() {
+    let mut app = app!();
+    let learned = edit_route_to(&mut app, "Jo Reyes");
+    assert_eq!(learned.len(), 2);
+    let started = route_draft(app.state());
+    assert_eq!(started.hints(), &learned[..]);
+    assert_eq!(started.flood, 1);
+    assert!(!started.dirty);
+    assert_eq!(focus(app.state()), Some(keys::path(0)));
+
+    // A hop's menu, then Move: the wheel carries it past the next.
+    run(&mut app, &[Input::Press]);
+    assert_eq!(route_draft(app.state()).over, Some(EditOver::Hop(0)));
+    assert_eq!(focus(app.state()), Some(keys::HOP_MOVE));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(route_draft(app.state()).lifted, Some((0, 0)));
+    run(&mut app, &[Input::Turn(1)]);
+    assert_eq!(route_draft(app.state()).hints(), &[learned[1], learned[0]]);
+    assert_eq!(focus(app.state()), Some(keys::path(1)));
+    // Turned on past the last hop, it stays the last.
+    run(&mut app, &[Input::Turn(1)]);
+    assert_eq!(route_draft(app.state()).lifted, Some((1, 0)));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(route_draft(app.state()).lifted, None);
+    assert!(route_draft(app.state()).dirty);
+
+    // Then flood: pressed, turning up floods farther; pressed, it stops.
+    turn_to(&mut app, keys::ROUTE_FLOOD);
+    run(&mut app, &[Input::Press, Input::Turn(-2), Input::Press]);
+    assert_eq!(route_draft(app.state()).flood, 3);
+    run(&mut app, &[Input::Turn(1)]);
+    assert_eq!(route_draft(app.state()).flood, 3);
+    // Hold for steps through its choices, never past the last.
+    turn_to(&mut app, keys::ROUTE_HOLD);
+    run(&mut app, &[Input::Press, Input::Turn(-9), Input::Press]);
+    assert_eq!(route_draft(app.state()).hold_ms(), 24 * 3_600_000);
+
+    turn_to(&mut app, keys::ROUTE_SAVE);
+    run(&mut app, &[Input::Press]);
+    assert!(app.state().route_draft().is_none());
+    assert_eq!(focus(app.state()), Some(keys::ROUTE_EDIT));
+    let route = shown_route(app.state()).unwrap();
+    let held: Vec<[u8; 2]> = route.repeaters.iter().map(|r| r.hint).collect();
+    assert_eq!(held, [learned[1], learned[0]]);
+    let manual = route.manual.as_ref().expect("held");
+    assert_eq!(manual.flood_hops, 3);
+    assert_eq!(manual.left.as_str(), "24 hr left");
+}
+
+#[test]
+fn a_route_with_every_hop_removed_saves_as_direct() {
+    let mut app = app!();
+    edit_route_to(&mut app, "Jo Reyes");
+    for _ in 0..2 {
+        run(&mut app, &[Input::Press]);
+        turn_to(&mut app, keys::HOP_REMOVE);
+        run(&mut app, &[Input::Press]);
+    }
+    assert!(route_draft(app.state()).hints().is_empty());
+    assert_eq!(focus(app.state()), Some(keys::ROUTE_FLOOD));
+    turn_to(&mut app, keys::ROUTE_SAVE);
+    run(&mut app, &[Input::Press]);
+    let route = shown_route(app.state()).unwrap();
+    assert_eq!(route.kind, RouteKind::Direct);
+    assert_eq!(route_text(&route).as_str(), "Manual \u{B7} Direct");
+}
+
+#[test]
+fn a_lifted_hop_goes_back_where_it_was_on_backspace() {
+    let mut app = app!();
+    let learned = edit_route_to(&mut app, "Jo Reyes");
+    run(&mut app, &[Input::Press, Input::Press, Input::Turn(1), Input::Backspace]);
+    let back = route_draft(app.state());
+    assert_eq!(back.hints(), &learned[..]);
+    assert_eq!(back.lifted, None);
+    assert!(!back.dirty);
+    assert_eq!(focus(app.state()), Some(keys::path(0)));
+    // Unchanged, Backspace leaves the editor for the route, asking nothing.
+    run(&mut app, &[Input::Backspace]);
+    assert!(app.state().route_draft().is_none());
+    assert!(shown_route(app.state()).is_some());
+}
+
+#[test]
+fn leaving_a_changed_route_asks_what_to_do_with_it() {
+    let mut app = app!();
+    edit_route_to(&mut app, "Jo Reyes");
+    run(&mut app, &[Input::Press]);
+    turn_to(&mut app, keys::HOP_REMOVE);
+    run(&mut app, &[Input::Press, Input::Backspace]);
+    assert_eq!(route_draft(app.state()).over, Some(EditOver::Leave));
+    assert_eq!(focus(app.state()), Some(keys::LEAVE_SAVE));
+
+    // Keep editing closes the card, the change kept.
+    turn_to(&mut app, keys::LEAVE_KEEP);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(route_draft(app.state()).over, None);
+    assert_eq!(route_draft(app.state()).hints().len(), 1);
+
+    // Discard changes leaves the route as it was.
+    run(&mut app, &[Input::Backspace]);
+    turn_to(&mut app, keys::LEAVE_DISCARD);
+    run(&mut app, &[Input::Press]);
+    assert!(app.state().route_draft().is_none());
+    let route = shown_route(app.state()).unwrap();
+    assert_eq!(route.manual, None);
+    assert_eq!(route.repeaters.len(), 2);
+}
+
+#[test]
+fn ping_along_route_pings_the_route_unsaved() {
+    let store = store();
+    let mut app = app!(store);
+    let learned = edit_route_to(&mut app, "Jo Reyes");
+    run(&mut app, &[Input::Press]);
+    turn_to(&mut app, keys::HOP_REMOVE);
+    run(&mut app, &[Input::Press]);
+    turn_to(&mut app, keys::ROUTE_PING_ALONG);
+    run(&mut app, &[Input::Press]);
+    let Screen::Ping { peer, .. } = app.state().screen().clone() else {
+        panic!("expected the ping");
+    };
+    let (to, hints, flood) = store.pinged_along().expect("pinged along the route");
+    assert_eq!((to, &hints[..], flood), (peer, &learned[1..], 1));
+    assert_eq!(shown_ping(app.state()), Some(PingView::Waiting));
+
+    // Ping again goes along the route being chosen too.
+    let at = store.next_deadline().expect("the answer is due");
+    store.advance(at);
+    input::events(&mut app, at);
+    assert!(matches!(shown_ping(app.state()), Some(PingView::Reply(_))));
+    turn_to(&mut app, keys::PING_AGAIN);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(shown_ping(app.state()), Some(PingView::Waiting));
+    let (_, hints, _) = store.pinged_along().expect("pinged along the route again");
+    assert_eq!(&hints[..], &learned[1..]);
+
+    // Back in the editor, nothing was saved, and the row says how it went.
+    run(&mut app, &[Input::Backspace]);
+    assert!(route_draft(app.state()).pinged);
+    assert_eq!(focus(app.state()), Some(keys::ROUTE_PING_ALONG));
+    assert_eq!(shown_route(app.state()).unwrap().manual, None);
+
+    // Changed, the route is no longer the one pinged.
+    turn_to(&mut app, keys::ROUTE_FLOOD);
+    run(&mut app, &[Input::Press, Input::Turn(-1), Input::Press]);
+    assert!(!route_draft(app.state()).pinged);
+}
+
+#[test]
+fn a_lifted_hop_is_put_down_when_a_row_is_tapped() {
+    let mut app = app!();
+    let learned = edit_route_to(&mut app, "Jo Reyes");
+    run(&mut app, &[Input::Press, Input::Press, Input::Turn(1)]);
+    // A tap reaches Then flood without the press that puts the hop down.
+    app.state_mut().press_flood();
+    let tapped = route_draft(app.state());
+    assert_eq!(tapped.lifted, None);
+    assert_eq!(tapped.hints(), &[learned[1], learned[0]]);
+    assert!(tapped.dirty);
+    assert_eq!(tapped.adjusting, Some(umsh_ux_communicator::nav::Adjust::Flood));
+}
+
+#[test]
+fn a_peer_forgotten_while_their_route_is_edited_closes_it() {
+    let mut app = app!();
+    edit_route_to(&mut app, "Jo Reyes");
+    let Screen::Route { peer, .. } = app.state().screen().clone() else {
+        unreachable!()
+    };
+    // Changed, so that Backspace would ask rather than leave.
+    run(&mut app, &[Input::Press]);
+    turn_to(&mut app, keys::HOP_REMOVE);
+    run(&mut app, &[Input::Press]);
+    assert!(route_draft(app.state()).dirty);
+    app.state().node.forget_peer(peer);
+    input::events(&mut app, tick(0));
+    assert!(app.state().route_draft().is_none());
+    assert_eq!(app.state().screen().peer(), None);
 }
 
 #[test]
@@ -4838,4 +5105,848 @@ fn wifi_turned_off_is_only_its_switches() {
     assert_eq!(focus(app.state()), Some(keys::WIFI_IP_MULTICAST));
     run(&mut app, &[Input::Turn(-1), Input::Press]);
     assert_eq!(app.state().wifi.current, b"Okafor-5G");
+}
+
+/// The router the Neighbors screen shown lists for, and what it holds.
+fn shown_listing(state: &State) -> (String, Option<umsh_ux_communicator::model::Listing>) {
+    let Screen::Neighbors { router, .. } = state.screen() else {
+        panic!("expected neighbors, got {:?}", state.screen());
+    };
+    (router.to_string(), state.node.listing(router))
+}
+
+/// Answers what the fixture was asked, as a board's loop wakes for it.
+fn answer<V, F>(app: &mut App<V, State, F>, store: &fixture::Store)
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    let at = store.next_deadline().expect("an answer is due");
+    store.advance(at);
+    input::events(app, at);
+}
+
+/// Riverbend Camp's page, from the details of my answer.
+fn open_riverbend<V, F>(app: &mut App<V, State, F>)
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    answer_details(app);
+    scroll_to(app, keys::repeater(0));
+    run(app, &[Input::Press]);
+    let (member, _) = shown_member(app.state());
+    assert_eq!(member.sender.name.as_str(), "Riverbend Camp");
+    assert!(member.forwards);
+}
+
+#[test]
+fn neighbors_reads_nothing_until_refreshed_then_loads_more() {
+    let store = store();
+    let mut app = app!(store);
+    open_riverbend(&mut app);
+    turn_to(&mut app, keys::MEMBER_NEIGHBORS);
+    run(&mut app, &[Input::Press]);
+    // Opening asks for nothing.
+    let (_, listing) = shown_listing(app.state());
+    assert_eq!(listing, None);
+    assert_eq!(focus(app.state()), Some(keys::NEIGHBORS_REFRESH));
+
+    run(&mut app, &[Input::Press]);
+    let (_, listing) = shown_listing(app.state());
+    assert_eq!(listing.unwrap().asking, Some(ListingAsk::Top));
+    // The spinner keeps the screen coming back while it waits.
+    assert!(app.state().next_deadline().is_some());
+    answer(&mut app, store);
+    let (router, listing) = shown_listing(app.state());
+    let listing = listing.unwrap();
+    assert_eq!((listing.count, listing.total), (3, Some(5)));
+    assert!(listing.more && listing.asking.is_none());
+    let known = app.state().node.listed(&router, 1).unwrap();
+    assert_eq!(known.name.as_str(), "Ridge Runner");
+    assert!(known.address.is_some());
+
+    turn_to(&mut app, keys::NEIGHBORS_MORE);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(
+        shown_listing(app.state()).1.unwrap().asking,
+        Some(ListingAsk::More)
+    );
+    answer(&mut app, store);
+    let listing = shown_listing(app.state()).1.unwrap();
+    assert_eq!(listing.count, 5);
+    assert!(!listing.more);
+    // A known row opens its node.
+    turn_to(&mut app, keys::neighbor(1));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(
+        shown_member(app.state()).0.sender.name.as_str(),
+        "Ridge Runner"
+    );
+}
+
+#[test]
+fn a_bare_hint_among_neighbors_is_asked_who_it_is_and_its_own_go_unanswered() {
+    let store = store();
+    let mut app = app!(store);
+    open_riverbend(&mut app);
+    turn_to(&mut app, keys::MEMBER_NEIGHBORS);
+    run(&mut app, &[Input::Press, Input::Press]);
+    answer(&mut app, store);
+    let (router, _) = shown_listing(app.state());
+    let bare = app.state().node.listed(&router, 0).unwrap();
+    assert_eq!(bare.address, None);
+
+    turn_to(&mut app, keys::neighbor(0));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(app.state().identifying().as_slice(), [bare.hint]);
+    answer(&mut app, store);
+    let named = app.state().node.listed(&router, 0).unwrap();
+    assert_eq!(named.name.as_str(), "Bald Knob");
+    assert!(named.address.is_some());
+
+    // Bald Knob forwards too, and does not answer.
+    run(&mut app, &[Input::Press]);
+    assert_eq!(shown_member(app.state()).0.sender.name.as_str(), "Bald Knob");
+    turn_to(&mut app, keys::MEMBER_NEIGHBORS);
+    run(&mut app, &[Input::Press, Input::Press]);
+    answer(&mut app, store);
+    let listing = shown_listing(app.state()).1.unwrap();
+    assert!(listing.no_answer && listing.asking.is_none());
+    assert_eq!(listing.count, 0);
+    assert_eq!(focus(app.state()), Some(keys::NEIGHBORS_REFRESH));
+}
+
+#[test]
+fn a_walk_through_neighbors_past_the_stack_replaces_the_page_shown() {
+    let store = store();
+    let mut app = app!(store);
+    open_riverbend(&mut app);
+    turn_to(&mut app, keys::MEMBER_NEIGHBORS);
+    run(&mut app, &[Input::Press, Input::Press]);
+    answer(&mut app, store);
+    let (riverbend, _) = shown_listing(app.state());
+    // Bald Knob, once it is known, forwards too.
+    turn_to(&mut app, keys::neighbor(0));
+    run(&mut app, &[Input::Press]);
+    answer(&mut app, store);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(shown_member(app.state()).0.sender.name.as_str(), "Bald Knob");
+    let full = app.state().screens.len();
+    assert_eq!(full, app.state().screens.capacity());
+
+    // Its Neighbors takes the place of its page.
+    turn_to(&mut app, keys::MEMBER_NEIGHBORS);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(app.state().screens.len(), full);
+    let (bald_knob, _) = shown_listing(app.state());
+    assert_ne!(bald_knob, riverbend);
+    assert!(matches!(
+        &app.state().screens[full - 2],
+        Screen::Neighbors { router, .. } if router.as_str() == riverbend
+    ));
+    // The listing of the screen beneath is kept while others are asked.
+    run(&mut app, &[Input::Press]);
+    assert!(app.state().node.listing(&riverbend).is_some());
+}
+
+/// Add hop's router, what it finds by what is typed, and its rows.
+fn shown_pick(state: &State) -> (String, String, umsh_ux_communicator::nav::PickRows) {
+    let Screen::Neighbors {
+        router,
+        pick: Some(pick),
+        ..
+    } = state.screen()
+    else {
+        panic!("expected Add hop, got {:?}", state.screen());
+    };
+    (
+        router.to_string(),
+        pick.find.to_string(),
+        state.pick_rows().expect("Add hop's rows"),
+    )
+}
+
+/// The known repeaters Add hop's rows offer, in order.
+fn known_rows(
+    state: &State,
+    rows: &umsh_ux_communicator::nav::PickRows,
+) -> Vec<umsh_ux_communicator::model::KnownRepeater> {
+    (0..rows.len())
+        .filter_map(|index| match rows.row(index) {
+            Some(PickRow::KnownAt(at, _)) => state.node.known_repeater(usize::from(at)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Opens Add hop in the editor of the route to `name`.
+fn add_hop_to<V, F>(app: &mut App<V, State, F>, name: &str)
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    edit_route_to(app, name);
+    turn_to(app, keys::ROUTE_ADD);
+    run(app, &[Input::Press]);
+    shown_pick(app.state());
+}
+
+#[test]
+fn add_hop_after_a_bare_hint_offers_known_repeaters_and_asks_along_the_route() {
+    let store = store();
+    let mut app = app!(store);
+    let learned = {
+        edit_route_to(&mut app, "Jo Reyes");
+        route_draft(app.state()).hints().to_vec()
+    };
+    turn_to(&mut app, keys::ROUTE_ADD);
+    run(&mut app, &[Input::Press]);
+    // The last hop is known by its hint alone: nobody to ask.
+    let (router, _, rows) = shown_pick(app.state());
+    assert_eq!(router, "");
+    assert_eq!(rows.row(0), Some(PickRow::Known));
+    let names: Vec<_> = known_rows(app.state(), &rows)
+        .iter()
+        .map(|k| k.name.to_string())
+        .collect();
+    assert_eq!(names, ["Riverbend Camp", "Bald Knob", "Ridge Runner"]);
+    // Hops already on the route are marked, and focus passes them by.
+    assert!(rows.in_path(1) && rows.in_path(2) && !rows.in_path(3));
+    let ridge = known_rows(app.state(), &rows)[2].hint;
+    assert_eq!(focus(app.state()), Some(keys::known(ridge)));
+    run(&mut app, &[Input::Turn(-1)]);
+    assert_eq!(focus(app.state()), Some(keys::known(ridge)));
+
+    // A press goes to the row with the key it was drawn with, wherever
+    // the rows have since moved it.
+    app.state_mut().press_sheet(1, keys::known(ridge));
+    app.finalize_view();
+    let (router, _, rows) = shown_pick(app.state());
+    assert!(!router.is_empty());
+    let draft = *app.state().pick_draft().unwrap();
+    assert_eq!(draft.hints().len(), 3);
+    assert!(draft.dirty);
+    // Now on the route, Ridge Runner is in its path.
+    let known = known_rows(app.state(), &rows);
+    let ridge = known.iter().find(|k| k.name.as_str() == "Ridge Runner");
+    assert!(draft.hints().contains(&ridge.unwrap().hint));
+    // Opening asks nothing; Refresh asks along the route up to it.
+    assert_eq!(app.state().node.listing(&router), None);
+    assert_eq!(focus(app.state()), Some(keys::NEIGHBORS_REFRESH));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(
+        store.listing_route().as_deref(),
+        Some(&learned[..]),
+        "asked by way of the hops before it"
+    );
+
+    // Backspace returns to the editor with every hop added.
+    run(&mut app, &[Input::Backspace]);
+    assert_eq!(route_draft(app.state()).hints().len(), 3);
+    assert_eq!(focus(app.state()), Some(keys::ROUTE_ADD));
+}
+
+#[test]
+fn add_hop_reads_this_devices_own_list_and_finishes_beside_the_peer() {
+    let store = store();
+    let mut app = app!(store);
+    add_hop_to(&mut app, "Pat Okafor");
+    let (router, _, _) = shown_pick(app.state());
+    assert_eq!(router, app.state().node.address().as_str());
+    answer(&mut app, store);
+    // Pat is heard here: pinned to the top, where focus lands.
+    let (_, _, rows) = shown_pick(app.state());
+    assert_eq!(rows.row(1), Some(PickRow::Neighbor(1)));
+    assert_eq!(rows.peer_at, Some(1));
+    assert_eq!(focus(app.state()), Some(keys::neighbor(1)));
+    // Finish here ends the route where it is, at Save.
+    run(&mut app, &[Input::Press]);
+    assert!(route_draft(app.state()).hints().is_empty());
+    assert_eq!(focus(app.state()), Some(keys::ROUTE_SAVE));
+
+    // Riverbend, then on to what Riverbend hears.
+    turn_to(&mut app, keys::ROUTE_ADD);
+    run(&mut app, &[Input::Press]);
+    answer(&mut app, store);
+    turn_to(&mut app, keys::neighbor(0));
+    run(&mut app, &[Input::Press]);
+    let (router, _, _) = shown_pick(app.state());
+    let hops = app.state().pick_draft().unwrap().hints().to_vec();
+    assert_eq!(hops.len(), 1);
+    assert_eq!(
+        app.state().node.repeater(hops[0]).unwrap().name.as_str(),
+        "Riverbend Camp"
+    );
+    assert_eq!(
+        app.state().node.known_member(&router).unwrap().sender.name,
+        "Riverbend Camp"
+    );
+}
+
+#[test]
+fn typing_in_add_hop_narrows_it_and_offers_the_hints_it_fixes() {
+    let store = store();
+    let mut app = app!(store);
+    add_hop_to(&mut app, "Pat Okafor");
+    answer(&mut app, store);
+
+    // A word of a name narrows to it.
+    run(&mut app, &typed("riv"));
+    let (_, find, rows) = shown_pick(app.state());
+    assert_eq!(find, "riv");
+    assert_eq!(rows.found, Some(1));
+    // The field heads the rows, then what matches.
+    assert_eq!(rows.row(0), Some(PickRow::Field));
+    assert_eq!(rows.row(2), Some(PickRow::Neighbor(0)));
+    assert_eq!(rows.top(), Some(2));
+    assert_eq!(focus(app.state()), Some(keys::PICK_FIELD));
+    // Backspace takes back what was typed before it leaves.
+    run(&mut app, &[Input::Backspace; 3]);
+    let (_, find, rows) = shown_pick(app.state());
+    assert_eq!((find.as_str(), rows.found), ("", None));
+
+    // Four hex digits, which are Base58 too: read both ways, labeled.
+    run(&mut app, &typed("4b21"));
+    let (_, _, rows) = shown_pick(app.state());
+    assert!(rows.hints.len() >= 2, "{:?}", rows.hints);
+    let hex = rows.hints.len() - 1;
+    assert!(rows.hints[hex].hex);
+    assert_eq!(rows.hints[hex].hint, [0x4b, 0x21]);
+    assert_eq!(focus(app.state()), Some(keys::PICK_FIELD));
+    turn_to(&mut app, keys::hint_read(hex));
+    run(&mut app, &[Input::Press]);
+    let (router, find, _) = shown_pick(app.state());
+    assert_eq!(app.state().pick_draft().unwrap().hints(), &[[0x4b, 0x21]]);
+    // Known by its hint alone, the next hop has nobody to ask.
+    assert_eq!((router.as_str(), find.as_str()), ("", ""));
+}
+
+#[test]
+fn add_hop_puts_down_a_lifted_hop_first() {
+    let mut app = app!();
+    let learned = edit_route_to(&mut app, "Jo Reyes");
+    run(&mut app, &[Input::Press, Input::Press, Input::Turn(1)]);
+    assert_eq!(route_draft(app.state()).lifted, Some((1, 0)));
+    // As a touch on the Add hop row would.
+    app.state_mut().add_hop();
+    let draft = *app.state().pick_draft().unwrap();
+    assert_eq!(draft.lifted, None);
+    assert_eq!(draft.hints(), &[learned[1], learned[0]]);
+}
+
+#[test]
+fn add_hop_never_offers_the_peer_as_a_known_repeater() {
+    let store = store();
+    // Riverbend, saved as a peer, has a route of its own to edit.
+    store.gather_known("", "", "");
+    let riverbend = store.known_repeater(0).unwrap().address;
+    let member = store.known_member(&riverbend).expect("Riverbend is known");
+    store.save_peer(&member).expect("saved");
+    let mut app = app!(store);
+    add_hop_to(&mut app, "Riverbend Camp");
+    let (_, _, rows) = shown_pick(app.state());
+    let known = known_rows(app.state(), &rows);
+    assert!(
+        known.iter().all(|k| k.address != riverbend),
+        "{:?}",
+        known.iter().map(|k| k.name.as_str()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn a_peer_forgotten_while_add_hop_is_open_closes_it() {
+    let mut app = app!();
+    add_hop_to(&mut app, "Jo Reyes");
+    let peer = app.state().screen().peer().expect("Add hop's peer");
+    app.state().node.forget_peer(peer);
+    input::events(&mut app, tick(0));
+    assert!(app.state().pick_rows().is_none());
+    assert!(app.state().route_draft().is_none());
+    assert_eq!(app.state().screen().peer(), None);
+}
+
+#[test]
+fn add_hop_goes_away_once_the_route_is_full() {
+    let mut app = app!();
+    add_hop_to(&mut app, "Pat Okafor");
+    for hop in 0..15u8 {
+        // Hex alone: a zero is no Base58 digit.
+        run(&mut app, &typed(&format!("01{hop:02X}")));
+        assert_eq!(shown_pick(app.state()).2.hints.len(), 1);
+        // Enter in the field adds the top row.
+        run(&mut app, &[Input::Enter]);
+    }
+    let draft = route_draft(app.state());
+    assert_eq!(draft.hints().len(), 15);
+    assert!(!draft.has_room());
+    assert_eq!(focus(app.state()), Some(keys::path(14)));
+    assert!((0..draft.rows()).all(|row| draft.row(row) != Some(EditRow::Add)));
+}
+
+/// Jo Reyes, as a saved peer of the fixture's.
+const JO_PEER: u32 = 2;
+
+/// Sends `text` to Jo and lets the fixture carry it to its end. Returns
+/// the message.
+fn sent_to_jo<V, F>(app: &mut App<V, State, F>, store: &fixture::Store, text: &str) -> u32
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    let sent = app.state().node.send(JO, text, None, false).expect("sent");
+    input::events(app, tick(0));
+    while let Some(at) = store.next_deadline() {
+        store.advance(at);
+        input::events(app, at);
+    }
+    sent.id
+}
+
+/// What is open over the conversation shown.
+fn over_chat(state: &State) -> Option<Unsent> {
+    match state.screen() {
+        Screen::Conversation { unsent, .. } => *unsent,
+        screen => panic!("expected a conversation, got {screen:?}"),
+    }
+}
+
+#[test]
+fn a_held_route_the_flood_carries_twice_offers_the_learned_one() {
+    let store = store();
+    let mut app = app!(store);
+    app.state()
+        .node
+        .hold_route(JO_PEER, &[[0x4b, 0x21]], 0, 3_600_000);
+    input::events(&mut app, tick(0));
+    open_chat(&mut app, JO);
+    // The header says how far the route held by hand goes.
+    assert_eq!(
+        app.state().chat(JO).unwrap().kind,
+        ChatKind::Peer {
+            hops: Some(2),
+            manual: true
+        }
+    );
+
+    // The route misses, and the flood after carries it.
+    let first = sent_to_jo(&mut app, store, "Leaving the trailhead now");
+    assert_eq!(delivery(app.state(), first), Delivery::Flooded);
+    assert_eq!(over_chat(app.state()), None, "once is not enough");
+    sent_to_jo(&mut app, store, "Pass is clear");
+    assert_eq!(over_chat(app.state()), Some(Unsent::Learned));
+    assert_eq!(focus(app.state()), Some(keys::LEARNED_USE));
+
+    // Backspace keeps the manual route, and it is not offered again.
+    run(&mut app, &[Input::Backspace]);
+    assert_eq!(over_chat(app.state()), None);
+    assert_eq!(focus(app.state()), Some(keys::COMPOSER));
+    sent_to_jo(&mut app, store, "Still flooding");
+    assert_eq!(over_chat(app.state()), None);
+
+    // Held anew, it is offered again; Use takes the learned route.
+    app.state()
+        .node
+        .hold_route(JO_PEER, &[[0x4b, 0x21]], 0, 3_600_000);
+    input::events(&mut app, tick(0));
+    sent_to_jo(&mut app, store, "Over the saddle");
+    sent_to_jo(&mut app, store, "At the lake");
+    assert_eq!(over_chat(app.state()), Some(Unsent::Learned));
+    // What is offered is the route the floods taught.
+    let learned = app.state().node.learned_route(JO_PEER).expect("offered");
+    assert_eq!(learned.hops, 3);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(over_chat(app.state()), None);
+    let route = app.state().node.peer_route(JO_PEER).unwrap();
+    assert_eq!((route.manual, route.hops), (None, Some(learned.hops)));
+    assert!(matches!(
+        app.state().chat(JO).unwrap().kind,
+        ChatKind::Peer { manual: false, .. }
+    ));
+    // What the flood carried still says so.
+    assert_eq!(delivery(app.state(), first), Delivery::Flooded);
+}
+
+/// A learned route that comes due while a message's actions are open is
+/// offered once they close, from the keyboard too.
+#[test]
+fn the_learned_route_is_offered_once_the_actions_over_it_close() {
+    let store = store();
+    let mut app = app!(store);
+    app.state()
+        .node
+        .hold_route(JO_PEER, &[[0x4b, 0x21]], 0, 3_600_000);
+    input::events(&mut app, tick(0));
+    open_chat(&mut app, JO);
+    let first = sent_to_jo(&mut app, store, "One");
+    run(&mut app, &[Input::Turn(-1), Input::Press]);
+    assert_eq!(actions(app.state()), Some(first));
+    sent_to_jo(&mut app, store, "Two");
+    assert_eq!(over_chat(app.state()), None, "not over the actions");
+    run(&mut app, &[Input::Backspace]);
+    assert_eq!(actions(app.state()), None);
+    assert_eq!(over_chat(app.state()), Some(Unsent::Learned));
+    assert_eq!(focus(app.state()), Some(keys::LEARNED_USE));
+}
+
+/// Holds Jo's route, opens the conversation, sends a first message the
+/// flood carries, and opens its actions. Returns the message.
+fn actions_on_a_flood<V, F>(app: &mut App<V, State, F>, store: &fixture::Store) -> u32
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    app.state()
+        .node
+        .hold_route(JO_PEER, &[[0x4b, 0x21]], 0, 3_600_000);
+    input::events(app, tick(0));
+    open_chat(app, JO);
+    let first = sent_to_jo(app, store, "One");
+    run(app, &[Input::Turn(-1), Input::Press]);
+    assert_eq!(actions(app.state()), Some(first));
+    sent_to_jo(app, store, "Two");
+    assert_eq!(over_chat(app.state()), None, "not over the actions");
+    first
+}
+
+/// Closing the actions to write, by typing or by Reply, leaves the learned
+/// route waiting: the keys that follow are for the draft.
+#[test]
+fn the_learned_route_waits_when_the_actions_close_to_write() {
+    let store = store();
+    let mut app = app!(store);
+    actions_on_a_flood(&mut app, store);
+    run(&mut app, &typed("ok"));
+    assert_eq!(over_chat(app.state()), None);
+    assert_eq!(app.state().chat(JO).unwrap().draft.text(), "ok");
+
+    let store = self::store();
+    let mut app = app!(store);
+    actions_on_a_flood(&mut app, store);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(over_chat(app.state()), None, "Reply writes");
+    assert_eq!(focus(app.state()), Some(keys::COMPOSER));
+    run(&mut app, &typed("Sure"));
+    assert_eq!(app.state().chat(JO).unwrap().draft.text(), "Sure");
+    // Enter goes to the composer too.
+    let store = self::store();
+    let mut app = app!(store);
+    actions_on_a_flood(&mut app, store);
+    run(&mut app, &[Input::Enter]);
+    assert_eq!(over_chat(app.state()), None, "Enter writes");
+    assert_eq!(focus(app.state()), Some(keys::COMPOSER));
+}
+
+/// A learned route that comes due while the picker is open waits for it.
+#[test]
+fn the_learned_route_waits_for_the_picker() {
+    let store = store();
+    let mut app = app!(store);
+    app.state()
+        .node
+        .hold_route(JO_PEER, &[[0x4b, 0x21]], 0, 3_600_000);
+    input::events(&mut app, tick(0));
+    open_chat(&mut app, JO);
+    for text in ["One", "Two"] {
+        app.state().node.send(JO, text, None, false).expect("sent");
+    }
+    // The picker opens while typing.
+    run(&mut app, &typed("a"));
+    run(&mut app, &[Input::Backspace, Input::Picker]);
+    assert!(app.state().picker.is_some());
+    while let Some(at) = store.next_deadline() {
+        store.advance(at);
+        input::events(&mut app, at);
+    }
+    assert_eq!(over_chat(app.state()), None, "not under the picker");
+    // Closed, it leaves the composer being written in.
+    run(&mut app, &[Input::Picker]);
+    assert!(app.state().picker.is_none());
+    assert_eq!(over_chat(app.state()), None);
+    // Sent, the next flood the message takes offers it.
+    run(&mut app, &typed("Hi"));
+    run(&mut app, &[Input::Enter]);
+    while let Some(at) = store.next_deadline() {
+        store.advance(at);
+        input::events(&mut app, at);
+    }
+    assert_eq!(over_chat(app.state()), Some(Unsent::Learned));
+}
+
+/// A click that takes up the composer to write in it leaves the offer
+/// waiting: the keys after it are for the message.
+#[test]
+fn the_learned_route_waits_for_a_click_into_the_composer() {
+    let store = store();
+    let mut app = app!(store);
+    app.state()
+        .node
+        .hold_route(JO_PEER, &[[0x4b, 0x21]], 0, 3_600_000);
+    input::events(&mut app, tick(0));
+    open_chat(&mut app, JO);
+    for text in ["One", "Two"] {
+        app.state().node.send(JO, text, None, false).expect("sent");
+    }
+    run(&mut app, &typed("On my way"));
+    while let Some(at) = store.next_deadline() {
+        store.advance(at);
+        input::events(&mut app, at);
+    }
+    run(&mut app, &[Input::Enter]);
+    assert_eq!(focus(app.state()), Some(keys::COMPOSER));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(over_chat(app.state()), None);
+    run(&mut app, &typed("ok"));
+    assert_eq!(app.state().chat(JO).unwrap().draft.text(), "Ok");
+    assert!(app.state().node.peer_route(JO_PEER).unwrap().manual.is_some());
+}
+
+/// Taken up from a message, by a letter typed there, the composer is being
+/// written in even once its draft is erased: the offer waits.
+#[test]
+fn the_learned_route_waits_for_a_composer_taken_up_from_a_message() {
+    let store = store();
+    let mut app = app!(store);
+    app.state()
+        .node
+        .hold_route(JO_PEER, &[[0x4b, 0x21]], 0, 3_600_000);
+    input::events(&mut app, tick(0));
+    open_chat(&mut app, JO);
+    sent_to_jo(&mut app, store, "One");
+    run(&mut app, &[Input::Turn(-1)]);
+    assert_ne!(focus(app.state()), Some(keys::COMPOSER));
+    run(&mut app, &typed("a"));
+    assert!(app.state().keyboard.active(), "the letter takes it up");
+    run(&mut app, &[Input::Backspace]);
+    assert!(app.state().keyboard.active());
+    sent_to_jo(&mut app, store, "Two");
+    assert_eq!(over_chat(app.state()), None);
+}
+
+/// Locked while the composer was taken up, it comes back not being
+/// written in, and what came due meanwhile is offered.
+#[test]
+fn the_learned_route_after_a_lock_over_the_composer() {
+    let store = store();
+    let mut app = app!(store);
+    app.state()
+        .node
+        .hold_route(JO_PEER, &[[0x4b, 0x21]], 0, 3_600_000);
+    input::events(&mut app, tick(0));
+    open_chat(&mut app, JO);
+    for text in ["One", "Two"] {
+        app.state().node.send(JO, text, None, false).expect("sent");
+    }
+    run(&mut app, &[Input::Press]);
+    assert!(app.state().keyboard.active());
+    app.state_mut().lock();
+    app.finalize_view();
+    while let Some(at) = store.next_deadline() {
+        store.advance(at);
+        input::events(&mut app, at);
+    }
+    unlock(&mut app);
+    assert!(!app.state().keyboard.active());
+    assert_eq!(over_chat(app.state()), Some(Unsent::Learned));
+}
+
+/// A learned route that comes due while the wheel is down waits for it to
+/// come up: the press goes where it was meant to.
+#[test]
+fn the_learned_route_waits_for_a_press() {
+    let store = store();
+    let mut app = app!(store);
+    app.state()
+        .node
+        .hold_route(JO_PEER, &[[0x4b, 0x21]], 0, 3_600_000);
+    input::events(&mut app, tick(0));
+    open_chat(&mut app, JO);
+    let first = sent_to_jo(&mut app, store, "One");
+    run(&mut app, &[Input::Turn(-1)]);
+    app.state().node.send(JO, "Two", None, false).expect("sent");
+    input::apply(&mut app, Input::Press, tick(0));
+    let mut now = tick(0);
+    while let Some(at) = store.next_deadline() {
+        store.advance(at);
+        input::events(&mut app, at);
+        now = at;
+    }
+    assert_eq!(over_chat(app.state()), None, "not under the press");
+    input::apply(&mut app, Input::Release, now);
+    assert_eq!(actions(app.state()), Some(first), "the press opened them");
+    run(&mut app, &[Input::Backspace]);
+    assert_eq!(over_chat(app.state()), Some(Unsent::Learned));
+    assert!(app.state().node.peer_route(JO_PEER).unwrap().manual.is_some());
+}
+
+/// What comes due while locked is offered on unlocking; an offer taken
+/// back while locked, or just before, leaves the composer focused.
+#[test]
+fn the_learned_route_across_the_lock() {
+    let store = store();
+    let mut app = app!(store);
+    app.state()
+        .node
+        .hold_route(JO_PEER, &[[0x4b, 0x21]], 0, 3_600_000);
+    input::events(&mut app, tick(0));
+    open_chat(&mut app, JO);
+    for text in ["One", "Two"] {
+        app.state().node.send(JO, text, None, false).expect("sent");
+    }
+    app.state_mut().lock();
+    app.finalize_view();
+    while let Some(at) = store.next_deadline() {
+        store.advance(at);
+        input::events(&mut app, at);
+    }
+    assert_eq!(over_chat(app.state()), None, "not while locked");
+    unlock(&mut app);
+    assert!(!app.state().lock.locked);
+    assert_eq!(over_chat(app.state()), Some(Unsent::Learned));
+    assert_eq!(focus(app.state()), Some(keys::LEARNED_USE));
+
+    // Locked over the offer, which the hold, let go, takes with it.
+    app.state_mut().lock();
+    app.finalize_view();
+    app.state().node.reset_route(JO_PEER);
+    input::events(&mut app, tick(0));
+    unlock(&mut app);
+    assert_eq!(over_chat(app.state()), None);
+    assert_eq!(focus(app.state()), Some(keys::COMPOSER));
+
+    // Taken back in the same pass of events that locks.
+    app.state()
+        .node
+        .hold_route(JO_PEER, &[[0x4b, 0x21]], 0, 3_600_000);
+    input::events(&mut app, tick(0));
+    sent_to_jo(&mut app, store, "Three");
+    sent_to_jo(&mut app, store, "Four");
+    assert_eq!(focus(app.state()), Some(keys::LEARNED_USE));
+    app.state().node.reset_route(JO_PEER);
+    {
+        let mut state = app.state_mut();
+        while let Some(event) = state.node.next_event() {
+            state.apply(event, tick(0));
+        }
+        state.lock();
+    }
+    app.finalize_view();
+    unlock(&mut app);
+    assert_eq!(over_chat(app.state()), None);
+    assert_eq!(focus(app.state()), Some(keys::COMPOSER));
+}
+
+/// Held anew after more messages than the fixture keeps, the route is
+/// offered again once the floods carry two more.
+#[test]
+fn the_learned_route_is_offered_again_after_many_messages() {
+    let store = store();
+    let mut app = app!(store);
+    let hold = |app: &mut App<_, State, _>| {
+        app.state()
+            .node
+            .hold_route(JO_PEER, &[[0x4b, 0x21]], 0, 3_600_000);
+        input::events(app, tick(0));
+    };
+    hold(&mut app);
+    open_chat(&mut app, JO);
+    for text in ["1", "2"] {
+        sent_to_jo(&mut app, store, text);
+    }
+    run(&mut app, &[Input::Backspace]);
+    for text in ["3", "4", "5", "6", "7", "8", "9", "10", "11"] {
+        sent_to_jo(&mut app, store, text);
+    }
+    assert_eq!(over_chat(app.state()), None);
+    hold(&mut app);
+    sent_to_jo(&mut app, store, "12");
+    assert_eq!(over_chat(app.state()), None, "once is not enough");
+    sent_to_jo(&mut app, store, "13");
+    assert_eq!(over_chat(app.state()), Some(Unsent::Learned));
+}
+
+/// A learned route that comes due while a draft is being written waits, so
+/// no key meant for the draft answers it; it is offered once the
+/// conversation is opened again, and goes with the peer.
+#[test]
+fn the_learned_route_waits_for_a_draft_and_goes_with_the_peer() {
+    let store = store();
+    let mut app = app!(store);
+    app.state()
+        .node
+        .hold_route(JO_PEER, &[[0x4b, 0x21]], 0, 3_600_000);
+    input::events(&mut app, tick(0));
+    open_chat(&mut app, JO);
+    for text in ["One", "Two"] {
+        app.state().node.send(JO, text, None, false).expect("sent");
+    }
+    run(&mut app, &typed("On my wa"));
+    while let Some(at) = store.next_deadline() {
+        store.advance(at);
+        input::events(&mut app, at);
+    }
+    assert_eq!(over_chat(app.state()), None, "it waits for the draft");
+    run(&mut app, &typed("y"));
+    assert_eq!(focus(app.state()), Some(keys::COMPOSER));
+
+    // Opened again, the conversation offers it.
+    assert!(app.state_mut().back());
+    app.finalize_view();
+    turn_to(&mut app, keys::chat(JO));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(over_chat(app.state()), Some(Unsent::Learned));
+
+    // Jo forgotten elsewhere, the offer goes with them.
+    app.state().node.forget_peer(JO_PEER);
+    input::events(&mut app, tick(0));
+    assert_eq!(over_chat(app.state()), None);
+    assert_eq!(focus(app.state()), Some(keys::COMPOSER));
+}
+
+/// Opened while the learned route is due, the conversation offers it at
+/// once; the offer goes once the hold that made it is let go.
+#[test]
+fn the_learned_route_is_offered_on_opening_and_goes_with_its_hold() {
+    let store = store();
+    let mut app = app!(store);
+    app.state()
+        .node
+        .hold_route(JO_PEER, &[[0x4b, 0x21]], 0, 3_600_000);
+    input::events(&mut app, tick(0));
+    open_chat(&mut app, JO);
+    sent_to_jo(&mut app, store, "One");
+    sent_to_jo(&mut app, store, "Two");
+    run(&mut app, &[Input::Backspace]);
+    // Turned down; held anew elsewhere and flooded twice more, then opened.
+    run(&mut app, &[Input::Backspace]);
+    app.state()
+        .node
+        .hold_route(JO_PEER, &[[0x4b, 0x21]], 0, 3_600_000);
+    for text in ["Three", "Four"] {
+        app.state().node.send(JO, text, None, false).expect("sent");
+    }
+    while let Some(at) = store.next_deadline() {
+        store.advance(at);
+        input::events(&mut app, at);
+    }
+    turn_to(&mut app, keys::chat(JO));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(over_chat(app.state()), Some(Unsent::Learned));
+    assert_eq!(focus(app.state()), Some(keys::LEARNED_USE));
+
+    // Let go of elsewhere, the hold takes the offer with it.
+    app.state().node.reset_route(JO_PEER);
+    input::events(&mut app, tick(0));
+    assert_eq!(over_chat(app.state()), None);
+    assert_eq!(focus(app.state()), Some(keys::COMPOSER));
 }

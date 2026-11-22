@@ -62,7 +62,7 @@ pub trait SoftPlatform {
     /// A fresh identity secret.
     fn generate_secret(&mut self) -> [u8; 32];
     /// A fresh identity secret from [`generate_secret`](Self::generate_secret),
-    /// redrawn while the hint filter matches its key.
+    /// redrawn until `admits_identity` accepts its key.
     fn generate_identity_secret(&mut self) -> [u8; 32] {
         umsh_crypto::software::generate_identity_secret(|secret| {
             *secret = self.generate_secret();

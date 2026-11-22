@@ -18,7 +18,7 @@ use crate::nav::keys;
 use crate::{font, icon, theme};
 
 /// A node's row: an action row with its margins.
-const NODE: u32 = 36;
+pub(super) const NODE: u32 = 36;
 /// A hop between two rows: with a reading, without one, and one nobody
 /// traced.
 const READING: u32 = 22;
@@ -88,7 +88,7 @@ pub(super) fn view(
     _ = name.push_str(umsh_grapheme::cut(peer.1, 32));
     VStack::new((
         you(m),
-        hop_row(m, first),
+        hop_gap(m, first),
         ForEach::<MAX_PATH>::new_vertical(&INDICES[..stops.len()], move |&i| {
             let (repeater, waiting, after) = stops[i].clone();
             stop(m, i, repeater, waiting, phase, after)
@@ -96,14 +96,19 @@ pub(super) fn view(
         .keyed(|&i| keys::path(i))
         .with_spacing(0),
         (unnamed != Some(0))
-            .then(|| VStack::new((nobody(m, unnamed), hop_row(m, past))).with_spacing(0)),
-        end(m, avatar, name, dim),
+            .then(|| VStack::new((nobody(m, unnamed), hop_gap(m, past))).with_spacing(0)),
+        end(m, avatar, name, dim, false),
     ))
     .with_spacing(0)
 }
 
 /// This device, where the path starts.
-fn you(m: &'static Metrics) -> impl View<Rgb565, State> + use<> {
+pub(super) fn you(m: &'static Metrics) -> impl View<Rgb565, State> + use<> {
+    Lazy::new(m, you_look)
+}
+
+/// This device's row. Built each time it is drawn, as every row is.
+pub(super) fn you_look(m: &&'static Metrics) -> impl View<Rgb565, ()> + use<> {
     node_row(
         Image::new(&icon::HANDHELD_26)
             .as_template()
@@ -114,28 +119,42 @@ fn you(m: &'static Metrics) -> impl View<Rgb565, State> + use<> {
     )
 }
 
-/// The peer, where the path ends.
-fn end(
+/// The peer, where the path ends: `dim` when the path is not known yet,
+/// and with the rail into it dashed while a route `flooding` may flood
+/// there.
+pub(super) fn end(
     m: &'static Metrics,
     avatar: AvatarStyle,
     name: String<32>,
     dim: bool,
+    flooding: bool,
 ) -> impl View<Rgb565, State> + use<> {
-    let color = if dim {
+    Lazy::new((avatar, name, dim, flooding, m), end_look)
+}
+
+/// The peer's row. Built each time it is drawn, as every row is.
+pub(super) fn end_look(
+    (avatar, name, dim, flooding, m): &(AvatarStyle, String<32>, bool, bool, &'static Metrics),
+) -> impl View<Rgb565, ()> + use<> {
+    let color = if *dim {
         theme::TEXT_TERTIARY
     } else {
         theme::TEXT
     };
-    node_row(
-        super::avatar::view(&avatar, AVATAR),
-        line(name, &font::REGULAR, m.body, color),
-        true,
-        false,
+    node_row_on(
+        super::avatar::view(avatar, AVATAR),
+        line(name.clone(), &font::REGULAR, m.body, color),
+        halves(NODE, Half::flood(*flooding), Half::Off),
     )
 }
 
 /// Repeaters nobody named, `count` of them when known, in one row.
 fn nobody(m: &'static Metrics, count: Option<u8>) -> impl View<Rgb565, State> + use<> {
+    Lazy::new((count, m), nobody_look)
+}
+
+/// The row of repeaters nobody named. Built each time it is drawn.
+fn nobody_look((count, m): &(Option<u8>, &'static Metrics)) -> impl View<Rgb565, ()> + use<> {
     let mut text: String<16> = String::new();
     _ = match count {
         Some(count) => core::fmt::write(&mut text, format_args!("{count} unnamed")),
@@ -163,6 +182,15 @@ fn node_row<C, M: View<Rgb565, C>, T: View<Rgb565, C>>(
     above: bool,
     below: bool,
 ) -> impl View<Rgb565, C> + use<C, M, T> {
+    node_row_on(mark, text, rail(NODE, above, below))
+}
+
+/// A row as [`node_row`] draws it, on `rail`.
+fn node_row_on<C, M: View<Rgb565, C>, T: View<Rgb565, C>, R: View<Rgb565, C>>(
+    mark: M,
+    text: T,
+    rail: R,
+) -> impl View<Rgb565, C> + use<C, M, T, R> {
     text.padding(Edges::Leading, NAME_X)
         .flex_infinite_width(HorizontalAlignment::Leading)
         .frame()
@@ -173,7 +201,7 @@ fn node_row<C, M: View<Rgb565, C>, T: View<Rgb565, C>>(
                 .with_width(AVATAR)
                 .padding(Edges::Leading, INSET),
         )
-        .background(Alignment::Leading, rail(NODE, above, below))
+        .background(Alignment::Leading, rail)
 }
 
 /// A repeater on the path, the `index`th: a press opens the node it most
@@ -227,7 +255,7 @@ fn stop_look(
 
 /// The rail through a row `height` tall: from its top when it joins a row
 /// `above`, to its bottom when it joins one `below`.
-fn rail<C>(height: u32, above: bool, below: bool) -> impl View<Rgb565, C> + use<C> {
+pub(super) fn rail<C>(height: u32, above: bool, below: bool) -> impl View<Rgb565, C> + use<C> {
     let half = |on: bool| {
         Rectangle
             .foreground_color(if on { theme::RAIL } else { theme::BACKGROUND })
@@ -236,6 +264,66 @@ fn rail<C>(height: u32, above: bool, below: bool) -> impl View<Rgb565, C> + use<
     VStack::new((half(above), half(below)))
         .with_spacing(0)
         .padding(Edges::Leading, RAIL_X)
+}
+
+/// Half of a row's rail.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Half {
+    Off,
+    On,
+    /// Where a route may flood.
+    Dashed,
+}
+
+impl Half {
+    /// Dashed while a route may flood there, else on.
+    pub(super) fn flood(flooding: bool) -> Self {
+        if flooding { Self::Dashed } else { Self::On }
+    }
+}
+
+/// The rail through a row `height` tall, its halves `above` and `below`
+/// its middle as they say.
+pub(super) fn halves<C>(height: u32, above: Half, below: Half) -> impl View<Rgb565, C> + use<C> {
+    let half = |half: Half| {
+        let dash = || {
+            Rectangle
+                .foreground_color(theme::RAIL)
+                .frame_sized(RAIL, DASH)
+        };
+        VStack::new((
+            (half != Half::Dashed).then(|| {
+                Rectangle
+                    .foreground_color(if half == Half::On {
+                        theme::RAIL
+                    } else {
+                        theme::BACKGROUND
+                    })
+                    .frame_sized(RAIL, height / 2)
+            }),
+            (half == Half::Dashed).then(|| {
+                VStack::new((dash(), dash(), dash()))
+                    .with_spacing(DASH)
+                    .frame()
+                    .with_height(height / 2)
+            }),
+        ))
+        .with_spacing(0)
+    };
+    VStack::new((half(above), half(below)))
+        .with_spacing(0)
+        .padding(Edges::Leading, RAIL_X)
+}
+
+/// [`hop_row`], built each time it is drawn ([`Lazy`]), as the rows
+/// around it are. Only a hop with a reading takes room: `hop_row` is
+/// otherwise empty, and a stack passes over it, which a [`Lazy`] would not.
+fn hop_gap(m: &'static Metrics, hop: Hop) -> Option<impl View<Rgb565, State> + use<>> {
+    matches!(hop, Hop::Read(_)).then(|| {
+        Lazy::new((m, hop), |&(m, hop): &(&'static Metrics, Hop)| {
+            hop_row::<()>(m, hop)
+        })
+    })
 }
 
 /// One hop between two rows.
@@ -293,7 +381,7 @@ fn reading<C>(m: &'static Metrics, leg: Leg) -> impl View<Rgb565, C> + use<C> {
 
 /// Of four bars, how strongly a hop was heard, by its signal-to-noise
 /// ratio.
-fn lit(signal: Signal) -> u8 {
+pub(super) fn lit(signal: Signal) -> u8 {
     match signal.snr {
         50.. => 4,
         0.. => 3,
@@ -303,7 +391,7 @@ fn lit(signal: Signal) -> u8 {
 }
 
 /// Green for a hop heard well, amber, then red as it fades.
-fn bar_color(lit: u8) -> Rgb565 {
+pub(super) fn bar_color(lit: u8) -> Rgb565 {
     match lit {
         3.. => theme::GREEN,
         2 => theme::AMBER,

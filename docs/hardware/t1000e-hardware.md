@@ -488,7 +488,7 @@ Seeed's routine verbatim) treats 80 mV as dark and clamps at 2.48 V,
 mapping the span onto 0–100 % rather than to any physical unit.
 
 This firmware reports **millilux** through
-[`PROP_ILLUMINANCE`](../protocol/src/ulcp-device.md), converting with a
+[`PROP_ILLUMINANCE`](../protocol-legacy/src/ulcp-device.md), converting with a
 two-constant linear fit—dark offset and slope—clamped at both ends;
 the constants live in `crates/umsh-bsp-t1000e/src/light.rs`. At 14-bit
 over a 3.6 V full scale (`Gain1_6` against the 0.6 V internal reference)

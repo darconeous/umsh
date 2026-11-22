@@ -15,7 +15,7 @@ See [BLE uploader setup and usage](../tools/ble-dfu/README.md).
 
 ## Protocol
 
-[`CMD_DFU = 17`](protocol/src/ulcp-core.md#cmd-dfu) carries zero or one mode
+[`CMD_DFU = 17`](protocol-legacy/src/ulcp-core.md#cmd-dfu) carries zero or one mode
 byte: Default (0), Serial/USB-CDC (1), UF2 (2), or BLE (3). Omission means
 Default. Defined but unsupported modes return `UNIMPLEMENTED`; undefined
 values return `INVALID_ARGUMENT`, and extra payload returns `PARSE_ERROR`.

@@ -12,7 +12,7 @@ mod support;
 use support::{Port, SharedFlash, config, device, phone_inserts, provision, starting_keys};
 use umsh_communicator::settings::{SAVE_DELAY_MS, STATISTICS_READ_MS};
 use umsh_communicator::task::Command;
-use umsh_communicator::task::{Arrival, Secrecy};
+use umsh_communicator::task::{Arrival, AskWay, HeldRoute, Learned, Secrecy};
 use umsh_communicator::{
     ChannelCrypto, Clock, CommunicatorNode, FlashMap, FlashMapStore, MemoryStore, Quota, Seeds,
 };
@@ -39,9 +39,9 @@ use umsh_ulcp::ids::prop;
 use umsh_ulcp::profiles::VETTED;
 use umsh_ulcp_simdev::{SessionConfig, SimulatedDevice, TimeConfig};
 use umsh_ux_communicator::model::{
-    ChannelAccess, ChannelEntry, ChatKind, Chats, Delivery, Direction, Forwarding,
-    KeyboardSettings, Leg, MESSAGE_LEN, Node, NodeEvent, PeerEntry, PeerSummary, PingView,
-    Presence, Profile, Reaction, RouteKind, Rule, Setting, Shareable, Signal,
+    ChannelAccess, ChannelEntry, ChatKind, Chats, Delivery, Direction, Forwarding, HintRead,
+    KeyboardSettings, Leg, ListingAsk, MESSAGE_LEN, Node, NodeEvent, PeerEntry, PeerSummary,
+    PingView, Presence, Profile, Reaction, RouteKind, Rule, Setting, Shareable, Signal,
 };
 
 /// 14:32 UTC, when the test clock starts.
@@ -1434,7 +1434,13 @@ fn a_direct_message_goes_out_and_can_be_retried() {
         .direct_chat(&address_of(&robin), "Robin", &avatar)
         .unwrap();
     assert_eq!(chat.name, "Robin");
-    assert_eq!(chat.kind, ChatKind::Peer { hops: None });
+    assert_eq!(
+        chat.kind,
+        ChatKind::Peer {
+            hops: None,
+            manual: false
+        }
+    );
     events(&node);
 
     let message = node.send(chat.id, "On my way", None, false).unwrap();
@@ -1901,7 +1907,13 @@ fn a_heard_node_is_found_by_name() {
         .direct_chat(&address_of(&robin), "Robin Ridge", &avatar)
         .unwrap();
     assert_eq!(chat.name, "Robin Ridge");
-    assert_eq!(chat.kind, ChatKind::Peer { hops: Some(1) });
+    assert_eq!(
+        chat.kind,
+        ChatKind::Peer {
+            hops: Some(1),
+            manual: false
+        }
+    );
 }
 
 /// A member saved is kept by the device, listed among the peers, and let
@@ -2787,6 +2799,8 @@ fn a_saved_peers_route_is_read_from_the_device_node() {
         peer: robin,
         route: route(),
         confirmed_age_ms: Some(60_000),
+        held: None,
+        changed: false,
     });
     assert_eq!(events(&node), [NodeEvent::RouteChanged(peer)]);
     let shown = node.peer_route(peer).unwrap();
@@ -2805,6 +2819,8 @@ fn a_saved_peers_route_is_read_from_the_device_node() {
         peer: robin,
         route: route(),
         confirmed_age_ms: Some(60_300),
+        held: None,
+        changed: false,
     });
     assert!(events(&node).is_empty());
 
@@ -2825,6 +2841,8 @@ fn a_saved_peers_route_is_read_from_the_device_node() {
         peer: robin,
         route: None,
         confirmed_age_ms: None,
+        held: None,
+        changed: false,
     });
     assert!(events(&node).contains(&NodeEvent::RouteChanged(peer)));
     assert_eq!(node.peer_route(peer).unwrap().kind, RouteKind::Unknown);
@@ -2832,6 +2850,219 @@ fn a_saved_peers_route_is_read_from_the_device_node() {
         node.peer_detail(peer).unwrap().route.as_deref(),
         Some("Not learned")
     );
+}
+
+/// A route held by hand is asked of the device node and read back as
+/// manual, with how far it floods and how long it has left; a read a
+/// moment later changes nothing, and once the hold runs out the route is an
+/// ordinary one.
+/// Forgetting a peer whose route is held by hand tells the chat with them
+/// that its header no longer says so.
+#[test]
+fn forgetting_a_peer_held_by_hand_retells_their_chat() {
+    let sim = device();
+    let (node, clock) = started(&sim);
+    let (robin, peer) = saved_robin(&sim, &node, clock);
+    let chat = node
+        .direct_chat(&address_of(&robin), "Robin", &node.avatar())
+        .unwrap();
+    node.arrive(Arrival::Route {
+        peer: robin,
+        route: CachedRoute::source(&[RouterHint([0xA1, 0x01])]),
+        confirmed_age_ms: None,
+        held: Some(HeldRoute {
+            remaining_ms: 3_600_000,
+            flood_hops: 0,
+            fallback_acks: 0,
+            learned: None,
+        }),
+        changed: false,
+    });
+    assert!(matches!(
+        node.chat(chat.id).unwrap().kind,
+        ChatKind::Peer { manual: true, .. }
+    ));
+    events(&node);
+    node.forget_peer(peer);
+    assert!(events(&node).contains(&NodeEvent::ChatChanged(chat.id)));
+    assert!(matches!(
+        node.chat(chat.id).unwrap().kind,
+        ChatKind::Peer { manual: false, .. }
+    ));
+}
+
+/// A route read before the hold was changed, and answered after the
+/// change was asked for, offers nothing: what it says is stale.
+#[test]
+fn a_route_read_before_a_change_offers_nothing() {
+    let sim = device();
+    let (node, clock) = started(&sim);
+    let (robin, peer) = saved_robin(&sim, &node, clock);
+    let route = || CachedRoute::source(&[RouterHint([0xA1, 0x01])]);
+    let read = |changed, learned: Option<Learned>| Arrival::Route {
+        peer: robin,
+        route: route(),
+        confirmed_age_ms: None,
+        held: Some(HeldRoute {
+            remaining_ms: 3_600_000,
+            flood_hops: 0,
+            fallback_acks: if learned.is_some() { 2 } else { 0 },
+            learned,
+        }),
+        changed,
+    };
+    let learned = Some(Learned {
+        hops: 2,
+        via: Some(RouterHint([0xB2, 0x02])),
+    });
+    clock.set(10_000);
+    node.arrive(read(false, learned));
+    assert!(node.learned_route(peer).is_some());
+
+    // Held anew while a plain read is under way, which then lands.
+    node.hold_route(peer, &[[0xA1, 0x01]], 0, 3_600_000);
+    assert_eq!(node.learned_route(peer), None);
+    node.arrive(read(false, learned));
+    assert_eq!(node.learned_route(peer), None, "a stale read");
+    // The hold's own answer stands, and so does a read after it.
+    node.arrive(read(true, None));
+    assert_eq!(node.learned_route(peer), None);
+    node.arrive(read(false, learned));
+    assert!(node.learned_route(peer).is_some());
+}
+
+#[test]
+fn a_route_held_by_hand_counts_down_and_then_is_ordinary() {
+    let sim = device();
+    let (node, clock) = started(&sim);
+    let (robin, peer) = saved_robin(&sim, &node, clock);
+    node.hold_route(peer, &[[0xA1, 0x01]], 1, 3_600_000);
+    assert!(asks(&node, |c| matches!(
+        c,
+        Command::HoldRoute { peer, hints, flood_hops: 1, hold_ms: 3_600_000 }
+            if *peer == robin && hints.as_slice() == [RouterHint([0xA1, 0x01])]
+    )));
+
+    let route = || CachedRoute::source(&[RouterHint([0xA1, 0x01])]);
+    let held = |remaining_ms| {
+        Some(HeldRoute {
+            remaining_ms,
+            flood_hops: 1,
+            fallback_acks: 0,
+            learned: None,
+        })
+    };
+    clock.set(10_000);
+    node.arrive(Arrival::Route {
+        peer: robin,
+        route: route(),
+        confirmed_age_ms: None,
+        held: held(3_600_000),
+        changed: false,
+    });
+    assert_eq!(events(&node), [NodeEvent::RouteChanged(peer)]);
+    let manual = node.peer_route(peer).unwrap().manual.unwrap();
+    assert_eq!(
+        (manual.flood_hops, manual.left.as_str()),
+        (1, "60 min left")
+    );
+    assert_eq!(
+        node.peer_detail(peer).unwrap().route.as_deref(),
+        Some("Manual \u{B7} 2 hops")
+    );
+
+    // Read again half a second on: the same hold.
+    clock.set(10_500);
+    node.arrive(Arrival::Route {
+        peer: robin,
+        route: route(),
+        confirmed_age_ms: None,
+        held: held(3_599_500),
+        changed: false,
+    });
+    assert!(events(&node).is_empty());
+
+    clock.set(10_000 + 3_600_000 - 61_000);
+    let manual = node.peer_route(peer).unwrap().manual.unwrap();
+    assert_eq!(manual.left.as_str(), "2 min left");
+    // Running out is told, so the peer's page stops saying Manual.
+    clock.set(10_000 + 3_600_000);
+    node.tick();
+    assert!(events(&node).contains(&NodeEvent::RouteChanged(peer)));
+    let shown = node.peer_route(peer).unwrap();
+    assert_eq!(shown.manual, None);
+    assert_eq!(shown.kind, RouteKind::Source, "the route itself stays");
+    assert_eq!(
+        node.peer_detail(peer).unwrap().route.as_deref(),
+        Some("2 hops")
+    );
+
+    // Only the hold changing is a change too.
+    let now = 10_000 + 3_600_000;
+    node.arrive(Arrival::Route {
+        peer: robin,
+        route: route(),
+        confirmed_age_ms: None,
+        held: held(600_000),
+        changed: false,
+    });
+    assert_eq!(events(&node), [NodeEvent::RouteChanged(peer)]);
+    clock.set(now + 1_000);
+    node.arrive(Arrival::Route {
+        peer: robin,
+        route: route(),
+        confirmed_age_ms: None,
+        held: None,
+        changed: false,
+    });
+    assert_eq!(events(&node), [NodeEvent::RouteChanged(peer)]);
+    assert_eq!(node.peer_route(peer).unwrap().manual, None);
+}
+
+#[test]
+fn a_ping_along_a_route_goes_by_it_and_holds_nothing() {
+    let sim = device();
+    let (node, clock) = started(&sim);
+    let (robin, peer) = saved_robin(&sim, &node, clock);
+    let along = [RouterHint([0xA1, 0x01]), RouterHint([0xB2, 0x02])];
+    node.ping_along(peer, &[along[0].0, along[1].0], 2);
+    assert!(asks(&node, |c| matches!(
+        c,
+        Command::Ping { peer, options }
+            if *peer == robin
+                && options.source_route.as_deref() == Some(&along[..])
+                && options.route_slack == Some(2)
+                && options.flood_hops == Some(2)
+                && options.trace
+                && options.full_source
+    )));
+    assert_eq!(node.ping_view(peer), Some(PingView::Waiting));
+    // An answer that came only once the route had failed says so.
+    node.arrive(Arrival::Pong {
+        peer: robin,
+        round_trip_ms: 3_800,
+        rx: rx(4),
+        signal: Vec::new(),
+        truncated: false,
+        flooded: true,
+    });
+    let Some(PingView::Reply(reply)) = node.ping_view(peer) else {
+        panic!("no reply");
+    };
+    assert!(reply.flooded);
+
+    // No hints is direct: an empty source route, which keeps the MAC from
+    // sending by the route it holds, and no flood past it.
+    node.ping_along(peer, &[], 0);
+    assert!(asks(&node, |c| matches!(
+        c,
+        Command::Ping { options, .. }
+            if options.source_route.as_deref() == Some(&[][..])
+                && options.flood_hops == Some(0)
+    )));
+    // A ping along a route holds nothing.
+    assert!(!asks(&node, |c| matches!(c, Command::HoldRoute { .. })));
+    assert_eq!(node.peer_route(peer).and_then(|route| route.manual), None);
 }
 
 /// A direct route shows how this device last heard the peer, and a flood
@@ -2850,6 +3081,8 @@ fn a_direct_route_has_its_reading_and_a_flood_its_unnamed_repeaters() {
         peer: robin,
         route: Some(CachedRoute::Direct),
         confirmed_age_ms: None,
+        held: None,
+        changed: false,
     });
     let shown = node.peer_route(peer).unwrap();
     assert_eq!(shown.kind, RouteKind::Direct);
@@ -2860,6 +3093,8 @@ fn a_direct_route_has_its_reading_and_a_flood_its_unnamed_repeaters() {
         peer: robin,
         route: CachedRoute::flood(3, &[]),
         confirmed_age_ms: None,
+        held: None,
+        changed: false,
     });
     let shown = node.peer_route(peer).unwrap();
     assert_eq!(shown.kind, RouteKind::Flood);
@@ -2889,6 +3124,7 @@ fn a_ping_answer_keeps_its_path_and_how_each_hop_was_heard() {
         rx: heard,
         signal: vec![HopSignal::new(-104, 38), HopSignal::POINT_TO_POINT],
         truncated: false,
+        flooded: false,
     });
     assert!(events(&node).contains(&NodeEvent::PingSettled(peer)));
     let Some(PingView::Reply(reply)) = node.ping_view(peer) else {
@@ -2940,6 +3176,7 @@ fn a_truncated_ping_answer_never_shows_a_whole_path() {
             rx: heard,
             signal: Vec::new(),
             truncated: true,
+            flooded: false,
         });
         let Some(PingView::Reply(reply)) = node.ping_view(peer) else {
             panic!("no reply");
@@ -2979,4 +3216,258 @@ fn a_repeater_is_asked_by_way_of_those_before_it() {
     };
     assert_eq!(hint, RouterHint([0xB2, 0x02]));
     assert_eq!(route, [RouterHint([0xA1, 0x01])]);
+}
+
+/// A router's listing is asked for a page at a time. A page answers only
+/// the ask waiting, a later page adds what the listing does not already
+/// hold, and an ask left unanswered says so and keeps what was read.
+#[test]
+fn a_routers_listing_is_read_a_page_at_a_time() {
+    use umsh_communicator::task::NeighborsBody;
+    use umsh_node::mac_command::{PeerRepeaterEntry, PeerRepeatersResponseBuilder};
+    let sim = device();
+    let (node, clock) = started(&sim);
+    let router = PublicKey([0x52; 32]);
+    let address = address_of(&router);
+    assert_eq!(node.listing(&address), None);
+
+    let asked = |more: bool| {
+        let sent = Cell::new(None);
+        node.ask_listing(&address, more, &[], None);
+        assert!(asks(&node, |c| match c {
+            Command::AskNeighbors {
+                router: to,
+                nonce,
+                cursor,
+                way: AskWay::Routed,
+            } if *to == router => {
+                sent.set(Some((*nonce, cursor.as_deref().map(<[u8]>::to_vec))));
+                true
+            }
+            _ => false,
+        }));
+        sent.take().unwrap()
+    };
+    let page = |nonce: u16, cursor: Option<&[u8]>, entries: &[PeerRepeaterEntry<'_>]| {
+        let mut builder = PeerRepeatersResponseBuilder::new(160).nonce(nonce).total(3);
+        if let Some(cursor) = cursor {
+            builder = builder.cursor(cursor);
+        }
+        for entry in entries {
+            assert!(builder.try_push(entry).unwrap());
+        }
+        Arrival::Neighbors {
+            router,
+            body: NeighborsBody::from_slice(&builder.build().unwrap()).unwrap(),
+        }
+    };
+    let ridge = PeerRepeaterEntry {
+        hint: &[0xAA, 0xBB, 0xCC],
+        name: Some("Ridge"),
+        rssi_snr: Some((-97, Snr::from_decibels(-7))),
+        last_heard_min: Some(12),
+        ..PeerRepeaterEntry::default()
+    };
+    let bare = PeerRepeaterEntry {
+        hint: &[0x11, 0x22],
+        ..PeerRepeaterEntry::default()
+    };
+    let last = PeerRepeaterEntry {
+        hint: &[0x33, 0x44],
+        ..PeerRepeaterEntry::default()
+    };
+
+    clock.set(10_000);
+    let (nonce, cursor) = asked(false);
+    assert_eq!(cursor, None);
+    assert_eq!(
+        node.listing(&address).unwrap().asking,
+        Some(ListingAsk::Top)
+    );
+    // A page answering another ask is not this one's.
+    node.arrive(page(nonce.wrapping_add(1), None, &[ridge]));
+    assert_eq!(node.listing(&address).unwrap().count, 0);
+    node.arrive(page(nonce, Some(&[0, 0, 2]), &[ridge, bare]));
+    let listing = node.listing(&address).unwrap();
+    assert_eq!((listing.count, listing.total), (2, Some(3)));
+    assert!(listing.more && listing.asking.is_none());
+    assert_eq!(listing.read_ms_ago, Some(0));
+    let first = node.listed(&address, 0).unwrap();
+    assert_eq!(first.name.as_str(), "Ridge");
+    assert_eq!(first.address, None);
+    assert_eq!(first.hint, [0xAA, 0xBB]);
+    assert_eq!(
+        first.signal,
+        Some(Signal {
+            rssi: -97,
+            snr: -70
+        })
+    );
+    assert_eq!(first.heard_min, Some(12));
+
+    // A cursor gone stale starts over: what is held is not held twice.
+    let (nonce, cursor) = asked(true);
+    assert_eq!(cursor.as_deref(), Some(&[0, 0, 2][..]));
+    node.arrive(page(nonce, None, &[bare, last]));
+    let listing = node.listing(&address).unwrap();
+    assert_eq!(listing.count, 3);
+    assert!(!listing.more);
+    assert_eq!(node.listed(&address, 2).unwrap().hint, [0x33, 0x44]);
+
+    // Unanswered, the ask gives up and the listing stays.
+    asked(false);
+    clock.set(40_001);
+    node.tick();
+    let listing = node.listing(&address).unwrap();
+    assert!(listing.no_answer && listing.asking.is_none());
+    assert_eq!(listing.count, 3);
+}
+
+/// A repeater's identity, named `name`, of twelve bytes at most.
+fn repeater_named(name: &str) -> NodeIdentityPayload {
+    let mut bytes = vec![
+        NodeRole::Repeater.as_byte(),
+        NodeCapabilities::REPEATER.bits(),
+        name.len() as u8,
+    ];
+    bytes.extend_from_slice(name.as_bytes());
+    NodeIdentityPayload::from_bytes(&bytes).unwrap()
+}
+
+/// Add hop asks a router along the route before it, flooding no further,
+/// with none as direct; this device's own list is read here.
+#[test]
+fn an_ask_goes_the_way_add_hop_says() {
+    let sim = device();
+    let (node, _) = started(&sim);
+    let router = PublicKey([0x52; 32]);
+    let address = address_of(&router);
+    let way = |along: Option<&[[u8; 2]]>, of: &str| {
+        node.ask_listing(of, false, &[], along);
+        let seen = RefCell::new(None);
+        assert!(asks(&node, |c| match c {
+            Command::AskNeighbors { way, .. } => {
+                *seen.borrow_mut() = Some(way.clone());
+                true
+            }
+            _ => false,
+        }));
+        seen.take().unwrap()
+    };
+    assert_eq!(
+        way(Some(&[[0xA1, 0x01]]), &address),
+        AskWay::Along([RouterHint([0xA1, 0x01])].into_iter().collect())
+    );
+    let other = address_of(&PublicKey([0x53; 32]));
+    assert_eq!(
+        way(Some(&[]), &other),
+        AskWay::Along([].into_iter().collect())
+    );
+    assert_eq!(way(None, &node.address()), AskWay::Here);
+}
+
+/// Known repeaters are those that forward, the most recently heard first,
+/// narrowed by a word of their names, less those the router lists; the
+/// peer's place in a listing is found by its address.
+#[test]
+fn known_repeaters_come_most_recent_first_less_those_listed() {
+    use umsh_communicator::task::NeighborsBody;
+    use umsh_node::mac_command::{PeerRepeaterEntry, PeerRepeatersResponseBuilder};
+    let sim = device();
+    let (node, clock) = started(&sim);
+    let heard = |key: PublicKey, identity: NodeIdentityPayload, at: u64| {
+        clock.set(at);
+        node.arrive(Arrival::Identity {
+            key,
+            identity,
+            payload: Vec::new(),
+            update: IdentityUpdate::Replace,
+            rx: rx(1),
+        });
+    };
+    let (fox, eugene, coburg) = (
+        PublicKey([0x61; 32]),
+        PublicKey([0x62; 32]),
+        PublicKey([0x63; 32]),
+    );
+    heard(fox, repeater_named("Fox Hollow"), 1_000);
+    heard(PublicKey([0x64; 32]), chatter("Robin"), 2_000);
+    heard(eugene, repeater_named("Eugene"), 3_000);
+    heard(coburg, repeater_named("Coburg"), 4_000);
+    clock.set(60_000);
+    let names_but = |query: &str, router: &str, peer: &str| -> Vec<String> {
+        (0..node.gather_known(query, router, peer))
+            .map(|at| node.known_repeater(at).unwrap().name.to_string())
+            .collect()
+    };
+    let names = |query: &str, router: &str| names_but(query, router, "");
+    assert_eq!(names("", ""), ["Coburg", "Eugene", "Fox Hollow"]);
+    assert_eq!(names("hol", ""), ["Fox Hollow"]);
+    node.gather_known("", "", "");
+    let first = node.known_repeater(0).unwrap();
+    assert_eq!(node.known_repeater(3), None);
+    assert_eq!(first.address.as_str(), address_of(&coburg));
+    assert_eq!(first.hint, [0x63, 0x63]);
+
+    // Coburg and Fox Hollow are listed by the router, and so are left out.
+    let router = PublicKey([0x52; 32]);
+    let at = address_of(&router);
+    node.ask_listing(&at, false, &[], None);
+    let nonce = Cell::new(0);
+    assert!(asks(&node, |c| match c {
+        Command::AskNeighbors { nonce: n, .. } => {
+            nonce.set(*n);
+            true
+        }
+        _ => false,
+    }));
+    let nonce = nonce.get();
+    let mut page = PeerRepeatersResponseBuilder::new(160).nonce(nonce);
+    for hint in [&[0x63, 0x63, 0x63][..], &[0x61, 0x61, 0x61]] {
+        assert!(
+            page.try_push(&PeerRepeaterEntry {
+                hint,
+                ..PeerRepeaterEntry::default()
+            })
+            .unwrap()
+        );
+    }
+    node.arrive(Arrival::Neighbors {
+        router,
+        body: NeighborsBody::from_slice(&page.build().unwrap()).unwrap(),
+    });
+    assert_eq!(names("", &at), ["Eugene"]);
+    assert_eq!(node.listed_place(&at, &address_of(&fox)), Some(1));
+    assert_eq!(node.listed_place(&at, &address_of(&eugene)), None);
+
+    // The peer of the route is left out, and the slot goes to the next.
+    assert_eq!(
+        names_but("", "", &address_of(&coburg)),
+        ["Eugene", "Fox Hollow"]
+    );
+    // Under one hint, the more recently heard stands for both.
+    let mut twin = [0x70; 32];
+    twin[..2].copy_from_slice(&[0x61, 0x61]);
+    heard(PublicKey(twin), repeater_named("Fox Twin"), 61_000);
+    assert_eq!(names("", ""), ["Fox Twin", "Coburg", "Eugene"]);
+}
+
+/// Four hexadecimal digits are also read as Base58, and a Base58 prefix
+/// too short to fix a hint is read as nothing.
+#[test]
+fn typed_text_is_read_as_the_router_hints_it_fixes() {
+    let sim = device();
+    let (node, _) = started(&sim);
+    let reads = node.hint_reads("3D9F");
+    assert!(reads.len() >= 2, "{reads:?}");
+    assert_eq!(
+        reads.last(),
+        Some(&HintRead {
+            hint: [0x3D, 0x9F],
+            hex: true
+        })
+    );
+    assert!(reads[..reads.len() - 1].iter().all(|read| !read.hex));
+    assert!(node.hint_reads("3D9").is_empty());
+    assert!(node.hint_reads("zzzz").iter().all(|read| !read.hex));
 }

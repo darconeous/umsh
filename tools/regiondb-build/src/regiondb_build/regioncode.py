@@ -12,6 +12,8 @@ recomputes that table here and compares. See
 from __future__ import annotations
 
 import hashlib
+import re
+import unicodedata
 
 # ARNCE/HAM-16 packs three characters into one 16-bit chunk, base 40, most
 # significant first. Index 0 is the absent character, so a one- or two-
@@ -32,6 +34,11 @@ REGION_NAME_MAX_LEN = 24
 
 class RegionCodeError(ValueError):
     """A string cannot be encoded as the region identity it was asked for."""
+
+
+# The white space `RegionCode::from_str` trims: Rust's `char::is_ascii_whitespace`.
+ASCII_WHITESPACE = " \t\n\x0c\r"
+HEX_DIGITS = "0123456789abcdefABCDEF"
 
 
 def is_short_code_form(text: str) -> bool:
@@ -65,7 +72,7 @@ def from_short_code(code: str) -> int:
 def transform_letter_chunk(encoded: int) -> int:
     """Move an all-letter ARNCE chunk out of the space short codes own.
 
-    Ported verbatim from the protocol spec (`docs/protocol/src/packet-options.md`).
+    Ported verbatim from the protocol spec (`docs/protocol-legacy/src/packet-options.md`).
     """
     a = encoded // 1600
     b = (encoded // 40) % 40
@@ -95,9 +102,14 @@ def fold(name: str) -> str:
     return "".join(chr(ord(c) + 32) if "A" <= c <= "Z" else c for c in name)
 
 
+def collapse_whitespace(name: str) -> str:
+    """Replace each run of ASCII white space with one space."""
+    return re.sub(f"[{re.escape(ASCII_WHITESPACE)}]+", " ", name)
+
+
 def from_name(name: str) -> int:
     """Hash a human-readable region name into its 16-bit code."""
-    digest = hashlib.sha256(fold(name).encode("utf-8")).digest()
+    digest = hashlib.sha256(fold(collapse_whitespace(name)).encode("utf-8")).digest()
     return transform_letter_chunk(int.from_bytes(digest[:2], "big"))
 
 
@@ -106,11 +118,16 @@ def from_string(text: str) -> int:
 
     Short-code form wins unconditionally, matching `RegionCode::from_str`.
     """
-    text = text.strip()
+    text = text.strip(ASCII_WHITESPACE)
     if not text:
         raise RegionCodeError("region name is empty")
-    if len(text.encode("utf-8")) > REGION_NAME_MAX_LEN:
+    if any(unicodedata.category(c) == "Cc" and c not in ASCII_WHITESPACE for c in text):
+        raise RegionCodeError(f"region name {text!r} contains a control character")
+    if len(collapse_whitespace(text).encode("utf-8")) > REGION_NAME_MAX_LEN:
         raise RegionCodeError(f"region name {text!r} exceeds {REGION_NAME_MAX_LEN} bytes UTF-8")
+    literal = text[2:]
+    if text[:2] in ("0x", "0X") and len(literal) == 4 and all(c in HEX_DIGITS for c in literal):
+        return int(literal, 16)
     if is_short_code_form(text):
         return from_short_code(text)
     return from_name(text)

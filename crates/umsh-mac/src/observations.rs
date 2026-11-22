@@ -9,7 +9,7 @@
 //! this node teaches nothing about a peer, and a frame overheard on the air
 //! never reaches the host, but both prove a neighboring repeater was on the
 //! air. That is what a
-//! [Peer Repeaters Response](../../docs/protocol/src/mac-commands.md) reports
+//! [Peer Repeaters Response](../../docs/protocol-legacy/src/mac-commands.md) reports
 //! about the hops it names.
 //!
 //! A neighbor need not be on the air at all: a host attached over a

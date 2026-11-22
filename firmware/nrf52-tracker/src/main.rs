@@ -6963,13 +6963,13 @@ mod firmware {
         let boot_identity_keys = match stored_identity {
             proto_store::StoredIdentity::Keys { secret, public } => Some((secret, public)),
             proto_store::StoredIdentity::Absent | proto_store::StoredIdentity::Unparseable => {
-                // Redrawn while the hint filter matches its key; the loop is
-                // written out because the TRNG is async.
+                // Redrawn until `admits_identity` accepts its key; the loop
+                // is written out because the TRNG is async.
                 let mut secret = [0u8; 32];
                 let (public, record) = loop {
                     rng.fill_bytes(&mut secret).await;
                     let (public, record) = driver::device_identity_record(&secret);
-                    if !umsh_core::hint_filter::is_avoided(&umsh_core::PublicKey(public)) {
+                    if umsh_core::hint_filter::admits_identity(&umsh_core::PublicKey(public)) {
                         break (public, record);
                     }
                 };

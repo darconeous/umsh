@@ -575,11 +575,30 @@ pub fn positions<H: Harness>(harness: &mut H) {
 pub fn delivery<H: Harness>(harness: &mut H) {
     let mut store = harness.fresh();
     let mut rig = Rig::new();
-    let (_, id) = rig.say(&mut store, direct(), "hello");
+    let (handle, id) = rig.say(&mut store, direct(), "hello");
     assert_eq!(
         record(&store, id).delivery.state(None),
         Some(DeliveryState::Acked)
     );
+    assert!(!record(&store, id).delivery.flooded());
+
+    // An acknowledgment that answered the flood after a miss on the route
+    // is kept as such.
+    let resolve = |asked| (asked == handle).then_some(id);
+    let mut batch = Batch::new(None, &resolve);
+    batch.push_chat(
+        &umsh_text::chat::ChatOutput::Delivery(umsh_text::chat::Delivery {
+            handle,
+            fragment: None,
+            fragments: 1,
+            state: DeliveryState::Acked,
+            via_flood: true,
+        }),
+        None,
+    );
+    store.commit(&batch).unwrap();
+    harness.power_on(&mut store);
+    assert!(record(&store, id).delivery.flooded());
 
     // Whether it went under forward secrecy is kept, and kept again.
     let secrecy = |store: &mut H::Store, forward_secret| {

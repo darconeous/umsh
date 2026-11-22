@@ -50,7 +50,7 @@ in [Protocol changes](#protocol-changes) so they can be reviewed as a unit.
 
 ### Extended advertising carries whole frames
 
-The existing [BLE As A Local Bearer](protocol/src/ulcp.md#ble-as-a-local-bearer)
+The existing [BLE As A Local Bearer](protocol-legacy/src/ulcp.md#ble-as-a-local-bearer)
 text treats advertising as too small for full frames. That is true of legacy
 advertising and not of BLE 5 extended advertising. A non-connectable,
 non-scannable extended advertising set puts a short `ADV_EXT_IND` on the three
@@ -71,7 +71,7 @@ The bearer is never the throughput bottleneck; LoRa airtime is.
 
 ### A crossing is already defined
 
-The [internet bridge](protocol/src/internet-bridging.md) already defines what
+The [internet bridge](protocol-legacy/src/internet-bridging.md) already defines what
 it means to join two meshes through a non-LoRa medium:
 
 - A crossing is two repeater hops: the ingress node forwards, the egress node
@@ -80,7 +80,7 @@ it means to join two meshes through a non-LoRa medium:
 - Egress receives it as an unmeasured backhaul reception.
 - The participants' duplicate caches, not the medium, stop circulation.
 
-The integrated client ([ulcp-bridge.md](protocol/src/ulcp-bridge.md#integrated-clients),
+The integrated client ([ulcp-bridge.md](protocol-legacy/src/ulcp-bridge.md#integrated-clients),
 `firmware-esp32/firmware/esp32-tracker/src/bridge.rs`) attaches to the radio
 multiplexer through `BridgePort` (`crates/umsh-ulcp-runtime/src/radio_mux.rs:98`).
 Ingress goes to the node as `RxOrigin::Backhaul`, and egress is the node's
@@ -232,7 +232,7 @@ X, and the transmission is advertised to BLE.
 All of the following are protocol-level, are new, and need spec text before
 code lands.
 
-### P1. BLE bearer binding (new chapter `docs/protocol/src/ble-bearer.md`)
+### P1. BLE bearer binding (new chapter `docs/protocol-legacy/src/ble-bearer.md`)
 
 **Advertising set.**
 
@@ -261,7 +261,7 @@ code lands.
   - Manufacturer Specific Data (`0xFF`) with an assigned company ID, or
   - Service Data with a 16-bit UUID (`0x16`), or
   - Service Data with a 128-bit UUID (`0x21`) from the UMSH base, slot
-    `0x0100` ([UUID Allocation](protocol/src/ulcp-ble.md#uuid-allocation)).
+    `0x0100` ([UUID Allocation](protocol-legacy/src/ulcp-ble.md#uuid-allocation)).
 - IDENTIFIER uses BLE's own little-endian encoding; it is a Bluetooth field,
   not a UMSH one.
 - The **bearer payload** is the concatenation of the DATA of every bearer AD
@@ -316,7 +316,7 @@ must support AdvData up to the two-structure maximum.
   enter its node, and **SHOULD** expose the bound (proposed default: 30
   frames per minute, token bucket). Frames over the limit are dropped and
   counted. This is the BLE analog of the mandatory host-interface rate limit
-  ([internet-bridging.md](protocol/src/internet-bridging.md#host-interfaces)).
+  ([internet-bridging.md](protocol-legacy/src/internet-bridging.md#host-interfaces)).
   BLE injection is cheap, and every admitted frame may cost LoRa airtime.
 - **Duplicates:** repeated copies of one frame (other advertising events,
   other bridges' copies) are ordinary duplicates for the node's dup cache.
@@ -348,7 +348,7 @@ must support AdvData up to the two-structure maximum.
   - Only a copy received over the air may defer or suppress a pending
     forward.
   - Only such a copy may satisfy
-    [forwarding confirmation](protocol/src/repeater-operation.md#forwarding-confirmation).
+    [forwarding confirmation](protocol-legacy/src/repeater-operation.md#forwarding-confirmation).
   - Receptions from a bearer or a backhaul say nothing about who heard the
     radio channel.
   - This also corrects the internet bridge's co-located-client case. There,

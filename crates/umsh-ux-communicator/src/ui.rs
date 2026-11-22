@@ -45,6 +45,7 @@ mod lock;
 mod lora;
 mod member;
 mod nearby;
+mod neighbors;
 mod path;
 mod peer;
 mod peers;
@@ -52,10 +53,12 @@ mod ping;
 mod profile;
 mod rail;
 mod route;
+mod route_edit;
 mod setting;
 mod setup;
 mod share;
 mod share_contact;
+mod sheet;
 mod sounds;
 mod statistics;
 mod status;
@@ -188,6 +191,7 @@ fn screens(state: &State) -> impl View<Rgb565, State> + use<> {
             Screen::Peer { .. }
             | Screen::ShareContact { .. }
             | Screen::Route { .. }
+            | Screen::Neighbors { .. }
             | Screen::Ping { .. }
             | Screen::Channel { .. } => peer_or_channel(state),
             Screen::Device { page, .. } => device::page(state, page),
@@ -220,6 +224,8 @@ fn peer_or_channel(state: &State) -> impl View<Rgb565, State> + use<> {
         Screen::ShareContact { peer, .. } => state
             .peer(*peer)
             .map(|summary| share_contact::view(state, &summary.name)),
+        // The route editor and Neighbors share one tree.
+        Screen::Route { edit: Some(_), .. } | Screen::Neighbors { .. } => sheet::view(state),
         Screen::Route { peer, .. } => state
             .peer(*peer)
             .map(|summary| route::view(state, *peer, &summary)),

@@ -5,7 +5,7 @@
 //! that radio and becoming a node: running a host MAC over the
 //! attachment, and speaking the same ULCP grammar to the far end,
 //! carried by the Node Management binding
-//! (`docs/protocol/src/app-node-management.md`).
+//! (`docs/protocol-legacy/src/app-node-management.md`).
 //!
 //! Two identities are in play and it is worth keeping them apart. The
 //! attached radio has its own device identity, which `identity` shows.

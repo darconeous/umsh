@@ -1,0 +1,1 @@
+{{#registry payload-types}}

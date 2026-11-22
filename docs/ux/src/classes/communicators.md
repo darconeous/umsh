@@ -125,6 +125,37 @@ and the next message floods.
 trip and the path it took, with how each hop was heard. **Ping again** keeps
 the earlier results below.
 
+### Manual route
+
+**Edit route** turns the Route screen into an editor in place, as the
+[manual route mockups](../hardware/mockups/communicator-manual-route.svg)
+draw it. A press on a hop offers Move or Remove; a moved hop follows the wheel
+until it is pressed down. **Then flood** sets how far a message floods past the
+last repeater, and **Hold for** how long the route is held. **Ping along
+route** tries the route as drawn without keeping it. **Save** holds it;
+leaving with changes asks to Save, Discard changes, or Keep editing.
+
+A held route is kept ahead of any the mesh learns, until its time runs out,
+**Clear manual route**, or a restart. The Route screen shows how long it has
+left, and the conversation's header reads **Manual**. A message the held
+route missed and the flood carried reads **Delivered · flooded**; after two in
+a row, the conversation offers the route the floods taught in its place:
+**Use learned route** or **Keep manual route**.
+
+**Add hop** lists the repeaters the previous hop hears, asked along the route
+so far, then known repeaters. Typing filters the list; a few Base58
+characters, or four hex digits, also offer the hints they could be. Choosing a
+repeater adds it and lists what it hears in turn, until **Finish here** at the
+peer.
+
+### Neighbors
+
+The **Neighbors** row of a node that forwards lists the repeaters it hears,
+with how each was heard and when. A repeater unheard for hours fades, and one
+reached over a bridge reads **Bridged**. A press opens a known repeater, or
+asks who holds a bare hint. **Refresh** asks again, and **Load more** fetches
+the rest of a long list.
+
 ## Keyboard and auxiliary controls
 
 Use hardware navigation controls for focus and scrolling; use the keyboard for

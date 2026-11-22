@@ -124,7 +124,9 @@ jobs:
           mdbook-version: "latest"
 
       - name: mdbook build
-        run: mdbook build docs/protocol/
+        run: |
+          mdbook build docs/protocol-legacy/
+          mdbook build docs/protocol/
 
       # run_tests.lua needs Lua 5.3+ and stubs the Wireshark API, so no
       # Wireshark install is required. The crypto section self-skips when

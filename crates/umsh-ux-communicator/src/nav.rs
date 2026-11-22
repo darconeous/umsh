@@ -16,10 +16,11 @@ use crate::keyboard::Field;
 use crate::model::Directions;
 use crate::model::{
     AUTO_LOCK_CHOICES, BANDWIDTHS, CODING_RATES, ChannelAccess, ChannelEntry, ChatId, ChatKind,
-    ChatSummary, Details, Exchange, Found, FoundKind, Invite, KeyboardSettings, LoraChoice,
-    MAX_FOUND, MAX_PATH, MAX_REPEATERS, Member, MessageId, NearbyId, PeerDetail, PeerEntry, PeerId,
-    PingView, Profile, RadioSettings, Reaction, Repeater, SPREADING_FACTORS, Section, Shareable,
-    State, TRANSMIT_LIMITS, TRANSMIT_POWER, word_match,
+    ChatSummary, Details, Exchange, Found, FoundKind, HintRead, Invite, KeyboardSettings, Listing,
+    LoraChoice, MAX_FOUND, MAX_HINT_READS, MAX_LISTED, MAX_PATH, MAX_REPEATERS, MAX_SCREENS,
+    Member, MessageId, NearbyId, PeerDetail, PeerEntry, PeerId, PingView, Profile, RadioSettings,
+    Reaction, Repeater, RouteKind, SPREADING_FACTORS, Section, Shareable, State, TRANSMIT_LIMITS,
+    TRANSMIT_POWER, word_match,
 };
 use crate::ui::GammaTest;
 pub use crate::wifi_settings::{NetworkText, PasswordText, WifiPage};
@@ -87,9 +88,15 @@ pub mod keys {
     const ZONE_ROW: u32 = 0x1C00_0000;
     const NEARBY: u32 = 0x2000_0000;
     const AUTO_LOCK_ROW: u32 = 0x2400_0000;
+    const NEIGHBOR: u32 = 0x2200_0000;
+    const SHEET: u32 = 0x2700_0000;
     const PATH: u32 = 0x2B00_0000;
     const WIFI_ROW: u32 = 0x2E00_0000;
     const LORA_CHOICE_ROW: u32 = 0x2F00_0000;
+    /// Add hop's known repeaters, then the router hints typed text fixes.
+    const PICK: u32 = 0x3000_0000;
+    const PICK_HINT: u32 = 0x100;
+    const PICK_KNOWN: u32 = 0x1_0000;
     /// Nearby networks' rows, after the saved ones'.
     const WIFI_NEARBY: u32 = 0x100;
 
@@ -134,6 +141,29 @@ pub mod keys {
     pub const ROUTE_PING: FocusKey = FocusKey(0x2C00_0001);
     /// The Ping screen's Ping again.
     pub const PING_AGAIN: FocusKey = FocusKey(0x2C00_0002);
+    /// The Route screen's Edit route, and the editor's rows after its
+    /// hops, which are [`path`]'s.
+    pub const ROUTE_EDIT: FocusKey = FocusKey(0x2C00_0003);
+    pub const ROUTE_FLOOD: FocusKey = FocusKey(0x2C00_0004);
+    pub const ROUTE_PING_ALONG: FocusKey = FocusKey(0x2C00_0005);
+    pub const ROUTE_HOLD: FocusKey = FocusKey(0x2C00_0006);
+    pub const ROUTE_SAVE: FocusKey = FocusKey(0x2C00_0007);
+    /// A hop's menu in the editor.
+    pub const HOP_MOVE: FocusKey = FocusKey(0x2C00_0008);
+    pub const HOP_REMOVE: FocusKey = FocusKey(0x2C00_0009);
+    /// What leaving the editor with changes asks.
+    pub const LEAVE_SAVE: FocusKey = FocusKey(0x2C00_000A);
+    pub const LEAVE_DISCARD: FocusKey = FocusKey(0x2C00_000B);
+    pub const LEAVE_KEEP: FocusKey = FocusKey(0x2C00_000C);
+    /// The editor's Add hop, and Add hop's field while text is typed.
+    pub const ROUTE_ADD: FocusKey = FocusKey(0x2C00_000D);
+    pub const PICK_FIELD: FocusKey = FocusKey(0x2C00_000E);
+    /// Neighbors on a repeater's page, and Load more and Refresh under
+    /// the list.
+    pub const MEMBER_NEIGHBORS: FocusKey = FocusKey(0x0700_0003);
+    pub const PEER_NEIGHBORS: FocusKey = FocusKey(0x0C00_0002);
+    pub const NEIGHBORS_MORE: FocusKey = FocusKey(0x2500_0000);
+    pub const NEIGHBORS_REFRESH: FocusKey = FocusKey(0x2500_0001);
     /// A chat's menu, which holding the wheel on its row opens: its peer
     /// or channel, and Delete or Leave; and their confirmation.
     pub const CHAT_SHOW: FocusKey = FocusKey(0x1D00_0000);
@@ -311,9 +341,8 @@ pub mod keys {
         match key {
             COMPOSER => Some(Field::Prose),
             NAME_FIELD | JOIN_NAME | IDENTITY_NAME | CHANNEL_NAME | PEER_ALIAS => Some(Field::Name),
-            FIND_FIELD | PEER_FIELD | CHANNEL_FIELD | WIFI_PASSWORD_FIELD | WIFI_NAME_FIELD => {
-                Some(Field::Literal)
-            }
+            FIND_FIELD | PEER_FIELD | CHANNEL_FIELD | WIFI_PASSWORD_FIELD | WIFI_NAME_FIELD
+            | PICK_FIELD => Some(Field::Literal),
             POWER_FIELD | FREQUENCY_FIELD => Some(Field::Number),
             _ => None,
         }
@@ -329,6 +358,9 @@ pub mod keys {
     /// The warning before the first message sent on `EMERGENCY`.
     pub const EMERGENCY_CERTIFY: FocusKey = FocusKey(0x1900_0005);
     pub const EMERGENCY_CANCEL: FocusKey = FocusKey(0x1900_0006);
+    /// The learned route, offered in place of one held by hand.
+    pub const LEARNED_USE: FocusKey = FocusKey(0x1900_0007);
+    pub const LEARNED_KEEP: FocusKey = FocusKey(0x1900_0008);
     /// Shut down's confirmation.
     pub const SHUT_DOWN_CONFIRM: FocusKey = FocusKey(0x1600_0000);
     pub const SHUT_DOWN_CANCEL: FocusKey = FocusKey(0x1600_0001);
@@ -375,6 +407,32 @@ pub mod keys {
     #[must_use]
     pub const fn rail(section: Section) -> FocusKey {
         FocusKey(RAIL | section as u32)
+    }
+
+    /// A repeater a router reports hearing, by its place in the listing.
+    #[must_use]
+    pub const fn neighbor(index: usize) -> FocusKey {
+        FocusKey(NEIGHBOR | (index as u32 & !KIND))
+    }
+
+    /// A row of the route editor or of Neighbors that focus passes over,
+    /// by its place.
+    #[must_use]
+    pub const fn sheet(index: usize) -> FocusKey {
+        FocusKey(SHEET | (index as u32 & !KIND))
+    }
+
+    /// One of the known repeaters Add hop offers, by its router hint:
+    /// their order changes as they are heard, and focus stays with each.
+    #[must_use]
+    pub const fn known(hint: [u8; 2]) -> FocusKey {
+        FocusKey(PICK | PICK_KNOWN | u16::from_be_bytes(hint) as u32)
+    }
+
+    /// One of the router hints typed into Add hop fixes, by its place.
+    #[must_use]
+    pub const fn hint_read(index: usize) -> FocusKey {
+        FocusKey(PICK | PICK_HINT | (index as u32 & 0xFF))
     }
 
     /// One of Find's results, by its place among them.
@@ -544,7 +602,8 @@ impl ChatMenu {
     }
 }
 
-/// What is open over a message not yet sent, or not confirmed.
+/// What is open over the conversation: about a message not yet sent, or
+/// not confirmed, or about the route its messages go by.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Unsent {
     /// How to send again one that was to go under forward secrecy.
@@ -554,6 +613,9 @@ pub enum Unsent {
     /// The warning before the first thing sent on `EMERGENCY` since the
     /// device started, asking to be certified, with what waits on it.
     CertifyEmergency { then: Certified },
+    /// The route learned while the peer's was held by hand, offered in
+    /// its place.
+    Learned,
 }
 
 /// What waits on `EMERGENCY`'s warning: anything that would go on the air
@@ -580,7 +642,7 @@ impl Unsent {
     pub const fn message(self) -> Option<MessageId> {
         match self {
             Self::Resend(message) | Self::ConfirmDelete(message) => Some(message),
-            Self::CertifyEmergency { .. } => None,
+            Self::CertifyEmergency { .. } | Self::Learned => None,
         }
     }
 }
@@ -738,9 +800,21 @@ pub enum Screen {
     /// The chats a saved peer's contact can be sent to.
     ShareContact { peer: PeerId, focus: FocusState },
     /// The route the next message to a saved peer takes, as the node holds
-    /// it.
+    /// it; or, while `edit` is one, a route being chosen in its place.
     Route {
         peer: PeerId,
+        edit: Option<RouteDraft>,
+        asked: Asked,
+        focus: FocusState,
+    },
+    /// The repeaters the router at `router` reports hearing, as last read;
+    /// or, while `pick` is one, Add hop: what the last hop of the route
+    /// being edited beneath reports hearing, to choose the next from. An
+    /// empty `router` is a last hop known only by its hint, which cannot
+    /// be asked.
+    Neighbors {
+        router: String<44>,
+        pick: Option<AddHop>,
         asked: Asked,
         focus: FocusState,
     },
@@ -787,6 +861,365 @@ pub enum Screen {
     },
 }
 
+// The navigation stack holds `MAX_SCREENS` of these, so a variant that
+// outgrows the rest costs every slot. Raise a bound only on purpose.
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(size_of::<Screen>() <= 1016);
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(size_of::<Screen>() <= 1192);
+
+/// How long a route chosen by hand can be held, in milliseconds, and
+/// which of them a new one starts at.
+pub const HOLD_CHOICES: [u32; 5] = [
+    30 * 60_000,
+    60 * 60_000,
+    4 * 60 * 60_000,
+    12 * 60 * 60_000,
+    24 * 60 * 60_000,
+];
+const HOLD_DEFAULT: u8 = 1;
+/// The farthest a route chosen by hand floods past its last hop.
+pub const MAX_FLOOD: u8 = 15;
+
+/// A route being chosen by hand: its hops, the repeater nearest this
+/// device first, how far it floods past them, and how long it is to be
+/// held. Nothing reaches the node until it is saved.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RouteDraft {
+    hints: [[u8; 2]; MAX_PATH],
+    len: u8,
+    pub flood: u8,
+    /// Which of [`HOLD_CHOICES`].
+    pub hold: u8,
+    /// The hop being moved: where it is now, and where it was.
+    pub lifted: Option<(u8, u8)>,
+    /// The value turning changes.
+    pub adjusting: Option<Adjust>,
+    /// What is open over the editor.
+    pub over: Option<EditOver>,
+    /// It differs from what it started as.
+    pub dirty: bool,
+    /// A ping went along it as it stands, and its row says how it went.
+    pub pinged: bool,
+}
+
+/// A value of a route being chosen that turning changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Adjust {
+    Flood,
+    Hold,
+}
+
+/// A row of the route editor, from the top.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditRow {
+    You,
+    /// The hop at this place, the one nearest this device first.
+    Hop(usize),
+    /// Add hop, while the route has room for one.
+    Add,
+    Flood,
+    Peer,
+    Ping,
+    Hold,
+    Save,
+}
+
+/// A row of a router's Neighbors, from the top.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ListRow {
+    /// When the listing was read, or that it never was.
+    Read,
+    /// The repeater at this place in the listing.
+    Neighbor(usize),
+    /// That the router listed nobody, or did not answer.
+    Said,
+    More,
+    Refresh,
+}
+
+/// The row at `index` of a router's Neighbors, `listing` as last read.
+#[must_use]
+pub fn listing_row(listing: Option<&Listing>, index: usize) -> Option<ListRow> {
+    let count = listing.map_or(0, |listing| usize::from(listing.count));
+    let read = listing.is_some_and(|listing| listing.read_ms_ago.is_some());
+    let no_answer = listing.is_some_and(|listing| listing.no_answer);
+    let asking = listing.is_some_and(|listing| listing.asking.is_some());
+    let said = no_answer || (read && count == 0 && !asking);
+    let more = listing.is_some_and(|listing| listing.more);
+    let rows = [
+        (true, ListRow::Read),
+        (said, ListRow::Said),
+        (more, ListRow::More),
+        (true, ListRow::Refresh),
+    ];
+    match index {
+        0 => Some(ListRow::Read),
+        i if i <= count => Some(ListRow::Neighbor(i - 1)),
+        i => rows[1..]
+            .iter()
+            .filter(|(shown, _)| *shown)
+            .nth(i - count - 1)
+            .map(|&(_, row)| row),
+    }
+}
+
+/// How many rows a router's Neighbors has, `listing` as last read.
+#[must_use]
+pub fn listing_rows(listing: Option<&Listing>) -> usize {
+    (0..)
+        .take_while(|&i| listing_row(listing, i).is_some())
+        .count()
+}
+
+/// The most rows the route editor, Neighbors, or Add hop lays out: the
+/// editor's with every hop.
+pub const SHEET_ROWS: usize = MAX_PATH + 6;
+const _: () = assert!(MAX_LISTED + 4 <= SHEET_ROWS);
+
+/// Add hop: the hop after the last of the route being edited beneath it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AddHop {
+    /// The peer the route goes to, beside whom it can end, and their
+    /// address.
+    pub peer: PeerId,
+    pub address: String<44>,
+    /// What the rows are narrowed by, as it is typed.
+    pub find: String<16>,
+    /// The top of the listing was asked for, and focus goes to its first
+    /// row when it comes.
+    pub landing: bool,
+}
+
+/// A row of Add hop, from the top.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PickRow {
+    /// The field, while text is typed: Enter adds the row under it.
+    Field,
+    /// Who reported the repeaters under it, and when.
+    Heard,
+    /// The repeater at this place in the listing.
+    Neighbor(u8),
+    /// That the router listed nobody, or did not answer.
+    Said,
+    More,
+    Refresh,
+    /// The label over the known repeaters.
+    Known,
+    /// The known repeater at this place of the node's last gathering,
+    /// and its router hint.
+    KnownAt(u8, [u8; 2]),
+    /// The label over the router hints typed text fixes.
+    Hints,
+    Hint(u8),
+}
+
+/// Add hop's rows, as they stand: the field while text is typed, then what
+/// the last hop reports hearing, the peer first, known repeaters, and the
+/// router hints typed text fixes, each narrowed by what is typed. Past [`SHEET_ROWS`], the last
+/// are left out.
+#[derive(Clone)]
+pub struct PickRows {
+    pub listing: Option<Listing>,
+    pub hints: heapless::Vec<HintRead, MAX_HINT_READS>,
+    /// The peer's place in the listing, whose row is pinned to the top.
+    pub peer_at: Option<u8>,
+    /// How many rows match what is typed; `None` while nothing is.
+    pub found: Option<usize>,
+    rows: heapless::Vec<PickRow, SHEET_ROWS>,
+    /// The rows already on the route, by place: focus passes over them.
+    in_path: u32,
+}
+
+impl PickRows {
+    #[must_use]
+    pub fn row(&self, index: usize) -> Option<PickRow> {
+        self.rows.get(index).copied()
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.rows.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.rows.is_empty()
+    }
+
+    /// Whether the row at `index` is already on the route.
+    #[must_use]
+    pub fn in_path(&self, index: usize) -> bool {
+        index < 32 && self.in_path & (1 << index) != 0
+    }
+
+    /// The row at `index`'s key, and whether focus lands on it: never on
+    /// a row already on the route, which a press would not add.
+    #[must_use]
+    pub fn key(&self, index: usize) -> (FocusKey, bool) {
+        if self.in_path(index) {
+            return (keys::sheet(index), false);
+        }
+        match self.row(index) {
+            Some(PickRow::Field) => (keys::PICK_FIELD, true),
+            Some(PickRow::Neighbor(at)) => (keys::neighbor(usize::from(at)), true),
+            Some(PickRow::More) => (keys::NEIGHBORS_MORE, true),
+            Some(PickRow::Refresh) => (keys::NEIGHBORS_REFRESH, true),
+            Some(PickRow::KnownAt(_, hint)) => (keys::known(hint), true),
+            Some(PickRow::Hint(at)) => (keys::hint_read(usize::from(at)), true),
+            _ => (keys::sheet(index), false),
+        }
+    }
+
+    /// The first row focus lands on.
+    #[must_use]
+    pub fn first_key(&self) -> Option<FocusKey> {
+        (0..self.len())
+            .map(|index| self.key(index))
+            .find(|&(_, focusable)| focusable)
+            .map(|(key, _)| key)
+    }
+
+    /// Where the row with `key` is now, given that it was at `index`.
+    #[must_use]
+    pub fn place(&self, index: usize, key: FocusKey) -> Option<usize> {
+        if self.key(index).0 == key {
+            return Some(index);
+        }
+        (0..self.len()).find(|&at| self.key(at).0 == key)
+    }
+
+    /// The top row past the field, which Enter in it adds.
+    #[must_use]
+    pub fn top(&self) -> Option<usize> {
+        (0..self.len()).find(|&index| self.row(index) != Some(PickRow::Field) && self.key(index).1)
+    }
+}
+
+/// What is open over the route editor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditOver {
+    /// A hop's menu: Move and Remove.
+    Hop(u8),
+    /// Leaving with changes: Save, Discard changes, or Keep editing.
+    Leave,
+}
+
+impl RouteDraft {
+    /// A draft of `hints`, flooding `flood` past them.
+    #[must_use]
+    pub fn new(hints: &[[u8; 2]], flood: u8) -> Self {
+        let mut draft = Self {
+            hints: [[0; 2]; MAX_PATH],
+            len: 0,
+            flood: flood.min(MAX_FLOOD),
+            hold: HOLD_DEFAULT,
+            lifted: None,
+            adjusting: None,
+            over: None,
+            dirty: false,
+            pinged: false,
+        };
+        for &hint in hints.iter().take(MAX_PATH) {
+            draft.hints[usize::from(draft.len)] = hint;
+            draft.len += 1;
+        }
+        draft
+    }
+
+    /// Its hops, the one nearest this device first.
+    #[must_use]
+    pub fn hints(&self) -> &[[u8; 2]] {
+        &self.hints[..usize::from(self.len)]
+    }
+
+    /// The editor's row at `index`.
+    #[must_use]
+    pub fn row(&self, index: usize) -> Option<EditRow> {
+        let hops = usize::from(self.len);
+        let add = usize::from(self.has_room());
+        Some(match index {
+            0 => EditRow::You,
+            i if i <= hops => EditRow::Hop(i - 1),
+            i if i <= hops + add => EditRow::Add,
+            i => match i - hops - add {
+                1 => EditRow::Flood,
+                2 => EditRow::Peer,
+                3 => EditRow::Ping,
+                4 => EditRow::Hold,
+                5 => EditRow::Save,
+                _ => return None,
+            },
+        })
+    }
+
+    /// How many rows the editor has.
+    #[must_use]
+    pub fn rows(&self) -> usize {
+        usize::from(self.len) + usize::from(self.has_room()) + 6
+    }
+
+    /// It can take another hop.
+    #[must_use]
+    pub fn has_room(&self) -> bool {
+        usize::from(self.len) < MAX_PATH
+    }
+
+    /// Adds `hint` after the last hop.
+    fn push(&mut self, hint: [u8; 2]) {
+        if self.has_room() {
+            self.hints[usize::from(self.len)] = hint;
+            self.len += 1;
+            self.changed();
+        }
+    }
+
+    /// How long it is to be held, in milliseconds.
+    #[must_use]
+    pub fn hold_ms(&self) -> u32 {
+        HOLD_CHOICES[usize::from(self.hold).min(HOLD_CHOICES.len() - 1)]
+    }
+
+    /// Puts a lifted hop down where it is, returning where that is.
+    fn put_down(&mut self) -> Option<u8> {
+        let (now, from) = self.lifted.take()?;
+        if now != from {
+            self.changed();
+        }
+        Some(now)
+    }
+
+    /// It changed: what was pinged along it no longer is it.
+    fn changed(&mut self) {
+        self.dirty = true;
+        self.pinged = false;
+    }
+
+    /// Takes the hop at `index` out.
+    fn remove(&mut self, index: usize) {
+        let len = usize::from(self.len);
+        if index >= len {
+            return;
+        }
+        self.hints.copy_within(index + 1..len, index);
+        self.len -= 1;
+        self.changed();
+    }
+
+    /// Moves the hop at `from` to `to`, the others closing up around it.
+    fn shift(&mut self, from: usize, to: usize) {
+        let len = usize::from(self.len);
+        if from >= len || to >= len || from == to {
+            return;
+        }
+        if from < to {
+            self.hints[from..=to].rotate_left(1);
+        } else {
+            self.hints[to..=from].rotate_right(1);
+        }
+    }
+}
+
 impl Screen {
     /// The Chats screen, its list focused.
     #[must_use]
@@ -814,6 +1247,7 @@ impl Screen {
             | Self::Peer { focus, .. }
             | Self::ShareContact { focus, .. }
             | Self::Route { focus, .. }
+            | Self::Neighbors { focus, .. }
             | Self::Ping { focus, .. }
             | Self::Channel { focus, .. }
             | Self::Device { focus, .. }
@@ -844,7 +1278,11 @@ impl Screen {
             Self::Peer { peer, .. }
             | Self::ShareContact { peer, .. }
             | Self::Route { peer, .. }
-            | Self::Ping { peer, .. } => Some(*peer),
+            | Self::Ping { peer, .. }
+            | Self::Neighbors {
+                pick: Some(AddHop { peer, .. }),
+                ..
+            } => Some(*peer),
             _ => None,
         }
     }
@@ -852,18 +1290,20 @@ impl Screen {
     /// The unknown repeaters this screen has asked who they are.
     fn asked(&self) -> Option<&Asked> {
         match self {
-            Self::Details { asked, .. } | Self::Route { asked, .. } | Self::Ping { asked, .. } => {
-                Some(asked)
-            }
+            Self::Details { asked, .. }
+            | Self::Route { asked, .. }
+            | Self::Neighbors { asked, .. }
+            | Self::Ping { asked, .. } => Some(asked),
             _ => None,
         }
     }
 
     fn asked_mut(&mut self) -> Option<&mut Asked> {
         match self {
-            Self::Details { asked, .. } | Self::Route { asked, .. } | Self::Ping { asked, .. } => {
-                Some(asked)
-            }
+            Self::Details { asked, .. }
+            | Self::Route { asked, .. }
+            | Self::Neighbors { asked, .. }
+            | Self::Ping { asked, .. } => Some(asked),
             _ => None,
         }
     }
@@ -881,6 +1321,7 @@ impl Screen {
             | Self::Peer { focus, .. }
             | Self::ShareContact { focus, .. }
             | Self::Route { focus, .. }
+            | Self::Neighbors { focus, .. }
             | Self::Ping { focus, .. }
             | Self::Channel { focus, .. }
             | Self::Device { focus, .. }
@@ -1102,6 +1543,7 @@ impl State {
             reply: None,
             unsent: None,
         });
+        self.refresh_learned_route(false);
     }
 
     /// Opens the actions menu of `message` in the conversation shown, with
@@ -1154,6 +1596,7 @@ impl State {
     /// Shows `member`, known by address: their page when they are saved,
     /// else their sheet on Message.
     pub(crate) fn show_known(&mut self, member: Member) {
+        self.room_for_screen();
         if member.saved
             && let Some(peer) = member
                 .address
@@ -1309,6 +1752,115 @@ impl State {
                 true
             }
         }
+    }
+
+    /// Whether something is under way over the conversation shown that an
+    /// offer opening now would cut into: a menu, a card other than the
+    /// learned route's offer, the picker, the wheel or a finger down, or
+    /// the lock screen.
+    pub(crate) fn conversation_busy(&self) -> bool {
+        matches!(
+            self.screens.last(),
+            Some(Screen::Conversation { actions, unsent, .. })
+                if actions.is_some()
+                    || unsent.is_some_and(|over| over != Unsent::Learned)
+                    || self.picker.is_some()
+                    || self.press.is_some()
+                    || self.touch.is_some()
+                    || self.lock.locked
+        )
+    }
+
+    /// Offers the route learned while the peer's was held by hand, over the
+    /// conversation with them, once it is time to and nothing is under way
+    /// there; and takes the offer back once it is no longer made. One that
+    /// comes `unasked`, while the conversation is in use, waits while a
+    /// draft or a reply is being written, or the composer is taken up to
+    /// write one: the next key meant for it would answer the offer.
+    pub(crate) fn refresh_learned_route(&mut self, unasked: bool) {
+        let node = self.node;
+        let Some(&Screen::Conversation { chat, reply, .. }) = self.screens.last() else {
+            return;
+        };
+        let writing = unasked
+            && (reply.is_some()
+                || self.keyboard.editing()
+                || self
+                    .chats
+                    .iter()
+                    .find(|summary| summary.id == chat)
+                    .is_some_and(|summary| !summary.draft.text().is_empty()));
+        let busy = self.conversation_busy();
+        let Some(Screen::Conversation { unsent, focus, .. }) = self.screens.last_mut() else {
+            return;
+        };
+        let offered = node
+            .chat_peer(chat)
+            .is_some_and(|peer| node.learned_route(peer).is_some());
+        match *unsent {
+            None if offered && !busy && !writing => {
+                *unsent = Some(Unsent::Learned);
+                focus.request(keys::LEARNED_USE);
+            }
+            Some(Unsent::Learned) if !offered => {
+                *unsent = None;
+                focus.request(keys::COMPOSER);
+            }
+            _ => {}
+        }
+    }
+
+    /// `key`, or the composer in its place when `key` is one of the learned
+    /// route's choices and the offer is no longer open.
+    pub(crate) fn still_offered(&self, key: FocusKey) -> FocusKey {
+        let offer = key == keys::LEARNED_USE || key == keys::LEARNED_KEEP;
+        let open = matches!(
+            self.screens.last(),
+            Some(Screen::Conversation {
+                unsent: Some(Unsent::Learned),
+                ..
+            })
+        );
+        if offer && !open { keys::COMPOSER } else { key }
+    }
+
+    /// Switches to the learned route offered over the conversation.
+    pub fn use_learned_route(&mut self) {
+        if let Some(peer) = self.close_learned_route() {
+            self.node.adopt_learned_route(peer);
+        }
+    }
+
+    /// Keeps the route held by hand that the offer over the conversation
+    /// would replace, and asks no more until it is held again. Returns
+    /// whether the offer was open.
+    pub fn keep_manual_route(&mut self) -> bool {
+        let Some(peer) = self.close_learned_route() else {
+            return false;
+        };
+        self.node.keep_manual_route(peer);
+        true
+    }
+
+    /// Closes the learned route's offer, returning to the composer. Returns
+    /// the peer it was made for, if it was open.
+    fn close_learned_route(&mut self) -> Option<PeerId> {
+        let node = self.node;
+        let Some(Screen::Conversation {
+            chat,
+            unsent,
+            focus,
+            ..
+        }) = self.screens.last_mut()
+        else {
+            return None;
+        };
+        if *unsent != Some(Unsent::Learned) {
+            return None;
+        }
+        *unsent = None;
+        focus.request(keys::COMPOSER);
+        node.chat_peer(*chat)
     }
 
     /// Shows the channel the message whose actions menu is open invites to,
@@ -1496,6 +2048,7 @@ impl State {
         self.node.load_route(peer);
         _ = self.screens.push(Screen::Route {
             peer,
+            edit: None,
             asked: Asked::new(),
             focus: FocusState::new(),
         });
@@ -1508,6 +2061,268 @@ impl State {
         }
     }
 
+    /// The route being chosen on the Route screen shown.
+    #[must_use]
+    pub fn route_draft(&self) -> Option<&RouteDraft> {
+        match self.screens.last() {
+            Some(Screen::Route {
+                edit: Some(draft), ..
+            }) => Some(draft),
+            _ => None,
+        }
+    }
+
+    fn route_draft_mut(&mut self) -> Option<(&mut RouteDraft, &mut FocusState)> {
+        match self.screens.last_mut() {
+            Some(Screen::Route {
+                edit: Some(draft),
+                focus,
+                ..
+            }) => Some((draft, focus)),
+            _ => None,
+        }
+    }
+
+    /// Turns the Route screen shown into its editor, starting from the
+    /// route shown: its repeaters when it names them, else none, and how
+    /// far it floods past them when it was chosen by hand.
+    pub fn edit_route(&mut self) {
+        let Some(&Screen::Route {
+            peer, edit: None, ..
+        }) = self.screens.last()
+        else {
+            return;
+        };
+        let route = self.node.peer_route(peer);
+        let hints: heapless::Vec<[u8; 2], MAX_PATH> = match &route {
+            Some(route) if route.kind == RouteKind::Source => {
+                route.repeaters.iter().map(|r| r.hint).collect()
+            }
+            _ => heapless::Vec::new(),
+        };
+        let flood = route
+            .as_ref()
+            .and_then(|route| route.manual.as_ref())
+            .map_or(u8::from(!hints.is_empty()), |manual| manual.flood_hops);
+        if let Some(Screen::Route { edit, focus, .. }) = self.screens.last_mut() {
+            *edit = Some(RouteDraft::new(&hints, flood));
+            focus.request(if hints.is_empty() {
+                keys::ROUTE_FLOOD
+            } else {
+                keys::path(0)
+            });
+        }
+    }
+
+    /// A hop of the route being chosen was pressed: a lifted one is put
+    /// down where it is, and any other opens its menu.
+    pub fn press_hop(&mut self, index: usize) {
+        let Some((draft, focus)) = self.route_draft_mut() else {
+            return;
+        };
+        if let Some(now) = draft.put_down() {
+            focus.request(keys::path(usize::from(now)));
+            return;
+        }
+        if index < draft.hints().len() {
+            draft.adjusting = None;
+            draft.over = Some(EditOver::Hop(index as u8));
+            focus.request(keys::HOP_MOVE);
+        }
+    }
+
+    /// The hop whose menu is open is lifted: turning carries it.
+    pub fn move_hop(&mut self) {
+        let Some((draft, focus)) = self.route_draft_mut() else {
+            return;
+        };
+        if let Some(EditOver::Hop(index)) = draft.over.take() {
+            draft.lifted = Some((index, index));
+            focus.request(keys::path(usize::from(index)));
+        }
+    }
+
+    /// The hop whose menu is open is taken out of the route.
+    pub fn remove_hop(&mut self) {
+        let Some((draft, focus)) = self.route_draft_mut() else {
+            return;
+        };
+        if let Some(EditOver::Hop(index)) = draft.over.take() {
+            let index = usize::from(index);
+            draft.remove(index);
+            let left = draft.hints().len();
+            focus.request(if left == 0 {
+                keys::ROUTE_FLOOD
+            } else {
+                keys::path(index.min(left - 1))
+            });
+        }
+    }
+
+    /// Closes what is open over the editor, back to what opened it.
+    pub fn close_route_over(&mut self) {
+        let Some((draft, focus)) = self.route_draft_mut() else {
+            return;
+        };
+        match draft.over.take() {
+            Some(EditOver::Hop(index)) => focus.request(keys::path(usize::from(index))),
+            Some(EditOver::Leave) => focus.request(keys::ROUTE_SAVE),
+            None => {}
+        }
+    }
+
+    /// Then flood was pressed: turning starts or stops changing it.
+    pub fn press_flood(&mut self) {
+        self.press_adjust(Adjust::Flood);
+    }
+
+    /// Hold for was pressed: turning starts or stops changing it.
+    pub fn press_hold(&mut self) {
+        self.press_adjust(Adjust::Hold);
+    }
+
+    fn press_adjust(&mut self, what: Adjust) {
+        if let Some((draft, _)) = self.route_draft_mut() {
+            // A tap can reach the row with a hop still lifted.
+            draft.put_down();
+            draft.adjusting = if draft.adjusting == Some(what) {
+                None
+            } else {
+                Some(what)
+            };
+        }
+    }
+
+    /// Which value of the route being chosen turning changes: it was
+    /// pressed, and is still focused.
+    #[must_use]
+    pub fn adjusting_route(&self) -> Option<Adjust> {
+        let Some(Screen::Route {
+            edit: Some(draft),
+            focus,
+            ..
+        }) = self.screens.last()
+        else {
+            return None;
+        };
+        let key = match draft.adjusting? {
+            Adjust::Flood => keys::ROUTE_FLOOD,
+            Adjust::Hold => keys::ROUTE_HOLD,
+        };
+        draft.adjusting.filter(|_| focus.current() == Some(key))
+    }
+
+    /// The wheel turned `detents` in the route editor: carries a lifted
+    /// hop, turned down toward the peer, or changes the value being
+    /// changed, turned up for more. Returns whether it did either.
+    pub fn turn_route_edit(&mut self, detents: i8) -> bool {
+        let adjusting = self.adjusting_route();
+        let Some((draft, focus)) = self.route_draft_mut() else {
+            return false;
+        };
+        if let Some((now, from)) = draft.lifted {
+            let last = draft.hints().len().saturating_sub(1);
+            let to = (usize::from(now) as isize + isize::from(detents)).clamp(0, last as isize);
+            let to = to as usize;
+            draft.shift(usize::from(now), to);
+            draft.lifted = Some((to as u8, from));
+            focus.request(keys::path(to));
+            return true;
+        }
+        let up = i16::from(detents.saturating_neg());
+        match adjusting {
+            Some(Adjust::Flood) => {
+                let flood = (i16::from(draft.flood) + up).clamp(0, i16::from(MAX_FLOOD)) as u8;
+                if flood != draft.flood {
+                    draft.flood = flood;
+                    draft.changed();
+                }
+                true
+            }
+            Some(Adjust::Hold) => {
+                let last = HOLD_CHOICES.len() as i16 - 1;
+                let hold = (i16::from(draft.hold) + up).clamp(0, last) as u8;
+                if hold != draft.hold {
+                    draft.hold = hold;
+                    draft.dirty = true;
+                }
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Backspace in the route editor: closes what is open over it, puts a
+    /// lifted hop back where it was, stops a value changing, asks what to
+    /// do with changes, or else leaves the editor for the route.
+    pub fn route_edit_back(&mut self) {
+        let Some((draft, focus)) = self.route_draft_mut() else {
+            return;
+        };
+        if draft.over.is_some() {
+            self.close_route_over();
+        } else if let Some((now, from)) = draft.lifted.take() {
+            draft.shift(usize::from(now), usize::from(from));
+            focus.request(keys::path(usize::from(from)));
+        } else if draft.adjusting.is_some() {
+            draft.adjusting = None;
+        } else if draft.dirty {
+            draft.over = Some(EditOver::Leave);
+            focus.request(keys::LEAVE_SAVE);
+        } else {
+            self.discard_route();
+        }
+    }
+
+    /// Leaves the route editor without saving.
+    pub fn discard_route(&mut self) {
+        if let Some(Screen::Route { edit, focus, .. }) = self.screens.last_mut()
+            && edit.take().is_some()
+        {
+            focus.request(keys::ROUTE_EDIT);
+        }
+    }
+
+    /// Holds the route being chosen and leaves the editor.
+    pub fn save_route(&mut self) {
+        if let Some((draft, _)) = self.route_draft_mut() {
+            draft.put_down();
+        }
+        let Some(&Screen::Route {
+            peer,
+            edit: Some(draft),
+            ..
+        }) = self.screens.last()
+        else {
+            return;
+        };
+        self.node
+            .hold_route(peer, draft.hints(), draft.flood, draft.hold_ms());
+        self.discard_route();
+    }
+
+    /// Pings the peer along the route being chosen, unsaved, and shows how
+    /// it goes.
+    pub fn ping_along(&mut self) {
+        if let Some((draft, _)) = self.route_draft_mut() {
+            draft.put_down();
+        }
+        let Some(&Screen::Route {
+            peer,
+            edit: Some(draft),
+            ..
+        }) = self.screens.last()
+        else {
+            return;
+        };
+        if let Some((draft, _)) = self.route_draft_mut() {
+            draft.adjusting = None;
+            draft.pinged = true;
+        }
+        self.node.ping_along(peer, draft.hints(), draft.flood);
+        self.show_ping(peer);
+    }
+
     /// Pings the saved peer shown, or whose route is shown, and shows how
     /// it goes.
     pub fn open_ping(&mut self) {
@@ -1515,6 +2330,11 @@ impl State {
             return;
         };
         self.node.ping(peer);
+        self.show_ping(peer);
+    }
+
+    /// Shows the ping to `peer` just sent.
+    fn show_ping(&mut self, peer: PeerId) {
         _ = self.screens.push(Screen::Ping {
             peer,
             sent_at: self.uptime,
@@ -1530,6 +2350,13 @@ impl State {
     pub fn ping_again(&mut self) {
         let uptime = self.uptime;
         let node = self.node;
+        // Opened from the route editor, it pings along the route there.
+        let along = match self.screens.len().checked_sub(2).map(|i| &self.screens[i]) {
+            Some(&Screen::Route {
+                edit: Some(draft), ..
+            }) => Some(draft),
+            _ => None,
+        };
         let Some(Screen::Ping {
             peer,
             sent_at,
@@ -1561,7 +2388,10 @@ impl State {
         );
         asked.clear();
         *sent_at = uptime;
-        node.ping(*peer);
+        match along {
+            Some(draft) => node.ping_along(*peer, draft.hints(), draft.flood),
+            None => node.ping(*peer),
+        }
     }
 
     /// How long the ping shown has been waiting for an answer.
@@ -1633,9 +2463,10 @@ impl State {
             .peer_at(index)
             .or_else(|| self.node.peer_at(self.node.peer_count().checked_sub(1)?))
             .map_or(keys::ADD_PEER, keys::peer);
-        // Its screens close, from its route or a ping on down.
+        // Its screens close, from its route or a ping on down, any route
+        // being chosen with them.
         let mut left = false;
-        while self.screen().peer() == Some(peer) && self.back() {
+        while self.screen().peer() == Some(peer) && self.leave() {
             left = true;
         }
         if left {
@@ -3078,6 +3909,515 @@ impl State {
         }
     }
 
+    /// Makes room on a full stack for one more screen, by letting go of the
+    /// one shown: a walk from node to node through their Neighbors would
+    /// otherwise stop where the stack does. A conversation is kept.
+    // Not `leave`: the screen pushed next is settled in its place, and
+    // `leave`'s frame would sit on the deepest path the stack check walks.
+    fn room_for_screen(&mut self) {
+        if self.screens.is_full()
+            && !matches!(self.screens.last(), Some(Screen::Conversation { .. }))
+        {
+            self.screens.pop();
+        }
+    }
+
+    /// Shows what the node whose page is shown reports hearing, as last
+    /// read: opening asks for nothing.
+    pub fn open_neighbors(&mut self) {
+        let router = match self.screens.last() {
+            Some(Screen::Member { member, .. }) => member.address.clone(),
+            Some(Screen::Peer { detail, .. }) => Some(detail.address.clone()),
+            _ => None,
+        };
+        let Some(router) = router else {
+            return;
+        };
+        let first = if self
+            .node
+            .listing(&router)
+            .is_some_and(|listing| listing.count > 0)
+        {
+            keys::neighbor(0)
+        } else {
+            keys::NEIGHBORS_REFRESH
+        };
+        self.room_for_screen();
+        _ = self.screens.push(Screen::Neighbors {
+            router,
+            pick: None,
+            asked: Asked::new(),
+            focus: FocusState::requesting(first),
+        });
+    }
+
+    /// Presses the row at `index` of the route editor or of Neighbors,
+    /// whichever is shown.
+    pub fn press_sheet(&mut self, index: usize, key: FocusKey) {
+        match self.screens.last() {
+            Some(Screen::Route {
+                edit: Some(draft), ..
+            }) => match draft.row(index) {
+                Some(EditRow::Hop(hop)) => self.press_hop(hop),
+                Some(EditRow::Add) => self.add_hop(),
+                Some(EditRow::Flood) => self.press_flood(),
+                Some(EditRow::Ping) => self.ping_along(),
+                Some(EditRow::Hold) => self.press_hold(),
+                Some(EditRow::Save) => self.save_route(),
+                Some(EditRow::You | EditRow::Peer) | None => {}
+            },
+            Some(Screen::Neighbors { pick: Some(_), .. }) => self.press_pick(index, key),
+            Some(Screen::Neighbors { router, .. }) => {
+                match listing_row(self.node.listing(router).as_ref(), index) {
+                    Some(ListRow::Neighbor(at)) => self.press_neighbor(at),
+                    Some(ListRow::More) => self.more_neighbors(),
+                    Some(ListRow::Refresh) => self.refresh_neighbors(),
+                    Some(ListRow::Read | ListRow::Said) | None => {}
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Asks the router shown for the top of what it hears again.
+    pub fn refresh_neighbors(&mut self) {
+        self.ask_listing(false);
+    }
+
+    /// Asks the router shown for the page after the last one held.
+    pub fn more_neighbors(&mut self) {
+        self.ask_listing(true);
+    }
+
+    /// Asks the router shown for a page of what it hears, keeping the
+    /// listings of every Neighbors screen open. Add hop asks along the
+    /// route being edited, up to the router.
+    fn ask_listing(&mut self, more: bool) {
+        let along: Option<heapless::Vec<[u8; 2], MAX_PATH>> = self.pick_draft().map(|draft| {
+            let hints = draft.hints();
+            hints[..hints.len().saturating_sub(1)]
+                .iter()
+                .copied()
+                .collect()
+        });
+        if let Some(Screen::Neighbors {
+            pick: Some(pick), ..
+        }) = self.screens.last_mut()
+        {
+            pick.landing |= !more;
+        }
+        let Some(Screen::Neighbors { router, .. }) = self.screens.last() else {
+            return;
+        };
+        let shown: heapless::Vec<&str, MAX_SCREENS> = self
+            .screens
+            .iter()
+            .filter_map(|screen| match screen {
+                Screen::Neighbors { router, .. } => Some(router.as_str()),
+                _ => None,
+            })
+            .collect();
+        self.node
+            .ask_listing(router, more, &shown, along.as_deref());
+    }
+
+    /// The route being edited beneath Add hop, while it is shown.
+    #[must_use]
+    pub fn pick_draft(&self) -> Option<&RouteDraft> {
+        let Some(Screen::Neighbors { pick: Some(_), .. }) = self.screens.last() else {
+            return None;
+        };
+        match self.screens.get(self.screens.len().checked_sub(2)?) {
+            Some(Screen::Route {
+                edit: Some(draft), ..
+            }) => Some(draft),
+            _ => None,
+        }
+    }
+
+    /// Opens Add hop over the route editor shown, on what its last hop
+    /// reports hearing, as last read; for the first hop, on what this
+    /// device hears, read anew.
+    pub fn add_hop(&mut self) {
+        // A hop lifted, or a value being changed, is settled first, as a
+        // press on any other row settles it.
+        let Some((draft, _)) = self.route_draft_mut() else {
+            return;
+        };
+        draft.put_down();
+        draft.adjusting = None;
+        let Some(&Screen::Route {
+            peer,
+            edit: Some(draft),
+            ..
+        }) = self.screens.last()
+        else {
+            return;
+        };
+        if !draft.has_room() {
+            return;
+        }
+        let Some(detail) = self.node.peer_detail(peer) else {
+            return;
+        };
+        let router = match draft.hints().last() {
+            Some(&hint) => self.hop_address(hint),
+            None => Some(self.node.address()),
+        };
+        self.room_beneath();
+        self.show_pick(router.unwrap_or_default(), peer, detail.address, false);
+    }
+
+    /// Makes room on a full stack for a screen over the one shown, by
+    /// letting go of the oldest screen between it and the Chats screen. A
+    /// conversation is kept.
+    fn room_beneath(&mut self) {
+        if !self.screens.is_full() {
+            return;
+        }
+        let shown = self.screens.len() - 1;
+        if let Some(oldest) =
+            (1..shown).find(|&at| !matches!(self.screens[at], Screen::Conversation { .. }))
+        {
+            self.screens.remove(oldest);
+        }
+    }
+
+    /// The address of the node the hop `hint` most plausibly is.
+    fn hop_address(&self, hint: [u8; 2]) -> Option<String<44>> {
+        let repeater = self.node.repeater(hint)?;
+        String::try_from(repeater.address?.as_str()).ok()
+    }
+
+    /// Shows Add hop on what the router at `router` reports hearing, in
+    /// place of the one shown when `replace`. This device's own list is
+    /// read anew, which sends nothing.
+    fn show_pick(&mut self, router: String<44>, peer: PeerId, address: String<44>, replace: bool) {
+        if replace {
+            self.screens.pop();
+        }
+        let here = router == self.node.address();
+        _ = self.screens.push(Screen::Neighbors {
+            router,
+            pick: Some(AddHop {
+                peer,
+                address,
+                find: String::new(),
+                landing: false,
+            }),
+            asked: Asked::new(),
+            focus: FocusState::new(),
+        });
+        if here {
+            self.ask_listing(false);
+        }
+        self.focus_top_pick();
+    }
+
+    /// Asks focus for Add hop's top row.
+    fn focus_top_pick(&mut self) {
+        if let Some(key) = self.pick_rows().and_then(|rows| rows.first_key()) {
+            self.focus().request(key);
+        }
+    }
+
+    /// Focus goes to the top of what Add hop's router reports hearing
+    /// once the top of it has come.
+    pub(crate) fn listing_landed(&mut self) {
+        let node = self.node;
+        let Some(Screen::Neighbors {
+            router,
+            pick: Some(pick),
+            ..
+        }) = self.screens.last_mut()
+        else {
+            return;
+        };
+        if !pick.landing
+            || node
+                .listing(router)
+                .is_none_or(|listing| listing.asking.is_some())
+        {
+            return;
+        }
+        pick.landing = false;
+        self.focus_top_pick();
+    }
+
+    /// Add hop's rows, while it is shown.
+    #[must_use]
+    pub fn pick_rows(&self) -> Option<PickRows> {
+        let Some(Screen::Neighbors {
+            router,
+            pick: Some(pick),
+            ..
+        }) = self.screens.last()
+        else {
+            return None;
+        };
+        let node = self.node;
+        let query = pick.find.trim();
+        let finding = !query.is_empty();
+        let heard = !router.is_empty();
+        let listing = heard.then(|| node.listing(router)).flatten();
+        let count = listing.map_or(0, |listing| usize::from(listing.count));
+        let peer_at = heard
+            .then(|| node.listed_place(router, &pick.address))
+            .flatten()
+            .filter(|&at| at < count);
+        let hops = self.pick_draft().map_or(&[][..], RouteDraft::hints);
+        let mut rows: heapless::Vec<PickRow, SHEET_ROWS> = heapless::Vec::new();
+        let mut in_path = 0u32;
+        let mut push =
+            |rows: &mut heapless::Vec<PickRow, SHEET_ROWS>, row, hint: Option<[u8; 2]>| {
+                if hint.is_some_and(|hint| hops.contains(&hint)) && rows.len() < 32 {
+                    in_path |= 1 << rows.len();
+                }
+                _ = rows.push(row);
+            };
+        if finding {
+            push(&mut rows, PickRow::Field, None);
+        }
+        let mut found = 0;
+        if heard {
+            push(&mut rows, PickRow::Heard, None);
+            // The peer is pinned to the top, the rest as listed.
+            for at in peer_at
+                .into_iter()
+                .chain((0..count).filter(|&at| Some(at) != peer_at))
+            {
+                let listed = node.listed(router, at);
+                if finding
+                    && listed
+                        .as_ref()
+                        .is_none_or(|listed| word_match(&listed.name, query).is_none())
+                {
+                    continue;
+                }
+                found += 1;
+                // The peer is never a hop, whatever its hint.
+                let hint = listed
+                    .filter(|_| Some(at) != peer_at)
+                    .map(|listed| listed.hint);
+                push(&mut rows, PickRow::Neighbor(at as u8), hint);
+            }
+            if finding {
+                if rows.last() == Some(&PickRow::Heard) {
+                    rows.pop();
+                }
+            } else {
+                for index in count + 1.. {
+                    let row = match listing_row(listing.as_ref(), index) {
+                        Some(ListRow::Said) => PickRow::Said,
+                        Some(ListRow::More) => PickRow::More,
+                        Some(ListRow::Refresh) => PickRow::Refresh,
+                        _ => break,
+                    };
+                    push(&mut rows, row, None);
+                }
+            }
+        }
+        // Read by place as the rows are drawn, so that none of them is
+        // held here.
+        let mut known = 0;
+        // The peer the route goes to is no hop on it.
+        for at in 0..node.gather_known(query, router, &pick.address) {
+            let Some(repeater) = node.known_repeater(at) else {
+                continue;
+            };
+            if known == 0 {
+                push(&mut rows, PickRow::Known, None);
+            }
+            known += 1;
+            let hint = repeater.hint;
+            push(&mut rows, PickRow::KnownAt(at as u8, hint), Some(hint));
+        }
+        let hints = if finding {
+            node.hint_reads(query)
+        } else {
+            heapless::Vec::new()
+        };
+        if !hints.is_empty() {
+            push(&mut rows, PickRow::Hints, None);
+            for (at, read) in hints.iter().enumerate() {
+                push(&mut rows, PickRow::Hint(at as u8), Some(read.hint));
+            }
+        }
+        found += known + hints.len();
+        Some(PickRows {
+            listing,
+            hints,
+            peer_at: peer_at.map(|at| at as u8),
+            found: finding.then_some(found),
+            rows,
+            in_path,
+        })
+    }
+
+    /// Presses Add hop's row drawn at `index` with `key`: a repeater is
+    /// added as the next hop, the peer ends the route there, and Load more
+    /// and Refresh ask.
+    fn press_pick(&mut self, index: usize, key: FocusKey) {
+        let Some(rows) = self.pick_rows() else {
+            return;
+        };
+        let Some(Screen::Neighbors { router, .. }) = self.screens.last() else {
+            return;
+        };
+        // The rows may have moved since they were drawn, as a repeater is
+        // heard: the row pressed is the one that still has its key.
+        let Some(index) = rows.place(index, key) else {
+            return;
+        };
+        // The field adds the row under it. Resolved here rather than by
+        // pressing again, which would hold a second set of rows on the
+        // stack.
+        let index = match rows.row(index) {
+            Some(PickRow::Field) => match rows.top() {
+                Some(top) => top,
+                None => return,
+            },
+            _ => index,
+        };
+        let (hint, address) = match rows.row(index) {
+            Some(PickRow::Neighbor(at)) if rows.peer_at == Some(at) => {
+                self.finish_route();
+                return;
+            }
+            Some(PickRow::Neighbor(at)) => {
+                let Some(listed) = self.node.listed(router, usize::from(at)) else {
+                    return;
+                };
+                (listed.hint, listed.address)
+            }
+            Some(PickRow::KnownAt(at, _)) => {
+                let Some(known) = self.node.known_repeater(usize::from(at)) else {
+                    return;
+                };
+                (known.hint, Some(known.address))
+            }
+            Some(PickRow::Hint(at)) => {
+                let Some(read) = rows.hints.get(usize::from(at)) else {
+                    return;
+                };
+                (read.hint, self.hop_address(read.hint))
+            }
+            Some(PickRow::More) => return self.ask_listing(true),
+            Some(PickRow::Refresh) => return self.ask_listing(false),
+            _ => return,
+        };
+        self.choose_hop(hint, address);
+    }
+
+    /// Adds `hint`, the node at `address` when it is known, as the next hop
+    /// of the route beneath, and moves Add hop on to the hop after it, or,
+    /// with the route full, returns to the editor. A hop already on the
+    /// route is not added again.
+    fn choose_hop(&mut self, hint: [u8; 2], address: Option<String<44>>) {
+        let Some(Screen::Neighbors {
+            pick: Some(pick), ..
+        }) = self.screens.last()
+        else {
+            return;
+        };
+        let (peer, to) = (pick.peer, pick.address.clone());
+        let below = self.screens.len() - 2;
+        let Some(Screen::Route {
+            edit: Some(draft), ..
+        }) = self.screens.get_mut(below)
+        else {
+            return;
+        };
+        if draft.hints().contains(&hint) {
+            return;
+        }
+        draft.push(hint);
+        let (room, last) = (draft.has_room(), draft.hints().len() - 1);
+        if room {
+            self.show_pick(address.unwrap_or_default(), peer, to, true);
+        } else {
+            self.leave();
+            self.focus().request(keys::path(last));
+        }
+    }
+
+    /// Ends the route beneath where it is, the peer heard by its last hop,
+    /// and returns to the editor at Save.
+    fn finish_route(&mut self) {
+        self.leave();
+        self.focus().request(keys::ROUTE_SAVE);
+    }
+
+    /// Narrows Add hop by a character typed, its field focused, whose
+    /// Enter adds the top row. Returns whether Add hop took it.
+    pub fn find_hop(&mut self, c: char) -> bool {
+        let Some(Screen::Neighbors {
+            pick: Some(pick), ..
+        }) = self.screens.last_mut()
+        else {
+            return false;
+        };
+        // Nothing is found by a space before anything else.
+        if c == ' ' && pick.find.trim().is_empty() {
+            return true;
+        }
+        _ = pick.find.push(c);
+        self.focus().request(keys::PICK_FIELD);
+        true
+    }
+
+    /// Takes back the last character Add hop was narrowed by, and returns
+    /// whether there was one. With none left, the field goes, and focus
+    /// goes to the top row.
+    pub fn unfind_hop(&mut self) -> bool {
+        let Some(Screen::Neighbors {
+            pick: Some(pick), ..
+        }) = self.screens.last_mut()
+        else {
+            return false;
+        };
+        let taken = pick.find.pop().is_some();
+        let cleared = pick.find.trim().is_empty();
+        if taken && cleared {
+            self.focus_top_pick();
+        }
+        taken
+    }
+
+    /// Opens the node the repeater at `index` in the listing shown most
+    /// plausibly is, or asks who it is, of the nodes in earshot of the
+    /// router, when no known node could be.
+    pub fn press_neighbor(&mut self, index: usize) {
+        let uptime = self.uptime;
+        let node = self.node;
+        let Some(Screen::Neighbors { router, asked, .. }) = self.screens.last_mut() else {
+            return;
+        };
+        let Some(listed) = node.listed(router, index) else {
+            return;
+        };
+        if let Some(address) = listed.address {
+            if let Some(member) = node.known_member(&address) {
+                self.show_known(member);
+            }
+            return;
+        }
+        let Some(listing) = node.listing(router) else {
+            return;
+        };
+        let hint = listed.hint;
+        if asked
+            .iter()
+            .any(|&(asked, until)| asked == hint && until > uptime)
+        {
+            return;
+        }
+        asked.retain(|&(asked, until)| asked != hint && until > uptime);
+        if asked.push((hint, uptime + IDENTIFY_WAIT_MS)).is_ok() {
+            node.identify_repeater(hint, &[listing.hint]);
+        }
+    }
+
     /// Opens the node the repeater at `index` on the screen shown most
     /// plausibly is, or asks who it is when no known node could be. A
     /// repeater on a path is asked by way of the repeaters before it.
@@ -3161,6 +4501,15 @@ impl State {
         if let Screen::Ping {
             settled_at: None, ..
         } = screen
+        {
+            return Some(step);
+        }
+        // A listing asked for spins in its row until it is answered.
+        if let Screen::Neighbors { router, .. } = screen
+            && self
+                .node
+                .listing(router)
+                .is_some_and(|listing| listing.asking.is_some())
         {
             return Some(step);
         }
@@ -3332,9 +4681,23 @@ impl State {
         }
     }
 
-    /// Returns to the screen before this one, focused where it was left.
-    /// Returns `false` on the Chats screen, which nothing comes before.
+    /// Backspace, or the header's way back: returns to the screen before
+    /// this one, focused where it was left, or, in the route editor, steps
+    /// back within it. Returns `false` on the Chats screen, which nothing
+    /// comes before.
     pub fn back(&mut self) -> bool {
+        // The route editor goes back to the route before leaving it.
+        if self.route_draft().is_some() {
+            self.route_edit_back();
+            return true;
+        }
+        self.leave()
+    }
+
+    /// Closes the screen shown, whatever is under way on it, for the one
+    /// before, focused where it was left. Returns `false` on the Chats
+    /// screen, which nothing comes before.
+    fn leave(&mut self) -> bool {
         if self.screens.len() < 2 {
             return false;
         }
@@ -3342,6 +4705,8 @@ impl State {
             self.close_conversation();
         }
         self.settle();
+        // Back on a conversation, what came due over it meanwhile is offered.
+        self.refresh_learned_route(false);
         // Focus returns where it was, unless the screen was left asking for
         // somewhere else.
         let focus = self.focus();

@@ -1,6 +1,6 @@
 //! Property, stream, and capability identifiers, plus protocol
 //! constants. The complete allocation is in
-//! `docs/protocol/src/ulcp-index.md`.
+//! `docs/protocol-legacy/src/ulcp-index.md`.
 
 /// Protocol version advertised in `PROP_PROTOCOL_VERSION`.
 pub const PROTOCOL_MAJOR_VERSION: u8 = 6;
@@ -797,8 +797,7 @@ pub mod repeater_state {
     /// Adaptive, tolerating as many overheard copies as an ordinary
     /// repeater: it recently carried a flood for its originator.
     pub const ENGAGED: u8 = 3;
-    /// Adaptive, holding back: the battery is low, or the channel is
-    /// busy.
+    /// Adaptive, forwarding nothing: the battery is low.
     pub const WITHHELD: u8 = 4;
 }
 

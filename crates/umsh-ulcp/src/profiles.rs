@@ -68,7 +68,7 @@ impl PhyProfile {
 }
 
 /// The private-network sync word every vetted profile uses. The spec
-/// suggests it in `docs/protocol/src/ulcp-radio.md`, and it is what
+/// suggests it in `docs/protocol-legacy/src/ulcp-radio.md`, and it is what
 /// `enable_public_network = false` selects on an SX126x.
 pub const DEFAULT_SYNC_WORD: u16 = 0x1424;
 

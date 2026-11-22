@@ -74,7 +74,7 @@ The radio features:
   without it advertises no Bluetooth capability and shows no Bluetooth menu.
 - `wifi`—the Wi-Fi station and IPv4.
 - `coex`—Wi-Fi and BLE in one image. Required whenever both are on.
-- `bridge-client`—the [internet bridge](../docs/protocol/src/internet-bridging.md)
+- `bridge-client`—the [internet bridge](../docs/protocol-legacy/src/internet-bridging.md)
   client. Its buffers live in PSRAM with `psram`, and in internal RAM, trimmed,
   without.
 - `debug-log`—diagnostic lines on the wired port. `ble-debug` adds the BLE

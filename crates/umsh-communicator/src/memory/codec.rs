@@ -51,7 +51,7 @@ pub const RECORD_MAX: usize = {
         + 5 // status
         + 1 // presence
         + 1 // flags
-        + 9 // delivery, its fragment count and undelivered last
+        + 11 // delivery, its fragment count, undelivered and flooded last
         + 1 + 3 + 3 + 2 + 1 // link
         + 5 // time
         + 4 // revision
@@ -232,6 +232,7 @@ pub(super) fn record(disk: &Disk, key: &RecordKey, out: &mut Vec<u8>) -> bool {
             // Last, so a record kept before they were is read without them.
             out.u8(record.delivery.fragments);
             out.u16(record.delivery.undelivered);
+            out.u16(record.delivery.flooded);
         }
         RecordKey::Peer(peer) => {
             let Some(peer) = disk.peers.get(peer) else {
@@ -480,6 +481,7 @@ fn message(id: u32, input: &mut In<'_>) -> Option<MessageEntry> {
         acked: input.u16()?,
         failed: input.u16()?,
         undelivered: 0,
+        flooded: 0,
         fragments: 0,
     };
     let link = input.option(|input| {
@@ -532,6 +534,8 @@ fn message(id: u32, input: &mut In<'_>) -> Option<MessageEntry> {
     // One kept before failures said whether anything went reads as if all
     // of it went: unconfirmed, as it was shown.
     delivery.undelivered = input.u16().unwrap_or(0) & delivery.failed;
+    // One kept before floods were told apart reads as routed.
+    delivery.flooded = input.u16().unwrap_or(0) & delivery.acked;
     Some(MessageEntry {
         record: MessageRecord {
             id: MessageId(id),

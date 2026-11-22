@@ -5,7 +5,7 @@
 Increments 0–3 are implemented in `crates/umsh-text`.
 
 - Increment 0: the open wire questions are settled in
-  `docs/protocol/src/app-text-messages.md`—serial-number ordering with the
+  `docs/protocol-legacy/src/app-text-messages.md`—serial-number ordering with the
   1–127 forward half, an automatic repair bound of 8 messages per gap with
   re-baselining beyond it, conversation-determined `Regarding` width (1-byte
   for all one-to-one conversations including blind-unicast), and 160-byte /

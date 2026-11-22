@@ -155,7 +155,7 @@ Move the "should the user be notified" decision into the engine—the only layer
 
 ## Phase 8—Spec (informative only, no wire change)
 
-**File:** `docs/protocol/src/app-text-messages.md`.
+**File:** `docs/protocol-legacy/src/app-text-messages.md`.
 
 - Add an informative note that repaired messages occupy their sequence slot in **display order** (not arrival order), and that receivers may render a pending-gap placeholder while a repair is outstanding.
 - Note the 30 s "first fragment" notification-latency guidance for fragmented messages.

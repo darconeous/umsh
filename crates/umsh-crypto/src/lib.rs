@@ -1004,7 +1004,7 @@ pub mod software {
     /// Draw a fresh identity secret.
     ///
     /// `fill` is called for each draw; a key that
-    /// [`umsh_core::hint_filter::is_avoided`] matches is discarded and
+    /// [`umsh_core::hint_filter::admits_identity`] refuses is discarded and
     /// another drawn. There is no attempt limit: an entropy source that
     /// never produces an acceptable key is broken. An error from `fill` is
     /// returned as is.
@@ -1025,7 +1025,7 @@ pub mod software {
                 return Err(error);
             }
             let public = PublicKey(SigningKey::from_bytes(&secret).verifying_key().to_bytes());
-            if !filter.avoids(&public) {
+            if filter.admits_identity(&public) {
                 return Ok(secret);
             }
         }
@@ -2105,6 +2105,33 @@ mod tests {
         assert!(!filter.avoids(clean.public_key()));
 
         let mut draws = [[1u8; 32], [1; 32], [2; 32]].into_iter();
+        let secret = generate_identity_secret_against(&filter, |secret| {
+            *secret = draws.next().unwrap();
+            Ok::<_, ()>(())
+        });
+        assert_eq!(secret, Ok([2; 32]));
+        assert_eq!(draws.next(), None);
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn generate_identity_secret_redraws_short_hint_renderings() {
+        use umsh_core::{NodeHint, RouterHint};
+
+        let filter = umsh_core::hint_filter::Filter::empty(0);
+        let node_starred = *SoftwareIdentity::from_secret_bytes(&[1; 32]).public_key();
+        assert_eq!(NodeHint::from_public_key(&node_starred).verified_chars(), 3);
+        let router_starred = *SoftwareIdentity::from_secret_bytes(&[15; 32]).public_key();
+        assert_eq!(
+            NodeHint::from_public_key(&router_starred).verified_chars(),
+            4
+        );
+        assert_eq!(
+            RouterHint::from_public_key(&router_starred).verified_chars(),
+            1
+        );
+
+        let mut draws = [[1u8; 32], [15; 32], [2; 32]].into_iter();
         let secret = generate_identity_secret_against(&filter, |secret| {
             *secret = draws.next().unwrap();
             Ok::<_, ()>(())

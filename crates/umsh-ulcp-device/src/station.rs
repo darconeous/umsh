@@ -1,4 +1,4 @@
-//! Choosing a network: the rules of `docs/protocol/src/ulcp-wifi.md`
+//! Choosing a network: the rules of `docs/protocol-legacy/src/ulcp-wifi.md`
 //! § Choosing a Network, as a state machine the platform's station task
 //! drives.
 //!

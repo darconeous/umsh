@@ -1,0 +1,36 @@
+# Add hop in the route editor: this device's own list with the peer
+# pinned to Finish here, a hop chosen and the next asked along the route,
+# Known repeaters, and typing that narrows the rows or reads router hints.
+backspace
+turn 1
+press
+turn 1
+press
+turn 3
+press
+press
+turn -1
+shot editor-add-hop
+press
+wait 1
+shot add-hop-here
+turn 1
+press
+shot add-hop-unread
+press
+wait 2
+shot add-hop-heard
+turn 9
+shot add-hop-known
+type Ridg
+shot add-hop-typed
+backspace
+backspace
+backspace
+backspace
+type 4b21
+shot add-hop-hints
+enter
+shot add-hop-after-hint
+backspace
+shot editor-hops-added

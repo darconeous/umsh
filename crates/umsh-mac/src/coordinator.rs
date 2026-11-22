@@ -699,44 +699,40 @@ pub struct ChannelPolicy {
     pub max_flood_hops: Option<u8>,
 }
 
-/// Controls how the coordinator and optional repeater handle amateur-radio legal requirements.
+/// A node's amateur-radio operating mode (UEP-0017 § Operating Modes).
 ///
-/// Amateur (ham) radio law in most jurisdictions prohibits encrypted transmissions and requires
-/// station identification on all transmitted frames. UMSH supports three operating modes to
-/// accommodate networks that mix licensed and unlicensed nodes, or that operate exclusively
-/// under one regulatory regime.
+/// Amateur radio rules in most jurisdictions prohibit encrypted
+/// transmissions and require station identification. A node has one
+/// operating mode, set on [`OperatingPolicy`], and it governs what the node
+/// originates, receives, and forwards alike.
 ///
-/// | Mode | Encryption | Operator callsign | Repeater station callsign |
-/// |------|------------|------------------|--------------------------|
-/// | `Unlicensed` | Allowed | Optional | Not added |
-/// | `LicensedOnly` | Prohibited | Required | Required |
-/// | `Hybrid` | Allowed (local) | Optional | Added to forwarded frames |
-///
-/// The mode appears on both [`OperatingPolicy`] (for locally-originated traffic) and
-/// [`RepeaterConfig`] (for forwarding decisions) and they may differ independently—a node
-/// might transmit its own encrypted application traffic (`Unlicensed`) while acting as a
-/// licensed-identified repeater (`LicensedOnly`) for third-party frames it forwards.
+/// | Mode | Originates | Receives | Forwards |
+/// |------|------------|----------|----------|
+/// | `Unlicensed` | Anything | Anything | Anything, removing any Station Callsign |
+/// | `LicensedOnly` | Unencrypted, with its Operator Callsign | Discards encrypted packets unopened | Unencrypted packets carrying an Operator Callsign, setting its Station Callsign |
+/// | `Hybrid` | Anything | Anything | As `LicensedOnly` for an unencrypted packet carrying an Operator Callsign, as `Unlicensed` otherwise |
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AmateurRadioMode {
-    /// Treat traffic as unlicensed operation only.
+    /// Unlicensed operation only.
     ///
-    /// Local transmit policy does not require operator callsigns or amateur-only
-    /// restrictions. Repeaters operating in this mode must not add a station
-    /// callsign when forwarding and should only retransmit packets that can be
-    /// handled under unlicensed rules.
+    /// Nothing is restricted. Forwards are made under unlicensed authority
+    /// and carry no Station Callsign.
     Unlicensed,
-    /// Treat forwarded and locally originated traffic as amateur-only.
+    /// Amateur operation only.
     ///
-    /// Encryption and blind unicast are disallowed, operator callsigns are
-    /// required on originated packets, and repeaters must identify themselves
-    /// with a station callsign on forwarded traffic.
+    /// Every packet the node sends is unencrypted and carries its operator
+    /// callsign, MAC acks included. It discards every encrypted packet it
+    /// receives without opening it, whatever its type, and forwards only
+    /// unencrypted packets that carry an Operator Callsign, setting its
+    /// station callsign on each. Unencrypted group unicast is allowed.
     LicensedOnly,
-    /// Permit both unlicensed and amateur-qualified forwarding behavior.
+    /// Amateur and unlicensed operation side by side.
     ///
-    /// Local transmit policy remains permissive, but repeaters identify
-    /// forwarded packets with their station callsign and may still forward
-    /// packets lacking an operator callsign when they can do so under
-    /// unlicensed rules.
+    /// Nothing the node originates or receives is restricted. A forward of
+    /// an unencrypted packet carrying an Operator Callsign is made under
+    /// amateur authority and sets the station callsign; any other forward
+    /// is made under unlicensed authority and removes it. Without a station
+    /// callsign, every forward is made under unlicensed authority.
     Hybrid,
 }
 
@@ -749,7 +745,7 @@ enum TransmitAuthority {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ForwardStationAction {
     Remove,
-    Replace,
+    Set,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -829,21 +825,22 @@ fn lora_snr_floor_cb(sf: Option<u8>) -> i32 {
     -75 - 25 * (sf - 7)
 }
 
-/// Local transmission policy enforced by the [`Mac`] coordinator on all outgoing frames.
+/// Local operating policy enforced by the [`Mac`] coordinator.
 ///
 /// `OperatingPolicy` governs what the coordinator is *allowed to send*, independent of what
 /// the application requests. It is consulted at the start of every `queue_*` call via an
 /// internal policy check, which returns [`SendError::PolicyViolation`] if the requested send
-/// would violate it. This policy applies only to locally-originated frames; forwarding
-/// decisions are governed separately by [`RepeaterConfig`].
+/// would violate it. Its amateur-radio mode is the node's one operating mode, and also
+/// governs what it receives and forwards; the rest of forwarding is configured by
+/// [`RepeaterConfig`].
 ///
-/// - **`amateur_radio_mode`**—determines whether encryption and blind-unicast are permitted
-///   and whether an operator callsign must be appended to originated frames.
-///   See [`AmateurRadioMode`].
-/// - **`operator_callsign`**—the ARNCE/HAM-64 callsign automatically appended to every
-///   locally-originated frame when set. Required in `LicensedOnly` mode; optional otherwise.
+/// - **`amateur_radio_mode`**—whether this node may send encrypted packets, whether it must
+///   identify them with its operator callsign, whether it discards encrypted packets it
+///   receives, and what it forwards under which authority. See [`AmateurRadioMode`].
+/// - **`operator_callsign`**—the ARNCE/HAM-64 callsign included in every packet this node
+///   sends when set, MAC acks included. Required in `LicensedOnly` mode; optional otherwise.
 /// - **`channel_policies`**—a small list of per-channel overrides for multicast and
-///   blind-unicast traffic. Channels absent from the list use permissive defaults.
+///   group-unicast traffic. Channels absent from the list use permissive defaults.
 ///
 /// The default configuration (via [`Default`]) sets `Unlicensed` mode with no callsign and
 /// no per-channel overrides.
@@ -892,12 +889,11 @@ impl Default for OperatingPolicy {
 ///   eligible repeaters contend to flood-forward the same frame. The window is deterministic
 ///   in the reception's SNR and RSSI, with a small random tie-breaker on top. These values
 ///   should usually remain aligned across the mesh.
-/// - **`amateur_radio_mode`**—determines whether the repeater may forward encrypted or
-///   blind-unicast frames, and whether it must inject a station callsign. See
-///   [`AmateurRadioMode`].
-/// - **`station_callsign`**—the ARNCE/HAM-64 callsign injected into the options block of
-///   every forwarded frame when operating in `LicensedOnly` or `Hybrid` mode, satisfying the
-///   third-party identification requirements of FCC §97.119 and equivalent regulations.
+/// - **`station_callsign`**—the ARNCE/HAM-64 callsign set as the Station Callsign of every
+///   forward made under amateur authority: in `LicensedOnly` mode, or in `Hybrid` mode for an
+///   unencrypted packet carrying an Operator Callsign (see [`AmateurRadioMode`], set on
+///   [`OperatingPolicy`]). Required in those modes. Without one, a `LicensedOnly` node
+///   forwards nothing and a `Hybrid` node forwards everything under unlicensed authority.
 ///
 /// The default configuration has `mode: RepeaterMode::Off`; repeating must be explicitly
 /// opted in.
@@ -952,7 +948,7 @@ pub struct RepeaterConfig {
     /// How many of a group standing together should forward a flood that
     /// reached them from elsewhere. An adaptive forwarder with more
     /// neighbors beside it than this forwards with that many chances in
-    /// their number, drawn for itself.
+    /// their number, drawn for itself. Zero is taken as one.
     pub adaptive_beside_forwarders: u8,
     /// Battery level, in percent, at or below which an adaptive forwarder
     /// forwards nothing.
@@ -961,9 +957,7 @@ pub struct RepeaterConfig {
     /// `adaptive_battery_low_percent`, so a pack at the line does not
     /// switch back and forth.
     pub adaptive_battery_resume_percent: u8,
-    /// Amateur-radio operating mode for forwarding.
-    pub amateur_radio_mode: AmateurRadioMode,
-    /// Optional station callsign injected on forwarded traffic.
+    /// Station callsign set on forwards made under amateur authority.
     pub station_callsign: Option<HamAddr>,
 }
 
@@ -989,7 +983,6 @@ impl Default for RepeaterConfig {
             adaptive_beside_forwarders: 3,
             adaptive_battery_low_percent: 10,
             adaptive_battery_resume_percent: 15,
-            amateur_radio_mode: AmateurRadioMode::Unlicensed,
             station_callsign: None,
         }
     }
@@ -999,7 +992,7 @@ impl Default for RepeaterConfig {
 pub const REPEATERS_HEARD_WINDOW_MS: u64 = 60 * 60 * 1000;
 
 /// Whether, and how eagerly, a node forwards other nodes' traffic
-/// (repeater-operation.md § Adaptive Forwarding).
+/// (UEP-0013, and UEP-0018 for the adaptive mode).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum RepeaterMode {
     /// Carries only its own traffic.
@@ -1008,7 +1001,7 @@ pub enum RepeaterMode {
     /// An ordinary repeater.
     On,
     /// Honors every source-routed hop, and floods only where nobody else
-    /// is heard forwarding (repeater-operation.md § Adaptive Forwarding).
+    /// is heard forwarding (UEP-0018).
     ///
     /// A flood it has not seen before is taken through these in order:
     ///
@@ -1362,6 +1355,9 @@ pub struct MacCounters {
     /// [`MAX_ACKED_IN_FLIGHT_PER_PEER`](crate::MAX_ACKED_IN_FLIGHT_PER_PEER)
     /// sends to the same peer already awaited their acknowledgments.
     pub tx_peer_in_flight_full: u32,
+    /// Encrypted frames discarded unopened because this node operates in
+    /// [`AmateurRadioMode::LicensedOnly`] mode.
+    pub rx_encrypted_discarded: u32,
 }
 
 impl MacCounters {
@@ -1396,7 +1392,9 @@ pub struct Mac<
     echo_watches: crate::echo_watch::EchoWatches,
     channels: ChannelTable<CHANNELS>,
     dup_cache: DuplicateCache<DUP>,
-    /// Unsigned multicasts accepted, by MIC: all that judges one.
+    /// Frames no replay window judges, accepted by MIC or signature: all
+    /// that keeps delivery from seeing a second copy of one. Entries live
+    /// [`FIRST_COPY_CACHE_TTL_MS`](crate::cache::FIRST_COPY_CACHE_TTL_MS).
     multicast_dup_cache: DuplicateCache<DUP>,
     tx_queue: TxQueue<TX, FRAME>,
     post_tx_listen: Option<PostTxListen>,
@@ -1491,7 +1489,7 @@ impl<
             echo_watches: crate::echo_watch::EchoWatches::new(),
             channels: ChannelTable::new(),
             dup_cache: DuplicateCache::new(),
-            multicast_dup_cache: DuplicateCache::new(),
+            multicast_dup_cache: DuplicateCache::with_ttl_ms(crate::cache::FIRST_COPY_CACHE_TTL_MS),
             tx_queue: TxQueue::new(),
             post_tx_listen: None,
             requested_wake_ms: None,
@@ -1552,6 +1550,26 @@ impl<
                 self.battery_low = false;
             }
             Some(_) => {}
+        }
+        if self.adaptive_withheld() {
+            self.withhold_forwards();
+        }
+    }
+
+    /// Whether an adaptive forwarder's battery holds it back.
+    fn adaptive_withheld(&self) -> bool {
+        self.repeater.mode == RepeaterMode::Adaptive && self.battery_low
+    }
+
+    /// Give up every forward still queued: a forwarder held back carries
+    /// nothing, the forwards it took on before included. One that never
+    /// aired releases its forwarding identity, and one awaiting its next hop
+    /// stops listening and retrying.
+    fn withhold_forwards(&mut self) {
+        while let Some(queued) = self.tx_queue.remove_first_matching(|entry| {
+            entry.priority == TxPriority::Forward && entry.receipt.is_none()
+        }) {
+            self.forget_unaired_forward(&queued);
         }
     }
 
@@ -1621,7 +1639,7 @@ impl<
     /// start within one channel check of each other collide, and none
     /// hears a copy to give way to.
     fn adaptive_group_admits(&mut self) -> bool {
-        let wanted = u32::from(self.repeater.adaptive_beside_forwarders);
+        let wanted = u32::from(self.repeater.adaptive_beside_forwarders).max(1);
         // This node and the ones beside it.
         let group = self.neighbors_beside() as u32 + 1;
         group <= wanted || self.rng.random_range(..group) < wanted
@@ -2662,7 +2680,8 @@ impl<
 
     /// Enqueue an ACK carrying `ack_trailer` as given, using the cached
     /// route plus whatever flood slack the route's far end earns (see
-    /// [`established_route_slack`]).
+    /// [`established_route_slack`]). Its tag must cover the operator
+    /// callsign the ack carries when one is configured.
     pub fn queue_mac_ack_for_peer(
         &mut self,
         from: LocalIdentityId,
@@ -2749,6 +2768,7 @@ impl<
             ack_trailer,
             flood_hops,
             trace_route,
+            false,
             source_route,
             regions,
         )?;
@@ -2779,10 +2799,14 @@ impl<
             .saturating_add(slack)
             .clamp(1, MAX_FLOOD_HOPS);
         let mut buf = [0u8; FRAME];
+        // The re-ack answers a Route Retry, and carries the option itself:
+        // repeaters that carried the first ack hold its identity, and the
+        // option makes this one a different one.
         let frame = self.build_mac_ack(
             &mut buf,
             ack_trailer,
             flood_hops,
+            true,
             true,
             None,
             request_regions,
@@ -2792,17 +2816,21 @@ impl<
 
     /// A MAC ack frame. Zero `flood_hops` is no `FHOPS` field at all.
     ///
-    /// A sealed ack is this node's own, so it carries the operator
-    /// callsign when one is configured. That is its only static option, and
-    /// the [ack tag] covers it.
+    /// Every ack is this node's own, so it carries the operator callsign
+    /// when one is configured ([`Self::ack_callsign`]). That is its only
+    /// static option, and the [ack tag] covers it: a sealed ack's tag is
+    /// computed over it here, and a verbatim trailer's must already cover
+    /// it.
     ///
     /// [ack tag]: https://darconeous.github.io/umsh/docs/protocol/security.html#ack-tag-construction
+    #[allow(clippy::too_many_arguments)]
     fn build_mac_ack<'a>(
         &self,
         buf: &'a mut [u8; FRAME],
         ack_trailer: AckTrailer<'_>,
         flood_hops: u8,
         trace_route: bool,
+        route_retry: bool,
         source_route: Option<&[RouterHint]>,
         regions: &[[u8; 2]],
     ) -> Result<&'a [u8], SendError> {
@@ -2814,10 +2842,7 @@ impl<
             }
             AckTrailer::Verbatim(trailer) => (trailer, None),
         };
-        let callsign = self
-            .operating_policy
-            .operator_callsign
-            .filter(|_| seal.is_some());
+        let callsign = self.ack_callsign()?;
         let mut builder = PacketBuilder::new(buf).mac_ack(placeholder);
         if flood_hops > 0 {
             builder = builder.flood_hops(flood_hops);
@@ -2827,6 +2852,9 @@ impl<
         }
         if let Some(callsign) = callsign {
             builder = builder.option(OptionNumber::OperatorCallsign, callsign.as_trimmed_slice());
+        }
+        if route_retry {
+            builder = builder.option(OptionNumber::RouteRetry, &[]);
         }
         if trace_route {
             builder = builder.trace();
@@ -2913,10 +2941,19 @@ impl<
     }
 
     /// Enqueues an immediate direct MAC ACK frame carrying `ack_trailer` as
-    /// given.
+    /// given. Its tag must cover the operator callsign the ack carries
+    /// when one is configured.
     pub fn queue_mac_ack(&mut self, ack_trailer: [u8; 8]) -> Result<(), SendError> {
         let mut buf = [0u8; FRAME];
-        let frame = PacketBuilder::new(&mut buf).mac_ack(ack_trailer).build()?;
+        let frame = self.build_mac_ack(
+            &mut buf,
+            AckTrailer::Verbatim(ack_trailer),
+            0,
+            false,
+            false,
+            None,
+            &[],
+        )?;
         if frame.len() > self.radio.max_frame_size() {
             return Err(SendError::Build(BuildError::BufferTooSmall));
         }
@@ -2995,7 +3032,14 @@ impl<
         };
 
         let receipt = if options.ack_requested {
-            Some(self.prepare_pending_ack(from, *peer, &packet, &pairwise_keys, options)?)
+            Some(self.prepare_pending_ack(
+                from,
+                *peer,
+                &packet,
+                &pairwise_keys,
+                options,
+                shape.provisional,
+            )?)
         } else {
             None
         };
@@ -3157,7 +3201,14 @@ impl<
         };
 
         let receipt = if options.ack_requested {
-            Some(self.prepare_pending_ack(from, *peer, &packet, &blind_keys, options)?)
+            Some(self.prepare_pending_ack(
+                from,
+                *peer,
+                &packet,
+                &blind_keys,
+                options,
+                shape.provisional,
+            )?)
         } else {
             None
         };
@@ -3252,7 +3303,8 @@ impl<
     /// Send a response over the carriage its request arrived on.
     ///
     /// The one place the MAC decides how an answer travels, so that answering
-    /// never widens the audience the question had.
+    /// never widens the audience the question had. Its options come from
+    /// [`Self::response_options`].
     async fn send_response(
         &mut self,
         from: LocalIdentityId,
@@ -3442,7 +3494,7 @@ impl<
                     .arm(identity_id, receipt, queued.frame.as_slice(), now_ms);
             }
         }
-        if queued.forward_watch != ForwardWatch::None {
+        if queued.forward_watch.is_tracked() {
             self.rearm_tracked_forward(queued);
         }
         Ok(receipt)
@@ -3478,7 +3530,7 @@ impl<
         if let Some(key) = Self::confirmation_key(queued.frame.as_slice()) {
             let now_ms = self.clock.now_ms();
             if !self.dup_cache.contains(&key, now_ms) {
-                self.dup_cache.insert(key, now_ms);
+                self.insert_forwarding_identity(key, now_ms);
             }
         }
     }
@@ -3552,7 +3604,7 @@ impl<
     #[inline(never)]
     fn rearm_tracked_forward(&mut self, mut queued: QueuedTx<FRAME>) {
         let retries = match queued.forward_watch {
-            ForwardWatch::None => return,
+            ForwardWatch::None | ForwardWatch::Routed => return,
             ForwardWatch::Armed { retries } => retries,
             ForwardWatch::Awaiting { retries } => {
                 MacCounters::bump(&mut self.counters.forward_retried);
@@ -3996,9 +4048,22 @@ impl<
         // Whatever the frame turns out to be, it held the channel. One
         // replayed from a queue held it at some other time, and one from a
         // bearer or a wire never did.
-        if rx.origin == RxOrigin::Air && rx.buffered.is_none() {
+        let live_air = rx.origin == RxOrigin::Air && rx.buffered.is_none();
+        if live_air {
             let airtime_ms = self.radio.airtime_ms(frame_len);
             self.rx_occupancy.record(self.clock.now_ms(), airtime_ms);
+        }
+        // A node in Licensed-Only mode does no work on an encrypted packet,
+        // whatever its type: it learns nothing from it, and so neither
+        // opens, delivers, acknowledges, answers, nor forwards it.
+        if self.operating_policy.amateur_radio_mode == AmateurRadioMode::LicensedOnly
+            && PacketHeader::parse(&buf[..frame_len])
+                .is_ok_and(|header| header.sec_info.is_some_and(|sec| sec.scf.encrypted()))
+        {
+            MacCounters::bump(&mut self.counters.rx_encrypted_discarded);
+            return false;
+        }
+        if live_air {
             self.note_neighbor_beside(&buf[..frame_len], rx.rssi);
         }
         self.note_transmitter_observation(&buf[..frame_len], rx);
@@ -4207,6 +4272,23 @@ impl<
                 } else {
                     from_key
                 };
+                // Only a verified signature, accepted by replay detection,
+                // says the peer sent it, and only then does it teach a
+                // route. An unsigned beacon may still suggest one.
+                if signature == SignatureStatus::Verified {
+                    if let Some((peer_id, _)) = from_key
+                        .as_ref()
+                        .and_then(|key| self.peer_registry.lookup_by_key(key))
+                    {
+                        self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
+                    }
+                } else if header.body_range.is_empty() {
+                    let peer_id = match from_key {
+                        Some(key) => self.peer_registry.lookup_by_key(&key).map(|(id, _)| id),
+                        None => self.resolve_unique_hint(from_hint).map(|(id, _)| id),
+                    };
+                    self.consider_beacon(&buf[..frame_len], header, peer_id, Some(from_hint), rx);
+                }
                 for (index, slot) in self.identities.iter().enumerate() {
                     // An ephemeral identity takes only unicast addressed to
                     // it: a broadcast reaches the long-term identity it
@@ -4579,7 +4661,7 @@ impl<
                 if let Some(data) = Self::echo_request_data(payload) {
                     let response =
                         Self::build_mac_command_payload(MAC_COMMAND_ECHO_RESPONSE_ID, data);
-                    let options = Self::echo_response_options(&original[..frame_len], header);
+                    let options = self.echo_response_options(&original[..frame_len], header);
                     let _ = self
                         .send_response(
                             local_id,
@@ -4738,10 +4820,13 @@ impl<
         // The channel key proves only membership, so an unsigned frame's
         // source is a claim any member can make. Only a verified signature
         // says the peer sent it, and only then does it teach a route.
-        if signature == SignatureStatus::Verified
-            && let Some(peer_id) = source.peer_id
-        {
-            self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
+        // An unsigned beacon may still suggest one.
+        if signature == SignatureStatus::Verified {
+            if let Some(peer_id) = source.peer_id {
+                self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
+            }
+        } else if body_range.is_empty() {
+            self.consider_beacon(original, header, source.peer_id, source.hint, rx);
         }
         let mut delivered = false;
         for (index, slot) in self.identities.iter().enumerate() {
@@ -5104,7 +5189,7 @@ impl<
                             let response =
                                 Self::build_mac_command_payload(MAC_COMMAND_ECHO_RESPONSE_ID, data);
                             let options =
-                                Self::echo_response_options(&original[..frame_len], header);
+                                self.echo_response_options(&original[..frame_len], header);
                             let _ = self
                                 .send_response(
                                     local_id,
@@ -5460,6 +5545,9 @@ impl<
                         continue;
                     }
                     if now_ms >= pending.ack_deadline_ms {
+                        // Fails once: what a Route Retry then misses is not
+                        // the provisional route's doing.
+                        let provisional = core::mem::take(&mut pending.provisional_route);
                         if pending.expects_ack() {
                             let revision = core::mem::take(&mut pending.cached_route_revision);
                             if self
@@ -5469,11 +5557,16 @@ impl<
                             {
                                 pending.held_route_missed = true;
                             }
+                            if provisional {
+                                self.peer_registry
+                                    .fail_provisional_route(&pending.peer, now_ms);
+                            }
                         }
                         if !pending.expects_ack() {
                             push_action(&mut actions, Action::Abandon { receipt: *receipt });
                         } else if Self::can_attempt_route_retry(
                             pending,
+                            provisional,
                             self.peer_registry.lookup_by_key(&pending.peer).is_some_and(
                                 |(_, peer)| peer.heard_within(LOST_REPLY_RETRY_WINDOW_MS, now_ms),
                             ),
@@ -5794,6 +5887,19 @@ impl<
         }
     }
 
+    /// The Operator Callsign every MAC ack this node sends carries: its
+    /// operator callsign, when one is configured. A node in Licensed-Only
+    /// mode without one sends no ack, as it sends nothing else.
+    fn ack_callsign(&self) -> Result<Option<HamAddr>, SendError> {
+        let policy = &self.operating_policy;
+        if policy.operator_callsign.is_none()
+            && policy.amateur_radio_mode == AmateurRadioMode::LicensedOnly
+        {
+            return Err(SendError::PolicyViolation);
+        }
+        Ok(policy.operator_callsign)
+    }
+
     /// Stop retrying a standalone ack whose acknowledgment a new send now
     /// carries as an [Ack MIC option].
     ///
@@ -6050,6 +6156,7 @@ impl<
         packet: &UnsealedPacket<'_>,
         keys: &PairwiseKeys,
         options: &SendOptions,
+        provisional: bool,
     ) -> Result<SendReceipt, SendError> {
         let header = PacketHeader::parse(packet.as_bytes())?;
         // Computed before sealing, while a blind unicast's address block is
@@ -6071,9 +6178,12 @@ impl<
         .map_err(|_| SendError::QueueFull)?
         .with_requested_flood_hops(options.flood_hops);
 
+        // A provisional route is not the peer's route: nothing a revision
+        // names is credited or retired by how the send ends.
         let cached_route_revision = self
             .peer_registry
             .lookup_by_key(&peer)
+            .filter(|_| !provisional)
             .filter(|(_, info)| {
                 let uses_hints = matches!(info.route.as_ref(),
                     Some(CachedRoute::Source(route)) if !route.is_empty());
@@ -6091,6 +6201,7 @@ impl<
             PendingAck::direct(full_mac, peer, resend)
         };
         pending.cached_route_revision = cached_route_revision;
+        pending.provisional_route = provisional;
         pending.reachability_test = options.reachability_test;
         pending.reply = options.reply;
         slot.try_insert_pending_ack(receipt, pending)
@@ -6122,6 +6233,44 @@ impl<
         Ok(self
             .crypto
             .derive_pairwise_keys(&shared_secret, &local_key, peer_key))
+    }
+
+    /// The provisional route a send to `peer_id` follows, if it may follow
+    /// one ([`PeerRegistry::provisional_route`]).
+    ///
+    /// Only a unicast this node originates that requests an
+    /// acknowledgment, and has a flood budget to carry the margin past the
+    /// route's end, tries one; never a reply, and never one the caller or a
+    /// hold chose a route for. One such send to a peer is in flight at a
+    /// time, so a forged route costs one failure before its suppression,
+    /// however many sends were waiting. Every other send, and every other
+    /// rule, sees a peer with no route.
+    fn provisional_send_route(
+        &self,
+        destination: SendDestination<'_>,
+        peer_id: Option<PeerId>,
+        options: &SendOptions,
+    ) -> Option<&CachedRoute> {
+        let SendDestination::Unicast(peer) = destination else {
+            return None;
+        };
+        if !options.ack_requested
+            || options.reply
+            || options.source_route.is_some()
+            || options.flood_hops.is_none_or(|hops| hops == 0)
+        {
+            return None;
+        }
+        let peer_id = peer_id?;
+        let now_ms = self.clock.now_ms();
+        if self.peer_registry.route_hold(peer_id, now_ms).is_some()
+            || self
+                .provisional_sends()
+                .any(|pending| pending.peer == *peer)
+        {
+            return None;
+        }
+        self.peer_registry.provisional_route(peer_id, now_ms)
     }
 
     fn effective_source_route(
@@ -6719,7 +6868,7 @@ impl<
             return;
         };
         let response = Self::build_mac_command_payload(MAC_COMMAND_ECHO_RESPONSE_ID, data);
-        let options = Self::echo_response_options(original, header);
+        let options = self.echo_response_options(original, header);
         let _ = self
             .send_response(local_id, &peer_key, carriage, response.as_slice(), &options)
             .await;
@@ -6801,7 +6950,7 @@ impl<
         let payload = Self::resync_command_payload(MAC_COMMAND_VERIFY_FRAME_ID, nonce);
         let mut ack_mic = [0u8; 4];
         ack_mic.copy_from_slice(&ack_v[..4]);
-        let options = SendOptions::default().with_ack_mic(ack_mic);
+        let options = self.response_options().with_ack_mic(ack_mic);
         if self
             .send_response(local_id, &peer_key, carriage, &payload, &options)
             .await
@@ -6965,7 +7114,9 @@ impl<
             return true;
         };
         let payload = Self::resync_command_payload(MAC_COMMAND_FRAME_VERIFIED_ID, nonce);
-        let options = Self::echo_response_options(original, header).with_ack_requested(true);
+        let options = self
+            .echo_response_options(original, header)
+            .with_ack_requested(true);
         if let Ok(Some(answer)) = self
             .send_response(local_id, &peer_key, carriage, &payload, &options)
             .await
@@ -7047,7 +7198,7 @@ impl<
         let nonce = self.rng.next_u32();
         let payload =
             Self::build_mac_command_payload(MAC_COMMAND_ECHO_REQUEST_ID, &nonce.to_be_bytes());
-        let options = SendOptions::default();
+        let options = self.response_options();
         if self
             .send_response(local_id, &peer_key, carriage, payload.as_slice(), &options)
             .await
@@ -7297,6 +7448,18 @@ impl<
         Some(data)
     }
 
+    /// The options every answer and probe the MAC sends on its own starts
+    /// from. A node in Licensed-Only mode sends nothing encrypted, so its
+    /// answers and probes go out in the clear.
+    fn response_options(&self) -> SendOptions {
+        let options = SendOptions::default();
+        if self.operating_policy.amateur_radio_mode == AmateurRadioMode::LicensedOnly {
+            options.unencrypted()
+        } else {
+            options
+        }
+    }
+
     /// Mirror the requester's trace options and MIC size onto the echo
     /// response.
     ///
@@ -7312,8 +7475,8 @@ impl<
     /// The trace options are requests, not guarantees. A response that ends
     /// up with no flood budget and no source route drops them again on the
     /// way out; see [`Mac::frame_is_repeatable`].
-    fn echo_response_options(frame: &[u8], header: &PacketHeader) -> SendOptions {
-        let mut options = SendOptions::default();
+    fn echo_response_options(&self, frame: &[u8], header: &PacketHeader) -> SendOptions {
+        let mut options = self.response_options();
         if let Some(mic_size) = header.sec_info.and_then(|info| info.scf.mic_size().ok()) {
             options = options.with_mic_size(mic_size);
         }
@@ -7669,6 +7832,79 @@ impl<
         if let Some(offer) = self.route_offer(peer_id, frame, header, &options, rx, now_ms) {
             self.peer_registry.offer_route(peer_id, offer, now_ms);
         }
+    }
+
+    /// Weigh what an unsigned beacon says about the way to its source,
+    /// `peer_id` as the frame's source resolved, `hint` as it named it.
+    ///
+    /// Nothing authenticates the beacon, so it teaches nothing and refreshes
+    /// nothing. It may only suggest a provisional route
+    /// ([`PeerRegistry::provisional_route`]) to a peer this node holds no
+    /// route to, or put a differing source or direct route in doubt, and
+    /// only its first copy does either ([`PeerRegistry::hear_beacon`]). It is
+    /// weighed only received live, from a peer held by full key that is not
+    /// mobile, over a complete trace with no Source Route option, or no trace
+    /// and no flood hops at all.
+    fn consider_beacon(
+        &mut self,
+        frame: &[u8],
+        header: &PacketHeader,
+        peer_id: Option<PeerId>,
+        hint: Option<umsh_core::NodeHint>,
+        rx: &RxInfo,
+    ) {
+        if rx.buffered.is_some() || rx.origin == RxOrigin::LocalTx {
+            return;
+        }
+        let Some(peer_id) = peer_id else {
+            return;
+        };
+        let local = |slot: &Option<IdentitySlot<P::Identity, PEERS, ACKS, FRAME>>| {
+            slot.as_ref()
+                .is_some_and(|slot| Some(slot.identity().public_key().hint()) == hint)
+        };
+        if self.identities.iter().any(local) {
+            return;
+        }
+        let Some(peer) = self.peer_registry.get(peer_id) else {
+            return;
+        };
+        if peer.mobile {
+            return;
+        }
+        let Ok(options) = ParsedOptions::extract(frame, header.options_range.clone()) else {
+            return;
+        };
+        if options.source_route.is_some() {
+            return;
+        }
+        let now_ms = self.clock.now_ms();
+        // The path is built as for a teaching packet; what the trace
+        // measured along it is not used.
+        let route = match self.route_offer(peer_id, frame, header, &options, rx, now_ms) {
+            Some(RouteOffer { route, .. }) if !matches!(route, CachedRoute::Flood { .. }) => route,
+            _ => return,
+        };
+        // Each peer with a send along its provisional route in flight still
+        // has its entry, so there are no more of them than entries.
+        let mut pinned: Vec<PeerId, { crate::PROVISIONAL_ROUTES }> = Vec::new();
+        for pending in self.provisional_sends() {
+            if let Some((id, _)) = self.peer_registry.lookup_by_key(&pending.peer) {
+                let _ = pinned.push(id);
+            }
+        }
+        self.peer_registry
+            .hear_beacon(peer_id, route, now_ms, &pinned);
+    }
+
+    /// Every send along a provisional route still awaiting its
+    /// acknowledgment, from any identity.
+    fn provisional_sends(&self) -> impl Iterator<Item = &PendingAck<FRAME>> {
+        self.identities
+            .iter()
+            .flatten()
+            .flat_map(|slot| slot.pending_acks.values())
+            .filter(|pending| pending.provisional_route)
     }
 
     /// The route back to `peer_id` that one received frame offers, scored
@@ -8205,13 +8441,6 @@ impl<
         if !self.repeater.mode.forwards() {
             return false;
         }
-        // An adaptive forwarder's battery is its owner's before it is the
-        // mesh's. Low, it carries nothing for anyone, a source-routed hop
-        // included: the sender's missing confirmation is what tells it to
-        // find another way.
-        if self.repeater.mode == RepeaterMode::Adaptive && self.battery_low {
-            return false;
-        }
         if !header.packet_type().is_routable() {
             return false;
         }
@@ -8224,7 +8453,7 @@ impl<
         // frame back on the air that already left this antenna once.
         if rx.origin == RxOrigin::LocalTx {
             if let Some(cache_key) = Self::forward_dup_key(header, frame) {
-                self.dup_cache.insert(cache_key, self.clock.now_ms());
+                self.insert_forwarding_identity(cache_key, self.clock.now_ms());
             }
             return false;
         }
@@ -8260,6 +8489,14 @@ impl<
             self.defer_pending_forward(&cache_key, frame, header, rx, &options);
             return false;
         }
+        // An adaptive forwarder's battery is its owner's before it is the
+        // mesh's. Low, it carries nothing for anyone, a source-routed hop
+        // included: the sender's missing confirmation is what tells it to
+        // find another way. It still records its own radio's frames above,
+        // so that it does not carry them once the battery recovers.
+        if self.adaptive_withheld() {
+            return false;
+        }
 
         let mut left_to_others = false;
         let Some(plan) = self.plan_forwarding(frame, header, &options, rx, &mut left_to_others)
@@ -8268,7 +8505,7 @@ impl<
             // stays left: a later copy of it, from a forwarder further
             // off, is the same flood and not a second chance at it.
             if left_to_others {
-                self.dup_cache.insert(cache_key, self.clock.now_ms());
+                self.insert_forwarding_identity(cache_key, self.clock.now_ms());
             }
             return false;
         };
@@ -8329,7 +8566,7 @@ impl<
                 entry.forward_watch = Self::source_routed_forward_watch(header, hints_left);
             }
         }
-        self.dup_cache.insert(cache_key, now_ms);
+        self.insert_forwarding_identity(cache_key, now_ms);
         // Counted at the decision to repeat rather than at the eventual
         // transmit, so the tally measures what this node chose to carry.
         // The frame is also counted again in `tx_frames` when it actually
@@ -8358,7 +8595,7 @@ impl<
             PacketType::UnicastAckReq | PacketType::BlindUnicastAckReq
         );
         if hints_left == 0 && !acknowledged {
-            return ForwardWatch::None;
+            return ForwardWatch::Routed;
         }
         let retries = if header.packet_type() == PacketType::MacAck {
             MAX_ACK_FORWARD_RETRIES
@@ -8383,7 +8620,7 @@ impl<
         }
 
         let router_hint = self.repeater_router_hint()?;
-        let station_action = self.classify_forward_station_action(frame, header)?;
+        let station_action = self.classify_forward_station_action(header, options)?;
 
         let source_route_bytes = options
             .source_route
@@ -8420,7 +8657,9 @@ impl<
 
         if decrement_flood_hops {
             let flood_hops = header.flood_hops?;
-            if flood_hops.remaining() == 0 {
+            // A packet that has already flooded 15 hops has no room to count
+            // another, whatever budget it still claims.
+            if flood_hops.remaining() == 0 || flood_hops.accumulated() == 0x0F {
                 return None;
             }
             adaptive_flood = self.repeater.mode == RepeaterMode::Adaptive;
@@ -8531,42 +8770,24 @@ impl<
         })
     }
 
+    /// The Station Callsign edit a forward of this packet makes under this
+    /// node's operating mode, or `None` when the mode declines it
+    /// (UEP-0017 § Eligibility).
     fn classify_forward_station_action(
         &self,
-        frame: &[u8],
         header: &PacketHeader,
+        options: &ParsedOptions,
     ) -> Option<ForwardStationAction> {
-        let has_operator_callsign = if header.options_range.is_empty() {
-            false
-        } else {
-            umsh_core::iter_options(frame, header.options_range.clone())
-                .filter_map(Result::ok)
-                .any(|(number, _)| OptionNumber::from(number) == OptionNumber::OperatorCallsign)
-        };
-        let encrypted = header
-            .sec_info
-            .map(|sec| sec.scf.encrypted())
-            .unwrap_or(false);
-
-        match self.repeater.amateur_radio_mode {
+        let encrypted = header.sec_info.is_some_and(|sec| sec.scf.encrypted());
+        let amateur = !encrypted && options.operator_callsign.is_some();
+        let station = self.repeater.station_callsign.is_some();
+        match self.operating_policy.amateur_radio_mode {
             AmateurRadioMode::Unlicensed => Some(ForwardStationAction::Remove),
             AmateurRadioMode::LicensedOnly => {
-                if encrypted || !has_operator_callsign || self.repeater.station_callsign.is_none() {
-                    None
-                } else {
-                    Some(ForwardStationAction::Replace)
-                }
+                (amateur && station).then_some(ForwardStationAction::Set)
             }
-            AmateurRadioMode::Hybrid => {
-                if !encrypted && has_operator_callsign {
-                    self.repeater
-                        .station_callsign
-                        .as_ref()
-                        .map(|_| ForwardStationAction::Replace)
-                } else {
-                    Some(ForwardStationAction::Remove)
-                }
-            }
+            AmateurRadioMode::Hybrid if amateur && station => Some(ForwardStationAction::Set),
+            AmateurRadioMode::Hybrid => Some(ForwardStationAction::Remove),
         }
     }
 
@@ -8696,8 +8917,19 @@ impl<
     ) -> Result<usize, CapacityError> {
         let mut encoder = OptionEncoder::new(dst);
         let mut inserted_region = false;
-        let mut inserted_station = false;
-        let mut saw_station = false;
+        // The Station Callsign still to write: Set leaves exactly one, in
+        // the place of the first the packet carried or inserted in order,
+        // and Remove leaves none.
+        let mut station = match plan.station_action {
+            ForwardStationAction::Set => Some(
+                self.repeater
+                    .station_callsign
+                    .as_ref()
+                    .ok_or(CapacityError)?
+                    .as_trimmed_slice(),
+            ),
+            ForwardStationAction::Remove => None,
+        };
         let mut seen_singletons = 0u16;
 
         if !header.options_range.is_empty() {
@@ -8722,21 +8954,12 @@ impl<
                         .map_err(|_| CapacityError)?;
                     inserted_region = true;
                 }
-                if !inserted_station
-                    && matches!(plan.station_action, ForwardStationAction::Replace)
-                    && number > OptionNumber::StationCallsign.as_u16()
+                if number > OptionNumber::StationCallsign.as_u16()
+                    && let Some(value) = station.take()
                 {
                     encoder
-                        .put(
-                            OptionNumber::StationCallsign.as_u16(),
-                            self.repeater
-                                .station_callsign
-                                .as_ref()
-                                .ok_or(CapacityError)?
-                                .as_trimmed_slice(),
-                        )
+                        .put(OptionNumber::StationCallsign.as_u16(), value)
                         .map_err(|_| CapacityError)?;
-                    inserted_station = true;
                 }
 
                 match OptionNumber::from(number) {
@@ -8773,22 +8996,8 @@ impl<
                         encoder.put(number, remaining).map_err(|_| CapacityError)?;
                     }
                     OptionNumber::StationCallsign => {
-                        saw_station = true;
-                        match plan.station_action {
-                            ForwardStationAction::Remove => {}
-                            ForwardStationAction::Replace => {
-                                encoder
-                                    .put(
-                                        number,
-                                        self.repeater
-                                            .station_callsign
-                                            .as_ref()
-                                            .ok_or(CapacityError)?
-                                            .as_trimmed_slice(),
-                                    )
-                                    .map_err(|_| CapacityError)?;
-                                inserted_station = true;
-                            }
+                        if let Some(value) = station.take() {
+                            encoder.put(number, value).map_err(|_| CapacityError)?;
                         }
                     }
                     _ => {
@@ -8798,26 +9007,17 @@ impl<
             }
         }
 
-        if matches!(plan.station_action, ForwardStationAction::Replace)
-            && !inserted_station
-            && !saw_station
-        {
-            encoder
-                .put(
-                    OptionNumber::StationCallsign.as_u16(),
-                    self.repeater
-                        .station_callsign
-                        .as_ref()
-                        .ok_or(CapacityError)?
-                        .as_trimmed_slice(),
-                )
-                .map_err(|_| CapacityError)?;
-        }
+        // Whatever is still to insert goes last, in increasing order.
         if let Some(region_code) = plan.insert_region_code
             && !inserted_region
         {
             encoder
                 .put(OptionNumber::RegionCode.as_u16(), &region_code)
+                .map_err(|_| CapacityError)?;
+        }
+        if let Some(value) = station {
+            encoder
+                .put(OptionNumber::StationCallsign.as_u16(), value)
                 .map_err(|_| CapacityError)?;
         }
         Ok(encoder.finish())
@@ -9150,14 +9350,22 @@ impl<
         // else forwarded. The originator sending the packet again shows the
         // opposite, that nobody carried it, which is when the adaptive
         // forward is wanted.
+        //
+        // A routed hop gives way to nobody: the route named this node. A
+        // flood forward gives way only to a copy already carried as far as
+        // its own would go. A copy from behind, such as the originator's own
+        // retry, is a sign the packet has not gone on.
         let Some(mut queued) = self.tx_queue.remove_first_matching(|entry| {
             entry.priority == TxPriority::Forward
-                && !entry.forward_watch.has_aired()
+                && !entry.forward_watch.is_routed()
                 && Self::confirmation_key(entry.frame.as_slice())
                     .map(|entry_key| &entry_key == key)
                     .unwrap_or(false)
-                && (!entry.adaptive.is_flood()
-                    || crate::forward_id::serves_neighborhood(entry.frame.as_slice(), frame))
+                && if entry.adaptive.is_flood() {
+                    crate::forward_id::serves_neighborhood(entry.frame.as_slice(), frame)
+                } else {
+                    crate::forward_id::carried_as_far(entry.frame.as_slice(), frame)
+                }
         }) else {
             return;
         };
@@ -9262,7 +9470,9 @@ impl<
                 && Self::forward_named_by_ack_mic(entry, ack_mic, acks_too)
             {
                 entry.cad_attempts = HINTED;
-                entry.forward_watch = ForwardWatch::None;
+                if entry.forward_watch.is_routed() {
+                    entry.forward_watch = ForwardWatch::Routed;
+                }
                 hinted += 1;
             }
         }
@@ -9496,6 +9706,21 @@ impl<
     /// `2 × T_frame + W_max + 2 × W_jitter + D_ack`, which at the default
     /// tuning is `2.95 × T_frame` (repeater-operation.md § Forwarding
     /// Confirmation).
+    /// Record a forwarding identity in the duplicate cache.
+    ///
+    /// A MAC ack's entry lives for a confirmation timeout and one frame
+    /// time: long enough to absorb a routed ack's single retry and the late
+    /// flood copies of one exchange. A re-acknowledgement answering a Route
+    /// Retry carries the option, so it is a different identity and is
+    /// carried however soon it follows.
+    fn insert_forwarding_identity(&mut self, key: DupCacheKey, now_ms: u64) {
+        let ack_ttl_ms = self
+            .forward_confirm_timeout_ms()
+            .saturating_add(u64::from(self.radio.t_frame_ms()));
+        self.dup_cache.set_ack_ttl_ms(ack_ttl_ms);
+        self.dup_cache.insert(key, now_ms);
+    }
+
     fn forward_confirm_timeout_ms(&self) -> u64 {
         let t_frame_ms = u64::from(self.radio.t_frame_ms());
         t_frame_ms
@@ -9553,7 +9778,14 @@ impl<
     /// A [reachability test](SendOptions::reachability_test) earns it
     /// unheard: whether the peer is there is the question being asked, and a
     /// dead way back would answer it wrongly.
-    fn can_attempt_route_retry(pending: &PendingAck<FRAME>, peer_heard_recently: bool) -> bool {
+    ///
+    /// `provisional` says the send followed a provisional route, which is
+    /// an assumed route whatever the frame's shape shows.
+    fn can_attempt_route_retry(
+        pending: &PendingAck<FRAME>,
+        provisional: bool,
+        peer_heard_recently: bool,
+    ) -> bool {
         let Ok(header) = PacketHeader::parse(pending.resend.frame.as_slice()) else {
             return false;
         };
@@ -9581,7 +9813,7 @@ impl<
             pending.expects_ack(),
             pending.resend.requested_flood_hops,
             options.route_retry || pending.route_retry_spent,
-            has_source_route || narrowed,
+            provisional || has_source_route || narrowed,
             peer_heard_recently || pending.reachability_test,
         )
     }

@@ -214,7 +214,9 @@ where
         let elapsed = app.elapsed();
         let age = Duration::from_millis(now.saturating_sub(at));
         app.set_time(elapsed.saturating_sub(age));
+        let busy = app.state().conversation_busy();
         touch(app, phase, Point::new(x.into(), y.into()), at);
+        reoffer(app, busy);
         app.set_time(elapsed);
         if next.is_some_and(|next| input.lays_out_with(next)) {
             return;
@@ -229,13 +231,30 @@ where
         return;
     }
     sync_keyboard(app);
+    let busy = app.state().conversation_busy();
     if app.state().picker.is_some() {
         pick(app, input, now);
     } else {
         deliver(app, input, now);
     }
+    reoffer(app, busy);
     app.finalize_view();
     sync_keyboard(app);
+}
+
+/// Offers what came due over the conversation while something was under
+/// way over it, once that is done, however it ended: unless what ended it
+/// went on to the draft or a reply.
+fn reoffer<V, F>(app: &mut App<V, State, F>, busy: bool)
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    if busy && !app.state().conversation_busy() {
+        app.state_mut().refresh_learned_route(true);
+    }
 }
 
 /// Moves the interface's clock to `now`. Ages are shown in whole seconds,
@@ -505,11 +524,12 @@ where
                 return;
             }
             // A part of the date and time being changed takes the turn,
-            // and so does the brightness being set.
+            // and so do the brightness being set and a route being chosen.
             if app.state_mut().turn_set_time(detents)
                 || app.state_mut().turn_brightness(detents)
                 || app.state_mut().turn_volume(detents)
                 || app.state_mut().turn_gamma(detents)
+                || app.state_mut().turn_route_edit(detents)
             {
                 return;
             }
@@ -631,6 +651,13 @@ where
             Arrow::Up | Arrow::Right => 1,
             Arrow::Down | Arrow::Left => -1,
         });
+        return;
+    }
+    // A hop being moved, or a value of a route being chosen: up and down
+    // as the wheel turns.
+    if let Some(detents) = direction.detents()
+        && state.turn_route_edit(detents)
+    {
         return;
     }
     // The gamma chart's square: up and right lighten it, down and left

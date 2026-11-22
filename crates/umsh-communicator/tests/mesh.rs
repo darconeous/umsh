@@ -38,8 +38,9 @@ use support::{Port, device, phone_inserts, provision};
 
 type Platform = TokioPlatform<SimulatedRadio, MemoryCounterStore, MemoryKeyValueStore>;
 /// Room for the board's identity and the ephemeral ones its sessions with
-/// forward secrecy take, as the device node has.
-type MeshMac = Mac<Platform, 5, 16, 4, 8, 8, 255, 32>;
+/// forward secrecy take, and for routes held by hand, as the device node
+/// has.
+type MeshMac = Mac<Platform, 5, 16, 4, 8, 8, 255, 32, 8>;
 
 /// A test that stops making progress fails rather than hangs.
 const PATIENCE: Duration = Duration::from_secs(20);
@@ -62,7 +63,7 @@ impl Clock for Since {
 struct Board {
     node: &'static CommunicatorNode<Port>,
     sim: Rc<RefCell<SimulatedDevice>>,
-    mesh: LocalNode<MacHandle<'static, Platform, 5, 16, 4, 8, 8, 255, 32>>,
+    mesh: LocalNode<MacHandle<'static, Platform, 5, 16, 4, 8, 8, 255, 32, 8>>,
     key: PublicKey,
 }
 
@@ -249,7 +250,10 @@ async fn a_direct_message_is_delivered() {
             assert_eq!(&*message.text, "Meet at the ridge");
             assert_eq!(
                 bob.node.chat(chat).unwrap().kind,
-                ChatKind::Peer { hops: Some(1) }
+                ChatKind::Peer {
+                    hops: Some(1),
+                    manual: false
+                }
             );
 
             // The answer goes back the same way.
@@ -1270,6 +1274,175 @@ async fn a_ping_through_a_repeater_names_it_and_reads_each_hop() {
                 alice.node.peer_route(peer).is_some()
             })
             .await;
+        })
+        .await;
+}
+
+/// A route held by hand through a repeater nobody hears misses, each
+/// message floods instead and is delivered so, and the route is held
+/// still. After two, the route the floods taught is offered in its place;
+/// turned down, it is not offered again until the route is held anew, and
+/// taken, it replaces the held route.
+#[tokio::test(flavor = "current_thread")]
+async fn a_held_route_that_misses_floods_and_offers_what_the_floods_taught() {
+    LocalSet::new()
+        .run_until(async {
+            let network = SimulatedNetwork::new();
+            let near = network.add_radio_with_config(255, 20);
+            let middle = network.add_radio_with_config(255, 20);
+            let far = network.add_radio_with_config(255, 20);
+            network.connect_bidirectional(near.id(), middle.id());
+            network.connect_bidirectional(middle.id(), far.id());
+            let alice = board(near, [0x11; 32]).await;
+            let ridge = repeater(middle, [0x33; 32]).await;
+            let bob = board(far, [0x22; 32]).await;
+
+            phone_inserts(&alice.sim, prop::DEV_PEERS, &bob.key.0);
+            alice.node.pump();
+            let peer = alice.node.peers()[0].id;
+            let chat = alice
+                .node
+                .direct_chat(&address(&bob.key), "Bob", &alice.node.avatar())
+                .unwrap();
+            // No repeater answers to this hint.
+            let nobody = [0xEE, 0xEE];
+            let hold = || alice.node.hold_route(peer, &[nobody], 0, 3_600_000);
+            hold();
+            until("the held route was not read", || {
+                alice
+                    .node
+                    .peer_route(peer)
+                    .is_some_and(|route| route.manual.is_some())
+            })
+            .await;
+            // The chat's header says how far the held route goes.
+            assert_eq!(
+                alice.node.chat(chat.id).unwrap().kind,
+                ChatKind::Peer {
+                    hops: Some(2),
+                    manual: true
+                }
+            );
+
+            let alice = &alice;
+            let flooded = |text: &'static str| async move {
+                let sent = alice.node.send(chat.id, text, None, false).unwrap();
+                until("the message was not delivered", || {
+                    how_sent(alice, chat.id, sent.id).0 == Delivery::Flooded
+                })
+                .await;
+            };
+            flooded("By the ridge").await;
+            // The route missed and the flood after it was acknowledged, and
+            // the device node holds the same route still.
+            let status = alice.mesh.peer_route_status(&bob.key).await.unwrap();
+            assert_eq!(status.fallback_acks, 1, "{status:?}");
+            assert!(status.hold_remaining_ms.is_some(), "{status:?}");
+            assert_eq!(
+                status.route,
+                umsh::mac::CachedRoute::source(&[umsh_core::RouterHint(nobody)]),
+            );
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            assert_eq!(
+                alice.node.learned_route(peer),
+                None,
+                "one miss is not enough"
+            );
+
+            flooded("Past the pass").await;
+            until("the learned route was not offered", || {
+                alice.node.learned_route(peer).is_some()
+            })
+            .await;
+            let learned = alice.node.learned_route(peer).unwrap();
+            assert_eq!(learned.hops, 2);
+            assert!(learned.via.is_some(), "{learned:?}");
+
+            // Turned down, it is not offered again while the route is held.
+            alice.node.keep_manual_route(peer);
+            assert_eq!(alice.node.learned_route(peer), None);
+            // Held anew, it is, once the floods have taught it again: not
+            // before the new hold is read back.
+            hold();
+            assert_eq!(alice.node.learned_route(peer), None);
+            flooded("Down the far side").await;
+            flooded("Nearly there").await;
+            until("the learned route was not offered again", || {
+                alice.node.learned_route(peer).is_some()
+            })
+            .await;
+
+            // Taken, it replaces the held route.
+            alice.node.adopt_learned_route(peer);
+            assert_eq!(alice.node.learned_route(peer), None);
+            until("the learned route was not taken", || {
+                alice
+                    .node
+                    .peer_route(peer)
+                    .is_some_and(|route| route.manual.is_none())
+            })
+            .await;
+            let status = alice.mesh.peer_route_status(&bob.key).await.unwrap();
+            assert_eq!(status.hold_remaining_ms, None, "{status:?}");
+            assert_eq!(
+                status.route,
+                umsh::mac::CachedRoute::source(&[umsh_core::RouterHint([ridge.0[0], ridge.0[1]])]),
+            );
+            assert_eq!(alice.node.learned_route(peer), None);
+            assert!(matches!(
+                alice.node.chat(chat.id).unwrap().kind,
+                ChatKind::Peer { manual: false, .. }
+            ));
+        })
+        .await;
+}
+
+/// What this device hears is read from its own device node, a page as a
+/// router would give it, with nothing sent: the repeater heard carrying a
+/// ping is listed.
+#[tokio::test(flavor = "current_thread")]
+async fn this_devices_own_list_is_read_here() {
+    LocalSet::new()
+        .run_until(async {
+            let network = SimulatedNetwork::new();
+            let near = network.add_radio_with_config(255, 20);
+            let middle = network.add_radio_with_config(255, 20);
+            let far = network.add_radio_with_config(255, 20);
+            let (near_id, middle_id) = (near.id(), middle.id());
+            network.connect_bidirectional(near_id, middle_id);
+            network.connect_bidirectional(middle.id(), far.id());
+            let alice = board(near, [0x11; 32]).await;
+            let ridge = repeater(middle, [0x33; 32]).await;
+            let bob = board(far, [0x22; 32]).await;
+
+            phone_inserts(&alice.sim, prop::DEV_PEERS, &bob.key.0);
+            alice.node.pump();
+            let peer = alice.node.peers()[0].id;
+            alice.node.ping(peer);
+            until("the ping was not answered", || {
+                matches!(alice.node.ping_view(peer), Some(PingView::Reply(_)))
+            })
+            .await;
+
+            // With alice cut off, only her own table can answer.
+            network.disconnect(near_id, middle_id);
+            network.disconnect(middle_id, near_id);
+            let here = alice.node.address();
+            alice.node.ask_listing(&here, false, &[], None);
+            until("this device's own list was not read", || {
+                alice
+                    .node
+                    .listing(&here)
+                    .is_some_and(|listing| listing.asking.is_none() && listing.count > 0)
+            })
+            .await;
+            let listing = alice.node.listing(&here).unwrap();
+            assert!(!listing.no_answer, "{listing:?}");
+            assert_eq!(listing.total, Some(listing.count), "{listing:?}");
+            assert_eq!(
+                alice.node.listed(&here, 0).unwrap().hint,
+                [ridge.0[0], ridge.0[1]]
+            );
         })
         .await;
 }

@@ -1,5 +1,5 @@
 //! The repeaters a node has heard directly, and how it answers a
-//! [Peer Repeaters Request](../../docs/protocol/src/mac-commands.md).
+//! [Peer Repeaters Request](../../docs/protocol-legacy/src/mac-commands.md).
 //!
 //! The list is a neighborhood: repeaters heard off their own transmitters.
 //! Two sources feed it, because neither is enough on its own:

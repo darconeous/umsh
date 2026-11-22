@@ -723,10 +723,10 @@ const PHASES: usize = 6;
 
 /// What the stack's report calls each screen.
 #[cfg(feature = "debug-log")]
-const SCREENS: [&str; 22] = [
+const SCREENS: [&str; 23] = [
     "chats", "find", "peers", "device", "conv", "menu", "resend", "details", "member", "peer",
     "page", "setup", "address", "join", "lock", "share", "nearby", "exchange", "channel", "route",
-    "ping", "wifi",
+    "ping", "wifi", "listing",
 ];
 
 /// The screen `state` shows, as an index into [`SCREENS`].
@@ -774,6 +774,7 @@ fn screen(state: &State) -> usize {
         Screen::Channel { .. } => 18,
         Screen::Route { .. } => 19,
         Screen::Ping { .. } => 20,
+        Screen::Neighbors { .. } => 22,
     }
 }
 

@@ -10,7 +10,7 @@
 //! transactions, and queueing of frames that arrive while a command is
 //! in flight.
 //!
-//! See `docs/protocol/src/ulcp.md` and the chapters under it for the
+//! See `docs/protocol-legacy/src/ulcp.md` and the chapters under it for the
 //! protocol.
 
 use std::collections::VecDeque;
@@ -828,7 +828,9 @@ pub struct HostProvisioning {
     /// an existing peer must be re-inserted explicitly (insert
     /// replaces).
     pub peer_keys: Vec<items::PeerKeyEntry>,
-    /// Desired `PROP_HOST_AUTO_ACK`.
+    /// Desired `PROP_HOST_AUTO_ACK`. A host in Licensed-Only mode leaves it
+    /// off: the device's acks carry no Operator Callsign, and it opens the
+    /// encrypted packets it acknowledges.
     pub auto_ack: bool,
 }
 

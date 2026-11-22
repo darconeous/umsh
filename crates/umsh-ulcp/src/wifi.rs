@@ -1,6 +1,6 @@
 //! Wi-Fi codecs (`PROP_WIFI_*`).
 //!
-//! The structures of `docs/protocol/src/ulcp-wifi.md`: a known-network
+//! The structures of `docs/protocol-legacy/src/ulcp-wifi.md`: a known-network
 //! entry and its credential, a scan result, the station's link, and the
 //! access point's configuration, state, and clients.
 //!
@@ -9,7 +9,7 @@
 //! with cannot disagree with that host about the format.
 //!
 //! Decoding is structural and tolerant in the way
-//! `docs/protocol/src/ulcp-conformance.md` requires of receivers: it
+//! `docs/protocol-legacy/src/ulcp-conformance.md` requires of receivers: it
 //! rejects what it cannot parse and accepts what it can, including
 //! trailing octets a later revision may append. Well-formedness, the
 //! rules a device answers `STATUS_INVALID_ARGUMENT` to, is

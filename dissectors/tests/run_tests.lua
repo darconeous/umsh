@@ -200,7 +200,7 @@ section("Keystore")
 
 local NODE_A_PUB = ("ED54A59FB1AC3A5123935136294 1B868E85A60E3D7B2485D828821DC7A69C279"):gsub("%s","")
 local NODE_B_PUB = "6C28FD058C18C88C6CCE2AF981D2D11C851B123ED5B69B7876773ED099EA3F83"
--- 32 bytes: the all-0x5A channel key from docs/protocol/src/test-vectors.md,
+-- 32 bytes: the all-0x5A channel key from docs/protocol-legacy/src/test-vectors.md,
 -- whose channel ID is B0 8D.
 local CHAN_KEY   = ("5A"):rep(32)
 
@@ -226,7 +226,7 @@ check("lookup NodeA by full key",
 -- Option registry
 -- Every option the spec defines should be named; a gap here is an option
 -- the dissector renders as a bare "Option N" with its value undecoded.
--- See the Defined Options table in docs/protocol/src/packet-options.md.
+-- See the Defined Options table in docs/protocol-legacy/src/packet-options.md.
 -- ─────────────────────────────────────────────────────────────────────────────
 section("Option registry")
 
@@ -1248,7 +1248,7 @@ local function new_pinfo()
 end
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- Node Management payloads (docs/protocol/src/app-node-management.md)
+-- Node Management payloads (docs/protocol-legacy/src/app-node-management.md)
 --
 -- [TOKEN:2][OPTIONS][0xFF][FRAME]: direction is the payload type, 8 for a
 -- request and 9 for a response, and exactly one unprefixed ULCP frame runs
@@ -1496,7 +1496,7 @@ check("the multicast rule names the payload type",
       true)
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- Meet payloads (docs/protocol/src/app-meet.md)
+-- Meet payloads (docs/protocol-legacy/src/app-meet.md)
 --
 -- [VERSION][KIND][BODY]: exact body lengths, a Hello on broadcast and every
 -- other kind on unicast, and an Identity's signature either absent or exactly
@@ -1545,7 +1545,7 @@ check("a short signature is flagged",
       #dissect_payload("0A 01 04" .. key .. identity .. "FF" .. string.rep("11", 63)).violations, 1)
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- Node Identity regions (docs/protocol/src/node-identity.md)
+-- Node Identity regions (docs/protocol-legacy/src/node-identity.md)
 --
 -- Option 4 is repeated: one region name per option, as UTF-8. The 2-octet
 -- forwarding code is derived from the name rather than carried.
@@ -1569,7 +1569,7 @@ check("an over-long region is flagged",
       true)
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- Peer Repeaters (docs/protocol/src/mac-commands.md)
+-- Peer Repeaters (docs/protocol-legacy/src/mac-commands.md)
 --
 -- Command 10 is a CoAP option block and nothing else; command 11 follows its
 -- own option block with a list of entries, each an option list terminated by
@@ -1672,7 +1672,7 @@ check("a one-byte RSSI/SNR is flagged",
       true)
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- Verify Frame / Frame Verified (docs/protocol/src/mac-commands.md)
+-- Verify Frame / Frame Verified (docs/protocol-legacy/src/mac-commands.md)
 --
 -- Both carry a 4-byte nonce. A Verify Frame names the frame it asks about in
 -- the header's Ack MIC option; a Frame Verified asks to be acknowledged.
@@ -1714,7 +1714,7 @@ local vf_multicast = dissect_payload("02 0C 0A0B0C0D", 4, "11223344")
 check("a multicast verify frame is flagged", #vf_multicast.violations > 0, true)
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- Signing rules in the app layer (docs/protocol/src/multicast-channels.md,
+-- Signing rules in the app layer (docs/protocol-legacy/src/multicast-channels.md,
 -- node-identity.md)
 --
 -- Every multicast carrying text on the emergency channel is signed. An

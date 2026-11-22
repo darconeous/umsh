@@ -12,8 +12,8 @@
 //! the byte pipes and the radio.
 //!
 //! Design constraints from the spec
-//! (`docs/protocol/src/ulcp-core.md`,
-//! `docs/protocol/src/ulcp-transport.md`):
+//! (`docs/protocol-legacy/src/ulcp-core.md`,
+//! `docs/protocol-legacy/src/ulcp-transport.md`):
 //!
 //! - one confirmed transmit in flight at a time (`STATUS_BUSY`);
 //! - transmits never wait for duty-cycle allowance

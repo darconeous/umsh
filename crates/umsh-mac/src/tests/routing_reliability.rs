@@ -1758,6 +1758,7 @@ struct AckShape {
     flood_hops: Option<u8>,
     source_route: Option<Vec<RouterHint>>,
     traced: bool,
+    route_retry: bool,
     regions: Vec<[u8; 2]>,
 }
 
@@ -1784,6 +1785,7 @@ fn queued_ack_shape(mac: &mut TestMac) -> AckShape {
                 .collect()
         }),
         traced: trace.is_some(),
+        route_retry: options.route_retry,
         regions,
     }
 }
@@ -1821,13 +1823,15 @@ fn a_route_retry_of_an_acked_request_reacks_by_scoped_flood_and_keeps_the_route(
             "a duplicate is not delivered"
         );
         // The re-ack reaches as far as the retry came, plus a hop, within
-        // its regions, and traces so the sender learns a way back.
+        // its regions, and traces so the sender learns a way back. It carries
+        // Route Retry, so repeaters that carried the first ack carry it too.
         assert_eq!(
             queued_ack_shape(&mut mac),
             AckShape {
                 flood_hops: Some(4),
                 source_route: None,
                 traced: true,
+                route_retry: true,
                 regions: vec![LOST_REPLY_REGION],
             }
         );

@@ -18,7 +18,7 @@ import sys
 import time
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Test-vector packet bytes from docs/protocol/src/test-vectors.md
+# Test-vector packet bytes from docs/protocol-legacy/src/test-vectors.md
 # ─────────────────────────────────────────────────────────────────────────────
 
 VECTORS = [

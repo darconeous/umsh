@@ -1,0 +1,30 @@
+# A route held by hand that misses: each message is carried by the flood
+# after it and says so, and after two the learned route is offered in its
+# place. Keep manual route stops the asking.
+backspace
+turn 1
+press
+turn 2
+press
+turn 3
+press
+turn 2
+press
+turn 20
+press
+backspace
+turn -3
+press
+shot held-header
+type Leaving the trailhead now
+enter
+wait 7
+shot delivered-flooded
+type Pass is clear
+enter
+wait 7
+shot switch-prompt
+turn 1
+shot switch-prompt-keep
+press
+shot kept-manual

@@ -28,8 +28,8 @@ The difficult geographic work must happen at **build time**, not on the radio or
 Before implementing this project, read these existing files in the UMSH repository:
 
 - `crates/umsh-core/src/region.rs`
-- `docs/protocol/src/packet-options.md`, especially “Region Code” and “Region Code Encoding”
-- `docs/protocol/src/repeater-operation.md`, especially “Region policy”
+- `docs/protocol-legacy/src/packet-options.md`, especially “Region Code” and “Region Code Encoding”
+- `docs/protocol-legacy/src/repeater-operation.md`, especially “Region policy”
 - `crates/umsh-mobile-core/src/ulcp.rs`
 - `apps/ios/README.md`
 - repository-root `CLAUDE.md`
