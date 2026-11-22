@@ -20,7 +20,25 @@ uep = 7
 anchor = "frame-signature-option"
 
 [[value]]
+value = 3
+name = "Source Route"
+uep = 14
+anchor = "source-route"
+
+[[value]]
+value = 6
+name = "Route Retry"
+uep = 12
+anchor = "route-retry"
+
+[[value]]
 value = 8
 name = "Ack MIC"
 uep = 7
 anchor = "ack-mic-option"
+
+[[value]]
+value = 11
+name = "Region Code"
+uep = 13
+anchor = "region-code"
