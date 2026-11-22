@@ -18380,13 +18380,21 @@ public struct MobileRadioStateRecord: Equatable, Hashable {
      */
     public var deviceKey: Data?
     /**
-     * The latest battery reading, kept until a newer one arrives.
+     * The latest battery reading, kept until a newer one arrives. It
+     * outlives the link while the transport still names the same radio,
+     * and is dropped when it names another or none.
      */
     public var battery: UlcpBatteryRecord?
     /**
      * When `battery` arrived, in milliseconds since the Unix epoch.
      */
     public var batteryReadAtMs: UInt64?
+    /**
+     * `battery` came over an earlier link, not the current one: a past
+     * reading to show with its age, and its charge state no longer
+     * describes the radio.
+     */
+    public var batteryCached: Bool
     /**
      * What the radio is doing to make itself findable, as it reports it
      * now.
@@ -18420,11 +18428,18 @@ public struct MobileRadioStateRecord: Equatable, Hashable {
          * The radio's own public key, when it has a device identity.
          */deviceKey: Data?,
         /**
-         * The latest battery reading, kept until a newer one arrives.
+         * The latest battery reading, kept until a newer one arrives. It
+         * outlives the link while the transport still names the same radio,
+         * and is dropped when it names another or none.
          */battery: UlcpBatteryRecord?,
         /**
          * When `battery` arrived, in milliseconds since the Unix epoch.
          */batteryReadAtMs: UInt64?,
+        /**
+         * `battery` came over an earlier link, not the current one: a past
+         * reading to show with its age, and its charge state no longer
+         * describes the radio.
+         */batteryCached: Bool,
         /**
          * What the radio is doing to make itself findable, as it reports it
          * now.
@@ -18445,6 +18460,7 @@ public struct MobileRadioStateRecord: Equatable, Hashable {
         self.deviceKey = deviceKey
         self.battery = battery
         self.batteryReadAtMs = batteryReadAtMs
+        self.batteryCached = batteryCached
         self.alert = alert
         self.clock = clock
         self.position = position
@@ -18475,6 +18491,7 @@ public struct FfiConverterTypeMobileRadioStateRecord: FfiConverterRustBuffer {
                 deviceKey: FfiConverterOptionData.read(from: &buf),
                 battery: FfiConverterOptionTypeUlcpBatteryRecord.read(from: &buf),
                 batteryReadAtMs: FfiConverterOptionUInt64.read(from: &buf),
+                batteryCached: FfiConverterBool.read(from: &buf),
                 alert: FfiConverterOptionTypeUlcpAlertState.read(from: &buf),
                 clock: FfiConverterOptionTypeMobileRadioClockRecord.read(from: &buf),
                 position: FfiConverterOptionTypeUlcpGnssRecord.read(from: &buf),
@@ -18491,6 +18508,7 @@ public struct FfiConverterTypeMobileRadioStateRecord: FfiConverterRustBuffer {
         FfiConverterOptionData.write(value.deviceKey, into: &buf)
         FfiConverterOptionTypeUlcpBatteryRecord.write(value.battery, into: &buf)
         FfiConverterOptionUInt64.write(value.batteryReadAtMs, into: &buf)
+        FfiConverterBool.write(value.batteryCached, into: &buf)
         FfiConverterOptionTypeUlcpAlertState.write(value.alert, into: &buf)
         FfiConverterOptionTypeMobileRadioClockRecord.write(value.clock, into: &buf)
         FfiConverterOptionTypeUlcpGnssRecord.write(value.position, into: &buf)

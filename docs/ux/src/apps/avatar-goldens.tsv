@@ -1,0 +1,78 @@
+# Avatar and channel-badge goldens, shared by the iOS and Android tests.
+# Generated once from the Swift rules in apps/ios/UMSH/DesignSystem/AvatarStyle.swift
+# and PeerAvatarShape.swift; hint text rendered by the core's render_node_hint.
+# kind: peer (fill = the hint's bytes) or channel (fill = the badge band of the tint).
+# role: wire role code; caps: capability bits in hex, or - when nothing was advertised.
+# text: the lettering color by APCA (peer) or by band (channel).
+# hint: the core's render_node_hint text for the bytes (peer only), drawn two over two.
+kind	bytes	role	caps	fill	text	shape	hint
+peer	a1b203	2	04	A1B203	black	circle	BtC5
+peer	84811b	1	01	84811B	white	triangle	9v*
+peer	5ea1b2	3	02	5EA1B2	white	hexagon	7NQL
+peer	8b60f5	2	-	8B60F5	white	circle	AP5R
+peer	2f5d8a	4	08	2F5D8A	white	hexagon	4Btt
+peer	102030	1	04	102030	white	circle	25wz
+peer	405060	5	00	405060	white	triangle	5L4B
+peer	708090	3	01	708090	white	hexagon	8aAN
+peer	a0b0c0	0	-	A0B0C0	black	hexagon	BpG*
+peer	d0e0f0	6	10	D0E0F0	black	hexagon	F4Nj
+peer	123456	7	00	123456	white	hexagon	2E4d
+peer	9abcde	99	c0	9ABCDE	black	hexagon	BR2p
+peer	000000	0	-	000000	white	hexagon	1111
+peer	ffffff	0	-	FFFFFF	black	hexagon	JEKN
+peer	808080	0	-	808080	white	hexagon	9ecq
+peer	ff0000	0	-	FF0000	white	hexagon	JAQ*
+peer	00ff00	0	-	00FF00	black	hexagon	14tX
+peer	0000ff	0	-	0000FF	white	hexagon	111t
+peer	ffff00	0	-	FFFF00	black	hexagon	JEJV
+peer	00ffff	0	-	00FFFF	black	hexagon	14uQ
+peer	ff00ff	0	-	FF00FF	white	hexagon	JAR*
+peer	80ff00	0	-	80FF00	black	hexagon	9gYi
+peer	a3a3a3	0	-	A3A3A3	white	hexagon	C1nB
+peer	a4a4a4	0	-	A4A4A4	black	hexagon	C5hU
+peer	821174	0	-	821174	white	hexagon	9kjS
+peer	a656a7	0	-	A656A7	white	hexagon	CCKK
+peer	b204b0	0	-	B204B0	white	hexagon	Cyui
+peer	d8dc2e	0	-	D8DC2E	black	hexagon	FbX*
+peer	cf4e1e	0	-	CF4E1E	white	hexagon	ExE*
+peer	8655a6	0	-	8655A6	white	hexagon	A3PP
+peer	13f687	0	-	13F687	black	hexagon	2Lvn
+peer	210385	0	-	210385	white	hexagon	3Ds*
+peer	749584	0	-	749584	white	hexagon	8r6X
+peer	aa73cb	0	-	AA73CB	white	hexagon	CUNi
+peer	626e80	0	-	626E80	white	hexagon	7dEg
+peer	8829f4	0	-	8829F4	white	hexagon	AAX*
+peer	7ddfc9	0	-	7DDFC9	black	hexagon	9UM*
+peer	fd649e	0	-	FD649E	white	hexagon	J498
+peer	2272d2	0	-	2272D2	white	hexagon	3KUQ
+peer	ef7118	0	-	EF7118	white	hexagon	H7gT
+peer	9c70e8	0	-	9C70E8	white	hexagon	BXgT
+peer	f44073	0	-	F44073	white	hexagon	HSTU
+peer	f7f961	0	-	F7F961	black	hexagon	HgzF
+peer	1a0412	0	-	1A0412	white	hexagon	2kZC
+peer	ac7f9d	0	-	AC7F9D	white	hexagon	CcMz
+peer	a6d921	0	-	A6D921	black	hexagon	CEJi
+peer	5f108e	0	-	5F108E	white	hexagon	7Q6N
+peer	4921c2	0	-	4921C2	white	hexagon	5vU*
+channel	93228e	-	-	6B1967	white	badge	-
+channel	8f02ca	-	-	C77EE6	black	badge	-
+channel	3a8fd2	-	-	7EB8E6	black	badge	-
+channel	000000	-	-	6B6B6B	white	badge	-
+channel	ffffff	-	-	E6E6E6	black	badge	-
+channel	9e9e9e	-	-	6B6B6B	white	badge	-
+channel	9f9f9f	-	-	E6E6E6	black	badge	-
+channel	e9c46a	-	-	E6C77E	black	badge	-
+channel	1f6e73	-	-	1D666B	white	badge	-
+channel	ff0000	-	-	E67E7E	black	badge	-
+channel	6a1c1d	-	-	6B1C1D	white	badge	-
+channel	098283	-	-	106A6B	white	badge	-
+channel	229e09	-	-	1F6B10	white	badge	-
+channel	360b7c	-	-	33106B	white	badge	-
+channel	ec7b10	-	-	E6B07E	black	badge	-
+channel	afa978	-	-	E6DE9D	black	badge	-
+channel	9915a4	-	-	DE7EE6	black	badge	-
+channel	18b63d	-	-	7EE696	black	badge	-
+channel	b2ee68	-	-	B7E67E	black	badge	-
+channel	d6ba9c	-	-	E6C7A7	black	badge	-
+channel	4c7587	-	-	3C5D6B	white	badge	-
+channel	906886	-	-	6B4D64	white	badge	-

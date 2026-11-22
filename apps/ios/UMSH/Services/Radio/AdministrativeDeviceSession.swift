@@ -58,6 +58,9 @@ extension AdministeredDeviceSnapshot {
         let identity = state.deviceKey.flatMap {
             try? UMSHMobileCore.inspectPublicIdentityBytes(publicKey: $0)
         }
+        // This snapshot carries no reading time, so it shows only a reading
+        // from the session in hand.
+        let liveBattery = state.batteryCached ? nil : state.battery
         self.init(
             linkState: RadioLinkState(state.phase),
             identifier: state.linkId.flatMap(UUID.init(uuidString:)),
@@ -70,9 +73,9 @@ extension AdministeredDeviceSnapshot {
             },
             hostState: RadioHostState(state.host),
             sync: state.provisioning,
-            batteryPercentage: state.battery?.percentage.map(Int.init),
-            batteryVoltageMillivolts: state.battery?.voltageMv.map(Int.init),
-            chargeState: state.battery?.chargeState.map(RadioChargeState.init),
+            batteryPercentage: liveBattery?.percentage.map(Int.init),
+            batteryVoltageMillivolts: liveBattery?.voltageMv.map(Int.init),
+            chargeState: liveBattery?.chargeState.map(RadioChargeState.init),
             alert: state.alert.map(RadioAlertState.init),
             clock: state.clock.map {
                 RadioClock(

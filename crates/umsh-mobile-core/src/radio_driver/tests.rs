@@ -345,6 +345,92 @@ fn attaching_claims_the_bound_radio_and_turns_its_transmitter_on() {
 }
 
 #[test]
+fn the_battery_reading_outlives_the_link_for_the_same_radio_only() {
+    let mut bench = Bench::attached();
+    let reading = bench.state().battery.clone();
+    let read_at = bench.state().battery_read_at_ms;
+    assert!(reading.is_some() && !bench.state().battery_cached);
+
+    // The link goes; the transport still names the radio.
+    bench.cut();
+    bench.advance(60_000);
+    assert!(bench.state().phase == MobileRadioPhase::Attached || bench.state().battery_cached);
+    bench.report(MobileRadioTransportPhase::Reconnecting);
+    let state = bench.state();
+    assert_eq!(state.phase, MobileRadioPhase::Reconnecting);
+    assert_eq!(state.battery, reading);
+    assert_eq!(state.battery_read_at_ms, read_at);
+    assert!(state.battery_cached);
+
+    // Back over a new link: the radio's next reading is live again.
+    bench.connect(true);
+    let state = bench.state();
+    assert_eq!(state.phase, MobileRadioPhase::Attached);
+    assert!(state.battery.is_some() && !state.battery_cached);
+    assert!(state.battery_read_at_ms > read_at);
+
+    // Another radio never shows this one's reading, nor does this one once
+    // the transport has moved on from it.
+    for link_id in [Some("other"), None, Some("bench")] {
+        bench.cut();
+        bench.handle(Event::Transport(MobileRadioTransportStateRecord {
+            phase: MobileRadioTransportPhase::Connecting,
+            name: None,
+            link_id: link_id.map(str::to_owned),
+            problem: None,
+        }));
+        let state = bench.state();
+        assert!(state.battery.is_none(), "{link_id:?}");
+        assert!(state.battery_read_at_ms.is_none() && !state.battery_cached);
+    }
+}
+
+#[test]
+fn a_fault_makes_the_battery_reading_an_earlier_one_at_once() {
+    let mut bench = Bench::attached();
+    let reading = bench.state().battery.clone();
+    let read_at = bench.state().battery_read_at_ms;
+    assert!(reading.is_some());
+
+    // Before the transport says anything about the fault.
+    bench.handle(Event::LinkFault(MobileRadioProblem::InvalidFrame));
+    let state = bench.state();
+    assert_eq!(state.phase, MobileRadioPhase::Reconnecting);
+    assert_eq!(state.battery, reading);
+    assert!(state.battery_cached);
+
+    // A transport that comes straight back: live only once the new
+    // session reports a reading of its own.
+    bench.cut();
+    bench.advance(1_000);
+    bench.device.attach();
+    bench.carrying = true;
+    bench.deliver();
+    bench.handle(Event::LinkReady { bound_radio: true });
+    let state = bench.state();
+    assert_eq!(state.phase, MobileRadioPhase::Attached);
+    assert!(!state.battery_cached);
+    assert!(state.battery_read_at_ms > read_at);
+
+    // A fault with no retry left: the failure, and its settling, keep the
+    // reading as an earlier one.
+    let mut bench = spent();
+    let reading = bench.state().battery.clone();
+    let read_at = bench.state().battery_read_at_ms;
+    bench.handle(Event::LinkFault(MobileRadioProblem::InvalidFrame));
+    assert_eq!(bench.state().phase, MobileRadioPhase::Failed);
+    assert!(bench.state().battery_cached);
+    bench.cut();
+    bench.report(MobileRadioTransportPhase::Disconnecting);
+    bench.report(MobileRadioTransportPhase::Idle);
+    let state = bench.state();
+    assert_eq!(state.phase, MobileRadioPhase::Failed);
+    assert_eq!(state.battery, reading);
+    assert_eq!(state.battery_read_at_ms, read_at);
+    assert!(state.battery_cached);
+}
+
+#[test]
 fn a_radio_the_app_is_not_bound_to_is_left_awaiting_a_host() {
     let mut bench = Bench::new();
     bench.handle(Event::HostKey(Some(HOST_KEY)));

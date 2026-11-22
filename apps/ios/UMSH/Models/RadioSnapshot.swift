@@ -11,6 +11,10 @@ struct RadioSnapshot: Equatable, Sendable {
     var batteryVoltageMillivolts: Int?
     var chargeState: RadioChargeState?
     var batteryReadAt: Date?
+    /// The battery reading came over an earlier connection to this radio:
+    /// drawn dimmed, with its age, never as live. Its charge state is not
+    /// carried.
+    var batteryCached = false
     var deviceIdentity: MeshPublicIdentity?
     var hostState: RadioHostState
     var provisioning: RadioProvisioningSummary?
@@ -144,7 +148,9 @@ struct RadioSnapshot: Equatable, Sendable {
         provisioning?.supportsBattery ?? false
     }
 
-    var accessibleSummary: String {
+    /// Takes the moment to describe the reading's age from, so a view
+    /// shows it under a timeline rather than once.
+    func accessibleSummary(now: Date) -> String {
         var parts = [linkState.accessibilityLabel]
         if let name {
             parts.append(name)
@@ -152,17 +158,29 @@ struct RadioSnapshot: Equatable, Sendable {
         // A radio charging off a rail it cannot estimate a level from
         // still reports its terminal voltage, which is a measurement
         // rather than the absence of one.
+        let age = batteryCached ? batteryReadAt.map { AgePresentation.text(since: $0, now: now) } : nil
         if let batteryPercentage {
-            parts.append("Battery \(batteryPercentage) percent")
+            if let age {
+                parts.append(String(localized: "Battery was \(batteryPercentage) percent \(age)", comment: "A battery reading from an earlier connection to the radio, with its age, such as “12 min. ago”. Has plural variants."))
+            } else {
+                parts.append(String(localized: "Battery \(batteryPercentage) percent", comment: "The radio's battery level. Has plural variants."))
+            }
         } else if let millivolts = batteryVoltageMillivolts {
-            parts.append("Battery \(formattedVolts(millivolts))")
+            let volts = formattedVolts(millivolts)
+            if let age {
+                parts.append(String(localized: "Battery was \(volts) \(age)", comment: "A battery voltage, such as “3.82 V”, from an earlier connection to the radio, with its age, such as “12 min. ago”."))
+            } else {
+                parts.append(String(localized: "Battery \(volts)", comment: "The radio's battery voltage, such as “3.82 V”."))
+            }
         } else if reportsBattery {
-            parts.append("Battery level unavailable")
+            parts.append(String(localized: "Battery level unavailable", comment: "The radio measures its battery but has not reported a reading."))
         }
         if let chargeState {
             parts.append(chargeState.accessibilityLabel)
         }
-        return parts.joined(separator: ", ")
+        // Whole localized clauses, joined the locale's way (as Android's
+        // ListFormatter does), never a hard-coded separator.
+        return parts.formatted(.list(type: .and, width: .narrow))
     }
 }
 

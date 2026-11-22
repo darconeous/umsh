@@ -545,6 +545,79 @@
     "Base58 Prefix" : {
 
     },
+    "Battery %@" : {
+      "comment" : "The radio's battery voltage, such as “3.82 V”."
+    },
+    "Battery %lld percent" : {
+      "comment" : "The radio's battery level. Has plural variants.",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Battery %lld percent"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Battery %lld percent"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Battery level unavailable" : {
+      "comment" : "The radio measures its battery but has not reported a reading."
+    },
+    "Battery was %@ %@" : {
+      "comment" : "A battery voltage, such as “3.82 V”, from an earlier connection to the radio, with its age, such as “12 min. ago”.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Battery was %1$@ %2$@"
+          }
+        }
+      }
+    },
+    "Battery was %lld percent %@" : {
+      "comment" : "A battery reading from an earlier connection to the radio, with its age, such as “12 min. ago”. Has plural variants.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Battery was %#@percent@ %2$@"
+          },
+          "substitutions" : {
+            "percent" : {
+              "argNum" : 1,
+              "formatSpecifier" : "lld",
+              "variations" : {
+                "plural" : {
+                  "one" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg percent"
+                    }
+                  },
+                  "other" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg percent"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "Beacon" : {
 
     },

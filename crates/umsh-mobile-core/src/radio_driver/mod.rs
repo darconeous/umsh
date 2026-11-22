@@ -168,10 +168,16 @@ pub struct MobileRadioStateRecord {
     pub host: UlcpHostOwnership,
     /// The radio's own public key, when it has a device identity.
     pub device_key: Option<Vec<u8>>,
-    /// The latest battery reading, kept until a newer one arrives.
+    /// The latest battery reading, kept until a newer one arrives. It
+    /// outlives the link while the transport still names the same radio,
+    /// and is dropped when it names another or none.
     pub battery: Option<UlcpBatteryRecord>,
     /// When `battery` arrived, in milliseconds since the Unix epoch.
     pub battery_read_at_ms: Option<u64>,
+    /// `battery` came over an earlier link, not the current one: a past
+    /// reading to show with its age, and its charge state no longer
+    /// describes the radio.
+    pub battery_cached: bool,
     /// What the radio is doing to make itself findable, as it reports it
     /// now.
     pub alert: Option<UlcpAlertState>,
@@ -206,6 +212,7 @@ impl MobileRadioStateRecord {
             device_key: None,
             battery: None,
             battery_read_at_ms: None,
+            battery_cached: false,
             alert: None,
             clock: None,
             position: None,

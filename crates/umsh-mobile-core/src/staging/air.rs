@@ -223,8 +223,8 @@ impl MobileStagingAir {
             let device = SoftDevice::new(radio_config(), StagedRadio::default());
             Ok::<_, std::convert::Infallible>(async move {
                 let radio = driven::run(device, medium, host_events, |_| {});
-                let air = Air::new(dir, heard, air_reachable, wifi_scan_only)
-                    .run(air_queue, control_queue);
+                let air = Air::new(dir, air_queue, heard, air_reachable, wifi_scan_only)
+                    .run(control_queue);
                 tokio::select! {
                     () = radio => {}
                     () = air => {}
@@ -987,6 +987,8 @@ struct Air {
     started: Instant,
     /// The phone's key, once it tethers the radio.
     phone: Option<[u8; 32]>,
+    /// From the radio's medium: what the radio transmitted, and its host.
+    air_events: mpsc::UnboundedReceiver<AirEvent>,
     /// To the radio's receiver.
     heard: mpsc::UnboundedSender<Heard>,
     wakes: mpsc::UnboundedSender<usize>,
@@ -999,13 +1001,15 @@ struct Air {
     asks_when_listed: bool,
     /// The speaking peer has pressed Same on the code now showing.
     pressed_same: bool,
-    /// The speaking peer's next transmissions never reach the radio.
+    /// The next frame the speaking peer originates never reaches the
+    /// radio. Its immediate acknowledgments still do.
     losing: bool,
 }
 
 impl Air {
     fn new(
         dir: PathBuf,
+        air_events: mpsc::UnboundedReceiver<AirEvent>,
         heard: mpsc::UnboundedSender<Heard>,
         remote_reachable: Arc<AtomicBool>,
         wifi_scan_only: bool,
@@ -1024,6 +1028,7 @@ impl Air {
             duty: Box::leak(Box::new(DutyLedger::new())),
             started: Instant::now(),
             phone: None,
+            air_events,
             heard,
             wakes,
             wake_queue,
@@ -1035,16 +1040,12 @@ impl Air {
         }
     }
 
-    async fn run(
-        mut self,
-        mut air: mpsc::UnboundedReceiver<AirEvent>,
-        mut controls: mpsc::UnboundedReceiver<Control>,
-    ) {
+    async fn run(mut self, mut controls: mpsc::UnboundedReceiver<Control>) {
         self.retire_generations();
         self.stand_up().await;
         loop {
             tokio::select! {
-                event = air.recv() => match event {
+                event = self.air_events.recv() => match event {
                     Some(event) => self.on_air(event).await,
                     None => break,
                 },
@@ -1295,7 +1296,9 @@ impl Air {
 
     /// Drain one station: complete its transmissions and put them on the
     /// air. A peer's chat keeps itself, in its own store. Answers how many
-    /// frames it transmitted.
+    /// frames it originated: an immediate acknowledgment, the only frame a
+    /// station sends without listening first, answers what it heard and is
+    /// not counted.
     fn pump(&mut self, index: usize) -> usize {
         let Some(Some(station)) = self.stations.get(index) else {
             return 0;
@@ -1311,15 +1314,18 @@ impl Air {
         {
             self.follow_meet(meet, session);
         }
-        let transmitted = update.outbound_frames.len();
-        if index == SPEAKER && self.losing && transmitted > 0 {
-            self.losing = false;
-            return transmitted;
-        }
+        let mut originated = 0;
         for frame in update.outbound_frames {
+            if !frame.nocca {
+                originated += 1;
+                if index == SPEAKER && self.losing {
+                    self.losing = false;
+                    continue;
+                }
+            }
             self.transmit(seed, &frame.data);
         }
-        transmitted
+        originated
     }
 
     /// Answer the managed repeater's admitted requests through its session.
@@ -1364,16 +1370,32 @@ impl Air {
         });
     }
 
-    /// Pump until the speaking peer transmits, or [`FLUSH_WAIT`] passes.
+    /// Pump until the speaking peer originates a frame, or [`FLUSH_WAIT`]
+    /// passes.
+    ///
+    /// The radio's side of the air carries on meanwhile: what the speaker
+    /// waits for may be the phone's acknowledgment of what it said last,
+    /// once it has as many awaiting one as it may.
     async fn flush(&mut self) -> Result<(), MobileStagingAirError> {
         let deadline = Instant::now() + FLUSH_WAIT;
         while self.pump(SPEAKER) == 0 {
-            match tokio::time::timeout_at(deadline, self.wake_queue.recv()).await {
-                Ok(Some(SPEAKER)) => {}
-                Ok(Some(other)) => {
-                    self.pump(other);
+            tokio::select! {
+                wake = self.wake_queue.recv() => match wake {
+                    Some(SPEAKER) => {}
+                    Some(other) => {
+                        self.pump(other);
+                    }
+                    None => return Err(MobileStagingAirError::NotTransmitted),
+                },
+                event = self.air_events.recv() => match event {
+                    // Boxed: a new host restands every node, whose future
+                    // is too large to nest in every control's.
+                    Some(event) => Box::pin(self.on_air(event)).await,
+                    None => return Err(MobileStagingAirError::Stopped),
+                },
+                () = tokio::time::sleep_until(deadline) => {
+                    return Err(MobileStagingAirError::NotTransmitted);
                 }
-                Ok(None) | Err(_) => return Err(MobileStagingAirError::NotTransmitted),
             }
         }
         Ok(())
@@ -1381,25 +1403,23 @@ impl Air {
 
     async fn obey(&mut self, order: Order) -> Result<(), MobileStagingAirError> {
         match order {
-            Order::Say { body, on_channel } => self.say(body, on_channel).await,
+            Order::Say { body, on_channel } => self.say(body, on_channel, false).await,
             Order::SayLosingOne {
                 bodies: [first, lost, last],
             } => {
-                self.say(first, true).await?;
-                // Only what the lost message produces is lost: anything
-                // the peer already has queued goes out first.
-                self.pump(SPEAKER);
-                self.losing = true;
-                let said = self.say(lost, true).await;
-                self.losing = false;
-                said?;
-                self.say(last, true).await
+                self.say(first, true, false).await?;
+                self.say(lost, true, true).await?;
+                self.say(last, true, false).await
             }
             Order::React { body } => {
                 let target = self.last_heard()?;
                 let phone = self.phone()?;
-                self.speak(phone, MobileChatSendRequest::Reaction { target, body })
-                    .await
+                self.speak(
+                    phone,
+                    MobileChatSendRequest::Reaction { target, body },
+                    false,
+                )
+                .await
             }
             Order::Reply { body } => {
                 let target = self.last_heard()?;
@@ -1411,6 +1431,7 @@ impl Air {
                         body,
                         forward_secret: None,
                     },
+                    false,
                 )
                 .await
             }
@@ -1430,25 +1451,37 @@ impl Air {
         }
     }
 
-    async fn say(&mut self, body: String, on_channel: bool) -> Result<(), MobileStagingAirError> {
+    async fn say(
+        &mut self,
+        body: String,
+        on_channel: bool,
+        lose: bool,
+    ) -> Result<(), MobileStagingAirError> {
         let address = match on_channel {
             true => channel_address(),
             false => self.phone()?,
         };
-        self.speak(address, MobileChatSendRequest::Text { body })
+        self.speak(address, MobileChatSendRequest::Text { body }, lose)
             .await
     }
 
     /// Have the speaking peer send `request` to `address`, and wait for it
-    /// to go out.
+    /// to go out. With `lose`, it never reaches the radio.
     async fn speak(
         &mut self,
         address: String,
         request: MobileChatSendRequest,
+        lose: bool,
     ) -> Result<(), MobileStagingAirError> {
         let session = self.speaker()?.session.clone();
+        // Anything the peer already has queued goes out first, and is not
+        // taken for this send.
+        self.pump(SPEAKER);
         session.send_chat(address, request).await.map_err(refused)?;
-        self.flush().await
+        self.losing = lose;
+        let flushed = self.flush().await;
+        self.losing = false;
+        flushed
     }
 
     fn speaker(&self) -> Result<&Station, MobileStagingAirError> {

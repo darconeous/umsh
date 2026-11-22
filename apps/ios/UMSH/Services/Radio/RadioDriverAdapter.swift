@@ -531,8 +531,10 @@ extension RadioSnapshot {
             localIdentifier: state.linkId.flatMap(UUID.init(uuidString:)),
             batteryPercentage: state.battery?.percentage.map(Int.init),
             batteryVoltageMillivolts: state.battery?.voltageMv.map(Int.init),
-            chargeState: state.battery?.chargeState.map(RadioChargeState.init),
+            // A past reading's charge state says nothing about now.
+            chargeState: state.batteryCached ? nil : state.battery?.chargeState.map(RadioChargeState.init),
             batteryReadAt: state.batteryReadAtMs.map(Date.init(unixMilliseconds:)),
+            batteryCached: state.batteryCached,
             deviceIdentity: identity.map {
                 MeshPublicIdentity(
                     canonicalAddress: $0.canonicalAddress,

@@ -314,6 +314,32 @@ async fn a_peer_and_the_phone_talk_both_ways() {
     phone.hears(&peer, "See you there").await;
 }
 
+/// More messages back to back than the peer may await acknowledgments
+/// for go out without a stall: the phone's acknowledgments reach the peer
+/// while each control waits for its message to go out.
+#[tokio::test]
+async fn a_burst_of_direct_messages_goes_out_without_stalling() {
+    let phone = Phone::tethered().await;
+    let peer = address_of(speaker().seed);
+    let count = 3 * umsh_mac::DEFAULT_ACKS;
+    for index in 0..count {
+        let started = std::time::Instant::now();
+        phone
+            .air
+            .peer_says(format!("burst {index}"), false)
+            .await
+            .unwrap_or_else(|error| panic!("burst {index}: {error}"));
+        // A stalled peer waits out an acknowledgment's timeout, seconds
+        // long; an unstalled one sends in milliseconds.
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "burst {index} took {:?}",
+            started.elapsed()
+        );
+    }
+    phone.hears(&peer, &format!("burst {}", count - 1)).await;
+}
+
 #[tokio::test]
 async fn a_lost_channel_message_leaves_a_gap() {
     let phone = Phone::tethered().await;

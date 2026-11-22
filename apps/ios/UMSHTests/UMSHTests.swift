@@ -2,6 +2,7 @@ import CoreBluetooth
 import Foundation
 import SQLite3
 import Testing
+import UIKit
 import UMSHMobileCore
 @testable import UMSH
 
@@ -638,6 +639,59 @@ struct PeerAvatarTests {
         #expect(unknown.avatarShape == .hexagon)
         #expect(unknown.roleLabel == nil)
     }
+
+    /// The goldens Android's `AvatarStyleTest` reads too, so both apps draw a
+    /// node and a channel the same.
+    @Test func sharedGoldensMatch() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("docs/ux/src/apps/avatar-goldens.tsv")
+        let rows = try String(contentsOf: url, encoding: .utf8)
+            .split(separator: "\n")
+            .filter { !$0.hasPrefix("#") && !$0.hasPrefix("kind\t") }
+            .map { $0.split(separator: "\t", omittingEmptySubsequences: false).map(String.init) }
+        #expect(rows.count > 60)
+
+        func bytes(_ hex: String) -> Data {
+            var data = Data()
+            var rest = Substring(hex)
+            while !rest.isEmpty {
+                data.append(UInt8(rest.prefix(2), radix: 16)!)
+                rest = rest.dropFirst(2)
+            }
+            return data
+        }
+        func octets(_ color: UIColor) -> [Int] {
+            var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0
+            color.getRed(&red, green: &green, blue: &blue, alpha: nil)
+            return [red, green, blue].map { Int(($0 * 255).rounded()) }
+        }
+
+        for row in rows {
+            let want = Array(bytes(row[4]))
+            switch row[0] {
+            case "peer":
+                let style = AvatarStyle.peer(hint: MeshNodeHint(bytes: bytes(row[1]), text: row[7]))
+                #expect(octets(style.fill) == want.map(Int.init), "fill \(row[1])")
+                #expect((style.text == .white) == (row[5] == "white"), "text \(row[1])")
+                let capabilities = row[3] == "-" ? nil : MeshNodeCapabilities(rawValue: UInt8(row[3], radix: 16)!)
+                let shape = PeerAvatarShape(role: PeerRole(roleCode: UInt8(row[2])!), capabilities: capabilities)
+                #expect("\(shape)" == row[6], "shape \(row[1])")
+                #expect(style.lines == [String(row[7].prefix(2)), String(row[7].dropFirst(2))])
+            case "channel":
+                let style = AvatarStyle.channel(canonicalName: nil, title: "X", identifierHex: "00", tint: bytes(row[1]))
+                let got = octets(style.fill)
+                // UIKit keeps components as floats; the golden rounds them.
+                #expect(zip(got, want).allSatisfy { abs($0 - Int($1)) <= 1 }, "fill \(row[1]): \(got)")
+                #expect((style.text == .white) == (row[5] == "white"), "text \(row[1])")
+            default:
+                Issue.record("unknown row kind \(row[0])")
+            }
+        }
+    }
 }
 
 @Suite
@@ -652,5 +706,42 @@ struct RepeatCaptionTests {
     @Test func countsRepeatersThatNamedNobody() {
         #expect(RepeatCaption.text(lead: nil, count: 1) == "Heard a repeat")
         #expect(RepeatCaption.text(lead: nil, count: 3) == "Heard 3 repeats")
+    }
+}
+
+@Suite
+struct RadioBatteryTests {
+    private func record(cached: Bool, phase: MobileRadioPhase) -> MobileRadioStateRecord {
+        MobileRadioStateRecord(
+            phase: phase, name: "T1000-E", linkId: UUID().uuidString, host: .ours, deviceKey: nil,
+            battery: UlcpBatteryRecord(percentage: 78, voltageMv: 3_900, chargeState: .charging),
+            batteryReadAtMs: 1_800_000_000_000, batteryCached: cached, alert: nil, clock: nil,
+            position: nil, provisioning: nil, problem: nil
+        )
+    }
+
+    @Test func aReadingFromAnEarlierLinkIsShownWithItsAge() {
+        let snapshot = RadioSnapshot(record(cached: true, phase: .reconnecting))
+        #expect(snapshot.batteryCached)
+        #expect(snapshot.batteryPercentage == 78)
+        // A past reading's charge state says nothing about now.
+        #expect(snapshot.chargeState == nil)
+        let readAt = Date(unixMilliseconds: 1_800_000_000_000)
+        let summary = snapshot.accessibleSummary(now: readAt.addingTimeInterval(12 * 60))
+        #expect(summary.contains(AgePresentation.text(since: readAt, now: readAt.addingTimeInterval(12 * 60))))
+    }
+
+    @Test func aLiveReadingHasNoAge() {
+        let snapshot = RadioSnapshot(record(cached: false, phase: .attached))
+        #expect(!snapshot.batteryCached)
+        #expect(snapshot.chargeState == .charging)
+        let readAt = Date(unixMilliseconds: 1_800_000_000_000)
+        let later = readAt.addingTimeInterval(12 * 60)
+        #expect(!snapshot.accessibleSummary(now: later).contains(AgePresentation.text(since: readAt, now: later)))
+    }
+
+    @Test func anAdministeredDeviceShowsOnlyItsLiveReading() {
+        #expect(AdministeredDeviceSnapshot(record(cached: true, phase: .reconnecting)).batteryPercentage == nil)
+        #expect(AdministeredDeviceSnapshot(record(cached: false, phase: .attached)).batteryPercentage == 78)
     }
 }

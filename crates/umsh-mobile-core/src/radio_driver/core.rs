@@ -495,6 +495,9 @@ pub(crate) struct DriverCore {
     published: MobileRadioStateRecord,
     /// The transport's latest report, for its name and identifier.
     transport: MobileRadioTransportStateRecord,
+    /// The transport identifier of the radio `state.battery` came from:
+    /// the reading outlives the link only for that radio.
+    battery_link_id: Option<String>,
     link_up: bool,
     bound_radio: bool,
     /// Bumped whenever the link comes up or goes down. Deferred work
@@ -591,6 +594,7 @@ impl DriverCore {
             },
             published: state.clone(),
             state,
+            battery_link_id: None,
             link_up: false,
             bound_radio: false,
             generation: 0,
@@ -908,6 +912,16 @@ impl DriverCore {
             self.retire_session();
         }
         let mut state = MobileRadioStateRecord::transport(&report);
+        // The last battery reading stays, marked as from an earlier link,
+        // while the transport still names the radio it came from. Any other
+        // radio, or none, starts without one.
+        if report.link_id.is_some() && report.link_id == self.battery_link_id {
+            state.battery = self.state.battery.take();
+            state.battery_read_at_ms = self.state.battery_read_at_ms;
+            state.battery_cached = state.battery.is_some();
+        } else {
+            self.battery_link_id = None;
+        }
         if let Some(mut fault) = self.fault.take() {
             let teardown = match Teardown::of(&report) {
                 Teardown::Reconnecting if !fault.retry_offered && !fault.settled => {
@@ -1167,6 +1181,9 @@ impl DriverCore {
         self.raw_retry = None;
         self.attach_announced = None;
         self.attach_settled = false;
+        // The reading came from this session. It stays, as an earlier one,
+        // until the next session reports its own.
+        self.state.battery_cached = self.state.battery.is_some();
     }
 
     fn begin_synchronization(&mut self, now: Now) {
@@ -1339,6 +1356,8 @@ impl DriverCore {
         if let Some(battery) = &snapshot.battery {
             self.state.battery = Some(battery.clone());
             self.state.battery_read_at_ms = Some(now.wall_ms);
+            self.state.battery_cached = false;
+            self.battery_link_id.clone_from(&self.transport.link_id);
         }
         // Carried on every update: the radio ends an alert on its own, and
         // the control has to follow the radio, not what was last asked.

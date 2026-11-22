@@ -5,6 +5,14 @@ struct RadioToolbarItem: View {
     let action: () -> Void
 
     var body: some View {
+        // Each minute, so a past battery reading's age in the label stays
+        // true.
+        TimelineView(.everyMinute) { context in
+            button(now: context.date)
+        }
+    }
+
+    private func button(now: Date) -> some View {
         Button(action: action) {
             HStack(spacing: 6) {
                 Image(systemName: snapshot.linkState.symbolName)
@@ -13,7 +21,10 @@ struct RadioToolbarItem: View {
                 // and no percentage, and the power cue is the part that
                 // still means something then.
                 if let batteryPercentage = snapshot.batteryPercentage {
+                    // A reading from an earlier connection is dimmed; its
+                    // age is in the label.
                     Image(systemName: batterySymbol(for: batteryPercentage))
+                        .foregroundStyle(snapshot.batteryCached ? .tertiary : .primary)
                 }
                 if let symbol = snapshot.chargeState?.externalPowerSymbol {
                     Image(systemName: symbol)
@@ -24,7 +35,7 @@ struct RadioToolbarItem: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(snapshot.accessibleSummary)
+        .accessibilityLabel(snapshot.accessibleSummary(now: now))
         .accessibilityHint("Shows radio details")
     }
 
@@ -54,9 +65,12 @@ struct RadioProblemBanner: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(problemDescription)
                         .font(.subheadline.weight(.semibold))
-                    Text(snapshot.accessibleSummary)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    // Each minute, so a past battery reading's age stays true.
+                    TimelineView(.everyMinute) { context in
+                        Text(snapshot.accessibleSummary(now: context.date))
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
                 Spacer()
                 if RadioAccessories.usesSystemPicker, accessories.inventory.migrationID != nil {
