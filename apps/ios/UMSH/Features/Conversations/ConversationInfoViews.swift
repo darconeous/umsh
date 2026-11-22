@@ -151,11 +151,10 @@ struct ClearMessagesSection: View {
                     isPresented: $confirms,
                     titleVisibility: .visible
                 ) {
-                    Button(
-                        messageCount == 1 ? "Clear 1 Message" : "Clear \(messageCount) Messages",
-                        role: .destructive
-                    ) {
+                    Button(role: .destructive) {
                         Task { await clear() }
+                    } label: {
+                        Text("Clear \(messageCount) Messages", comment: "Confirms erasing a conversation. Has plural variants.")
                     }
                     Button("Cancel", role: .cancel) {}
                 } message: {
