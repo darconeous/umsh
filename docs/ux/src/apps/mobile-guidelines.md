@@ -73,7 +73,7 @@ recognizable across Conversations, Network, maps, details, and notifications.
 ### Render addresses and hints canonically
 
 Node addresses and partial hints must follow the presentation algorithm in
-`docs/protocol/src/addressing.md`. Applications must not invent fingerprint,
+`docs/protocol-legacy/src/addressing.md`. Applications must not invent fingerprint,
 ellipsis, suffix, or hexadecimal abbreviations.
 
 - A complete 32-byte node public key is shown as its exact fixed-width

@@ -3,7 +3,7 @@
 //! Wire format for the UMSH Local Control Protocol (ULCP).
 //!
 //! This crate implements the byte-level grammar specified in
-//! `docs/protocol/src/ulcp-core.md`: packed unsigned
+//! `docs/protocol-legacy/src/ulcp-core.md`: packed unsigned
 //! integers, the frame header and command layer, property/stream/status
 //! identifiers, the `STR_PHY_RAW` metadata envelopes
 //! (`ulcp-transport.md`), and HDLC-Lite framing for asynchronous serial

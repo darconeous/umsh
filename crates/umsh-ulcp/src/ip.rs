@@ -1,6 +1,6 @@
 //! IP connectivity codecs (`PROP_IPV4_*`, `PROP_IPV6_*`, `PROP_IP_*`).
 //!
-//! The structures of `docs/protocol/src/ulcp-ip.md`: family readiness,
+//! The structures of `docs/protocol-legacy/src/ulcp-ip.md`: family readiness,
 //! the per-family configuration, the addresses in effect, and the
 //! resolvers.
 //!

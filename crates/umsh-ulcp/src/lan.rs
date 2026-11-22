@@ -1,7 +1,7 @@
 //! LAN bearer configuration and state (device domain).
 //!
-//! Spec: `docs/protocol/src/ulcp-lan-bearer.md`; the bearer itself is
-//! `docs/protocol/src/lan-bearer.md`.
+//! Spec: `docs/protocol-legacy/src/ulcp-lan-bearer.md`; the bearer itself is
+//! `docs/protocol-legacy/src/lan-bearer.md`.
 
 /// The default multicast group.
 pub const DEFAULT_GROUP: [u8; 4] = [239, 255, 134, 121];

@@ -83,7 +83,7 @@ frames it sent and drops the first identical datagram for each.
 
 ### A crossing is already defined
 
-The [internet bridge](protocol/src/internet-bridging.md) already defines what
+The [internet bridge](protocol-legacy/src/internet-bridging.md) already defines what
 it means to join two meshes through a non-LoRa medium:
 
 - A crossing is two repeater hops: the ingress node forwards, the egress node
@@ -92,7 +92,7 @@ it means to join two meshes through a non-LoRa medium:
 - Egress receives it as an unmeasured backhaul reception.
 - The participants' duplicate caches, not the medium, stop circulation.
 
-The integrated client ([ulcp-bridge.md](protocol/src/ulcp-bridge.md#integrated-clients),
+The integrated client ([ulcp-bridge.md](protocol-legacy/src/ulcp-bridge.md#integrated-clients),
 `firmware-esp32/firmware/esp32-tracker/src/bridge.rs`) attaches to the radio
 multiplexer through `BridgePort` (`crates/umsh-ulcp-runtime/src/radio_mux.rs:98`).
 Ingress goes to the node as `RxOrigin::Backhaul`, and egress is the node's
@@ -189,7 +189,7 @@ the same wrapper with real storage, OS entropy, and persistent counters.
   lives in the bridge image there.
 - embassy-net 0.8 has `udp` and `multicast` features
   (`Stack::join_multicast_group`); no image enables either today.
-- There is no mDNS anywhere in the repo. `docs/protocol/src/ulcp-ip.md:473`
+- There is no mDNS anywhere in the repo. `docs/protocol-legacy/src/ulcp-ip.md:473`
   defers it "for whatever first needs it". This is that.
 - Wi-Fi power save (PS Minimum) delays multicast reception to the DTIM
   interval. At LoRa timescales that is acceptable.
@@ -310,7 +310,7 @@ decryption, the text layer, and contact names in the extension; that is
 ## Protocol changes
 
 All normative LAN bearer text lives in **one new chapter,
-`docs/protocol/src/lan-bearer.md`**, listed after Internet Bridging. It is the
+`docs/protocol-legacy/src/lan-bearer.md`**, listed after Internet Bridging. It is the
 document the multicast entitlement request points to, so it must stand alone:
 a reader who knows nothing else of UMSH learns from it what the group carries,
 who sends to it, how participants are discovered, and what a participant does
@@ -325,7 +325,7 @@ this chapter links to them.
 Two things stay outside the chapter, following existing precedent:
 
 - **Device configuration** goes in `ulcp-lan-bearer.md`, beside
-  [Bridge Client](protocol/src/ulcp-bridge.md), the same split the internet
+  [Bridge Client](protocol-legacy/src/ulcp-bridge.md), the same split the internet
   bridge uses.
 - **The Unix socket ULCP transport** is part of phase 2 and lands with the
   iOS work.
@@ -422,7 +422,7 @@ missing optional key as false and ignore unknown keys.
   - This also corrects the internet bridge's co-located-client case, where a
     tunnel copy currently reschedules a pending forward to fire immediately.
 - **Bearer copies confirm:** a copy received from a bearer satisfies
-  [forwarding confirmation](protocol/src/repeater-operation.md#forwarding-confirmation),
+  [forwarding confirmation](protocol-legacy/src/repeater-operation.md#forwarding-confirmation),
   as a backhaul copy does. A LAN endpoint's frame comes back to the group
   when a radio repeats it on air; that return is the endpoint's
   confirmation.
@@ -493,7 +493,7 @@ closing a detach, and a new connection replaces the current one, so a host
 that died without closing never holds the device against its successor. It
 is general, not iOS-specific, and lands with the iOS work because that is
 its first user. It sits beside the other transport bindings in
-[Local Sockets](protocol/src/ulcp-core.md#local-sockets).
+[Local Sockets](protocol-legacy/src/ulcp-core.md#local-sockets).
 
 ### P9. Point-to-point and the shared port
 

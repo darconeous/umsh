@@ -1,6 +1,6 @@
 //! Property, stream, and capability identifiers, plus protocol
 //! constants. The complete allocation is in
-//! `docs/protocol/src/ulcp-index.md`.
+//! `docs/protocol-legacy/src/ulcp-index.md`.
 
 /// Protocol version advertised in `PROP_PROTOCOL_VERSION`.
 pub const PROTOCOL_MAJOR_VERSION: u8 = 6;

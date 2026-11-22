@@ -646,7 +646,7 @@ relationship is checked again at the next boot. An absent gauge or invalid
 telemetry sample reports unknown, never a fabricated zero.
 
 Parameters can be inspected and provisioned explicitly through the
-[ULCP I2C interface](../protocol/src/ulcp-i2c.md#cmd-i2c-transfer). The gauge's
+[ULCP I2C interface](../protocol-legacy/src/ulcp-i2c.md#cmd-i2c-transfer). The gauge's
 RAM is backed by the battery: normal shipping-mode power-off and ESP32 reset
 retain it because U16's BAT supply connects to VBAT at the battery connector,
 upstream of the BQ25896's switched SYS output. If the gauge loses power, it
@@ -665,7 +665,7 @@ is displayed as “maximum.” These reads do not provision or reset the gauge.
 To investigate a percentage jump, compare all three pages before and after the
 jump; charger completion and the gauge's full flag are separate observations.
 The same source serves the optional
-[ULCP battery diagnostics](../protocol/src/ulcp-device.md#battery-diagnostics).
+[ULCP battery diagnostics](../protocol-legacy/src/ulcp-device.md#battery-diagnostics).
 Reads select their required registers, retain per-property failures, and share
 one acquisition across a multi-get. Periodic UI/safety reads and host reads
 share a maximum of two acquisition passes per second; host requests do not
@@ -676,7 +676,7 @@ Use `umshctl battery --gauge-telemetry --watch --json` to monitor the BQ27220's
 raw coulomb count, configured and internal temperatures, average current/power,
 time-to-empty/full estimates (including standby and maximum-load estimates),
 cycle count, state of health, and requested charging current. The combined
-[`PROP_BATTERY_GAUGE_TELEMETRY`](../protocol/src/ulcp-device.md#prop-battery-gauge-telemetry)
+[`PROP_BATTERY_GAUGE_TELEMETRY`](../protocol-legacy/src/ulcp-device.md#prop-battery-gauge-telemetry)
 uses sealed standard-command reads, needs no unlock delay, and is acquired only
 when requested. It preserves sentinels and raw bits; the CLI labels unavailable
 times and supplies Celsius conversions. These additional reads do not run during
@@ -715,7 +715,7 @@ each sequence. An already FULL_ACCESS gauge needs no key sequence. Inspecting
 a manually resealed gauge pauses ordinary gauge sampling for about nine
 seconds; other peripherals and input handling continue operating.
 The wire layout is documented under
-[`PROP_BATTERY_GAUGE_CONFIG`](../protocol/src/ulcp-device.md#prop-battery-gauge-config).
+[`PROP_BATTERY_GAUGE_CONFIG`](../protocol-legacy/src/ulcp-device.md#prop-battery-gauge-config).
 Ten elapsed seconds of valid battery-only readings at or below 3.1 V request
 shutdown. More frequent host reads do not shorten this duration. USB presence,
 recovered voltage, missing/failed readings, CFGUPDATE, or a gap exceeding 2.5

@@ -42,7 +42,7 @@ T-1000E 605/117 KiB, T-Echo 617/126 KiB (of 756/256 KiB).
 
 ## Why
 
-The spec requires it. `docs/protocol/src/ulcp.md` §Identities: the
+The spec requires it. `docs/protocol-legacy/src/ulcp.md` §Identities: the
 device identity "exists even when no phone is attached and can be used for
 in-band management, diagnostics, repeater or bridge behavior, announcing the
 presence or capabilities of the radio." `ulcp-full.md`
@@ -350,8 +350,8 @@ acks; a dedicated check rides the next counter-block flush).
 
 ## References
 
-- `docs/protocol/src/ulcp.md` §Identities, §Hybrid Use
-- `docs/protocol/src/ulcp-full.md` §Identity Model, §State
+- `docs/protocol-legacy/src/ulcp.md` §Identities, §Hybrid Use
+- `docs/protocol-legacy/src/ulcp-full.md` §Identity Model, §State
   Classes, §PROP_DEV_*, §Receive Filtering, §Ack Delegation
 - `docs/ulcp-ble-plan.md` §Architecture guardrails, increment 7
 - `docs/ux/src/hardware/t1000e.md` §Button behavior (single-click slot)

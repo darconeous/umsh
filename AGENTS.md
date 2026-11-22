@@ -8,7 +8,8 @@ replay protection) with AES-SIV (RFC 5297) nonce-misuse-resistant encryption. Th
 holds the protocol **spec**, a Rust **reference implementation**, embedded
 **firmware** for several LoRa boards, an **iOS app**, and a **Wireshark dissector**.
 
-Spec: `docs/protocol/` (mdBook). Everything here was written with heavy LLM
+Spec: `docs/protocol-legacy/` (mdBook), being reorganized into numbered UMSH Extension Protocols
+(UEPs) in `docs/protocol/`—UEP-0001 is the process, and the index there is the road map. Everything here was written with heavy LLM
 assistance and is explicitly experimental—expect code smells and WIP APIs.
 
 There is no significant installed user base, so versioning and migration are a matter
@@ -26,7 +27,7 @@ costs of migration before considering implementing it.
 - `apps/ios/`—SwiftUI app; `packages/UMSHMobileCore`—UniFFI Swift package.
 - `tools/`—host binaries and dev tooling (`crates/` is reserved for library crates):
   - `umshctl`—the radio tool (clap + rustyline; capture is a subcommand)
-  - `umsh-bridge`—the internet bridge daemon (`docs/protocol/src/internet-bridging.md`); lib+bin split so the integration tests can stand a whole bridge up in one process. TOML config + `tracing`, its own dependency table
+  - `umsh-bridge`—the internet bridge daemon (`docs/protocol-legacy/src/internet-bridging.md`); lib+bin split so the integration tests can stand a whole bridge up in one process. TOML config + `tracing`, its own dependency table
   - `regiondb-build`—the region-database compiler. **Python, not Rust**, and the repo's only
     packaged Python (`pyproject.toml` + `uv.lock`, run through `uv`); `scripts/` stays
     stdlib-only because building firmware must need nothing but a Rust toolchain
@@ -37,7 +38,7 @@ costs of migration before considering implementing it.
   `regions-build` (committed tree → `dist/`). Every layer's extract is committed—the
   country layer is land buffered ~100 km seaward and clipped to the EEZ ceiling, not coastlines, so it stays small—and a
   clean checkout builds the world offline. See `regions/README.md` and `regions/FORMAT.md`.
-- `docs/`—protocol spec (`protocol/`), per-board hardware docs, firmware/feature plans, UX.
+- `docs/`—protocol spec (`protocol-legacy/`, and its UEP successor in `protocol/`), per-board hardware docs, firmware/feature plans, UX.
 - `dissectors/umsh/`—Wireshark Lua dissector. `diag/`, `contrib/systemd/`, `scripts/` (`mkuf2.py` builds the UF2, `flash.py` only flashes one, board table in `firmware_image.py`).
 
 ## Build / test

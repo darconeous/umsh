@@ -310,7 +310,7 @@ local function bytes_to_hex(s)
   end))
 end
 
--- Canonical rendering, per docs/protocol/src/addressing.md: a 3-byte node
+-- Canonical rendering, per docs/protocol-legacy/src/addressing.md: a 3-byte node
 -- hint as its star-truncated base58 form, a full key as its 44 base58
 -- digits.
 --

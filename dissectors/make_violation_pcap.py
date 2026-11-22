@@ -40,7 +40,7 @@ FRAME_SIG = (
 )
 
 # Channel ID of the emergency channel, derived from its name.
-# See docs/protocol/src/multicast-channels.md.
+# See docs/protocol-legacy/src/multicast-channels.md.
 CHAN_EMERGENCY = "26 C7"
 
 

@@ -4,11 +4,12 @@ authors = ["UMSH Contributors"]
 language = "en"
 src = "src"
 
+# Renders each UEP's TOML header and enforces the header rules in UEP-0001.
+[preprocessor.uep]
+command = "python3 ../../scripts/uep.py"
+
 [output.html]
-site-url = "/docs/protocol/"
 default-theme = "light"
 preferred-dark-theme = "ayu"
-
-[output.html.redirect]
-"/lan-bearer.html" = "ip-multicast.html"
-"/ulcp-lan-bearer.html" = "ulcp-ip-multicast.html"
+# Sidebar section numbers would read as UEP numbers.
+no-section-label = true

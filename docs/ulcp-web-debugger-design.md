@@ -5,10 +5,10 @@ live in [`tools/ulcp-web-debugger`](../tools/ulcp-web-debugger/README.md).
 Companion documents:
 [ulcp-ble-plan.md](archive/ulcp-ble-plan.md) (implementation
 history) and the protocol chapters under
-[Local Control Protocol](protocol/src/ulcp.md)—in particular
-[framing](protocol/src/ulcp-core.md),
-[frame transport](protocol/src/ulcp-transport.md), and
-[ULCP over BLE](protocol/src/ulcp-ble.md).
+[Local Control Protocol](protocol-legacy/src/ulcp.md)—in particular
+[framing](protocol-legacy/src/ulcp-core.md),
+[frame transport](protocol-legacy/src/ulcp-transport.md), and
+[ULCP over BLE](protocol-legacy/src/ulcp-ble.md).
 
 ## Motivation
 

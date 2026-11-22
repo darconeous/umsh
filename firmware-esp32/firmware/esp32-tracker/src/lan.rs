@@ -13,7 +13,7 @@
 //! is also what gets a reconnected station back into a snooping access
 //! point's or switch's forwarding table.
 //!
-//! Spec: `docs/protocol/src/lan-bearer.md`.
+//! Spec: `docs/protocol-legacy/src/lan-bearer.md`.
 
 use core::cell::RefCell;
 use core::net::{Ipv4Addr, Ipv6Addr};

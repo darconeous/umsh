@@ -339,7 +339,7 @@ transfer flow can be designed separately without making simultaneous use safe.
 
 Direct device-only Keychain storage does not provide a portable identity
 backup. A future recovery design can use the separately encrypted
-[identity export artifact](protocol/src/identity-export.md), protected by
+[identity export artifact](protocol-legacy/src/identity-export.md), protected by
 user-held material and optionally stored in Files or iCloud Drive. Restore is
 not a version-one requirement. When implemented, it discards local transmit and
 receive counter state, advances the restored outbound counter according to the
@@ -951,7 +951,7 @@ The implementation sequence needs these resolution points:
 | Keychain accessibility/unlock and device policy | Phase 0 | Device-only, non-synchronizing Keychain item; no cloud escrow or synchronization |
 | Crash-safe frame-counter allocation | Phase 0 | Do not send authenticated production traffic |
 | UniFFI or C ABI and concurrency contract | Phase 0 | Prototype only |
-| Identity export format adoption ([drafted](protocol/src/identity-export.md)) | Future | Create-only onboarding; restore and export entries hidden |
+| Identity export format adoption ([drafted](protocol-legacy/src/identity-export.md)) | Future | Create-only onboarding; restore and export entries hidden |
 | Minimum OS, database, and migration strategy | Phase 0 | No durable feature schema |
 | Direct routing/flood defaults | Phase 2 | Named conservative preset with visible diagnostics |
 | Discovery observation/retention policy | Phase 3 | Bounded explicit session; no background address harvest |

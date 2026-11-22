@@ -23,7 +23,7 @@ type SoftwareCryptoEngine = CryptoEngine<SoftwareAes, SoftwareSha256>;
 
 /// Render the canonical phase-1 test-vector appendix as Markdown.
 ///
-/// The output is expected to match `docs/protocol/src/test-vectors.md`
+/// The output is expected to match `docs/protocol-legacy/src/test-vectors.md`
 /// byte-for-byte.
 pub fn render_phase1_test_vectors_markdown() -> String {
     let vectors = generate_phase1_vectors();
@@ -1204,7 +1204,7 @@ mod tests {
         let expected = render_phase1_test_vectors_markdown();
         let actual = fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../docs/protocol/src/test-vectors.md"
+            "/../docs/protocol-legacy/src/test-vectors.md"
         ))
         .expect("read protocol test vectors");
         assert_eq!(actual, expected);

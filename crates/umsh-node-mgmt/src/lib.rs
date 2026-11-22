@@ -8,7 +8,7 @@
 //! (payload type 8) and **Node Management Response** (payload type 9)
 //! payloads carry ordinary ULCP frames between an **administrator**—a
 //! node listed in the device's `PROP_DEV_ADMINS`—and the **device**.
-//! `docs/protocol/src/app-node-management.md` specifies it.
+//! `docs/protocol-legacy/src/app-node-management.md` specifies it.
 //!
 //! The binding relies on exactly what secure unicast guarantees—an
 //! authenticated source, confidentiality, and replay protection—and

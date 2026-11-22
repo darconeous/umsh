@@ -25,7 +25,7 @@ design than implicit synchronization with undefined concurrency.
 
 The onboarding restore path and the recovery export depend on the protected
 identity export artifact drafted in the protocol specification's Identity
-Export Format appendix (`docs/protocol/src/identity-export.md`). The draft
+Export Format appendix (`docs/protocol-legacy/src/identity-export.md`). The draft
 defines the envelope, passphrase key derivation, payload sections, the
 counter advance rule, and QR part framing. Remaining product decisions:
 

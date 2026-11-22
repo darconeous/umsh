@@ -20,7 +20,7 @@
 //!   works as backhaul does: whether a frame is carried is the node's
 //!   ordinary forwarding decision, and the LAN sees what came of it.
 //!
-//! Spec: `docs/protocol/src/lan-bearer.md`.
+//! Spec: `docs/protocol-legacy/src/lan-bearer.md`.
 
 use core::cell::RefCell;
 use core::task::{Context, Poll};

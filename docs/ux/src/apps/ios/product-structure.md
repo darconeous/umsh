@@ -114,7 +114,7 @@ changes how the mesh recognizes the user. The name may be left blank; the
 address, not the name, is the identity.
 
 Restore accepts the export artifact (file or QR set; format specified in
-`docs/protocol/src/identity-export.md`) and its passphrase, shows
+`docs/protocol-legacy/src/identity-export.md`) and its passphrase, shows
 a non-committing preview of the name and complete address, and commits only on
 an explicit confirmation. Restore marks a fresh counter epoch and requires the
 app to warn that the exporting device must stop using the identity. The app

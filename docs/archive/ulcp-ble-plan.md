@@ -254,7 +254,7 @@ host owns the UMSH MAC and must be attached to receive traffic or generate MAC
 acknowledgements.
 
 The normative target for the next development is
-[Full Companion Radio Protocol](protocol/src/ulcp-full.md). The full
+[Full Companion Radio Protocol](protocol-legacy/src/ulcp-full.md). The full
 protocol keeps the host as MAC owner but adds filtering, detached inbound
 queueing, delegated acknowledgements, key provisioning, a device identity, and
 explicit saved-state snapshots. These features are not implemented merely by
@@ -1117,7 +1117,7 @@ itself require reprovisioning the SoftDevice and moving the app base—
 the "already resident, zero provisioning risk" advantage that
 originally justified it does not exist on this board.
 
-Implements the [Companion Radio over BLE](protocol/src/ulcp-ble.md)
+Implements the [Companion Radio over BLE](protocol-legacy/src/ulcp-ble.md)
 spec chapter: the companion-radio protocol carried over the GATT frame
 transport, secured with LESC bonding and the pairing-mode/PIN model,
 on the T-Echo NCP firmware and the host-side `UlcpDevice` driver.

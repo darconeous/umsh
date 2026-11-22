@@ -10,7 +10,7 @@
 //! transactions, and queueing of frames that arrive while a command is
 //! in flight.
 //!
-//! See `docs/protocol/src/ulcp.md` and the chapters under it for the
+//! See `docs/protocol-legacy/src/ulcp.md` and the chapters under it for the
 //! protocol.
 
 use std::collections::VecDeque;

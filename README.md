@@ -84,7 +84,8 @@ traffic.
 
 | Path | Description |
 |---|---|
-| [`docs/protocol/`](docs/protocol/) | Full mdBook specification for the protocol, including comparisons and test vectors |
+| [`docs/protocol-legacy/`](docs/protocol-legacy/) | Full mdBook specification for the protocol, including comparisons and test vectors |
+| [`docs/protocol/`](docs/protocol/) | The specification being reorganized into numbered UMSH Extension Protocols (UEPs), one per feature |
 | [`docs/hardware/`](docs/hardware/) | Per-board hardware references—pin maps, power, radio and display wiring |
 | [`crates/`](crates/) | Layered `no_std` Rust library crates implementing the protocol stack, plus board support and device interfaces |
 | [`umsh/`](umsh/) | Integration crate with runtime adapters and runnable examples |
@@ -99,10 +100,11 @@ traffic.
 | [`scripts/`](scripts/) | Firmware image, flashing, and release scripts |
 | [`site/`](site/) | Sources for [umsh.dev](https://umsh.dev) |
 
-The [`docs/protocol/`](docs/protocol/) directory holds the specification as an
+The [`docs/protocol-legacy/`](docs/protocol-legacy/) directory holds the specification as an
 [mdBook](https://rust-lang.github.io/mdBook/): the MAC layer, all packet types, cryptographic
 constructions, routing, application protocols, and appendices including protocol comparisons
-and test vectors. [`crates/`](crates/) implements it as a set of layered `no_std` libraries,
+and test vectors. It is being reorganized into numbered UMSH Extension Protocols (UEPs) in [`docs/protocol/`](docs/protocol/).
+[`crates/`](crates/) implements it as a set of layered `no_std` libraries,
 from primitive types (`umsh-core`) up through cryptography, the MAC layer, node state, and
 application protocols; [`umsh/`](umsh/) bundles those together and adds Tokio and Embassy
 runtime adapters. Rendered copies of both are published at
@@ -281,8 +283,9 @@ package that `make ios-mobile-core` builds. See [apps/ios/README.md](apps/ios/RE
 ### Build the documentation
 
 ```sh
-make docs        # protocol book -> docs/protocol/book/
-make docs-serve  # live-reloading preview
+make docs        # protocol books -> docs/protocol-legacy/book/, docs/protocol/book/
+make docs-serve  # live-reloading preview of the UEPs
+make docs-legacy-serve  # live-reloading preview of the legacy book
 make rust-docs   # cargo doc for the whole workspace
 ```
 

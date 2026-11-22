@@ -1,4 +1,4 @@
-.PHONY: docs rust-docs rust-docs-nightly docs-serve gh-pages web-debugger arduino-test \
+.PHONY: docs rust-docs rust-docs-nightly docs-serve docs-legacy-serve gh-pages web-debugger arduino-test \
 	fuzz fuzz-build fuzz-check fuzz-seeds fuzz-min fuzz-coverage fuzz-smoke \
 	site site-serve site-check site-test site-preview \
 	regions-fetch regions-update regions-update-check regions-build \
@@ -838,6 +838,7 @@ web-debugger:
 # rather than on a feature alone; `#[cfg(doc)]` does not help, because it
 # applies to the crate being documented and not to its dependencies.
 docs:
+	mdbook build docs/protocol-legacy/
 	mdbook build docs/protocol/
 
 rust-docs:
@@ -850,6 +851,9 @@ rust-docs-nightly:
 
 docs-serve:
 	mdbook serve docs/protocol/
+
+docs-legacy-serve:
+	mdbook serve docs/protocol-legacy/
 
 # ─── Arduino library ─────────────────────────────────────────────────────────
 #
@@ -1031,7 +1035,7 @@ site-preview: docs rust-docs-nightly
 	rm -rf target/site-preview
 	mkdir -p target/site-preview/docs/protocol target/site-preview/docs/rust
 	cp -R site/public/. target/site-preview/
-	cp -R docs/protocol/book/. target/site-preview/docs/protocol/
+	cp -R docs/protocol-legacy/book/. target/site-preview/docs/protocol/
 	cp -R target/doc/. target/site-preview/docs/rust/
 	cp docs/rust-index.html target/site-preview/docs/rust/index.html
 	@# Layer in whatever release has been staged locally, in the same shape
@@ -1053,7 +1057,7 @@ site-preview: docs rust-docs-nightly
 # Who owns what in the published tree:
 #
 #   /              the Zola site—wiped and replaced on every run
-#   /docs/protocol the mdBook spec—wiped and replaced on every run
+#   /docs/protocol the legacy mdBook spec (docs/protocol-legacy)—wiped and replaced on every run
 #   /docs/rust     rustdoc—wiped and replaced by `gh-pages`, left alone by
 #                  `gh-pages-site`
 #   /firmware      release artifacts, written by `release-mirror`
@@ -1114,7 +1118,7 @@ define gh-pages-lay
 	rm -rf $(GH_PAGES_WT)/docs/protocol
 	cp -R site/public/. $(GH_PAGES_WT)/
 	mkdir -p $(GH_PAGES_WT)/docs/protocol
-	cp -R docs/protocol/book/. $(GH_PAGES_WT)/docs/protocol/
+	cp -R docs/protocol-legacy/book/. $(GH_PAGES_WT)/docs/protocol/
 	touch $(GH_PAGES_WT)/.nojekyll
 endef
 
@@ -1139,7 +1143,7 @@ gh-pages-site: site docs
 
 
 clean-workspaces:
-	for DIR in .claude/worktrees/* ; do ( cd $$DIR ; cargo clean && rm -fr target packages/UMSHMobileCore/Artifacts/UMSHMobileCoreFFI.xcframework docs/protocol/book && cd firmware-esp32 && rm -fr target && cargo clean )  ; done
+	for DIR in .claude/worktrees/* ; do ( cd $$DIR ; cargo clean && rm -fr target packages/UMSHMobileCore/Artifacts/UMSHMobileCoreFFI.xcframework docs/protocol/book docs/protocol-legacy/book && cd firmware-esp32 && rm -fr target && cargo clean )  ; done
 
 # --- Fuzzing ------------------------------------------------------------
 # Targets live in crates/umsh-fuzz-harness; fuzz/ is thin libFuzzer wrappers

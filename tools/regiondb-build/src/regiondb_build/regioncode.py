@@ -65,7 +65,7 @@ def from_short_code(code: str) -> int:
 def transform_letter_chunk(encoded: int) -> int:
     """Move an all-letter ARNCE chunk out of the space short codes own.
 
-    Ported verbatim from the protocol spec (`docs/protocol/src/packet-options.md`).
+    Ported verbatim from the protocol spec (`docs/protocol-legacy/src/packet-options.md`).
     """
     a = encoded // 1600
     b = (encoded // 40) % 40

@@ -2,7 +2,7 @@
 
 Status: implemented, 2026-09-14. This document records the approved design;
 the normative definitions are in
-[ULCP Device Domain](protocol/src/ulcp-device.md#battery-diagnostics).
+[ULCP Device Domain](protocol-legacy/src/ulcp-device.md#battery-diagnostics).
 Properties 4944–4956 are allocated without an additional capability.
 
 Expose the readings on the Pager's Settings → Battery pages as individually
@@ -17,14 +17,14 @@ jump alone does not establish that the gauge calibrated successfully.
 
 ## Existing behavior
 
-- [`PROP_BATTERY` (69)](protocol/src/ulcp-device.md#prop-battery) already exposes
+- [`PROP_BATTERY` (69)](protocol-legacy/src/ulcp-device.md#prop-battery) already exposes
   voltage, percentage, and charger state. Its existing encoding and behavior
   remain unchanged; clients need no new scalar aliases for those three fields.
-- [`CMD_PROP_MULTI_GET`](protocol/src/ulcp-core.md#cmd-prop-multi-get) fetches
+- [`CMD_PROP_MULTI_GET`](protocol-legacy/src/ulcp-core.md#cmd-prop-multi-get) fetches
   several properties in one exchange. It preserves request order, including
   individual failures, but does not currently promise a shared measurement
   event across different properties.
-- [Node Management](protocol/src/app-node-management.md#exchanges) carries
+- [Node Management](protocol-legacy/src/app-node-management.md#exchanges) carries
   those same commands to an authorized device over the radio. Remote reads
   are request/response exchanges; unsolicited updates are not carried there.
 - The Pager's current diagnostic source is
@@ -82,7 +82,7 @@ This applies equally to individual reads and entries in a multi-get response.
 
 - **Signed current:** little-endian two's complement, with a signed 32-bit
   range. Reuse the encoding of
-  [`PROP_IDENT_ALTITUDE`](protocol/src/ulcp-device.md#prop-ident-altitude),
+  [`PROP_IDENT_ALTITUDE`](protocol-legacy/src/ulcp-device.md#prop-ident-altitude),
   requiring minimal output here. One octet covers −128 through 127; two cover
   −32768 through 32767; three cover −8388608 through 8388607. Keep a sign octet
   when removing it would change the value's sign.
