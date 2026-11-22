@@ -13,6 +13,12 @@ to = 255
 use = "reserved"
 
 [[value]]
+value = 1
+name = "Identity Request"
+uep = 10
+anchor = "identity-request"
+
+[[value]]
 value = 4
 name = "Echo Request"
 uep = 6
@@ -23,6 +29,24 @@ value = 5
 name = "Echo Response"
 uep = 6
 anchor = "echo-response"
+
+[[value]]
+value = 6
+name = "PFS Session Request"
+uep = 9
+anchor = "pfs-session-request"
+
+[[value]]
+value = 7
+name = "PFS Session Response"
+uep = 9
+anchor = "pfs-session-response"
+
+[[value]]
+value = 8
+name = "End PFS Session"
+uep = 9
+anchor = "end-pfs-session"
 
 [[value]]
 value = 9

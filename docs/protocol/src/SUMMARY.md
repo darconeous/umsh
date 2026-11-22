@@ -15,10 +15,10 @@
 - [UEP-0006: MAC Commands](uep-0006.md)
 - [UEP-0007: Cryptographic Processing](uep-0007.md)
 - [UEP-0008: Groups](uep-0008.md)
-- [UEP-0009: Perfect Forward Secrecy Sessions]()
-- [UEP-0010: Node Identity]()
-- [UEP-0011: UMSH over LoRa]()
-- [UEP-0012: Channel Access]()
+- [UEP-0009: Perfect Forward Secrecy Sessions](uep-0009.md)
+- [UEP-0010: Node Identity](uep-0010.md)
+- [UEP-0011: UMSH over LoRa](uep-0011.md)
+- [UEP-0012: Channel Access](uep-0012.md)
 - [UEP-0013: Flood Routing]()
 - [UEP-0014: Signal-Quality Filtering]()
 - [UEP-0015: Region Scoping]()
@@ -39,6 +39,7 @@
 - [ULCP: BLE Binding]()
 - [ULCP: Saved State]()
 - [ULCP: Device Node]()
+- [ULCP: Radio Control]()
 - [Signal Reports]()
 - [MeshCore Forwarding]()
 - [ULCP: Wi-Fi]()
@@ -69,6 +70,10 @@
 - [Packet Options](registries/packet-options.md)
 - [Payload Types](registries/payload-types.md)
 - [MAC Commands](registries/mac-commands.md)
+- [Node Roles](registries/node-roles.md)
+- [Capability Bits](registries/capability-bits.md)
+- [Identity Options](registries/identity-options.md)
+- [Identity Request Options](registries/identity-request-options.md)
 
 # Guide
 

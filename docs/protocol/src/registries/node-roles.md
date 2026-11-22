@@ -1,0 +1,1 @@
+{{#registry node-roles}}

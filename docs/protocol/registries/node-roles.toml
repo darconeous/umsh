@@ -1,0 +1,54 @@
+title = "Node Roles"
+created-by = 10
+anchor = "registry-considerations"
+min = 0
+max = 255
+policy = "Values 0 to 255, allocated by a standards UEP."
+
+[[value]]
+value = 0
+name = "Unspecified"
+uep = 10
+anchor = "roles"
+
+[[value]]
+value = 1
+name = "Repeater"
+uep = 10
+anchor = "roles"
+
+[[value]]
+value = 2
+name = "Chat"
+uep = 10
+anchor = "roles"
+
+[[value]]
+value = 3
+name = "Tracker"
+uep = 10
+anchor = "roles"
+
+[[value]]
+value = 4
+name = "Sensor"
+uep = 10
+anchor = "roles"
+
+[[value]]
+value = 5
+name = "Bridge"
+uep = 10
+anchor = "roles"
+
+[[value]]
+value = 6
+name = "Chat Room"
+uep = 10
+anchor = "roles"
+
+[[value]]
+value = 7
+name = "Temporary Session"
+uep = 10
+anchor = "roles"

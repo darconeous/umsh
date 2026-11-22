@@ -24,6 +24,7 @@ anchor = "compatibility"
 value = 1
 name = "Node Identity"
 uep = 10
+anchor = "payload"
 
 [[value]]
 value = 2

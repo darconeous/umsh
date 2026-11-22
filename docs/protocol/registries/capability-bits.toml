@@ -1,0 +1,42 @@
+title = "Capability Bits"
+created-by = 10
+anchor = "registry-considerations"
+min = 0
+max = 7
+policy = "Bits 0 to 7 of the capability bitmap, allocated by a standards UEP."
+
+[[value]]
+value = 0
+name = "REP: Repeater"
+uep = 10
+anchor = "capabilities"
+
+[[value]]
+value = 1
+name = "MOB: Mobile"
+uep = 10
+anchor = "capabilities"
+
+[[value]]
+value = 2
+name = "TXT: Text Messages"
+uep = 10
+anchor = "capabilities"
+
+[[value]]
+value = 3
+name = "TLM: Public Telemetry"
+uep = 10
+anchor = "capabilities"
+
+[[value]]
+value = 4
+name = "CHR: Chat Room"
+uep = 10
+anchor = "capabilities"
+
+[[value]]
+value = 5
+name = "CoA: CoAP"
+uep = 10
+anchor = "capabilities"
