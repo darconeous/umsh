@@ -350,7 +350,9 @@ fn a_retry_lost_to_a_busy_channel_keeps_its_packet() {
     for _ in 0..crate::MAX_CAD_ATTEMPTS {
         mac.radio_mut().cad_responses.push_back(true).unwrap();
         assert_eq!(transmit(&mut mac), None);
-        mac.clock().advance_ms(60_000);
+        // Past any backoff, while every attempt still falls inside the
+        // forwarding cache lifetime.
+        mac.clock().advance_ms(30_000);
     }
     assert!(mac.tx_queue().is_empty());
     assert_eq!(mac.counters().forward_unconfirmed, 1);

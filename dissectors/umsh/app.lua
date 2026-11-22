@@ -612,7 +612,8 @@ local function dissect_mac_command(payload, subtree, tvb, ctx, pinfo)
     subtree:set_text("MAC Command: Signal Report Request")
 
   elseif cmd == 3 then
-    -- Signal Report Response: RSSI (u8 as negative dBm) + SNR (s8)
+    -- Signal Report Response: RSSI (u8 as negative dBm) + SNR (s8,
+    -- quarter-dB steps)
     if rest >= 2 then
       local rssi_raw = byte_at(payload, 2)
       local snr_raw  = byte_at(payload, 3)
@@ -620,8 +621,9 @@ local function dissect_mac_command(payload, subtree, tvb, ctx, pinfo)
       -- RSSI stored as unsigned negative dBm: display as negative
       subtree:add(f.mac_rssi, tvb(1, 1)):set_text(
         "RSSI: -" .. rssi_raw .. " dBm")
-      subtree:add(f.mac_snr, tvb(2, 1), snr)
-      detail = string.format("RSSI -%d dBm, SNR %d dB", rssi_raw, snr)
+      subtree:add(f.mac_snr, tvb(2, 1), snr):set_text(
+        string.format("SNR: %.2f dB", snr / 4))
+      detail = string.format("RSSI -%d dBm, SNR %.2f dB", rssi_raw, snr / 4)
     end
 
   elseif cmd == 4 or cmd == 5 then

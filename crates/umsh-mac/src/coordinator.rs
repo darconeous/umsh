@@ -1396,7 +1396,9 @@ pub struct Mac<
     echo_watches: crate::echo_watch::EchoWatches,
     channels: ChannelTable<CHANNELS>,
     dup_cache: DuplicateCache<DUP>,
-    /// Unsigned multicasts accepted, by MIC: all that judges one.
+    /// Frames no replay window judges, accepted by MIC or signature: all
+    /// that keeps delivery from seeing a second copy of one. Entries live
+    /// [`FIRST_COPY_CACHE_TTL_MS`](crate::cache::FIRST_COPY_CACHE_TTL_MS).
     multicast_dup_cache: DuplicateCache<DUP>,
     tx_queue: TxQueue<TX, FRAME>,
     post_tx_listen: Option<PostTxListen>,
@@ -1491,7 +1493,7 @@ impl<
             echo_watches: crate::echo_watch::EchoWatches::new(),
             channels: ChannelTable::new(),
             dup_cache: DuplicateCache::new(),
-            multicast_dup_cache: DuplicateCache::new(),
+            multicast_dup_cache: DuplicateCache::with_ttl_ms(crate::cache::FIRST_COPY_CACHE_TTL_MS),
             tx_queue: TxQueue::new(),
             post_tx_listen: None,
             requested_wake_ms: None,
@@ -3005,7 +3007,14 @@ impl<
         };
 
         let receipt = if options.ack_requested {
-            Some(self.prepare_pending_ack(from, *peer, &packet, &pairwise_keys, options)?)
+            Some(self.prepare_pending_ack(
+                from,
+                *peer,
+                &packet,
+                &pairwise_keys,
+                options,
+                shape.provisional,
+            )?)
         } else {
             None
         };
@@ -3167,7 +3176,14 @@ impl<
         };
 
         let receipt = if options.ack_requested {
-            Some(self.prepare_pending_ack(from, *peer, &packet, &blind_keys, options)?)
+            Some(self.prepare_pending_ack(
+                from,
+                *peer,
+                &packet,
+                &blind_keys,
+                options,
+                shape.provisional,
+            )?)
         } else {
             None
         };
@@ -4217,6 +4233,23 @@ impl<
                 } else {
                     from_key
                 };
+                // Only a verified signature, accepted by replay detection,
+                // says the peer sent it, and only then does it teach a
+                // route. An unsigned beacon may still suggest one.
+                if signature == SignatureStatus::Verified {
+                    if let Some((peer_id, _)) = from_key
+                        .as_ref()
+                        .and_then(|key| self.peer_registry.lookup_by_key(key))
+                    {
+                        self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
+                    }
+                } else if header.body_range.is_empty() {
+                    let peer_id = match from_key {
+                        Some(key) => self.peer_registry.lookup_by_key(&key).map(|(id, _)| id),
+                        None => self.resolve_unique_hint(from_hint).map(|(id, _)| id),
+                    };
+                    self.consider_beacon(&buf[..frame_len], header, peer_id, Some(from_hint), rx);
+                }
                 for (index, slot) in self.identities.iter().enumerate() {
                     // An ephemeral identity takes only unicast addressed to
                     // it: a broadcast reaches the long-term identity it
@@ -4748,10 +4781,13 @@ impl<
         // The channel key proves only membership, so an unsigned frame's
         // source is a claim any member can make. Only a verified signature
         // says the peer sent it, and only then does it teach a route.
-        if signature == SignatureStatus::Verified
-            && let Some(peer_id) = source.peer_id
-        {
-            self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
+        // An unsigned beacon may still suggest one.
+        if signature == SignatureStatus::Verified {
+            if let Some(peer_id) = source.peer_id {
+                self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
+            }
+        } else if body_range.is_empty() {
+            self.consider_beacon(original, header, source.peer_id, source.hint, rx);
         }
         let mut delivered = false;
         for (index, slot) in self.identities.iter().enumerate() {
@@ -5470,6 +5506,9 @@ impl<
                         continue;
                     }
                     if now_ms >= pending.ack_deadline_ms {
+                        // Fails once: what a Route Retry then misses is not
+                        // the provisional route's doing.
+                        let provisional = core::mem::take(&mut pending.provisional_route);
                         if pending.expects_ack() {
                             let revision = core::mem::take(&mut pending.cached_route_revision);
                             if self
@@ -5479,11 +5518,16 @@ impl<
                             {
                                 pending.held_route_missed = true;
                             }
+                            if provisional {
+                                self.peer_registry
+                                    .fail_provisional_route(&pending.peer, now_ms);
+                            }
                         }
                         if !pending.expects_ack() {
                             push_action(&mut actions, Action::Abandon { receipt: *receipt });
                         } else if Self::can_attempt_route_retry(
                             pending,
+                            provisional,
                             self.peer_registry.lookup_by_key(&pending.peer).is_some_and(
                                 |(_, peer)| peer.heard_within(LOST_REPLY_RETRY_WINDOW_MS, now_ms),
                             ),
@@ -6060,6 +6104,7 @@ impl<
         packet: &UnsealedPacket<'_>,
         keys: &PairwiseKeys,
         options: &SendOptions,
+        provisional: bool,
     ) -> Result<SendReceipt, SendError> {
         let header = PacketHeader::parse(packet.as_bytes())?;
         // Computed before sealing, while a blind unicast's address block is
@@ -6081,9 +6126,12 @@ impl<
         .map_err(|_| SendError::QueueFull)?
         .with_requested_flood_hops(options.flood_hops);
 
+        // A provisional route is not the peer's route: nothing a revision
+        // names is credited or retired by how the send ends.
         let cached_route_revision = self
             .peer_registry
             .lookup_by_key(&peer)
+            .filter(|_| !provisional)
             .filter(|(_, info)| {
                 let uses_hints = matches!(info.route.as_ref(),
                     Some(CachedRoute::Source(route)) if !route.is_empty());
@@ -6101,6 +6149,7 @@ impl<
             PendingAck::direct(full_mac, peer, resend)
         };
         pending.cached_route_revision = cached_route_revision;
+        pending.provisional_route = provisional;
         pending.reachability_test = options.reachability_test;
         pending.reply = options.reply;
         slot.try_insert_pending_ack(receipt, pending)
@@ -6132,6 +6181,44 @@ impl<
         Ok(self
             .crypto
             .derive_pairwise_keys(&shared_secret, &local_key, peer_key))
+    }
+
+    /// The provisional route a send to `peer_id` follows, if it may follow
+    /// one ([`PeerRegistry::provisional_route`]).
+    ///
+    /// Only a unicast this node originates that requests an
+    /// acknowledgment, and has a flood budget to carry the margin past the
+    /// route's end, tries one; never a reply, and never one the caller or a
+    /// hold chose a route for. One such send to a peer is in flight at a
+    /// time, so a forged route costs one failure before its suppression,
+    /// however many sends were waiting. Every other send, and every other
+    /// rule, sees a peer with no route.
+    fn provisional_send_route(
+        &self,
+        destination: SendDestination<'_>,
+        peer_id: Option<PeerId>,
+        options: &SendOptions,
+    ) -> Option<&CachedRoute> {
+        let SendDestination::Unicast(peer) = destination else {
+            return None;
+        };
+        if !options.ack_requested
+            || options.reply
+            || options.source_route.is_some()
+            || options.flood_hops.is_none_or(|hops| hops == 0)
+        {
+            return None;
+        }
+        let peer_id = peer_id?;
+        let now_ms = self.clock.now_ms();
+        if self.peer_registry.route_hold(peer_id, now_ms).is_some()
+            || self
+                .provisional_sends()
+                .any(|pending| pending.peer == *peer)
+        {
+            return None;
+        }
+        self.peer_registry.provisional_route(peer_id, now_ms)
     }
 
     fn effective_source_route(
@@ -7679,6 +7766,79 @@ impl<
         if let Some(offer) = self.route_offer(peer_id, frame, header, &options, rx, now_ms) {
             self.peer_registry.offer_route(peer_id, offer, now_ms);
         }
+    }
+
+    /// Weigh what an unsigned beacon says about the way to its source,
+    /// `peer_id` as the frame's source resolved, `hint` as it named it.
+    ///
+    /// Nothing authenticates the beacon, so it teaches nothing and refreshes
+    /// nothing. It may only suggest a provisional route
+    /// ([`PeerRegistry::provisional_route`]) to a peer this node holds no
+    /// route to, or put a differing source or direct route in doubt, and
+    /// only its first copy does either ([`PeerRegistry::hear_beacon`]). It is
+    /// weighed only received live, from a peer held by full key that is not
+    /// mobile, over a complete trace with no Source Route option, or no trace
+    /// and no flood hops at all.
+    fn consider_beacon(
+        &mut self,
+        frame: &[u8],
+        header: &PacketHeader,
+        peer_id: Option<PeerId>,
+        hint: Option<umsh_core::NodeHint>,
+        rx: &RxInfo,
+    ) {
+        if rx.buffered.is_some() || rx.origin == RxOrigin::LocalTx {
+            return;
+        }
+        let Some(peer_id) = peer_id else {
+            return;
+        };
+        let local = |slot: &Option<IdentitySlot<P::Identity, PEERS, ACKS, FRAME>>| {
+            slot.as_ref()
+                .is_some_and(|slot| Some(slot.identity().public_key().hint()) == hint)
+        };
+        if self.identities.iter().any(local) {
+            return;
+        }
+        let Some(peer) = self.peer_registry.get(peer_id) else {
+            return;
+        };
+        if peer.mobile {
+            return;
+        }
+        let Ok(options) = ParsedOptions::extract(frame, header.options_range.clone()) else {
+            return;
+        };
+        if options.source_route.is_some() {
+            return;
+        }
+        let now_ms = self.clock.now_ms();
+        // The path is built as for a teaching packet; what the trace
+        // measured along it is not used.
+        let route = match self.route_offer(peer_id, frame, header, &options, rx, now_ms) {
+            Some(RouteOffer { route, .. }) if !matches!(route, CachedRoute::Flood { .. }) => route,
+            _ => return,
+        };
+        // Each peer with a send along its provisional route in flight still
+        // has its entry, so there are no more of them than entries.
+        let mut pinned: Vec<PeerId, { crate::PROVISIONAL_ROUTES }> = Vec::new();
+        for pending in self.provisional_sends() {
+            if let Some((id, _)) = self.peer_registry.lookup_by_key(&pending.peer) {
+                let _ = pinned.push(id);
+            }
+        }
+        self.peer_registry
+            .hear_beacon(peer_id, route, now_ms, &pinned);
+    }
+
+    /// Every send along a provisional route still awaiting its
+    /// acknowledgment, from any identity.
+    fn provisional_sends(&self) -> impl Iterator<Item = &PendingAck<FRAME>> {
+        self.identities
+            .iter()
+            .flatten()
+            .flat_map(|slot| slot.pending_acks.values())
+            .filter(|pending| pending.provisional_route)
     }
 
     /// The route back to `peer_id` that one received frame offers, scored
@@ -9590,7 +9750,14 @@ impl<
     /// A [reachability test](SendOptions::reachability_test) earns it
     /// unheard: whether the peer is there is the question being asked, and a
     /// dead way back would answer it wrongly.
-    fn can_attempt_route_retry(pending: &PendingAck<FRAME>, peer_heard_recently: bool) -> bool {
+    ///
+    /// `provisional` says the send followed a provisional route, which is
+    /// an assumed route whatever the frame's shape shows.
+    fn can_attempt_route_retry(
+        pending: &PendingAck<FRAME>,
+        provisional: bool,
+        peer_heard_recently: bool,
+    ) -> bool {
         let Ok(header) = PacketHeader::parse(pending.resend.frame.as_slice()) else {
             return false;
         };
@@ -9618,7 +9785,7 @@ impl<
             pending.expects_ack(),
             pending.resend.requested_flood_hops,
             options.route_retry || pending.route_retry_spent,
-            has_source_route || narrowed,
+            provisional || has_source_route || narrowed,
             peer_heard_recently || pending.reachability_test,
         )
     }

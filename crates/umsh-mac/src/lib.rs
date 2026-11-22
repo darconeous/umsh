@@ -360,8 +360,8 @@ pub use admission::{
     AUTO_REGISTER_QUOTA, AUTO_REGISTER_WINDOW_MS, REFUSED_KEY_TTL_MS, REFUSED_KEYS,
 };
 pub use cache::{
-    DUP_CACHE_TTL_MS, DupCacheKey, DuplicateCache, RecentMic, ReplayVerdict, ReplayWindow,
-    RxAcceptance,
+    DUP_CACHE_TTL_MS, DupCacheKey, DuplicateCache, FIRST_COPY_CACHE_TTL_MS, RecentMic,
+    ReplayVerdict, ReplayWindow, RxAcceptance,
 };
 pub use coordinator::{
     AmateurRadioMode, ChannelPolicy, CounterPersistenceError, IdentitySlot, LocalIdentity,
@@ -375,7 +375,8 @@ pub use observations::{
     MAX_TRANSMITTER_OBSERVATIONS, TransmitterObservation, TransmitterObservations,
 };
 pub use peers::{
-    CachedRoute, ChannelState, ChannelTable, HoldRelease, PeerCryptoMap, PeerCryptoState,
+    CachedRoute, ChannelState, ChannelTable, HoldRelease, PROVISIONAL_ROUTE_LIFETIME_MS,
+    PROVISIONAL_ROUTE_SUPPRESSION_MS, PROVISIONAL_ROUTES, PeerCryptoMap, PeerCryptoState,
     PeerHolder, PeerHolds, PeerId, PeerInfo, PeerRegistry, PeerRemoval, PeerRouteStatus,
     RouteCandidate, RouteHold, Vacancy,
 };

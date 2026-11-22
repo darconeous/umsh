@@ -122,8 +122,10 @@ pub enum MacCommand<'a> {
     },
     SignalReportRequest,
     SignalReportResponse {
+        /// The RSSI the request arrived at, as negative dBm.
         rssi: u8,
-        snr: i8,
+        /// The SNR the request arrived at; a quarter-dB step on the wire.
+        snr: umsh_hal::Snr,
     },
     EchoRequest {
         data: &'a [u8],
@@ -192,7 +194,7 @@ pub fn parse(payload: &[u8]) -> Result<MacCommand<'_>, AppParseError> {
         3 => match body {
             [rssi, snr, ..] => Ok(MacCommand::SignalReportResponse {
                 rssi: *rssi,
-                snr: *snr as i8,
+                snr: umsh_hal::Snr::from_quarter_db_steps(i16::from(*snr as i8)),
             }),
             _ => Err(AppParseError::InvalidLength {
                 expected: 2,
@@ -224,6 +226,12 @@ pub fn parse(payload: &[u8]) -> Result<MacCommand<'_>, AppParseError> {
         }),
         other => Err(AppParseError::InvalidCommandId(other)),
     }
+}
+
+/// An SNR as the signed quarter-dB byte MAC commands carry it, saturating
+/// at −32 and +31.75 dB rather than wrapping.
+fn quarter_db_byte(snr: umsh_hal::Snr) -> u8 {
+    snr.as_quarter_db_steps().clamp(-128, 127) as i8 as u8
 }
 
 fn parse_nonce(body: &[u8]) -> Result<u32, AppParseError> {
@@ -265,8 +273,10 @@ pub enum OwnedMacCommand {
     },
     SignalReportRequest,
     SignalReportResponse {
+        /// The RSSI the request arrived at, as negative dBm.
         rssi: u8,
-        snr: i8,
+        /// The SNR the request arrived at; a quarter-dB step on the wire.
+        snr: umsh_hal::Snr,
     },
     EchoRequest {
         data: Vec<u8>,
@@ -355,7 +365,7 @@ pub fn encode(cmd: &MacCommand<'_>, buf: &mut [u8]) -> Result<usize, AppEncodeEr
         MacCommand::SignalReportResponse { rssi, snr } => {
             push_byte(buf, &mut pos, CommandId::SignalReportResponse as u8)?;
             push_byte(buf, &mut pos, *rssi)?;
-            push_byte(buf, &mut pos, *snr as u8)?;
+            push_byte(buf, &mut pos, quarter_db_byte(*snr))?;
         }
         MacCommand::EchoRequest { data } => {
             push_byte(buf, &mut pos, CommandId::EchoRequest as u8)?;
@@ -1027,13 +1037,11 @@ impl PeerRepeaterEntry<'_> {
             // dBm is below any radio's floor.
             let rssi =
                 u8::try_from(-rssi_dbm.clamp(-255, 0)).map_err(|_| AppEncodeError::InvalidField)?;
-            let snr = i8::try_from(snr.as_quarter_db_steps().clamp(-128, 127))
-                .map_err(|_| AppEncodeError::InvalidField)?;
             put_option(
                 &mut buf,
                 &mut last_number,
                 peer_repeater_entry::RSSI_SNR,
-                &[rssi, snr as u8],
+                &[rssi, quarter_db_byte(snr)],
             )?;
         }
         if let Some(minutes) = self.last_heard_min {
@@ -1460,18 +1468,28 @@ mod tests {
     fn signal_report_response() {
         encode_decode(MacCommand::SignalReportResponse {
             rssi: 200,
-            snr: -10,
+            snr: umsh_hal::Snr::from_quarter_db_steps(-40),
         });
         let mut buf = [0u8; 8];
         let len = encode(
             &MacCommand::SignalReportResponse {
                 rssi: 0xAB,
-                snr: -1,
+                snr: umsh_hal::Snr::from_quarter_db_steps(-1),
             },
             &mut buf,
         )
         .unwrap();
         assert_eq!(&buf[..len], &[0x03, 0xAB, 0xFF]);
+        // Past the end of the byte saturates rather than wraps.
+        let len = encode(
+            &MacCommand::SignalReportResponse {
+                rssi: 0xAB,
+                snr: umsh_hal::Snr::from_decibels(40),
+            },
+            &mut buf,
+        )
+        .unwrap();
+        assert_eq!(&buf[..len], &[0x03, 0xAB, 0x7F]);
     }
 
     #[test]
@@ -1620,7 +1638,7 @@ mod tests {
             parse(&[0x03, 0xAB, 0xFF, 0x00]).unwrap(),
             MacCommand::SignalReportResponse {
                 rssi: 0xAB,
-                snr: -1
+                snr: umsh_hal::Snr::from_quarter_db_steps(-1),
             }
         );
 

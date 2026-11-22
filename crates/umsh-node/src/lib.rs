@@ -742,7 +742,7 @@ mod tests {
         for (trace, expected) in [
             (
                 &[0xAAu8, 0x01, 97, 65, 0xBB, 0x02, 0, 0][..],
-                vec![HopSignal::new(-97, 65), HopSignal::POINT_TO_POINT],
+                vec![HopSignal::from_bytes([97, 65]), HopSignal::POINT_TO_POINT],
             ),
             (&[0xFEu8, 0xAA, 0x01, 0xBB, 0x02][..], Vec::new()),
         ] {

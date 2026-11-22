@@ -308,7 +308,7 @@ M.TRACE_TRUNCATED  = "truncated"
 -- Parse a Trace value. Returns nil for a malformed one, otherwise
 -- {form = ..., entries = {{hint = 2B, rssi = n|nil, snr = n|nil,
 -- offset = 0-based offset of the entry within the value}, ...}}.
--- rssi is the raw byte (negative dBm), snr the signed byte (centibels).
+-- rssi is the raw byte (negative dBm), snr the signed byte (quarter-dB steps).
 function M.parse_trace(value)
   local len = #value
   local form, start, step

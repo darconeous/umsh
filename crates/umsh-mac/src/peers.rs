@@ -8,6 +8,17 @@ use crate::CapacityError;
 
 const FAILED_ROUTE_HOLDOFF_MS: u64 = 30_000;
 
+/// How many peers may have a [provisional route](PeerRegistry::provisional_route)
+/// or a suppression of one at once.
+pub const PROVISIONAL_ROUTES: usize = 4;
+
+/// How long a provisional route lasts, measured from when a beacon
+/// suggested it.
+pub const PROVISIONAL_ROUTE_LIFETIME_MS: u64 = 60 * 60 * 1000;
+
+/// How long a peer takes no provisional route once a send along one failed.
+pub const PROVISIONAL_ROUTE_SUPPRESSION_MS: u64 = 10 * 60 * 1000;
+
 /// Opaque identifier for one remote peer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct PeerId(pub u8);
@@ -305,6 +316,15 @@ impl PeerInfo {
         self.route_confirmed_ms
     }
 
+    /// Whether `route` is the one that just failed, or another direct one
+    /// after a direct route failed, and so not to be taken up again yet.
+    fn route_held_off(&self, route: &CachedRoute, now_ms: u64) -> bool {
+        self.failed_route.as_ref().is_some_and(|(failed, until)| {
+            now_ms < *until
+                && (failed == route || (failed.hop_count() == 1 && route.hop_count() == 1))
+        })
+    }
+
     /// Select `route`, forgetting what was known about the one it replaces.
     fn select_route(&mut self, selection: RouteSelection, revision: u64) {
         self.route = selection.route;
@@ -452,6 +472,39 @@ pub(crate) struct RouteOffer {
     pub last_hop: Option<HopSignal>,
 }
 
+/// What this node keeps about one peer's unsigned beacons: a path one
+/// suggested toward it, when the last beacon counted, and what a failed send
+/// along a suggested path left behind; see [`PeerRegistry::hear_beacon`].
+#[derive(Clone, Debug)]
+struct ProvisionalRoute {
+    peer: PeerId,
+    /// `None` once dropped, or when the peer held a route as the beacon was
+    /// heard, while a suppression may still be in force.
+    route: Option<CachedRoute>,
+    /// When the beacon that last counted was heard; `None` for an entry
+    /// that only records a failure. A route is set only along with it.
+    heard_ms: Option<u64>,
+    /// Until when the peer takes no suggestion.
+    suppressed_until_ms: u64,
+}
+
+impl ProvisionalRoute {
+    fn suppressed(&self, now_ms: u64) -> bool {
+        now_ms < self.suppressed_until_ms
+    }
+
+    fn heard_within(&self, window_ms: u64, now_ms: u64) -> bool {
+        self.heard_ms
+            .is_some_and(|at| now_ms.saturating_sub(at) < window_ms)
+    }
+
+    fn live_route(&self, now_ms: u64) -> Option<&CachedRoute> {
+        self.route
+            .as_ref()
+            .filter(|_| self.heard_within(PROVISIONAL_ROUTE_LIFETIME_MS, now_ms))
+    }
+}
+
 /// Outcome of inserting or updating an auto-learned peer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AutoPeerUpdate {
@@ -503,6 +556,9 @@ pub struct PeerRemoval {
 pub struct PeerRegistry<const N: usize, const H: usize = 0> {
     peers: Vec<PeerInfo, N>,
     holds: Vec<(PeerId, RouteHold), H>,
+    /// Kept beside the peer table, as holds are, so that no entry pays for
+    /// a route only a few peers ever have.
+    provisional: Vec<ProvisionalRoute, PROVISIONAL_ROUTES>,
     next_route_revision: u64,
 }
 
@@ -520,6 +576,7 @@ impl<const N: usize, const H: usize> PeerRegistry<N, H> {
         Self {
             peers: Vec::new(),
             holds: Vec::new(),
+            provisional: Vec::new(),
             next_route_revision: 0,
         }
     }
@@ -739,6 +796,7 @@ impl<const N: usize, const H: usize> PeerRegistry<N, H> {
 
         let evicted_key = self.peers[index].public_key;
         self.drop_hold(PeerId(index as u8));
+        self.forget_provisional(PeerId(index as u8));
         self.peers[index] = entry;
         Ok(AutoPeerUpdate {
             peer_id: PeerId(index as u8),
@@ -776,9 +834,17 @@ impl<const N: usize, const H: usize> PeerRegistry<N, H> {
         let removed = self.peers.swap_remove(index);
         let moved = (index != last).then_some((PeerId(last as u8), id));
         self.drop_hold(id);
+        self.forget_provisional(id);
         if let Some((old, new)) = moved {
             for (held, _) in self.holds.iter_mut().filter(|(held, _)| *held == old) {
                 *held = new;
+            }
+            for entry in self
+                .provisional
+                .iter_mut()
+                .filter(|entry| entry.peer == old)
+            {
+                entry.peer = new;
             }
         }
         Some(PeerRemoval {
@@ -804,6 +870,7 @@ impl<const N: usize, const H: usize> PeerRegistry<N, H> {
             peer.failed_route = None;
         }
         self.drop_hold(id);
+        self.drop_provisional_route(id);
     }
 
     /// Record whether `id` advertises itself as mobile. `false` when the
@@ -855,6 +922,7 @@ impl<const N: usize, const H: usize> PeerRegistry<N, H> {
         let peer = self.get_mut(id).expect("peer was just found");
         peer.select_route(RouteSelection::installed(route, true), revision);
         peer.failed_route = None;
+        self.drop_provisional_route(id);
         true
     }
 
@@ -872,6 +940,7 @@ impl<const N: usize, const H: usize> PeerRegistry<N, H> {
         if let Some(peer) = self.get_mut(id) {
             peer.select_route(RouteSelection::learned(candidate), revision);
         }
+        self.drop_provisional_route(id);
         true
     }
 
@@ -925,16 +994,15 @@ impl<const N: usize, const H: usize> PeerRegistry<N, H> {
         {
             peer.route_last_hop = offer.last_hop;
         }
-        if let Some((failed, until)) = &peer.failed_route {
-            if now_ms < *until
-                && (failed == &offer.route
-                    || (failed.hop_count() == 1 && offer.route.hop_count() == 1))
-            {
-                return;
-            }
-            if now_ms >= *until {
-                peer.failed_route = None;
-            }
+        if peer.route_held_off(&offer.route, now_ms) {
+            return;
+        }
+        if peer
+            .failed_route
+            .as_ref()
+            .is_some_and(|(_, until)| now_ms >= *until)
+        {
+            peer.failed_route = None;
         }
         if peer.route.as_ref() == Some(&offer.route) {
             if offer.score.is_some() {
@@ -978,6 +1046,7 @@ impl<const N: usize, const H: usize> PeerRegistry<N, H> {
         let revision = self.next_revision();
         let peer = self.get_mut(id).expect("peer was just found");
         peer.select_route(RouteSelection::learned(offer.into()), revision);
+        self.drop_provisional_route(id);
     }
 
     /// Hold `id`'s selected route in doubt: a Route Retry reported an
@@ -1071,6 +1140,156 @@ impl<const N: usize, const H: usize> PeerRegistry<N, H> {
         peer.route_revision = next_revision;
         peer.route_confirmed_ms = Some(now_ms);
         peer.route_doubted = false;
+    }
+
+    /// The provisional route to `id` in force at `now_ms`: a path an
+    /// unsigned beacon suggested, for a peer with no route of its own.
+    ///
+    /// It is never `id`'s route. Only the one kind of send the MAC lets try
+    /// it reads it; everything else sees a peer with no route.
+    pub fn provisional_route(&self, id: PeerId, now_ms: u64) -> Option<&CachedRoute> {
+        if self.get(id)?.route.is_some() {
+            return None;
+        }
+        self.provisional
+            .iter()
+            .find(|entry| entry.peer == id && !entry.suppressed(now_ms))?
+            .live_route(now_ms)
+    }
+
+    /// Weigh `route`, the path an unsigned beacon from `id` came along.
+    /// `true` when it is taken as `id`'s provisional route.
+    ///
+    /// A beacon floods and arrives as several copies, each traced
+    /// differently, so only the first copy heard counts, and the next one
+    /// to count comes from a beacon heard once the forwarding cache lifetime
+    /// has passed. That copy suggests its path to a peer with no route that
+    /// is under no suppression, and whose last failed route it is not. To a
+    /// peer holding a source or direct route, it puts that route in doubt if
+    /// it differs. A flood distance is left alone.
+    ///
+    /// With every entry in use, a suggestion takes the place of an entry
+    /// with no live route, or else of the oldest route; a beacon from a peer
+    /// holding a route takes only the former. An entry holding a
+    /// suppression in force, or whose peer has a send along its provisional
+    /// route in flight (`pinned`), is never given up. That is what bounds a
+    /// forger to one failed send per peer per
+    /// [`PROVISIONAL_ROUTE_SUPPRESSION_MS`]: a full table of them takes no
+    /// suggestion at all until one is released.
+    pub(crate) fn hear_beacon(
+        &mut self,
+        id: PeerId,
+        route: CachedRoute,
+        now_ms: u64,
+        pinned: &[PeerId],
+    ) -> bool {
+        let Some(peer) = self.get(id) else {
+            return false;
+        };
+        let held = match &peer.route {
+            Some(CachedRoute::Flood { .. }) => return false,
+            Some(held) => Some(*held != route),
+            None => None,
+        };
+        let held_off = peer.route_held_off(&route, now_ms);
+        let Some(entry) = self.provisional_entry(id, now_ms, pinned, held.is_none()) else {
+            return false;
+        };
+        if entry.heard_within(crate::cache::DUP_CACHE_TTL_MS, now_ms) {
+            return false;
+        }
+        entry.heard_ms = Some(now_ms);
+        match held {
+            Some(differs) => {
+                entry.route = None;
+                if differs {
+                    self.doubt_route(id);
+                }
+                false
+            }
+            None if entry.suppressed(now_ms) || held_off => {
+                entry.route = None;
+                false
+            }
+            None => {
+                entry.route = Some(route);
+                true
+            }
+        }
+    }
+
+    /// A send along `key`'s provisional route went unacknowledged: drop the
+    /// route, and take no suggestion for the peer for
+    /// [`PROVISIONAL_ROUTE_SUPPRESSION_MS`].
+    ///
+    /// The peer's entry is pinned while the send is in flight
+    /// ([`hear_beacon`](Self::hear_beacon)), so it is still here.
+    pub(crate) fn fail_provisional_route(&mut self, key: &PublicKey, now_ms: u64) {
+        let Some((id, _)) = self.lookup_by_key(key) else {
+            return;
+        };
+        if let Some(entry) = self.provisional.iter_mut().find(|entry| entry.peer == id) {
+            entry.route = None;
+            entry.suppressed_until_ms = now_ms.saturating_add(PROVISIONAL_ROUTE_SUPPRESSION_MS);
+        }
+    }
+
+    /// `id`'s entry, or room made for one by the policy
+    /// [`hear_beacon`](Self::hear_beacon) describes, giving up a live route
+    /// only when `evict_live`. `None` when there is no room.
+    fn provisional_entry(
+        &mut self,
+        id: PeerId,
+        now_ms: u64,
+        pinned: &[PeerId],
+        evict_live: bool,
+    ) -> Option<&mut ProvisionalRoute> {
+        let index = match self.provisional.iter().position(|entry| entry.peer == id) {
+            Some(index) => index,
+            None => {
+                let entry = ProvisionalRoute {
+                    peer: id,
+                    route: None,
+                    heard_ms: None,
+                    suppressed_until_ms: 0,
+                };
+                match self.provisional.push(entry) {
+                    Ok(()) => self.provisional.len() - 1,
+                    Err(entry) => {
+                        let index = self
+                            .provisional
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, entry)| {
+                                !entry.suppressed(now_ms)
+                                    && !pinned.contains(&entry.peer)
+                                    && (evict_live || entry.live_route(now_ms).is_none())
+                            })
+                            .min_by_key(|(_, entry)| {
+                                (entry.live_route(now_ms).is_some(), entry.heard_ms)
+                            })?
+                            .0;
+                        self.provisional[index] = entry;
+                        index
+                    }
+                }
+            }
+        };
+        self.provisional.get_mut(index)
+    }
+
+    /// Drop `id`'s provisional route, keeping any suppression: a route has
+    /// been installed in its place.
+    fn drop_provisional_route(&mut self, id: PeerId) {
+        for entry in self.provisional.iter_mut().filter(|entry| entry.peer == id) {
+            entry.route = None;
+        }
+    }
+
+    /// Forget everything provisional about `id`, whose slot is leaving the
+    /// registry.
+    fn forget_provisional(&mut self, id: PeerId) {
+        self.provisional.retain(|entry| entry.peer != id);
     }
 
     /// Record how a packet from `id` reached us: by flooding or not.

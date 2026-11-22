@@ -97,7 +97,10 @@ impl<'a> OptionEncoder<'a> {
 }
 
 /// The signal half of a trace record: negative RSSI in dBm, then SNR in
-/// centibels (packet-options.md § Trace).
+/// signed quarter-dB steps (UEP-0016 § Hop Records).
+///
+/// The API speaks centibels, the unit the rest of the stack uses; only the
+/// wire byte is in quarter-dB steps, the resolution LoRa radios report at.
 ///
 /// The encoding lives here rather than in whichever forwarder happens to
 /// need it: a repeater and a bridge that disagree about a byte produce a
@@ -134,13 +137,19 @@ impl HopSignal {
         self.0[0] == 0 && self.0[1] == 0
     }
 
-    /// The SNR the hop measured, in centibels, or `None` when it received
-    /// the packet over a point-to-point link and measured nothing.
+    /// The SNR the hop measured, in centibels rounded from its quarter-dB
+    /// step, or `None` when it received the packet over a point-to-point
+    /// link and measured nothing.
     pub const fn snr_centibels(self) -> Option<i16> {
         if self.is_point_to_point() {
             None
         } else {
-            Some(self.0[1] as i8 as i16)
+            let scaled = (self.0[1] as i8 as i16) * 25;
+            Some(if scaled >= 0 {
+                (scaled + 5) / 10
+            } else {
+                (scaled - 5) / 10
+            })
         }
     }
 
@@ -359,13 +368,21 @@ const fn saturate_rssi(rssi_dbm: i16) -> u8 {
     }
 }
 
+/// Rounds centibels to the nearest quarter-dB step, saturating at the ends
+/// of the signed byte: −32 to +31.75 dB.
 const fn saturate_snr(snr_centibels: i16) -> u8 {
-    if snr_centibels > 127 {
+    let scaled = snr_centibels as i32 * 2;
+    let steps = if scaled >= 0 {
+        (scaled + 2) / 5
+    } else {
+        (scaled - 2) / 5
+    };
+    if steps > 127 {
         127u8
-    } else if snr_centibels < -128 {
+    } else if steps < -128 {
         0x80
     } else {
-        (snr_centibels as i8) as u8
+        (steps as i8) as u8
     }
 }
 
@@ -730,8 +747,11 @@ mod tests {
 
     #[test]
     fn a_hop_signal_is_negated_rssi_then_signed_centibels() {
-        assert_eq!(HopSignal::new(-91, 42).as_bytes(), [91, 42]);
-        assert_eq!(HopSignal::new(-120, -75).as_bytes(), [120, 0xB5]);
+        // 4.2 dB rounds to the nearest quarter-dB step: 17 (4.25 dB).
+        assert_eq!(HopSignal::new(-91, 42).as_bytes(), [91, 17]);
+        assert_eq!(HopSignal::new(-120, -75).as_bytes(), [120, 0xE2]);
+        // A strong link fits: 20 dB is 80 steps, well inside the byte.
+        assert_eq!(HopSignal::new(-60, 200).as_bytes(), [60, 80]);
     }
 
     #[test]
@@ -741,6 +761,8 @@ mod tests {
         assert_eq!(HopSignal::new(-400, 0).as_bytes()[0], 255);
         assert_eq!(HopSignal::new(-90, 500).as_bytes()[1], 127);
         assert_eq!(HopSignal::new(-90, -500).as_bytes()[1], 0x80);
+        assert_eq!(HopSignal::new(-90, i16::MAX).as_bytes()[1], 127);
+        assert_eq!(HopSignal::new(-90, i16::MIN).as_bytes()[1], 0x80);
     }
 
     /// The point-to-point marker is reserved: even a reading at the top of
@@ -759,6 +781,13 @@ mod tests {
         let entry = HopSignal::from_bytes(HopSignal::new(-120, -75).as_bytes());
         assert_eq!(entry.snr_centibels(), Some(-75));
         assert!(!entry.is_point_to_point());
+        // Every quarter-dB step reads back as the centibels it rounds to and
+        // writes back as the same step.
+        for step in i8::MIN..=i8::MAX {
+            let entry = HopSignal::from_bytes([90, step as u8]);
+            let centibels = entry.snr_centibels().unwrap();
+            assert_eq!(HopSignal::new(-90, centibels), entry);
+        }
     }
 
     #[test]

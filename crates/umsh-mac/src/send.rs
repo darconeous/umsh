@@ -488,6 +488,10 @@ pub struct PendingAck<const FRAME: usize = MAX_RESEND_FRAME_LEN> {
     /// Cached-route revision used by this attempt, or zero if no cached
     /// assumption was used. Consumed when that attempt enters route recovery.
     pub(crate) cached_route_revision: u64,
+    /// The attempt followed the peer's provisional route
+    /// ([`PeerRegistry::provisional_route`](crate::PeerRegistry::provisional_route)).
+    /// Consumed when the attempt enters route recovery.
+    pub(crate) provisional_route: bool,
     /// The attempt rode a held route and missed, so whatever acknowledges
     /// this send now came back through the flood fallback.
     pub(crate) held_route_missed: bool,
@@ -541,6 +545,7 @@ impl<const FRAME: usize> PendingAck<FRAME> {
             completion: CompletionSignal::Ack,
             confirm_key: None,
             cached_route_revision: 0,
+            provisional_route: false,
             held_route_missed: false,
             route_retry_spent: false,
             reachability_test: false,
@@ -566,6 +571,7 @@ impl<const FRAME: usize> PendingAck<FRAME> {
             completion: CompletionSignal::Ack,
             confirm_key: None,
             cached_route_revision: 0,
+            provisional_route: false,
             held_route_missed: false,
             route_retry_spent: false,
             reachability_test: false,
@@ -592,6 +598,7 @@ impl<const FRAME: usize> PendingAck<FRAME> {
             completion: CompletionSignal::RepeatOnly,
             confirm_key: None,
             cached_route_revision: 0,
+            provisional_route: false,
             held_route_missed: false,
             route_retry_spent: false,
             reachability_test: false,

@@ -7,6 +7,7 @@ mod colliding_channels;
 mod forward_confirmation;
 #[cfg(feature = "payload-admission")]
 mod payload_admission;
+mod provisional_routes;
 mod queue_resilience;
 mod retired_addresses;
 mod routing_reliability;
@@ -9466,8 +9467,8 @@ fn repeater_prepends_its_signal_reading_alongside_the_router_hint() {
 
     assert_eq!(
         &frame[options.trace.clone().unwrap()],
-        // -93 dBm carried as its magnitude, -4.5 dB as -45 centibels.
-        &[repeater_hint.0[0], repeater_hint.0[1], 93u8, (-45i8) as u8],
+        // -93 dBm carried as its magnitude, -4.5 dB as -18 quarter-dB steps.
+        &[repeater_hint.0[0], repeater_hint.0[1], 93u8, (-18i8) as u8],
         "one hop means one record: the hint, then negative RSSI and signed \
          centibel SNR"
     );
@@ -9525,7 +9526,7 @@ fn repeater_prepends_its_signal_reading_when_forwarding_a_unicast() {
         entries,
         [umsh_core::options::TraceEntry {
             hint: repeater_hint,
-            signal: Some(HopSignal::from_bytes([101u8, 35u8])),
+            signal: Some(HopSignal::from_bytes([101u8, 14u8])),
         }],
         "one hop means one record, hint and reading together"
     );
