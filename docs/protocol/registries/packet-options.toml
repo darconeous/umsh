@@ -26,6 +26,12 @@ uep = 15
 anchor = "source-route"
 
 [[value]]
+value = 4
+name = "Operator Callsign"
+uep = 17
+anchor = "operator-callsign"
+
+[[value]]
 value = 6
 name = "Route Retry"
 uep = 13
@@ -48,3 +54,9 @@ value = 11
 name = "Region Code"
 uep = 14
 anchor = "region-code"
+
+[[value]]
+value = 15
+name = "Station Callsign"
+uep = 17
+anchor = "station-callsign"

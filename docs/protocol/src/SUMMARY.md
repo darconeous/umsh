@@ -23,7 +23,7 @@
 - [UEP-0014: Flood Forwarding](uep-0014.md)
 - [UEP-0015: Source Routing](uep-0015.md)
 - [UEP-0016: Path Discovery](uep-0016.md)
-- [UEP-0017: Amateur Radio Operation]()
+- [UEP-0017: Amateur Radio Operation](uep-0017.md)
 - [UEP-0018: Adaptive Forwarding]()
 - [UEP-0019: URI Formats]()
 - [UEP-0020: Text Messages]()
