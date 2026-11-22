@@ -20,10 +20,12 @@ final class AppCoreHost {
         #endif
     }
 
-    /// A core over the store it reads.
+    /// A core over the store it reads, with the channel-key vault it was
+    /// made with.
     struct Opened {
         let store: SQLiteApplicationStore
         let core: MobileAppCore
+        let vault: any SecretVault
     }
 
     /// The one channel-key vault: its legacy-move flag is per instance, so
@@ -75,7 +77,7 @@ final class AppCoreHost {
                     platformModel: Self.platformModel
                 )
             )
-            let opened = Opened(store: store, core: core)
+            let opened = Opened(store: store, core: core, vault: channelKeyVault)
             current = (kind, opened)
             return .success(opened)
         } catch {
@@ -167,6 +169,6 @@ final class AppCoreHost {
             vault: vault,
             config: MobileAppConfigRecord(counterDirectory: counters.path, platformModel: platformModel)
         )
-        return Opened(store: store, core: core)
+        return Opened(store: store, core: core, vault: vault)
     }
 }

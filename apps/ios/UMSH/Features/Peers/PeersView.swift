@@ -16,7 +16,7 @@ struct PeersView: View {
     let inspectPeerIdentity: (String) async -> Result<MeshNodeURIPreview, MeshEngineError>
     /// Same shape Conversations uses, so an import here can open the new
     /// transcript instead of silently dropping the "Message" intent.
-    let savePeer: (MeshNodeURIPreview, PeerImportDetails, Bool) async -> DirectConversationSummary?
+    let savePeer: (MeshNodeURIPreview, PeerImportDetails, Bool) async throws -> DirectConversationSummary?
     /// Hands a freshly created conversation to the app root, which switches
     /// to the Conversations tab and pushes the transcript.
     var openConversation: (DirectConversationSummary) -> Void = { _ in }
@@ -34,6 +34,7 @@ struct PeersView: View {
     @State private var roleFilter: PeersRoleFilter = .all
     @State private var searchText = ""
     @State private var peerPendingRemoval: PeerSummary?
+    @State private var failure: FailureNotice?
 
     /// Held until onDismiss: see PendingPeerImport.
     private func holdImport(
@@ -149,17 +150,29 @@ struct PeersView: View {
             if hasConversation(peer) {
                 if peerActions.demoteToTransient != nil {
                     Button("Remove Peer") {
-                        Task { _ = await peerActions.demoteToTransient?(peer) }
+                        Task {
+                            await $failure.attempt(String(localized: "Peer not removed", comment: "Alert title.")) {
+                                try await peerActions.demoteToTransient?(peer)
+                            }
+                        }
                     }
                 }
                 if peerActions.deletePeerAndConversation != nil {
                     Button("Delete Peer and Conversation", role: .destructive) {
-                        Task { _ = await peerActions.deletePeerAndConversation?(peer) }
+                        Task {
+                            await $failure.attempt(String(localized: "Peer not deleted", comment: "Alert title.")) {
+                                try await peerActions.deletePeerAndConversation?(peer)
+                            }
+                        }
                     }
                 }
             } else if peerActions.deletePeer != nil {
                 Button("Delete Peer", role: .destructive) {
-                    Task { _ = await peerActions.deletePeer?(peer) }
+                    Task {
+                        await $failure.attempt(String(localized: "Peer not deleted", comment: "Alert title.")) {
+                            try await peerActions.deletePeer?(peer)
+                        }
+                    }
                 }
             }
             Button("Cancel", role: .cancel) {}
@@ -168,6 +181,7 @@ struct PeersView: View {
                  ? "Removing the peer keeps its conversation and message history, and the node stays findable through search. Deleting the peer and conversation erases the message history too."
                  : "The node's record is deleted from this phone. Nothing is sent to the node.")
         }
+        .failureAlert($failure)
     }
 
     /// Run the import the Add-peer sheet accepted, now that its dismissal
@@ -176,11 +190,13 @@ struct PeersView: View {
         guard let pending = pendingImport else { return }
         pendingImport = nil
         Task {
-            let conversation = await savePeer(
-                pending.preview, pending.details, pending.startConversation
-            )
-            if pending.startConversation, let conversation {
-                openConversation(conversation)
+            await $failure.attempt(String(localized: "Peer not saved", comment: "Alert title.")) {
+                let conversation = try await savePeer(
+                    pending.preview, pending.details, pending.startConversation
+                )
+                if let conversation {
+                    openConversation(conversation)
+                }
             }
         }
     }
@@ -273,7 +289,11 @@ struct PeersView: View {
         .swipeActions(edge: .leading, allowsFullSwipe: false) {
             if peer.isSaved, !peer.isUlcpDevice, peerActions.setFavorite != nil {
                 Button {
-                    Task { _ = await peerActions.setFavorite?(peer, !peer.isFavorite) }
+                    Task {
+                        await $failure.attempt(String(localized: "Not changed", comment: "Alert title: a setting on a peer or conversation could not be changed.")) {
+                            try await peerActions.setFavorite?(peer, !peer.isFavorite)
+                        }
+                    }
                 } label: {
                     Label(
                         peer.isFavorite ? "Unfavorite" : "Favorite",
@@ -284,7 +304,11 @@ struct PeersView: View {
             }
             if !peer.isSaved, peerActions.promoteToSaved != nil {
                 Button {
-                    Task { _ = await peerActions.promoteToSaved?(peer) }
+                    Task {
+                        await $failure.attempt(String(localized: "Peer not saved", comment: "Alert title.")) {
+                            try await peerActions.promoteToSaved?(peer)
+                        }
+                    }
                 } label: {
                     Label("Save", systemImage: "square.and.arrow.down")
                 }

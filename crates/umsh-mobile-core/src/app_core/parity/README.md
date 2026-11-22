@@ -57,7 +57,7 @@ A line is its kind followed by ` name=value` pairs in the order given.
 
 ```
 peer id=<int> address=<string> hint=<string> alias=<string|-> advertised_name=<string|-> system_role=<enum|-> node_kind=<enum|-> advertised=<identity|-> authenticated=<bool> received_at=<int|-> last_heard=<int|-> saved=<bool> favorite=<bool> on_device=<bool> notify_when_heard=<bool>
-channel id=<string> kind=<enum> canonical_name=<string|-> name=<string|-> alias=<string|-> channel_id_hex=<string> tint=<bytes> region_code=<bytes|-> max_flood_hops=<int|-> joined_phone=<bool> joined_device=<bool> notifications=<bool> joined_at=<int|->
+channel id=<string> kind=<enum> canonical_name=<string|-> name=<string|-> alias=<string|-> channel_id_hex=<string> tint=<bytes> region_code=<bytes|-> max_flood_hops=<int|-> joined_phone=<bool> notifications=<bool> joined_at=<int|->
 direct id=<int> peer=<string> draft=<string> unread=<int> created=<int> notifications=<bool> last=<preview|->
 channel_conversation id=<int> channel=<string> address=<string> draft=<string> unread=<int> created=<int> last=<preview|->
 report reporter=<string> neighbor=<neighbor>

@@ -4,18 +4,19 @@
 
 use std::collections::HashMap;
 
+use super::channel_commands::parse_channel_input;
 use super::mapping::{self, PeerIndex};
 use super::records::{
     MobileAppChannelPreviewRecord, MobileAppRepeaterListingRecord, MobileAppStateRecord,
     MobileAppTranscriptPageRecord,
 };
 use super::{MobileAppCore, MobileAppError};
+use crate::channel_key_digest;
 use crate::store::{
     MobileStoredCachedPropertyRecord, MobileStoredChannelRecord, MobileStoredChatCursorRecord,
     MobileStoredChatMessagePageRecord, MobileStoredChatMessageRefRecord,
     MobileStoredClaimedRadioRecord, MobileStoredManagementCardRecord,
 };
-use crate::{MobileError, channel_key_digest, inspect_channel_name, inspect_channel_uri};
 
 #[uniffi::export]
 impl MobileAppCore {
@@ -28,7 +29,6 @@ impl MobileAppCore {
             .store
             .application_records(owner.clone(), conversations_only)?;
         let advertised_name = self.store.local_advertised_name(owner)?;
-        let unknown_device_channels = self.shared.snapshot().unknown_device_channels.clone();
         let lists = mapping::lists(records, conversations_only);
         Ok(MobileAppStateRecord {
             peers: lists.peers,
@@ -37,7 +37,6 @@ impl MobileAppCore {
             channel_conversations: lists.channel_conversations,
             neighbor_reports: lists.neighbor_reports,
             advertised_name,
-            unknown_device_channels,
         })
     }
 
@@ -153,18 +152,7 @@ impl MobileAppCore {
         input: String,
     ) -> Result<MobileAppChannelPreviewRecord, MobileAppError> {
         let owner = self.reader()?;
-        let input = input.trim();
-        if input.is_empty() {
-            return Err(MobileError::InvalidUri.into());
-        }
-        let is_uri = input
-            .get(..5)
-            .is_some_and(|scheme| scheme.eq_ignore_ascii_case("umsh:"));
-        let preview = if is_uri {
-            inspect_channel_uri(input.to_owned())?
-        } else {
-            inspect_channel_name(input.to_owned())?
-        };
+        let preview = parse_channel_input(&input)?;
         let existing = self
             .store
             .channel(owner.clone(), channel_key_digest(preview.key.clone()))?;

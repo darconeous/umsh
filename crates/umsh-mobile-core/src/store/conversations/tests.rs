@@ -727,6 +727,28 @@ fn a_channel_conversation_is_ensured_once_per_channel_in_any_case() {
 }
 
 #[test]
+fn only_a_joined_channel_s_conversation_opens() {
+    let (_directory, store) = open();
+    add_channel(&store, CHANNEL, "digest");
+    let open = |at| store.open_joined_channel_conversation(OWNER, CHANNEL, CHANNEL_ADDRESS, at);
+    assert_eq!(open(10), Ok(Some(true)));
+    assert_eq!(open(20), Ok(Some(false)), "open already");
+    assert_eq!(channel_conversations(&store)[0].created_at_ms, 10);
+
+    store.set_channel_joined_phone(CHANNEL, false, 30).unwrap();
+    assert_eq!(open(30), Ok(None), "left");
+    assert_eq!(
+        store.open_joined_channel_conversation(
+            OWNER,
+            "00000000-0000-0000-0000-000000000000",
+            "nowhere",
+            1
+        ),
+        Ok(None)
+    );
+}
+
+#[test]
 fn channel_conversations_list_newest_first_and_skip_unreadable_ids() {
     let (_directory, store) = open();
     let second = "00000000-0000-0000-0000-000000000002";

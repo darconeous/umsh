@@ -113,21 +113,6 @@ final class KeychainChannelKeyVault: SecretVault {
     }
 }
 
-extension SecretVault {
-    func storeKey(_ key: Data, channelID: UUID) throws {
-        guard key.count == 32 else { throw SecretVaultError.Failed }
-        try store(account: channelID.uuidString, secret: key)
-    }
-
-    func loadKey(channelID: UUID) throws -> Data? {
-        try load(account: channelID.uuidString)
-    }
-
-    func deleteKey(channelID: UUID) throws {
-        try delete(account: channelID.uuidString)
-    }
-}
-
 /// Channel keys held in memory, for previews, which must never reach the
 /// Keychain.
 final class MemorySecretVault: SecretVault, @unchecked Sendable {

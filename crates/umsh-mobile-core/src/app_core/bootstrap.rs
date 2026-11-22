@@ -96,26 +96,32 @@ impl Worker {
 
     /// The public channel is where an off-grid conversation starts, so its
     /// chat is always there to open. Other channels wait to be asked.
-    fn ensure_public_conversation(&self, owner: &str) {
+    /// Whether it opened one that was not open.
+    pub(super) fn ensure_public_conversation(&self, owner: &str) -> bool {
         let Ok(channels) = self.store.channels(owner.to_owned()) else {
-            return;
+            return false;
         };
-        let Some(public) = channels.into_iter().find(|channel| {
-            channel.joined_phone && channel.canonical_name.as_deref() == Some("public")
-        }) else {
-            return;
+        let Some(public) = channels
+            .into_iter()
+            .find(|channel| channel.joined_phone && is_public(channel))
+        else {
+            return false;
         };
         let address = self.channels.borrow().conversation_address(&public.id);
         let Some(address) = address else {
-            return;
+            return false;
         };
-        if let Err(error) = self.store.ensure_channel_conversation(
-            owner.to_owned(),
-            public.id,
-            address,
+        match self.store.open_joined_channel_conversation(
+            owner,
+            &public.id,
+            &address,
             self.clock.now_ms(),
         ) {
-            log::warn!(error:? = error; "the public conversation could not be opened");
+            Ok(opened) => opened == Some(true),
+            Err(error) => {
+                log::warn!(error:? = error; "the public conversation could not be opened");
+                false
+            }
         }
     }
 
@@ -225,6 +231,12 @@ impl Worker {
     }
 }
 
+/// Whether `channel` is the public channel.
+pub(super) fn is_public(channel: &MobileStoredChannelRecord) -> bool {
+    crate::well_known_channel(channel.canonical_name.clone())
+        .is_some_and(|known| known.channel == crate::MobileWellKnownChannel::Public)
+}
+
 /// Whether a peer's stored advertisement says it is mobile. Only an
 /// advertisement that can be attributed to the peer counts: a valid
 /// signature, or an unsigned one that arrived authenticated.
@@ -246,7 +258,7 @@ pub(super) fn advertises_mobile(node: &MobileStoredNodeRecord) -> bool {
 }
 
 /// A random version 4 UUID, uppercase, as the vault's accounts are named.
-fn random_uuid() -> String {
+pub(super) fn random_uuid() -> String {
     let mut bytes: [u8; 16] = rand::random();
     bytes[6] = (bytes[6] & 0x0F) | 0x40;
     bytes[8] = (bytes[8] & 0x3F) | 0x80;

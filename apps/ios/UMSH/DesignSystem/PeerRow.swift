@@ -121,8 +121,8 @@ struct RouterHintRow: View {
 /// Ask the node behind a hint no known node matches who it is: the trailing
 /// control of every row that shows such a hint.
 struct HintDiscoveryButton: View {
-    /// Sends the identity request, answering whether the radio took it.
-    typealias Ask = () async -> Bool
+    /// Sends the identity request, returning once the radio took it.
+    typealias Ask = () async throws -> Void
 
     let ask: Ask
 
@@ -133,6 +133,10 @@ struct HintDiscoveryButton: View {
     static let wait: Duration = .seconds(15)
 
     @State private var asked = false
+    /// Set while the ask is on its way to the radio, so a second tap does
+    /// not become a second request on the air.
+    @State private var isSending = false
+    @State private var failure: FailureNotice?
 
     var body: some View {
         if asked {
@@ -141,10 +145,18 @@ struct HintDiscoveryButton: View {
                 .accessibilityLabel("Waiting for a reply")
         } else {
             Button {
+                guard !isSending else { return }
+                isSending = true
                 Task {
                     // Marked only once the radio has it, so the spinner never
                     // claims an ask that never went out.
-                    guard await ask() else { return }
+                    let sent = await $failure.attempt(
+                        String(localized: "Not sent", comment: "Alert title: a request could not go out.")
+                    ) {
+                        try await ask()
+                    }
+                    isSending = false
+                    guard sent else { return }
                     asked = true
                     try? await Task.sleep(for: Self.wait)
                     asked = false
@@ -156,9 +168,11 @@ struct HintDiscoveryButton: View {
                     .font(.body)
             }
             .buttonStyle(.borderless)
+            .disabled(isSending)
             // A row's trailing slot is drawn as secondary text; this is a
             // control.
             .foregroundStyle(.tint)
+            .failureAlert($failure)
         }
     }
 }

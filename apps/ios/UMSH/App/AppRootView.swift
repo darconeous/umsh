@@ -39,6 +39,8 @@ struct AppRootView: View {
     @State private var incomingPeerImport: IncomingPeerImport?
     @State private var pendingPeerImport: PendingPeerImport?
     @State private var incomingChannelImport: IncomingChannelImport?
+    /// A tapped notification, until bootstrap is done and it can be opened.
+    @State private var incomingNotificationTap: IncomingNotificationTap?
     /// Read here as well as in the runtime: this is the control the Settings
     /// screen binds to, while the runtime is what acts on it.
     @AppStorage("phone.discoverable") private var phoneDiscoverable = true
@@ -73,17 +75,7 @@ struct AppRootView: View {
                             .background(.bar)
                     }
                 }
-                .alert(
-                    runtime.failureNotice?.title ?? "",
-                    isPresented: Binding(
-                        get: { runtime.failureNotice != nil },
-                        set: { if !$0 { runtime.failureNotice = nil } }
-                    ),
-                    presenting: runtime.failureNotice
-                ) { _ in
-                } message: { notice in
-                    Text(verbatim: notice.message)
-                }
+                .failureAlert($runtime.failureNotice)
         }
     }
 
@@ -148,7 +140,7 @@ struct AppRootView: View {
                     peerActions: runtime.peerActions,
                     channelActions: ChannelConversationActions(
                         start: runtime.startChannelConversation,
-                        startAfterJoin: runtime.startConversationAfterJoin,
+                        conversation: runtime.channelConversation(at:),
                         delete: runtime.deleteChannelConversation,
                         requestMemberIdentity: runtime.requestMemberIdentity,
                         setNotifications: runtime.setChannelNotifications,
@@ -178,7 +170,7 @@ struct AppRootView: View {
                     isLoading: isBootstrapping,
                     inspectPeerIdentity: runtime.inspectPeerIdentity,
                     savePeer: { preview, details, startConversation in
-                        await runtime.savePeer(preview, details: details, startConversation: startConversation)
+                        try await runtime.savePeer(preview, details: details, startConversation: startConversation)
                     },
                     openConversation: { conversation in
                         selectedTab = .conversations
@@ -284,7 +276,7 @@ struct AppRootView: View {
                     stopDiscovery: runtime.stopRadioDiscovery,
                     saveDevicePeer: runtime.saveAdministeredDevice,
                     isPeerSaved: { address in
-                        runtime.peers.contains { $0.identity.canonicalAddress == address }
+                        runtime.peers.contains { $0.identity.canonicalAddress == address && $0.isSaved }
                     },
                     peerActions: runtime.peerActions,
                     conversations: $runtime.conversations,
@@ -304,7 +296,6 @@ struct AppRootView: View {
                         countMessages: runtime.countConversationMessages
                     ),
                     channels: runtime.channels,
-                    unknownDeviceChannels: runtime.unknownDeviceChannels,
                     channelActions: channelManagementActions,
                     strandedRadios: runtime.strandedRadios,
                     isRevokingStrandedRadios: runtime.isRevokingClaimedRadios,
@@ -508,13 +499,13 @@ struct AppRootView: View {
         // scene it belongs to.
         .task {
             for await destination in notificationService.navigationRequests() {
-                switch destination {
-                case let .conversation(address):
-                    await openConversationFromNotification(conversationAddress: address)
-                case let .peer(address):
-                    await openPeerFromNotification(peerAddress: address)
-                }
+                incomingNotificationTap = IncomingNotificationTap(destination: destination)
             }
+        }
+        // Held while bootstrap runs, like a link: the tap that launched the
+        // app arrives before the core is running to open a conversation.
+        .task(id: isBootstrapping ? nil : incomingNotificationTap?.id) {
+            await openIncomingNotificationTap()
         }
         // Every path into a transcript gets the same reader—the
         // conversations list, a peer's profile, a notification tap—without
@@ -564,14 +555,21 @@ struct AppRootView: View {
         guard let pending = pendingPeerImport else { return }
         pendingPeerImport = nil
         Task {
-            let conversation = await runtime.savePeer(
-                pending.preview,
-                details: pending.details,
-                startConversation: pending.startConversation
-            )
-            if pending.startConversation, let conversation {
-                selectedTab = .conversations
-                openedConversation = conversation
+            do {
+                let conversation = try await runtime.savePeer(
+                    pending.preview,
+                    details: pending.details,
+                    startConversation: pending.startConversation
+                )
+                if let conversation {
+                    selectedTab = .conversations
+                    openedConversation = conversation
+                }
+            } catch {
+                runtime.failureNotice = FailureNotice(
+                    String(localized: "Peer not saved", comment: "Alert title."),
+                    error
+                )
             }
         }
     }
@@ -583,13 +581,19 @@ struct AppRootView: View {
     /// opens Settings, where its identity is.
     @MainActor
     private func openIncomingPeerLink() async {
-        guard let link = incomingPeerLink else { return }
+        // The task runs once on appearing whatever its id, so a nil id alone
+        // does not hold the link.
+        guard !isBootstrapping, let link = incomingPeerLink else { return }
         let ownAddress = runtime.localIdentity?.publicIdentity.canonicalAddress
         let inspected = await runtime.inspectPeerIdentity(link.uri)
-        var peer: PeerSummary?
+        var recorded: Result<PeerSummary?, any Error> = .success(nil)
         if case let .success(preview) = inspected,
            preview.publicIdentity.canonicalAddress != ownAddress {
-            peer = await runtime.peer(forLink: preview)
+            do {
+                recorded = .success(try await runtime.peer(forLink: preview))
+            } catch {
+                recorded = .failure(error)
+            }
         }
         // A newer link restarted this task; that one is what was asked for.
         guard !Task.isCancelled else { return }
@@ -600,7 +604,15 @@ struct AppRootView: View {
         case let .success(preview) where preview.publicIdentity.canonicalAddress == ownAddress:
             selectedTab = .settings
         case .success:
-            linkedPeer = peer
+            switch recorded {
+            case let .success(peer):
+                linkedPeer = peer
+            case let .failure(error):
+                runtime.failureNotice = FailureNotice(
+                    String(localized: "Link not opened", comment: "Alert title: a link to a node could not be opened."),
+                    error
+                )
+            }
         }
     }
 
@@ -626,6 +638,24 @@ struct AppRootView: View {
     private func openDiscovery(_ vantage: SolicitVantage?) {
         discoveryVantage = vantage
         showsDiscovery = true
+    }
+
+    @MainActor
+    private func openIncomingNotificationTap() async {
+        // Held like a link: the task's first run comes on appearing, while
+        // bootstrap may still be under way.
+        guard !isBootstrapping, let tap = incomingNotificationTap else { return }
+        switch tap.destination {
+        case let .conversation(address):
+            await openConversationFromNotification(conversationAddress: address)
+        case let .peer(address):
+            await openPeerFromNotification(peerAddress: address)
+        }
+        // Cleared only once opened: clearing it changes this task's id, which
+        // cancels the task. A newer tap that came meanwhile stays to be opened.
+        if incomingNotificationTap?.id == tap.id {
+            incomingNotificationTap = nil
+        }
     }
 
     @MainActor
@@ -679,7 +709,14 @@ struct AppRootView: View {
             openedConversation = conversation
             return
         }
-        openedConversation = await runtime.peerActions.startConversation?(peer)
+        do {
+            openedConversation = try await runtime.peerActions.startConversation?(peer)
+        } catch {
+            runtime.failureNotice = FailureNotice(
+                String(localized: "Conversation unavailable", comment: "Alert title."),
+                error
+            )
+        }
     }
 
     private struct IncomingPeerLink: Identifiable {
@@ -690,6 +727,11 @@ struct AppRootView: View {
     private struct IncomingPeerImport: Identifiable {
         let id = UUID()
         let uri: String
+    }
+
+    private struct IncomingNotificationTap: Identifiable {
+        let id = UUID()
+        let destination: ChatNotificationService.Destination
     }
 
     /// Where a deferred Discover is aimed—nil for this phone's own
@@ -782,8 +824,7 @@ private struct AppRootPreview: View {
         )
         let runtime = AppRuntime(
             radioConnection: NoRadioConnection(),
-            opened: .success(opened),
-            channelKeyVault: vault
+            opened: .success(opened)
         )
         runtime.localIdentity = LocalIdentitySnapshot(
             id: owner.canonicalAddress,

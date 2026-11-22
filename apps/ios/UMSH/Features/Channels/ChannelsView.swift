@@ -9,14 +9,12 @@ import SwiftUI
 /// is actually in.
 struct ChannelsView: View {
     let channels: [ChannelSummary]
-    let unknownDeviceChannels: [UnknownDeviceChannel]
-    let radioSnapshot: RadioSnapshot
     let actions: ChannelActions
 
     @State private var showsJoin = false
     @State private var showsCreate = false
-    @State private var explainedUnknown: UnknownDeviceChannel?
     @State private var pendingLeave: ChannelSummary?
+    @State private var failure: FailureNotice?
 
     var body: some View {
         List {
@@ -28,11 +26,7 @@ struct ChannelsView: View {
                 Section {
                     ForEach(joined) { channel in
                         NavigationLink {
-                            ChannelDetailView(
-                                channel: channel,
-                                radioSnapshot: radioSnapshot,
-                                actions: actions
-                            )
+                            ChannelDetailView(channel: channel, actions: actions)
                         } label: {
                             ChannelRow(channel: channel)
                         }
@@ -49,24 +43,6 @@ struct ChannelsView: View {
                             .tint(.red)
                         }
                     }
-                }
-            }
-            if !unknownDeviceChannels.isEmpty {
-                Section {
-                    ForEach(unknownDeviceChannels) { entry in
-                        Button {
-                            explainedUnknown = entry
-                        } label: {
-                            LabeledContent("Channel \(entry.wireIDHex)…") {
-                                Text("On radio")
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                } header: {
-                    Text("On the radio only")
-                } footer: {
-                    Text("The radio's own identity has joined these. It reports identifiers, never keys, so they cannot be named or used from this phone.")
                 }
             }
         }
@@ -97,7 +73,7 @@ struct ChannelsView: View {
             }
         }
         .confirmationDialog(
-            pendingLeave.map { "Leave “\($0.title)”?" } ?? "",
+            pendingLeave?.leaveTitle ?? "",
             isPresented: Binding(
                 get: { pendingLeave != nil },
                 set: { if !$0 { pendingLeave = nil } }
@@ -105,43 +81,35 @@ struct ChannelsView: View {
             titleVisibility: .visible
         ) {
             Button("Leave Channel", role: .destructive) {
-                if let channel = pendingLeave {
-                    Task { _ = await actions.leave?(channel) }
+                if let channel = pendingLeave, let leave = actions.leave {
+                    Task {
+                        await $failure.attempt(Self.notLeftTitle) { try await leave(channel) }
+                    }
                 }
                 pendingLeave = nil
             }
             Button("Cancel", role: .cancel) { pendingLeave = nil }
         } message: {
             if let channel = pendingLeave {
-                Text(
-                    channel.canRejoinAfterLeaving
-                        ? "You can join again at any time using the channel's name."
-                        : "The channel key is deleted from this phone. Joining again requires a new invitation."
-                )
+                Text(verbatim: channel.leaveMessage)
             }
         }
-        .alert(
-            "Channel \(explainedUnknown?.identifierHex ?? "")",
-            isPresented: Binding(
-                get: { explainedUnknown != nil },
-                set: { if !$0 { explainedUnknown = nil } }
-            )
-        ) {
-            Button("OK", role: .cancel) { explainedUnknown = nil }
-        } message: {
-            Text("The companion radio's own identity has joined this channel, but this phone does not hold its key. Join it here with its name or invitation to see it by name.")
-        }
+        .failureAlert($failure)
+    }
+
+    private static var notLeftTitle: String {
+        String(localized: "Channel not left", comment: "Alert title: leaving a channel failed.")
     }
 
     private var joined: [ChannelSummary] {
-        channels.filter(\.isJoined)
+        channels.filter(\.joinedPhone)
     }
 
     /// Built-in channels the user has left, offered again only inside the join
     /// sheet. Leaving one is a decision, and the list this tab shows is what
     /// the user is actually in—not a standing invitation to reconsider.
     private var suggested: [ChannelSummary] {
-        channels.filter { $0.kind == .builtin && !$0.isJoined }
+        channels.filter { $0.kind == .builtin && !$0.joinedPhone }
     }
 
     private var emptyState: some View {
@@ -158,9 +126,6 @@ struct ChannelsView: View {
 
 }
 
-/// One channel in a list: what it is called, what kind it is, and who has
-/// joined it.
-
 #Preview {
     NavigationStack {
         ChannelsView(
@@ -176,7 +141,6 @@ struct ChannelsView: View {
                     regionCode: nil,
                     maxFloodHops: 5,
                     joinedPhone: true,
-                    joinedDevice: false,
                     notificationsEnabled: false,
                     joinedAt: .now
                 ),
@@ -191,17 +155,10 @@ struct ChannelsView: View {
                     regionCode: nil,
                     maxFloodHops: 3,
                     joinedPhone: true,
-                    joinedDevice: true,
                     notificationsEnabled: true,
                     joinedAt: .now
                 ),
             ],
-            unknownDeviceChannels: [
-                UnknownDeviceChannel(
-                    identifier: Data([0x3f, 0xa1] + [UInt8](repeating: 0x5c, count: 14))
-                ),
-            ],
-            radioSnapshot: .previewReady,
             actions: .unavailable
         )
     }

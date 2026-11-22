@@ -142,6 +142,25 @@ pub struct MobilePeerUpsertRecord {
 }
 
 impl MobileAppStore {
+    /// The identity's row for a peer, or `None`.
+    pub(crate) fn node(
+        &self,
+        owner_identity_id: &str,
+        public_address: &str,
+    ) -> Result<Option<MobileStoredNodeRecord>, MobileStoreError> {
+        Ok(self
+            .connection()
+            .query_row(
+                &format!(
+                    "SELECT {} FROM node WHERE owner_identity_id = ? AND public_address = ?",
+                    node_columns("")
+                ),
+                params![owner_identity_id, public_address],
+                |row| stored_node(row, 0),
+            )
+            .optional()?)
+    }
+
     /// Make sure `id` has an identity row, its address being its ID, as an
     /// identity's is. A row already there is left alone.
     pub(crate) fn ensure_identity(
@@ -220,6 +239,9 @@ impl MobileAppStore {
     /// `advertisement_received_at_ms`) is written only with an
     /// advertisement. The sort key follows the row as it ends up: its
     /// alias or, without one, its advertised name.
+    ///
+    /// For tests and tools that seed a store with no core running; the app
+    /// edits through `MobileAppCore`'s commands.
     pub fn upsert_peer(
         &self,
         owner_identity_id: String,
@@ -266,6 +288,8 @@ impl MobileAppStore {
         Ok(())
     }
 
+    /// For tests and tools that seed a store with no core running; the app
+    /// edits through `MobileAppCore`'s commands.
     pub fn update_node_alias(
         &self,
         owner_identity_id: String,
@@ -280,6 +304,8 @@ impl MobileAppStore {
         Ok(())
     }
 
+    /// For tests and tools that seed a store with no core running; the app
+    /// edits through `MobileAppCore`'s commands.
     pub fn set_peer_favorite(
         &self,
         owner_identity_id: String,
@@ -299,6 +325,9 @@ impl MobileAppStore {
 
     /// Record a transient node on the local identity, making it visible in
     /// the main Peers list.
+    ///
+    /// For tests and tools that seed a store with no core running; the app
+    /// edits through `MobileAppCore`'s commands.
     pub fn promote_peer_to_saved(
         &self,
         owner_identity_id: String,
@@ -317,6 +346,9 @@ impl MobileAppStore {
     /// conversation keeps working. Favorite and alias are local statements
     /// about a saved peer, so they clear with it. Refuses the companion
     /// radio, whose row is system-managed.
+    ///
+    /// For tests and tools that seed a store with no core running; the app
+    /// edits through `MobileAppCore`'s commands.
     pub fn demote_peer_to_transient(
         &self,
         owner_identity_id: String,
@@ -336,6 +368,9 @@ impl MobileAppStore {
     /// `delete_peer_and_conversation`) or when the row is the system-managed companion
     /// radio. Stream checkpoints and counter state survive by design:
     /// sequence continuity and replay protection outlive the row.
+    ///
+    /// For tests and tools that seed a store with no core running; the app
+    /// edits through `MobileAppCore`'s commands.
     pub fn delete_peer(
         &self,
         owner_identity_id: String,
@@ -356,6 +391,9 @@ impl MobileAppStore {
     /// Drop every transient row that nothing else depends on: saved peers,
     /// the companion radio, rows on the device identity, rows with a
     /// conversation, and rows carrying a pending watch all stay.
+    ///
+    /// For tests and tools that seed a store with no core running; the app
+    /// edits through `MobileAppCore`'s commands.
     pub fn clear_transient_peers(&self, owner_identity_id: String) -> Result<(), MobileStoreError> {
         self.connection().execute(
             "DELETE FROM node
@@ -444,6 +482,9 @@ impl MobileAppStore {
     /// watch. Unlike favoriting, this does not save a transient node: the
     /// retention queries exempt armed rows instead, so asking to be told
     /// about a node is not the same as deciding to keep it.
+    ///
+    /// For tests and tools that seed a store with no core running; the app
+    /// edits through `MobileAppCore`'s commands.
     pub fn set_notify_when_heard(
         &self,
         owner_identity_id: String,

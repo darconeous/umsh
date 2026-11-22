@@ -8,7 +8,7 @@ struct ChannelCreateView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var isCreating = false
-    @State private var problem: String?
+    @State private var failure: FailureNotice?
 
     var body: some View {
         Form {
@@ -35,10 +35,6 @@ struct ChannelCreateView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(trimmedName.isEmpty || isCreating || actions.createPrivate == nil)
             }
-
-            if let problem {
-                Section { Text(problem).foregroundStyle(.red) }
-            }
         }
         .navigationTitle("New Private Channel")
         .toolbar {
@@ -46,6 +42,7 @@ struct ChannelCreateView: View {
                 Button("Cancel") { dismiss() }
             }
         }
+        .failureAlert($failure)
     }
 
     private var trimmedName: String {
@@ -53,16 +50,16 @@ struct ChannelCreateView: View {
     }
 
     private func create() async {
+        guard let createPrivate = actions.createPrivate else { return }
         isCreating = true
         defer { isCreating = false }
-        switch await actions.createPrivate?(trimmedName, ChannelDetails()) {
-        case .success:
+        if await $failure.attempt(Self.notCreatedTitle, { try await createPrivate(trimmedName) }) {
             dismiss()
-        case .phoneFull:
-            problem = "This phone is already holding as many channels as it can. Leave one to make room."
-        case .none, .failed, .deviceFull, .radioUnavailable, .unsupported, .unrecognizedAnswer:
-            problem = "The channel could not be created. Nothing was changed."
         }
+    }
+
+    private static var notCreatedTitle: String {
+        String(localized: "Channel not created", comment: "Alert title: creating a private channel failed.")
     }
 }
 

@@ -47,9 +47,6 @@ pub(super) struct PolicyState {
     // What the radio, or the store, was last brought to.
     radio_peer: Option<RadioPeer>,
     device_peers: Option<Vec<String>>,
-    /// The radio's channel IDs, and the cache version they were matched
-    /// against.
-    device_channels: Option<(Vec<Vec<u8>>, u64)>,
     host_channels: Option<Vec<String>>,
     /// The table waits for the vault to unlock.
     host_channels_locked: bool,
@@ -145,14 +142,6 @@ impl Worker {
             ..PolicyState::default()
         };
         drop(policy);
-        self.shared.publish(|snapshot| {
-            let had = !snapshot.unknown_device_channels.is_empty();
-            snapshot.unknown_device_channels.clear();
-            MobileAppChangesRecord {
-                channels_changed: had,
-                ..MobileAppChangesRecord::default()
-            }
-        });
         self.policy_wake.notify_one();
     }
 
@@ -245,26 +234,17 @@ impl Worker {
         if self.lifecycle() != MobileAppLifecycle::Running {
             return;
         }
-        let (stale, unseen_write) = {
-            let cache = self.channels.borrow();
-            let writes = self.store.content_writes();
-            (
-                cache.incomplete || cache.seen_writes != Some(writes),
-                cache.seen_writes.is_some_and(|seen| seen != writes),
-            )
-        };
-        if unseen_write {
-            // A channel write native code made without `content_changed()`:
-            // late, not wrong.
-            log::debug!("the store changed without content_changed()");
-        }
-        if stale {
+        // Every channel write the cache derives from is the core's own,
+        // made by a command that refreshes before it resolves or by a
+        // rollback that marks the cache incomplete, so only an incomplete
+        // cache is refreshed here.
+        let incomplete = self.channels.borrow().incomplete;
+        if incomplete {
             self.refresh_channels().await;
         }
         let state = self.shared.snapshot().radio.clone();
         let generation = self.policy.borrow().generation;
         self.radio_peer(state.as_ref());
-        self.device_channels(state.as_ref());
         let Some(radio) = self.radio(state.as_ref(), generation) else {
             return;
         };
@@ -367,7 +347,10 @@ impl Worker {
                 {
                     Ok(()) => {
                         self.policy.borrow_mut().device_peers = Some(addresses);
-                        self.raise_peers();
+                        self.raise(MobileAppChangesRecord {
+                            peers_changed: true,
+                            ..MobileAppChangesRecord::default()
+                        });
                     }
                     Err(error) => {
                         log::warn!(error:? = error; "the device identity's peers were not kept");
@@ -391,86 +374,13 @@ impl Worker {
         {
             Ok(()) => {
                 self.policy.borrow_mut().radio_peer = Some(record);
-                self.raise_peers();
+                self.raise(MobileAppChangesRecord {
+                    peers_changed: true,
+                    ..MobileAppChangesRecord::default()
+                });
             }
             Err(error) => log::warn!(error:? = error; "the radio's peer row was not kept"),
         }
-    }
-
-    /// Which stored channels the radio's device identity holds, and which
-    /// of its channels no stored channel derives.
-    fn device_channels(&self, state: Option<&MobileRadioStateRecord>) {
-        let identifiers = state
-            .filter(|state| in_session(Some(state)))
-            .and_then(|state| state.provisioning.as_ref())
-            .and_then(|sync| sync.dev_channel_ids.clone());
-        let Some(identifiers) = identifiers else {
-            if state.is_none_or(|state| !in_session(Some(state))) {
-                self.policy.borrow_mut().device_channels = None;
-                self.publish_unknown_device_channels(Vec::new());
-            }
-            return;
-        };
-        // A channel the vault holds back would read as unknown.
-        if self.channels.borrow().locked {
-            return;
-        }
-        let version = self.channels.borrow().version;
-        let matched = (identifiers, version);
-        if self.policy.borrow().device_channels.as_ref() == Some(&matched) {
-            return;
-        }
-        let (identifiers, _) = &matched;
-        let Some(owner) = self.owner() else {
-            return;
-        };
-        let Ok(rows) = self.store.channels(owner) else {
-            return;
-        };
-        let mut complete = true;
-        let mut identified = HashSet::new();
-        for row in rows {
-            // No key to derive it from, for good: nothing to match.
-            let Some(identifier) = self.channels.borrow().identifier(&row.id) else {
-                continue;
-            };
-            let on_device = identifiers.contains(&identifier);
-            if on_device {
-                identified.insert(identifier);
-            }
-            if row.joined_device != on_device
-                && let Err(error) = self.store.set_channel_joined_device(&row.id, on_device)
-            {
-                log::warn!(error:? = error; "a channel's device membership was not kept");
-                complete = false;
-            }
-        }
-        let unknown = identifiers
-            .iter()
-            .filter(|identifier| !identified.contains(*identifier))
-            .cloned()
-            .collect();
-        self.publish_unknown_device_channels(unknown);
-        if complete {
-            self.policy.borrow_mut().device_channels = Some(matched);
-        }
-        self.shared.publish(|_| MobileAppChangesRecord {
-            channels_changed: true,
-            ..MobileAppChangesRecord::default()
-        });
-    }
-
-    fn publish_unknown_device_channels(&self, unknown: Vec<Vec<u8>>) {
-        self.shared.publish(|snapshot| {
-            if snapshot.unknown_device_channels == unknown {
-                return MobileAppChangesRecord::default();
-            }
-            snapshot.unknown_device_channels = unknown;
-            MobileAppChangesRecord {
-                channels_changed: true,
-                ..MobileAppChangesRecord::default()
-            }
-        });
     }
 
     /// The radio's host channel table: every phone-joined channel, built-in
@@ -786,13 +696,6 @@ impl Worker {
             let lost = dropped - previous;
             log::info!(lost; "the radio dropped queued frames; that interval's transcript is incomplete");
         }
-    }
-
-    fn raise_peers(&self) {
-        self.shared.publish(|_| MobileAppChangesRecord {
-            peers_changed: true,
-            ..MobileAppChangesRecord::default()
-        });
     }
 
     // --- Claimed radios. ---

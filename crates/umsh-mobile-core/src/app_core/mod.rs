@@ -25,8 +25,11 @@ use crate::{MobileError, MobileIdentity, MobileMeshError, MobileMeshSession};
 #[cfg(test)]
 mod air_tests;
 mod bootstrap;
+mod channel_commands;
 mod channels;
 mod clock;
+#[cfg(test)]
+mod command_tests;
 mod commands;
 mod lifecycle;
 #[cfg(test)]
@@ -35,6 +38,7 @@ mod management;
 mod mapping;
 #[cfg(test)]
 mod parity;
+mod peers;
 mod pipeline;
 mod policy;
 mod queries;
@@ -55,11 +59,12 @@ pub use management::MobileOperation;
 pub use records::{
     MobileAppChangesRecord, MobileAppChannelConversationRecord, MobileAppChannelPreviewRecord,
     MobileAppChannelRecord, MobileAppConfigRecord, MobileAppDirectConversationRecord,
-    MobileAppLifecycle, MobileAppMessageRecord, MobileAppMessageRepeaterRecord,
-    MobileAppNeighborReportRecord, MobileAppOperationProgressRecord, MobileAppPeerRecord,
-    MobileAppPreviewRecord, MobileAppRepeaterListingRecord, MobileAppRepeaterNeighborRecord,
-    MobileAppStartFailure, MobileAppStateRecord, MobileAppStatusRecord,
-    MobileAppTranscriptPageRecord, MobileNotificationEventRecord, MobileNotificationReactionRecord,
+    MobileAppJoinedChannelRecord, MobileAppLifecycle, MobileAppMessageRecord,
+    MobileAppMessageRepeaterRecord, MobileAppNeighborReportRecord,
+    MobileAppOperationProgressRecord, MobileAppPeerRecord, MobileAppPreviewRecord,
+    MobileAppRepeaterListingRecord, MobileAppRepeaterNeighborRecord, MobileAppStartFailure,
+    MobileAppStateRecord, MobileAppStatusRecord, MobileAppTranscriptPageRecord,
+    MobileNotificationEventRecord, MobileNotificationReactionRecord,
 };
 pub use routes::{
     MobileAppLearnedPathOffer, MobileAppPositionReading, MobileAppRouteCandidateRecord,
@@ -75,9 +80,14 @@ pub enum MobileAppError {
     Store { error: MobileStoreError },
     /// An argument does not parse: an address, a channel invitation.
     InvalidInput { error: MobileError },
-    /// The session would not make the request as asked: a key of the wrong
-    /// length, a path it cannot carry, a request too large to send.
+    /// The request cannot be made as asked: a key of the wrong length, a
+    /// path the session cannot carry, a request too large to send, a peer
+    /// a conversation still holds, a setting the protocol fixes.
     InvalidRequest,
+    /// The peer, channel or conversation a command names is not stored.
+    NotFound,
+    /// The phone's session holds as many channels as it can.
+    ChannelTableFull,
     /// No owner is set, so there is nobody to read for.
     NoOwner,
     /// The core is starting, erasing or stopping.
@@ -124,6 +134,8 @@ impl std::fmt::Display for MobileAppError {
             Self::Store { error } => error.fmt(formatter),
             Self::InvalidInput { error } => error.fmt(formatter),
             Self::InvalidRequest => formatter.write_str("the request cannot be made as asked"),
+            Self::NotFound => formatter.write_str("not stored"),
+            Self::ChannelTableFull => formatter.write_str("the channel table is full"),
             Self::NoOwner => formatter.write_str("no owner is set"),
             Self::Busy => formatter.write_str("the core is busy"),
             Self::Stopped => formatter.write_str("the core has stopped"),
@@ -196,7 +208,6 @@ struct Snapshot {
     /// The attached radio's address, while it carries this phone as its
     /// host.
     attached_host: Option<String>,
-    unknown_device_channels: Vec<Vec<u8>>,
     /// The attached radio's state, while one is attached.
     radio: Option<MobileRadioStateRecord>,
     forward_secret_conversations: Vec<String>,
@@ -246,11 +257,14 @@ impl Shared {
     }
 }
 
-/// What a session error means to a caller of the core.
+/// What a session error means to a caller of the core. `UnknownConversation`
+/// is left to the caller: the session also answers it for a channel whose
+/// key it does not hold.
 pub(super) fn mesh_error(error: MobileMeshError) -> MobileAppError {
     match error {
         MobileMeshError::SessionUnavailable => MobileAppError::NotRunning,
         MobileMeshError::NoAnswer => MobileAppError::NoAnswer,
+        MobileMeshError::ChannelCapacity => MobileAppError::ChannelTableFull,
         MobileMeshError::InvalidPeer
         | MobileMeshError::InvalidRequest
         | MobileMeshError::InvalidRoute
@@ -435,18 +449,6 @@ impl MobileAppCore {
         })
         .await
     }
-
-    /// Native code wrote peers or channels: bring the core's view up to
-    /// date. Resolves once it is. Deleted once those writes have moved.
-    pub async fn content_changed(&self) -> Result<(), MobileAppError> {
-        self.on_worker(|worker| async move {
-            let _command = worker.begin_command().await?;
-            worker.refresh_channels().await;
-            worker.policy_triggered();
-            Ok(())
-        })
-        .await
-    }
 }
 
 /// What tests change about a core.
@@ -472,7 +474,6 @@ impl MobileAppCore {
                 lifecycle: MobileAppLifecycle::Idle,
                 owner: None,
                 attached_host: None,
-                unknown_device_channels: Vec::new(),
                 radio: None,
                 forward_secret_conversations: Vec::new(),
                 meet: None,

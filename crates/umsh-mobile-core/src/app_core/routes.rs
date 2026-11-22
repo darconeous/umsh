@@ -268,6 +268,19 @@ pub(super) fn checked_address(address: &str) -> Result<(), MobileAppError> {
         .map_err(|error| MobileAppError::InvalidInput { error })
 }
 
+/// Checks a conversation's address: a peer's, or a channel conversation's
+/// (`ch:` and 32 hex digits).
+pub(super) fn checked_conversation_address(address: &str) -> Result<(), MobileAppError> {
+    if address.starts_with(super::bootstrap::CHANNEL_ADDRESS_PREFIX) {
+        return crate::mobile_chat::parse_channel_address(address)
+            .map(|_| ())
+            .ok_or(MobileAppError::InvalidInput {
+                error: crate::MobileError::InvalidAddressCharacter,
+            });
+    }
+    checked_address(address)
+}
+
 #[uniffi::export]
 impl MobileAppCore {
     /// The way to a peer, as the session knows it now.

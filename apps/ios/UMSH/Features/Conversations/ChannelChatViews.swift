@@ -26,11 +26,13 @@ struct ChannelMember: Identifiable, Hashable, Sendable {
 struct ChannelChatChooserView: View {
     let channels: [ChannelSummary]
     let actions: ChannelActions
-    let start: (ChannelSummary) async -> Void
-    let startAfterJoin: (MeshChannelPreview) async -> Void
+    let start: (ChannelSummary) async throws -> Void
+    /// Open the conversation a join from here opened, by its address.
+    let openJoined: (String) async throws -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var showsJoin = false
+    @State private var failure: FailureNotice?
 
     var body: some View {
         List {
@@ -46,12 +48,16 @@ struct ChannelChatChooserView: View {
                 Section {
                     ForEach(channels) { channel in
                         Button {
-                            Task { await start(channel) }
+                            Task {
+                                await $failure.attempt(
+                                    String(localized: "Conversation unavailable", comment: "Alert title.")
+                                ) { try await start(channel) }
+                            }
                         } label: {
                             // A plain button is only as tappable as its label
                             // is wide, and a channel row does not reach the
                             // edge on its own. Rows are tapped anywhere.
-                            ChannelRow(channel: channel, showsScope: false)
+                            ChannelRow(channel: channel)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .contentShape(Rectangle())
                         }
@@ -79,13 +85,14 @@ struct ChannelChatChooserView: View {
                 ChannelJoinView(
                     actions: actions,
                     rejoinable: [],
-                    onJoined: { preview in
+                    onJoined: { address in
+                        try await openJoined(address)
                         showsJoin = false
-                        await startAfterJoin(preview)
                     }
                 )
             }
         }
+        .failureAlert($failure)
     }
 }
 
@@ -95,7 +102,7 @@ struct ChannelMemberSheet: View {
     let member: ChannelMember
     let knownPeer: PeerSummary?
     /// Absent when there is no channel to ask over.
-    let requestIdentity: ((Data) async -> Void)?
+    let requestIdentity: ((Data) async throws -> Void)?
     let dismiss: () -> Void
     /// Everything the peer sheet needs to be itself once this member turns out
     /// to be a node this phone knows—the same bundle the direct-conversation
@@ -108,6 +115,7 @@ struct ChannelMemberSheet: View {
     var sendMessage: ((DirectConversationSummary, String, Bool) async -> MessageSendResult)? = nil
 
     @State private var requested = false
+    @State private var failure: FailureNotice?
 
     var body: some View {
         Form {
@@ -169,7 +177,13 @@ struct ChannelMemberSheet: View {
                 Section {
                     Button(requested ? "Identity Requested" : "Request Identity") {
                         requested = true
-                        Task { await requestIdentity(member.hint) }
+                        Task {
+                            requested = await $failure.attempt(
+                                String(localized: "Not sent", comment: "Alert title: a request could not go out.")
+                            ) {
+                                try await requestIdentity(member.hint)
+                            }
+                        }
                     }
                     .disabled(requested)
                 } footer: {
@@ -188,6 +202,7 @@ struct ChannelMemberSheet: View {
                 Button("Done") { dismiss() }
             }
         }
+        .failureAlert($failure)
     }
 }
 
@@ -202,7 +217,7 @@ struct MessageDetailsSheet: View {
     var peerBrowsing: RemotePeerBrowsing? = nil
     /// Asks the node behind a hint who it is, by way of the repeaters
     /// before it.
-    var identifyRepeater: ((Data, [Data]) async -> Bool)? = nil
+    var identifyRepeater: ((Data, [Data]) async throws -> Void)? = nil
     let dismiss: () -> Void
 
     /// The route's hints as the core renders them, in trace-route order:
@@ -345,7 +360,7 @@ struct MessageDetailsSheet: View {
                 hint: hint,
                 named: named,
                 discover: identifyRepeater.map { identify in
-                    { await identify(hint.bytes, preceding.map(\.bytes)) }
+                    { try await identify(hint.bytes, preceding.map(\.bytes)) }
                 }
             )
         }

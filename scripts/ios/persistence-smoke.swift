@@ -15,102 +15,6 @@ struct PersistenceSmokeTest {
         let initialSchemaVersion = try await store.schemaVersion()
         precondition(initialSchemaVersion >= 31, "a new store is at or past the baseline")
 
-        try await store.insertIdentity(id: "alice", publicAddress: "alice-public")
-
-        // A user-initiated import is saved.
-        try await store.upsertPeer(
-            ownerIdentityID: "alice",
-            publicAddress: "peer-saved",
-            alias: "Ridge Medic",
-            isSaved: true
-        )
-        // An over-the-air advertisement lands in the transient tier.
-        try await store.upsertPeer(
-            ownerIdentityID: "alice",
-            publicAddress: "peer-transient",
-            alias: nil,
-            advertisedName: "Roaming Node"
-        )
-        var nodes = try await store.listNodes(ownerIdentityID: "alice")
-        precondition(node(nodes, "peer-saved").isSaved)
-        precondition(!node(nodes, "peer-transient").isSaved)
-
-        // A background advertisement upsert must never demote a saved peer.
-        try await store.upsertPeer(
-            ownerIdentityID: "alice",
-            publicAddress: "peer-saved",
-            alias: nil,
-            advertisedName: "Ridge Medic Node"
-        )
-        nodes = try await store.listNodes(ownerIdentityID: "alice")
-        precondition(node(nodes, "peer-saved").isSaved)
-
-        // Promote a transient; favorite it (favoriting implies saved).
-        try await store.promotePeerToSaved(ownerIdentityID: "alice", publicAddress: "peer-transient")
-        nodes = try await store.listNodes(ownerIdentityID: "alice")
-        precondition(node(nodes, "peer-transient").isSaved)
-        try await store.setPeerFavorite(
-            ownerIdentityID: "alice",
-            publicAddress: "peer-transient",
-            isFavorite: true
-        )
-        nodes = try await store.listNodes(ownerIdentityID: "alice")
-        precondition(node(nodes, "peer-transient").isFavorite)
-
-        // Demote clears favorite and alias but keeps the row.
-        try await store.demotePeerToTransient(ownerIdentityID: "alice", publicAddress: "peer-saved")
-        nodes = try await store.listNodes(ownerIdentityID: "alice")
-        precondition(!node(nodes, "peer-saved").isSaved)
-        precondition(node(nodes, "peer-saved").alias == nil)
-        try await store.promotePeerToSaved(ownerIdentityID: "alice", publicAddress: "peer-saved")
-
-        // Delete refuses a peer with a conversation; the combined delete works
-        // and removes both.
-        let conversationID = try await store.ensureDirectConversation(
-            ownerIdentityID: "alice",
-            peerAddress: "peer-saved"
-        )
-        try await store.updateDraft(
-            ownerIdentityID: "alice",
-            conversationID: conversationID,
-            text: "Draft survives relaunch"
-        )
-        let conversations = try await store.listDirectConversations(ownerIdentityID: "alice")
-        precondition(conversations.count == 1)
-        precondition(conversations[0].draftText == "Draft survives relaunch")
-        let refused = try await store.deletePeer(ownerIdentityID: "alice", publicAddress: "peer-saved")
-        precondition(!refused)
-        let removed = try await store.deletePeerAndConversation(
-            ownerIdentityID: "alice",
-            publicAddress: "peer-saved"
-        )
-        precondition(removed)
-        nodes = try await store.listNodes(ownerIdentityID: "alice")
-        precondition(!nodes.contains { $0.publicAddress == "peer-saved" })
-        let remainingConversations = try await store.listDirectConversations(ownerIdentityID: "alice")
-        precondition(remainingConversations.isEmpty)
-
-        // Plain delete works for a peer without a conversation.
-        let deleted = try await store.deletePeer(ownerIdentityID: "alice", publicAddress: "peer-transient")
-        precondition(deleted)
-
-        // clearTransientPeers drops the transients nothing depends on; a row
-        // with a conversation stays.
-        for index in 0..<3 {
-            try await store.upsertPeer(
-                ownerIdentityID: "alice",
-                publicAddress: "flood-\(index)",
-                alias: nil
-            )
-        }
-        _ = try await store.ensureDirectConversation(ownerIdentityID: "alice", peerAddress: "flood-0")
-        try await store.clearTransientPeers(ownerIdentityID: "alice")
-        nodes = try await store.listNodes(ownerIdentityID: "alice")
-        precondition(
-            Set(nodes.filter { $0.publicAddress.hasPrefix("flood-") }.map(\.publicAddress))
-                == ["flood-0"]
-        )
-
         // A file older than the baseline is refused and left as it was:
         // the Swift migrations that would have upgraded it are gone.
         let historicalURL = root.appendingPathComponent("historical.sqlite")
@@ -128,7 +32,7 @@ struct PersistenceSmokeTest {
         try await checkRemainingCalls(store, path: databaseURL.path)
         try await checkReopenAndErase(store, path: databaseURL.path)
 
-        print("SQLite tier, delete/demote, transient clearing, refusal, round-trip, and reopen checks passed")
+        print("SQLite refusal, round-trip, and reopen checks passed")
 
         // Seeding tens of thousands of rows takes long enough that the ordinary
         // smoke run should not pay for it.
@@ -137,9 +41,10 @@ struct PersistenceSmokeTest {
         }
     }
 
-    /// The calls the checks above leave out, each written with a different
-    /// value in every argument and read back, so one the store drops or
-    /// crosses with its neighbor shows.
+    /// The calls the Swift store still wraps, each written with a different
+    /// value in every argument and read back, so one it drops or crosses
+    /// with its neighbor shows. Peers, channels and conversations are
+    /// seeded as the core writes them; its own tests check those writes.
     private static func checkRemainingCalls(
         _ store: SQLiteApplicationStore,
         path: String
@@ -156,9 +61,6 @@ struct PersistenceSmokeTest {
                 messages: messages
             )
         }
-        func peer(_ address: String) async throws -> StoredNode {
-            node(try await store.listNodes(ownerIdentityID: owner), address)
-        }
         func transcript(_ address: String) async throws -> [StoredChatMessage] {
             try await store.chatMessagePage(
                 ownerIdentityID: owner, conversationAddress: address, newest: 100
@@ -170,84 +72,37 @@ struct PersistenceSmokeTest {
         let unknown = try await store.knowsIdentity(id: "nobody", publicAddress: "nobody-public")
         precondition(known && !unknown)
 
-        // Peers.
-        try await store.upsertPeer(
-            ownerIdentityID: owner, publicAddress: "relay", alias: "Relay",
-            advertisedName: "relay-adv", isSaved: true, nodeKind: .repeater,
-            advertisement: Data([1, 2, 3]), advertisementAuthenticated: true,
-            advertisementReceivedAt: at(10)
+        // Rows for the chat to land in, as the core's commands write them.
+        let core = store.coreStore
+        try core.upsertPeer(
+            ownerIdentityId: owner, publicAddress: "friend",
+            peer: MobilePeerUpsertRecord(alias: "Friend", isSaved: true, nodeKind: .chat)
         )
-        try await store.upsertPeer(
-            ownerIdentityID: owner, publicAddress: "friend", alias: "Friend",
-            isSaved: true, nodeKind: .chat
+        let direct = try core.ensureDirectConversation(
+            ownerIdentityId: owner, peerAddress: "friend", createdAtMs: ms(20)
         )
-        var relay = try await peer("relay")
-        precondition(relay.alias == "Relay" && relay.advertisedName == "relay-adv")
-        precondition(relay.nodeKind == .repeater && relay.advertisement == Data([1, 2, 3]))
-        precondition(relay.advertisementAuthenticated && relay.advertisementReceivedAt == at(10))
-        try await store.updateNodeAlias(ownerIdentityID: owner, publicAddress: "relay", alias: "Ridge relay")
-        try await store.setNotifyWhenHeard(ownerIdentityID: owner, publicAddress: "relay", enabled: true)
-        relay = try await peer("relay")
-        var friend = try await peer("friend")
-        precondition(relay.alias == "Ridge relay" && relay.notifyWhenHeard)
-        precondition(friend.alias == "Friend" && !friend.notifyWhenHeard)
+        let named = MobileStoredChannelRecord(
+            id: UUID().uuidString, ownerIdentityId: owner, kind: .named, canonicalName: "general",
+            name: "General", alias: nil, channelIdHex: "a1b2", tint: Data([1, 2, 3]),
+            regionCode: nil, maxFloodHops: nil, joinedPhone: true, joinedDevice: false,
+            notificationsEnabled: true, joinedAtMs: ms(30)
+        )
+        try core.insertChannel(channel: named, keyDigest: "digest-named", createdAtMs: ms(30))
+        let general = try core.ensureChannelConversation(
+            ownerIdentityId: owner, channelId: named.id, conversationAddress: "general-address",
+            createdAtMs: ms(31)
+        )
 
-        // Channels.
-        let named = StoredChannel(
-            id: UUID(), ownerIdentityID: owner, kind: .named, canonicalName: "general",
-            name: "General", alias: nil, channelIDHex: "a1b2", tint: Data([1, 2, 3]),
-            regionCode: Data([0x55, 0x53]), maxFloodHops: 3, joinedPhone: true,
-            joinedDevice: false, notificationsEnabled: true, joinedAt: at(30)
-        )
-        let secret = StoredChannel(
-            id: UUID(), ownerIdentityID: owner, kind: .privateKey, canonicalName: nil,
-            name: nil, alias: "Secret", channelIDHex: "c3d4", tint: Data([9]),
-            regionCode: nil, maxFloodHops: nil, joinedPhone: false,
-            joinedDevice: true, notificationsEnabled: false, joinedAt: nil
-        )
-        func channel(_ id: UUID) async throws -> StoredChannel? {
-            try await store.channels(ownerIdentityID: owner).first { $0.id == id }
-        }
-        try await store.insertChannel(named, keyDigest: "digest-named")
-        try await store.insertChannel(secret, keyDigest: "digest-secret")
-        var readNamed = try await channel(named.id)
-        var readSecret = try await channel(secret.id)
-        precondition(readNamed == named && readSecret == secret)
-        let byDigest = try await store.channel(ownerIdentityID: owner, keyDigest: "digest-secret")
-        let otherOwner = try await store.channel(ownerIdentityID: "alice", keyDigest: "digest-secret")
-        precondition(byDigest == secret && otherOwner == nil)
-        try await store.updateChannelDetails(
-            id: secret.id, alias: "Renamed", regionCode: Data([1, 2]), maxFloodHops: 5,
-            notificationsEnabled: true
-        )
-        try await store.setChannelMembership(id: secret.id, joinedPhone: true, joinedDevice: false)
-        readSecret = try await channel(secret.id)
-        precondition(readSecret?.alias == "Renamed" && readSecret?.regionCode == Data([1, 2]))
-        precondition(readSecret?.maxFloodHops == 5 && readSecret?.notificationsEnabled == true)
-        precondition(readSecret?.joinedPhone == true && readSecret?.joinedDevice == false)
-        precondition(readSecret?.joinedAt != nil, "the phone's first join is dated")
-        readNamed = try await channel(named.id)
-        precondition(readNamed == named, "changing one channel leaves the other")
-
-        // Conversations.
-        let direct = try await store.ensureDirectConversation(ownerIdentityID: owner, peerAddress: "friend")
-        let general = try await store.ensureChannelConversation(
-            ownerIdentityID: owner, channelID: named.id, conversationAddress: "general-address"
-        )
-        let hidden = try await store.ensureChannelConversation(
-            ownerIdentityID: owner, channelID: secret.id, conversationAddress: "secret-address"
-        )
+        // Drafts.
+        try await store.updateDraft(ownerIdentityID: owner, conversationID: direct, text: "direct draft")
         try await store.updateChannelDraft(ownerIdentityID: owner, conversationID: general, text: "channel draft")
-        try await store.setDirectConversationNotifications(
-            ownerIdentityID: owner, conversationID: direct, enabled: false
-        )
         var directs = try await store.listDirectConversations(ownerIdentityID: owner)
         precondition(directs.map(\.id) == [direct] && directs[0].node.publicAddress == "friend")
-        precondition(!directs[0].notificationsEnabled)
-        var channelConversations = try await store.listChannelConversations(ownerIdentityID: owner)
+        precondition(directs[0].draftText == "direct draft")
+        let channelConversations = try await store.listChannelConversations(ownerIdentityID: owner)
         let readGeneral = channelConversations.first { $0.id == general }
-        precondition(Set(channelConversations.map(\.id)) == [general, hidden])
-        precondition(readGeneral?.channelID == named.id)
+        precondition(channelConversations.map(\.id) == [general])
+        precondition(readGeneral?.channelID.uuidString == named.id)
         precondition(readGeneral?.conversationAddress == "general-address")
         precondition(readGeneral?.draftText == "channel draft")
 
@@ -362,7 +217,7 @@ struct PersistenceSmokeTest {
         let after = try await store.chatMessageCount(ownerIdentityID: owner, conversationAddress: "general-address")
         precondition(after == before + 25)
 
-        // Clearing keeps the conversation; deleting takes it.
+        // Clearing keeps the conversation.
         try await store.clearConversationMessages(ownerIdentityID: owner, conversationAddress: "friend")
         messages = try await transcript("friend")
         directs = try await store.listDirectConversations(ownerIdentityID: owner)
@@ -371,16 +226,6 @@ struct PersistenceSmokeTest {
             ownerIdentityID: owner, conversationAddress: "friend", sessionID: "720", handle: 1, wireID: 4
         )
         precondition(clearedFrames.isEmpty, "clearing takes the archive")
-        try await store.deleteDirectConversation(ownerIdentityID: owner, conversationID: direct)
-        directs = try await store.listDirectConversations(ownerIdentityID: owner)
-        friend = try await peer("friend")
-        precondition(directs.isEmpty && friend.isSaved, "deleting a conversation keeps the peer")
-        try await store.deleteChannelConversation(ownerIdentityID: owner, conversationID: hidden)
-        channelConversations = try await store.listChannelConversations(ownerIdentityID: owner)
-        precondition(channelConversations.map(\.id) == [general])
-        try await store.deleteChannel(id: secret.id)
-        let remaining = try await store.channels(ownerIdentityID: owner)
-        precondition(remaining.map(\.id) == [named.id])
     }
 
     /// A second connection to the same file reads what the first wrote, and
@@ -390,43 +235,35 @@ struct PersistenceSmokeTest {
         path: String
     ) async throws {
         let reopened = try SQLiteApplicationStore(path: path)
-        for owner in ["alice", "dana"] {
-            let writtenPeers = try await store.listNodes(ownerIdentityID: owner)
-            let readPeers = try await reopened.listNodes(ownerIdentityID: owner)
-            precondition(!writtenPeers.isEmpty && readPeers == writtenPeers)
-            let writtenChannels = try await store.channels(ownerIdentityID: owner)
-            let readChannels = try await reopened.channels(ownerIdentityID: owner)
-            precondition(readChannels == writtenChannels)
-            let writtenDirects = try await store.listDirectConversations(ownerIdentityID: owner)
-            let readDirects = try await reopened.listDirectConversations(ownerIdentityID: owner)
-            precondition(readDirects == writtenDirects)
-            let writtenGroups = try await store.listChannelConversations(ownerIdentityID: owner)
-            let readGroups = try await reopened.listChannelConversations(ownerIdentityID: owner)
-            precondition(readGroups == writtenGroups)
-        }
+        let owner = "dana"
+        let writtenPeers = try await store.listNodes(ownerIdentityID: owner)
+        let readPeers = try await reopened.listNodes(ownerIdentityID: owner)
+        precondition(!writtenPeers.isEmpty && readPeers == writtenPeers)
+        let writtenChannels = try await store.channels(ownerIdentityID: owner)
+        let readChannels = try await reopened.channels(ownerIdentityID: owner)
+        precondition(!writtenChannels.isEmpty && readChannels == writtenChannels)
+        let writtenDirects = try await store.listDirectConversations(ownerIdentityID: owner)
+        let readDirects = try await reopened.listDirectConversations(ownerIdentityID: owner)
+        precondition(readDirects == writtenDirects)
+        let writtenGroups = try await store.listChannelConversations(ownerIdentityID: owner)
+        let readGroups = try await reopened.listChannelConversations(ownerIdentityID: owner)
+        precondition(readGroups == writtenGroups)
         let page = try await store.chatMessagePage(
-            ownerIdentityID: "dana", conversationAddress: "general-address", newest: 100
+            ownerIdentityID: owner, conversationAddress: "general-address", newest: 100
         )
         let reread = try await reopened.chatMessagePage(
-            ownerIdentityID: "dana", conversationAddress: "general-address", newest: 100
+            ownerIdentityID: owner, conversationAddress: "general-address", newest: 100
         )
         precondition(!page.messages.isEmpty && reread == page)
 
         let version = try await reopened.schemaVersion()
         try await reopened.eraseAllContent()
         let erasedVersion = try await store.schemaVersion()
-        let erasedPeers = try await store.listNodes(ownerIdentityID: "alice")
-        let erasedConversations = try await store.listDirectConversations(ownerIdentityID: "alice")
-        let erasedIdentity = try await store.knowsIdentity(id: "alice", publicAddress: "alice-public")
+        let erasedPeers = try await store.listNodes(ownerIdentityID: owner)
+        let erasedConversations = try await store.listDirectConversations(ownerIdentityID: owner)
+        let erasedIdentity = try await store.knowsIdentity(id: owner, publicAddress: "dana-public")
         precondition(erasedVersion == version)
         precondition(erasedPeers.isEmpty && erasedConversations.isEmpty && !erasedIdentity)
-    }
-
-    private static func node(_ nodes: [StoredNode], _ address: String) -> StoredNode {
-        guard let found = nodes.first(where: { $0.publicAddress == address }) else {
-            preconditionFailure("Missing expected node \(address)")
-        }
-        return found
     }
 
     /// Run `sql` straight on the file at `path`.
@@ -474,6 +311,25 @@ extension PersistenceSmokeTest {
     private static let benchmarkChannelMessages = 20_000
     private static let benchmarkChannelAddress = "bench-channel-address"
 
+    /// A saved peer with a direct conversation, written as the core writes
+    /// them.
+    private static func seedPeerConversation(
+        _ store: SQLiteApplicationStore,
+        address: String,
+        alias: String
+    ) throws {
+        try store.coreStore.upsertPeer(
+            ownerIdentityId: benchmarkOwner,
+            publicAddress: address,
+            peer: MobilePeerUpsertRecord(alias: alias, isSaved: true)
+        )
+        _ = try store.coreStore.ensureDirectConversation(
+            ownerIdentityId: benchmarkOwner,
+            peerAddress: address,
+            createdAtMs: Date.now.storeMilliseconds
+        )
+    }
+
     static func runChatScaleBenchmark() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("umsh-chat-bench-\(UUID().uuidString)")
@@ -490,43 +346,36 @@ extension PersistenceSmokeTest {
         var directAddresses: [String] = []
         for index in 0..<benchmarkDirectConversations {
             let address = String(format: "bench-peer-%03d", index)
-            try await store.upsertPeer(
-                ownerIdentityID: benchmarkOwner,
-                publicAddress: address,
-                alias: "Bench Peer \(index)",
-                isSaved: true
-            )
-            _ = try await store.ensureDirectConversation(
-                ownerIdentityID: benchmarkOwner,
-                peerAddress: address
-            )
+            try seedPeerConversation(store, address: address, alias: "Bench Peer \(index)")
             directAddresses.append(address)
         }
 
-        let channelID = UUID()
-        try await store.insertChannel(
-            StoredChannel(
+        let channelID = UUID().uuidString
+        try store.coreStore.insertChannel(
+            channel: MobileStoredChannelRecord(
                 id: channelID,
-                ownerIdentityID: benchmarkOwner,
+                ownerIdentityId: benchmarkOwner,
                 kind: .named,
                 canonicalName: "bench",
                 name: "Bench",
                 alias: nil,
-                channelIDHex: "beef",
+                channelIdHex: "beef",
                 tint: Data([0xBE, 0xEF, 0x01]),
                 regionCode: nil,
                 maxFloodHops: nil,
                 joinedPhone: true,
                 joinedDevice: false,
                 notificationsEnabled: true,
-                joinedAt: nil
+                joinedAtMs: nil
             ),
-            keyDigest: "bench-key-digest"
+            keyDigest: "bench-key-digest",
+            createdAtMs: Date.now.storeMilliseconds
         )
-        _ = try await store.ensureChannelConversation(
-            ownerIdentityID: benchmarkOwner,
-            channelID: channelID,
-            conversationAddress: benchmarkChannelAddress
+        _ = try store.coreStore.ensureChannelConversation(
+            ownerIdentityId: benchmarkOwner,
+            channelId: channelID,
+            conversationAddress: benchmarkChannelAddress,
+            createdAtMs: Date.now.storeMilliseconds
         )
 
         // Seeding goes through raw SQL, in one transaction: with
@@ -726,16 +575,7 @@ extension PersistenceSmokeTest {
         // A conversation with no messages reports no preview and nothing unread,
         // rather than a zero-valued one.
         let emptyAddress = "bench-empty-peer"
-        try await store.upsertPeer(
-            ownerIdentityID: benchmarkOwner,
-            publicAddress: emptyAddress,
-            alias: "Empty",
-            isSaved: true
-        )
-        _ = try await store.ensureDirectConversation(
-            ownerIdentityID: benchmarkOwner,
-            peerAddress: emptyAddress
-        )
+        try seedPeerConversation(store, address: emptyAddress, alias: "Empty")
         guard let empty = (try await store.listDirectConversations(ownerIdentityID: benchmarkOwner))
             .first(where: { $0.node.publicAddress == emptyAddress })
         else { preconditionFailure("the empty conversation must be listed") }

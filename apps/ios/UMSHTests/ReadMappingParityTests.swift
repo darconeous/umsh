@@ -124,7 +124,7 @@ struct ReadMappingParityTests {
                 + " alias=\(opt(channel.alias, str)) channel_id_hex=\(str(channel.channelIDHex))"
                 + " tint=\(bytes(channel.tint)) region_code=\(opt(channel.regionCode, bytes))"
                 + " max_flood_hops=\(opt(channel.maxFloodHops, int))"
-                + " joined_phone=\(bool(channel.joinedPhone)) joined_device=\(bool(channel.joinedDevice))"
+                + " joined_phone=\(bool(channel.joinedPhone))"
                 + " notifications=\(bool(channel.notificationsEnabled)) joined_at=\(opt(channel.joinedAt, ms))")
         }
         for conversation in runtime.conversations {

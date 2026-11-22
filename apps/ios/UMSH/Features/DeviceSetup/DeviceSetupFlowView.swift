@@ -59,7 +59,7 @@ final class AdminFlowController {
     let companionProfile: CompanionRadioProfile?
 
     private let hostIdentity: MeshPublicIdentity?
-    private let saveDevicePeer: ((MeshPublicIdentity, String?, PeerRole) async -> Bool)?
+    private let saveDevicePeer: ((MeshPublicIdentity, String?, PeerRole?) async throws -> Void)?
     private let session = AdministrativeDeviceSession()
     private var snapshotTask: Task<Void, Never>?
     private var discoveryTask: Task<Void, Never>?
@@ -69,7 +69,7 @@ final class AdminFlowController {
         companionIdentifier: UUID?,
         companionName: String?,
         companionProfile: CompanionRadioProfile? = nil,
-        saveDevicePeer: ((MeshPublicIdentity, String?, PeerRole) async -> Bool)? = nil
+        saveDevicePeer: ((MeshPublicIdentity, String?, PeerRole?) async throws -> Void)? = nil
     ) {
         self.hostIdentity = hostIdentity
         self.companionIdentifier = companionIdentifier
@@ -81,9 +81,11 @@ final class AdminFlowController {
     /// Record the device being configured as a peer, so the operator can
     /// find it in Peers after the sheet closes. Nothing about the setup
     /// session itself is persisted.
-    func savePeer(role: PeerRole) async -> Bool {
-        guard let saveDevicePeer, let identity = snapshot.deviceIdentity else { return false }
-        return await saveDevicePeer(identity, snapshot.name, role)
+    func savePeer(role: PeerRole?) async throws {
+        guard let saveDevicePeer, let identity = snapshot.deviceIdentity else {
+            throw MobileAppError.InvalidRequest
+        }
+        try await saveDevicePeer(identity, snapshot.name, role)
     }
 
     var canSavePeer: Bool { saveDevicePeer != nil }
@@ -524,13 +526,14 @@ struct DeviceSetupFlowView: View {
     /// Peers list changes, instead of frozen when the sheet opened.
     private let isPeerSaved: (String) -> Bool
     private let peerActions: PeerActions
+    @State private var failure: FailureNotice?
 
     init(
         hostIdentity: MeshPublicIdentity?,
         companionIdentifier: UUID?,
         companionName: String?,
         companionProfile: CompanionRadioProfile? = nil,
-        saveDevicePeer: ((MeshPublicIdentity, String?, PeerRole) async -> Bool)? = nil,
+        saveDevicePeer: ((MeshPublicIdentity, String?, PeerRole?) async throws -> Void)? = nil,
         isPeerSaved: @escaping (String) -> Bool = { _ in false },
         peerActions: PeerActions = .unavailable
     ) {
@@ -568,6 +571,7 @@ struct DeviceSetupFlowView: View {
                     }
                 }
         }
+        .failureAlert($failure)
         .task { await controller.begin() }
         .onDisappear {
             Task { await controller.end() }
@@ -611,7 +615,15 @@ struct DeviceSetupFlowView: View {
     private func savePeerBar(_ peer: PeerSummary) -> some View {
         if controller.canSavePeer, !isPeerSaved(peer.identity.canonicalAddress) {
             Button {
-                Task { _ = await controller.savePeer(role: .unknown) }
+                Task {
+                    // Recorded under no role of its own: a node already on
+                    // file keeps the kind it was heard as.
+                    do {
+                        try await controller.savePeer(role: nil)
+                    } catch {
+                        failure = FailureNotice(String(localized: "Peer not saved", comment: "Alert title."), error)
+                    }
+                }
             } label: {
                 Label("Record in Peers", systemImage: "person.crop.circle.badge.plus")
                     .frame(maxWidth: .infinity)

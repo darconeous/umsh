@@ -51,7 +51,7 @@ actor RustMeshEngine: MeshEngine {
 
     func inspectPeerIdentity(_ input: String) throws -> MeshNodeURIPreview {
         do {
-            return Self.preview(from: try UMSHMobileCore.inspectPeerIdentity(input: input))
+            return Self.preview(from: try UMSHMobileCore.inspectPeerIdentity(input: input), input: input)
         } catch let error as MobileError {
             throw Self.inputError(error)
         } catch {
@@ -61,54 +61,6 @@ actor RustMeshEngine: MeshEngine {
 
     func generateIdentitySecret() -> Data {
         UMSHMobileCore.generateIdentitySecret()
-    }
-
-    func generateChannelKey() -> Data {
-        UMSHMobileCore.generateChannelKey()
-    }
-
-    func deriveChannelID(key: Data) throws -> Data {
-        do {
-            return try UMSHMobileCore.deriveChannelId(key: key)
-        } catch {
-            throw MeshEngineError.coreFailure
-        }
-    }
-
-    func channelConversationAddress(key: Data) throws -> String {
-        do {
-            return try UMSHMobileCore.channelConversationAddress(key: key)
-        } catch {
-            throw MeshEngineError.coreFailure
-        }
-    }
-
-    func deriveChannelTint(key: Data) throws -> Data {
-        do {
-            return try UMSHMobileCore.deriveChannelTint(key: key)
-        } catch {
-            throw MeshEngineError.coreFailure
-        }
-    }
-
-    func formatChannelInvitation(
-        key: Data,
-        name: String?,
-        displayName: String?,
-        maxFloodHops: UInt8?,
-        regionCode: Data?
-    ) throws -> String {
-        do {
-            return try UMSHMobileCore.formatChannelInvitation(
-                key: key,
-                name: name,
-                displayName: displayName,
-                maxFloodHops: maxFloodHops,
-                region: regionCode
-            )
-        } catch {
-            throw MeshEngineError.coreFailure
-        }
     }
 
     func regionCode(from text: String) throws -> Data {
@@ -167,8 +119,9 @@ actor RustMeshEngine: MeshEngine {
         )
     }
 
-    private static func preview(from record: NodeUriPreviewRecord) -> MeshNodeURIPreview {
+    private static func preview(from record: NodeUriPreviewRecord, input: String) -> MeshNodeURIPreview {
         MeshNodeURIPreview(
+            input: input,
             publicIdentity: MeshPublicIdentity(
                 canonicalAddress: record.canonicalAddress,
                 hint: MeshNodeHint(bytes: record.hint.bytes, text: record.hint.text)

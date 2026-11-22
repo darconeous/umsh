@@ -21,10 +21,6 @@ async fn commands_wait_for_a_running_identity() {
         core.core.mesh_session().await.err(),
         Some(MobileAppError::NotRunning)
     );
-    assert_eq!(
-        core.core.content_changed().await,
-        Err(MobileAppError::NotRunning)
-    );
 }
 
 #[tokio::test]
@@ -476,10 +472,8 @@ async fn a_command_made_while_starting_runs_once_the_start_is_done() {
     let app = core.core.clone();
     let session = tokio::spawn(async move { app.mesh_session().await });
     let app = core.core.clone();
-    let refreshed = tokio::spawn(async move { app.content_changed().await });
-    let app = core.core.clone();
     let named = tokio::spawn(async move { app.set_advertised_name(" Ridge Camp ".into()).await });
-    still_waiting(&[&refreshed, &named]).await;
+    still_waiting(&[&named]).await;
     assert!(!session.is_finished());
 
     hooks.start_gate.as_ref().unwrap().add_permits(1);
@@ -489,7 +483,6 @@ async fn a_command_made_while_starting_runs_once_the_start_is_done() {
         session.node_public_key(),
         crate::public_identity_bytes(owner.clone()).unwrap()
     );
-    refreshed.await.unwrap().unwrap();
     named.await.unwrap().unwrap();
     assert_eq!(
         core.store.local_advertised_name(owner).unwrap().as_deref(),

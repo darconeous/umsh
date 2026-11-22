@@ -19,12 +19,12 @@ struct ConversationsView: View {
     /// and an empty list is otherwise indistinguishable from a loaded one.
     var isLoading = false
     let inspectPeerIdentity: (String) async -> Result<MeshNodeURIPreview, MeshEngineError>
-    let savePeer: (MeshNodeURIPreview, PeerImportDetails, Bool) async -> DirectConversationSummary?
+    let savePeer: (MeshNodeURIPreview, PeerImportDetails, Bool) async throws -> DirectConversationSummary?
     let updateDraft: (Int64, String) async -> AppOperationResult
     var updateChannelDraft: (Int64, String) async -> AppOperationResult = { _, _ in .failure(.unavailable("Saving is unavailable.")) }
     let sendMessage: (ConversationListItem, String, Bool) async -> MessageSendResult
     var messageActions: ChatMessageActions = .unavailable
-    var deleteConversation: (DirectConversationSummary) async -> Void = { _ in }
+    var deleteConversation: (DirectConversationSummary) async throws -> Void = { _ in }
     var peerActions: PeerActions = .unavailable
     var channelActions: ChannelConversationActions = .unavailable
     /// Channel management, for joining one from here and for the channel
@@ -42,6 +42,7 @@ struct ConversationsView: View {
     @State private var conversationPendingDeletion: DirectConversationSummary?
     @State private var channelConversationPendingDeletion: ChannelConversationSummary?
     @State private var searchText = ""
+    @State private var failure: FailureNotice?
 
     var body: some View {
         List {
@@ -179,7 +180,9 @@ struct ConversationsView: View {
             Button("Delete Conversation", role: .destructive) {
                 if let conversation = conversationPendingDeletion {
                     conversationPendingDeletion = nil
-                    Task { await deleteConversation(conversation) }
+                    Task {
+                        await $failure.attempt(Self.notDeletedTitle) { try await deleteConversation(conversation) }
+                    }
                 }
             }
         } message: {
@@ -196,7 +199,9 @@ struct ConversationsView: View {
             Button("Leave Conversation", role: .destructive) {
                 if let conversation = channelConversationPendingDeletion {
                     channelConversationPendingDeletion = nil
-                    Task { await channelActions.delete(conversation) }
+                    Task {
+                        await $failure.attempt(Self.notDeletedTitle) { try await channelActions.delete(conversation) }
+                    }
                 }
             }
         } message: {
@@ -209,7 +214,9 @@ struct ConversationsView: View {
                     NodeImportView(
                         inspectPeerIdentity: inspectPeerIdentity,
                         save: { preview, details, startConversation in
-                            let conversation = await savePeer(preview, details, startConversation)
+                            // A failure throws back to the sheet, which
+                            // stays up and says why.
+                            let conversation = try await savePeer(preview, details, startConversation)
                             presentedSheet = nil
                             if startConversation {
                                 openedConversation = conversation
@@ -220,18 +227,27 @@ struct ConversationsView: View {
                     ChannelChatChooserView(
                         channels: channelsWithoutConversation,
                         actions: channelManagementActions,
+                        // A failure throws back to the chooser, which stays
+                        // up and says why.
                         start: { channel in
+                            let conversation = try await channelActions.start(channel)
                             presentedSheet = nil
-                            openedChannelConversation = await channelActions.start(channel)
+                            openedChannelConversation = conversation
                         },
-                        startAfterJoin: { preview in
+                        openJoined: { address in
+                            let conversation = try await channelActions.conversation(address)
                             presentedSheet = nil
-                            openedChannelConversation = await channelActions.startAfterJoin(preview)
+                            openedChannelConversation = conversation
                         }
                     )
                 }
             }
         }
+        .failureAlert($failure)
+    }
+
+    private static var notDeletedTitle: String {
+        String(localized: "Conversation not deleted", comment: "Alert title.")
     }
 
     private var isSearching: Bool {
@@ -356,12 +372,15 @@ struct ConversationsView: View {
     /// not a separate confirmed step.
     private func openConversation(with peer: PeerSummary) async {
         var conversation = existingConversation(with: peer)
-        if conversation == nil {
-            // Creating can report failure after the row itself was written, so
-            // look again rather than leaving the tap with nothing to show for
-            // itself.
-            conversation = await peerActions.startConversation?(peer)
-                ?? existingConversation(with: peer)
+        if conversation == nil, let startConversation = peerActions.startConversation {
+            do {
+                conversation = try await startConversation(peer)
+            } catch {
+                failure = FailureNotice(
+                    String(localized: "Conversation unavailable", comment: "Alert title."),
+                    error
+                )
+            }
         }
         guard let conversation else { return }
         searchText = ""
@@ -372,9 +391,16 @@ struct ConversationsView: View {
     /// in it, so the group chat is created the way joining through the compose
     /// menu creates one.
     private func openConversation(in channel: ChannelSummary) async {
-        guard let conversation = await channelActions.start(channel) else { return }
-        searchText = ""
-        openedChannelConversation = conversation
+        do {
+            let conversation = try await channelActions.start(channel)
+            searchText = ""
+            openedChannelConversation = conversation
+        } catch {
+            failure = FailureNotice(
+                String(localized: "Conversation unavailable", comment: "Alert title."),
+                error
+            )
+        }
     }
 
     private func existingConversation(with peer: PeerSummary) -> DirectConversationSummary? {

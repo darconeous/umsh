@@ -546,7 +546,7 @@ struct ConversationThreadView: View {
                     knownPeer: memberPeer(for: member),
                     requestIdentity: channelConversation.map { conversation in
                         { hint in
-                            await channelActions.requestMemberIdentity(conversation, hint)
+                            try await channelActions.requestMemberIdentity(conversation, hint)
                         }
                     },
                     dismiss: { inspectedMember = nil },
@@ -693,7 +693,6 @@ struct ConversationThreadView: View {
                 } else if let channelConversation {
                     ChannelConversationDetailView(
                         conversation: channelConversation,
-                        radioSnapshot: radioSnapshot,
                         channelActions: channelManagementActions,
                         setNotifications: channelActions.setNotifications,
                         clearMessages: clearMessages,

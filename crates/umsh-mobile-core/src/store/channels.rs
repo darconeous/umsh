@@ -9,6 +9,7 @@
 
 use rusqlite::{Connection, OptionalExtension, params};
 
+use super::conversations::purge_conversation_history;
 use super::{MobileAppStore, MobileStoreError, clamp};
 
 /// How a channel's key was established, which decides what may be shared.
@@ -76,8 +77,9 @@ pub struct MobileStoredChannelRecord {
     /// Whether the phone identity has joined. Drives MAC registration and
     /// the radio's host channel table.
     pub joined_phone: bool,
-    /// Whether the companion radio's device identity has joined. A cache:
-    /// the device is authoritative and this is reconciled from it on attach.
+    /// Whether the companion radio's device identity has joined. Nothing
+    /// keeps it current: the radio's own channels are managed apart from
+    /// the phone's, and nothing the phone does reads it.
     pub joined_device: bool,
     pub notifications_enabled: bool,
     /// When the phone identity first joined. Stamped once and kept through
@@ -125,13 +127,15 @@ impl MobileAppStore {
     /// channels; the record's `id` is stored uppercase. Fails with
     /// [`MobileStoreError::Failed`] when the identity already holds the ID
     /// or the key digest.
+    ///
+    /// For tests and tools that seed a store with no core running; the app
+    /// edits through `MobileAppCore`'s commands.
     pub fn insert_channel(
         &self,
         channel: MobileStoredChannelRecord,
         key_digest: String,
         created_at_ms: i64,
     ) -> Result<(), MobileStoreError> {
-        let _counted = self.wrote_content();
         let id = channel_id(&channel.id)?;
         self.connection().execute(
             "INSERT INTO channel (
@@ -165,6 +169,9 @@ impl MobileAppStore {
     /// Update the parts of a channel the user controls, leaving membership
     /// and key-derived columns alone. A channel that does not exist is not
     /// an error.
+    ///
+    /// For tests and tools that seed a store with no core running; the app
+    /// edits through `MobileAppCore`'s commands.
     pub fn update_channel_details(
         &self,
         id: String,
@@ -173,7 +180,6 @@ impl MobileAppStore {
         max_flood_hops: Option<u8>,
         notifications_enabled: bool,
     ) -> Result<(), MobileStoreError> {
-        let _counted = self.wrote_content();
         let id = channel_id(&id)?;
         self.connection().execute(
             "UPDATE channel
@@ -195,6 +201,9 @@ impl MobileAppStore {
     /// the first time the phone joins and is left alone after, through any
     /// number of leaves and rejoins. A channel that does not exist is not
     /// an error.
+    ///
+    /// For tests and tools that seed a store with no core running; the app
+    /// edits through `MobileAppCore`'s commands.
     pub fn set_channel_membership(
         &self,
         id: String,
@@ -202,7 +211,6 @@ impl MobileAppStore {
         joined_device: bool,
         now_ms: i64,
     ) -> Result<(), MobileStoreError> {
-        let _counted = self.wrote_content();
         let id = channel_id(&id)?;
         self.connection().execute(
             "UPDATE channel
@@ -222,8 +230,10 @@ impl MobileAppStore {
     /// `delete_channel_conversation`, which purges the history. Nothing
     /// here refuses a built-in channel; leaving one clears its flags
     /// instead, and that is the caller's to choose.
+    ///
+    /// For tests and tools that seed a store with no core running; the app
+    /// edits through `MobileAppCore`'s commands.
     pub fn delete_channel(&self, id: String) -> Result<(), MobileStoreError> {
-        let _counted = self.wrote_content();
         let id = channel_id(&id)?;
         self.connection()
             .execute("DELETE FROM channel WHERE id = ?", params![id])?;
@@ -300,22 +310,150 @@ pub(super) fn canonical_uuid(value: &str) -> Option<String> {
 #[cfg(test)]
 mod tests;
 
+/// What `leave_channel` did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct LeftChannel {
+    /// The row went; a built-in channel's stays, left.
+    pub(crate) deleted: bool,
+    /// The address of the conversation purged with it, when it had one.
+    pub(crate) conversation_address: Option<String>,
+}
+
+/// The app core's channel reads and writes.
 impl MobileAppStore {
-    /// Record whether the companion radio's device identity holds a
-    /// channel, leaving the phone's membership alone: the radio is
-    /// authoritative for this flag only, and a write of both could undo a
-    /// join or leave made meanwhile. A channel that does not exist is not
-    /// an error.
-    pub(crate) fn set_channel_joined_device(
+    /// The identity's channel with `id`, in any case, or `None`.
+    pub(crate) fn channel_by_id(
+        &self,
+        owner_identity_id: &str,
+        id: &str,
+    ) -> Result<Option<MobileStoredChannelRecord>, MobileStoreError> {
+        let id = channel_id(id)?;
+        let row = self
+            .connection()
+            .query_row(
+                &format!(
+                    "SELECT {CHANNEL_COLUMNS} FROM channel
+                    WHERE owner_identity_id = ? AND id = ?"
+                ),
+                params![owner_identity_id, id],
+                stored_channel,
+            )
+            .optional()?;
+        Ok(row.flatten())
+    }
+
+    /// Set the phone's membership alone, stamping `joined_at_ms` the first
+    /// time it joins, as `set_channel_membership` does.
+    pub(crate) fn set_channel_joined_phone(
         &self,
         id: &str,
-        joined_device: bool,
+        joined_phone: bool,
+        now_ms: i64,
     ) -> Result<(), MobileStoreError> {
         let id = channel_id(id)?;
         self.connection().execute(
-            "UPDATE channel SET joined_device = ? WHERE id = ?",
-            params![joined_device, id],
+            "UPDATE channel
+            SET joined_phone = ?1,
+                joined_at_ms = CASE
+                    WHEN ?1 = 1 AND joined_at_ms IS NULL THEN ?2 ELSE joined_at_ms
+                END
+            WHERE id = ?3",
+            params![joined_phone, now_ms, id],
         )?;
         Ok(())
+    }
+
+    pub(crate) fn set_channel_alias(
+        &self,
+        id: &str,
+        alias: Option<String>,
+    ) -> Result<(), MobileStoreError> {
+        let id = channel_id(id)?;
+        self.connection().execute(
+            "UPDATE channel SET alias = ? WHERE id = ?",
+            params![alias, id],
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn set_channel_notifications(
+        &self,
+        id: &str,
+        enabled: bool,
+    ) -> Result<(), MobileStoreError> {
+        let id = channel_id(id)?;
+        self.connection().execute(
+            "UPDATE channel SET notifications_enabled = ? WHERE id = ?",
+            params![enabled, id],
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn set_channel_routing(
+        &self,
+        id: &str,
+        region_code: Option<Vec<u8>>,
+        max_flood_hops: Option<u8>,
+    ) -> Result<(), MobileStoreError> {
+        let id = channel_id(id)?;
+        self.connection().execute(
+            "UPDATE channel SET region_code = ?, max_flood_hops = ? WHERE id = ?",
+            params![region_code, max_flood_hops, id],
+        )?;
+        Ok(())
+    }
+
+    /// Leave a channel, in one erasing transaction: its conversation and
+    /// transcript go; a built-in channel's row stays with the phone's flag
+    /// cleared, and any other row is deleted. `None` when the identity has
+    /// no such channel. The key is the caller's to delete.
+    pub(crate) fn leave_channel(
+        &self,
+        owner_identity_id: &str,
+        id: &str,
+    ) -> Result<Option<LeftChannel>, MobileStoreError> {
+        let id = channel_id(id)?;
+        self.erase(|transaction| {
+            let Some(kind) = transaction
+                .query_row(
+                    "SELECT kind FROM channel WHERE owner_identity_id = ? AND id = ?",
+                    params![owner_identity_id, id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+            else {
+                return Ok(None);
+            };
+            let conversation_address = transaction
+                .query_row(
+                    "SELECT conversation_address FROM channel_conversation
+                    WHERE owner_identity_id = ? AND channel_id = ?",
+                    params![owner_identity_id, id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            if let Some(address) = &conversation_address {
+                purge_conversation_history(transaction, owner_identity_id, address)?;
+                transaction.execute(
+                    "DELETE FROM channel_conversation
+                    WHERE owner_identity_id = ? AND channel_id = ?",
+                    params![owner_identity_id, id],
+                )?;
+            }
+            let deleted =
+                MobileStoredChannelKind::parse(&kind) != Some(MobileStoredChannelKind::Builtin);
+            if deleted {
+                transaction.execute("DELETE FROM channel WHERE id = ?", params![id])?;
+            } else {
+                transaction.execute(
+                    "UPDATE channel SET joined_phone = 0 WHERE id = ?",
+                    params![id],
+                )?;
+            }
+            Ok(Some(LeftChannel {
+                deleted,
+                conversation_address,
+            }))
+        })
     }
 }

@@ -126,6 +126,43 @@ struct DraftTests {
 
 @Suite
 struct BoundaryTests {
+    @Test func aCommandsFailureSaysItsOwnCause() {
+        let locked = MobileAppError.message(for: MobileAppError.Vault(error: .Unavailable))
+        let unreadable = MobileAppError.message(for: MobileAppError.Vault(error: .Failed))
+        let gone = MobileAppError.message(for: MobileAppError.NotFound)
+        let full = MobileAppError.message(for: MobileAppError.ChannelTableFull)
+        let messages = [locked, unreadable, gone, full, MobileAppError.NoRadio.message]
+        #expect(Set(messages).count == messages.count)
+        #expect(!messages.contains { $0.isEmpty })
+        // Anything that is not the core's own code still says something.
+        #expect(!MobileAppError.message(for: CancellationError()).isEmpty)
+        #expect(FailureNotice("Title", MobileAppError.NotFound).message == gone)
+    }
+
+    @Test func theProtocolsOwnChannelsFollowTheCoresRule() {
+        func channel(_ kind: StoredChannelKind, _ canonicalName: String?) -> ChannelSummary {
+            ChannelSummary(
+                id: UUID(), kind: kind, canonicalName: canonicalName, name: nil, alias: nil,
+                channelIDHex: "0000", tint: Data([0, 0, 0]), regionCode: nil, maxFloodHops: nil,
+                joinedPhone: true, notificationsEnabled: false, joinedAt: nil
+            )
+        }
+        let publicChannel = channel(.builtin, "public")
+        let emergency = channel(.builtin, "emergency")
+        let named = channel(.named, "trail crew")
+        let secret = channel(.privateKey, nil)
+        #expect(publicChannel.protocolMaxFloodHops != nil && !publicChannel.isEmergency)
+        #expect(emergency.protocolMaxFloodHops != nil && emergency.isEmergency)
+        #expect(named.protocolMaxFloodHops == nil && !named.isEmergency && named.protocolBehavior.isEmpty)
+        #expect(!publicChannel.protocolBehavior.isEmpty && !emergency.protocolBehavior.isEmpty)
+        // Joining `public` by hand reaches the same channel, with the same rules.
+        #expect(channel(.named, "public").protocolMaxFloodHops == publicChannel.protocolMaxFloodHops)
+        // A named channel can be joined again by its name; a private one
+        // needs a new invitation.
+        #expect(secret.leaveMessage != named.leaveMessage)
+        #expect(named.leaveMessage == publicChannel.leaveMessage)
+    }
+
     @Test func driverErrorsReachTableEditsAsTheirOwnCopy() {
         func mapped(_ error: MobileRadioError) -> DevicePeerError? {
             RadioDriverAdapter.devicePeerError(error) as? DevicePeerError
@@ -271,8 +308,11 @@ struct RuntimePersistenceTests {
         defer { fixture.remove() }
         let runtime = try radioLessRuntime(store: fixture.store)
         runtime.localIdentity = fixture.identity
-        try await fixture.store.upsertPeer(ownerIdentityID: fixture.identity.id,
-            publicAddress: fixture.identity.publicIdentity.canonicalAddress, alias: "Peer", isSaved: true)
+        try fixture.store.coreStore.upsertPeer(
+            ownerIdentityId: fixture.identity.id,
+            publicAddress: fixture.identity.publicIdentity.canonicalAddress,
+            peer: MobilePeerUpsertRecord(alias: "Peer", isSaved: true)
+        )
         await runtime.reloadApplicationState()
         #expect(runtime.peers.count == 1)
         try fixture.execute("ALTER TABLE node_peer_repeater_entry RENAME TO test_hidden_reports;")
@@ -283,55 +323,6 @@ struct RuntimePersistenceTests {
         await runtime.reloadApplicationState()
         #expect(runtime.stateLoadError == nil)
         #expect(runtime.peers.count == 1)
-    }
-}
-
-@Suite @MainActor
-struct AdvertisementArrivalTests {
-    @Test func arrivalMovesWithTheBundleItDates() async throws {
-        let fixture = try await StoreFixture()
-        defer { fixture.remove() }
-        let owner = fixture.identity.id
-        let address = fixture.identity.publicIdentity.canonicalAddress
-        let heard = Date(timeIntervalSince1970: 1_800_000_000)
-        func stored() async throws -> StoredNode? {
-            try await fixture.store.listNodes(ownerIdentityID: owner).first
-        }
-
-        try await fixture.store.upsertPeer(ownerIdentityID: owner, publicAddress: address,
-            alias: nil, advertisement: Data([1]), advertisementReceivedAt: heard)
-        #expect(try await stored()?.advertisementReceivedAt == heard)
-
-        // A write that carries no bundle says nothing about the one held.
-        try await fixture.store.upsertPeer(ownerIdentityID: owner, publicAddress: address,
-            alias: "Renamed")
-        #expect(try await stored()?.advertisementReceivedAt == heard)
-
-        // An imported bundle replaces it, and has no arrival to date it by.
-        try await fixture.store.upsertPeer(ownerIdentityID: owner, publicAddress: address,
-            alias: nil, advertisement: Data([2]))
-        #expect(try await stored()?.advertisementReceivedAt == nil)
-    }
-
-    /// The conversation columns are read after the node's; a node column
-    /// added in the middle must not shift them.
-    @Test func conversationColumnsFollowTheNodeColumns() async throws {
-        let fixture = try await StoreFixture()
-        defer { fixture.remove() }
-        let owner = fixture.identity.id
-        let address = fixture.identity.publicIdentity.canonicalAddress
-        try await fixture.store.upsertPeer(ownerIdentityID: owner, publicAddress: address,
-            alias: "Peer", isSaved: true, advertisement: Data([1]),
-            advertisementReceivedAt: Date(timeIntervalSince1970: 1_800_000_000))
-        let id = try await fixture.store.ensureDirectConversation(ownerIdentityID: owner,
-            peerAddress: address)
-        try await fixture.store.updateDraft(ownerIdentityID: owner, conversationID: id, text: "Draft")
-        let conversation = try #require(
-            try await fixture.store.listDirectConversations(ownerIdentityID: owner).first)
-        #expect(conversation.node.alias == "Peer")
-        #expect(conversation.node.advertisementReceivedAt != nil)
-        #expect(conversation.draftText == "Draft")
-        #expect(conversation.notificationsEnabled)
     }
 }
 
@@ -467,8 +458,7 @@ struct MapNodeTests {
 func radioLessRuntime(store: SQLiteApplicationStore) throws -> AppRuntime {
     AppRuntime(
         radioConnection: NoRadioConnection(),
-        opened: .success(try AppCoreHost.radioLess(over: store)),
-        channelKeyVault: KeychainChannelKeyVault()
+        opened: .success(try AppCoreHost.radioLess(over: store))
     )
 }
 

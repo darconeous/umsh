@@ -434,3 +434,123 @@ async fn a_cancelled_operation_ends_at_once() {
     assert_eq!(saved, Err(MobileAppError::Cancelled));
     assert!(started.elapsed() < Duration::from_secs(5));
 }
+
+/// The staged named channel's ID and conversation address.
+fn trail_crew(staged: &Staged) -> (String, String) {
+    let key = crate::inspect_channel_name("Trail Crew".to_owned())
+        .unwrap()
+        .key;
+    let id = staged
+        .core
+        .store
+        .channel(staged.owner.clone(), crate::channel_key_digest(key.clone()))
+        .unwrap()
+        .expect("staging joins Trail Crew")
+        .id;
+    (id, crate::channel_conversation_address(key).unwrap())
+}
+
+#[tokio::test]
+async fn a_left_channel_is_no_longer_heard_and_keeps_no_row() {
+    let staged = Staged::new().await;
+    let (id, address) = trail_crew(&staged);
+    let owner = staged.owner.clone();
+    staged.core.core.leave_channel(id.clone()).await.unwrap();
+    assert_eq!(staged.core.store.channel_by_id(&owner, &id).unwrap(), None);
+    assert!(!staged.core.vault.accounts().contains(&id));
+    assert_eq!(
+        staged
+            .core
+            .store
+            .chat_message_count(owner.clone(), address.clone())
+            .unwrap(),
+        0
+    );
+    staged.reset();
+    staged
+        .air
+        .peer_says("Anyone on the ridge?".to_owned(), true)
+        .await
+        .unwrap();
+    // A direct message after it, so the channel's had its chance.
+    let speaker = staged_speaker_address();
+    staged
+        .air
+        .peer_says("Still there?".to_owned(), false)
+        .await
+        .unwrap();
+    staged
+        .until("the direct message", |changes| {
+            changes.transcripts.contains(&speaker)
+        })
+        .await;
+    assert!(!staged.seen.borrow().transcripts.contains(&address));
+    assert_eq!(
+        staged
+            .core
+            .store
+            .chat_message_count(owner, address)
+            .unwrap(),
+        0
+    );
+}
+
+/// Wait until a staged node's identity, heard after the clock moved, is
+/// stored.
+async fn identity_heard(staged: &Staged, what: &str, address: Option<&str>) {
+    let store = staged.core.store.clone();
+    let owner = staged.owner.clone();
+    let since = super::Clock::now_ms(&*staged.core.clock);
+    staged
+        .core
+        .until(what, |_| {
+            store.list_nodes(owner.clone()).unwrap().iter().any(|node| {
+                address.is_none_or(|address| node.public_address == address)
+                    && node.advertisement_received_at_ms == Some(since)
+            })
+        })
+        .await;
+}
+
+#[tokio::test]
+async fn a_staged_node_answers_identify_and_discover() {
+    let staged = Staged::new().await;
+    let speaker = staged_speaker_address();
+
+    staged.core.clock.advance(1_000);
+    staged
+        .core
+        .core
+        .fetch_identity(speaker.clone())
+        .await
+        .unwrap();
+    identity_heard(&staged, "the speaker's identity", Some(&speaker)).await;
+
+    staged.core.clock.advance(1_000);
+    staged
+        .core
+        .core
+        .discover(None, None, Vec::new())
+        .await
+        .unwrap();
+    identity_heard(&staged, "a nearby identity", None).await;
+}
+
+#[tokio::test]
+async fn a_channel_member_answers_by_its_hint() {
+    let staged = Staged::new().await;
+    let speaker = staged_speaker_address();
+    staged.core.clock.advance(1_000);
+    let (_, address) = trail_crew(&staged);
+    let hint = crate::inspect_public_identity(speaker.clone())
+        .unwrap()
+        .hint
+        .bytes;
+    staged
+        .core
+        .core
+        .request_member_identity(address, hint)
+        .await
+        .unwrap();
+    identity_heard(&staged, "the member's identity", Some(&speaker)).await;
+}

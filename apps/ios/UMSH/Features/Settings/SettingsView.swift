@@ -33,7 +33,7 @@ struct SettingsView: View {
     let stopDiscovery: () async -> Void
     /// Records a device met during setup as an ordinary peer. Absent when
     /// there is no identity or store to record it against.
-    var saveDevicePeer: ((MeshPublicIdentity, String?, PeerRole) async -> Bool)? = nil
+    var saveDevicePeer: ((MeshPublicIdentity, String?, PeerRole?) async throws -> Void)? = nil
     /// Whether a node address is already in this phone's Peers list.
     var isPeerSaved: (String) -> Bool = { _ in false }
     /// Handed to every peer sheet reachable from Settings so those sheets
@@ -47,7 +47,6 @@ struct SettingsView: View {
     var sendMessage: ((DirectConversationSummary, String, Bool) async -> MessageSendResult)? = nil
     var messageActions: ChatMessageActions = .unavailable
     var channels: [ChannelSummary] = []
-    var unknownDeviceChannels: [UnknownDeviceChannel] = []
     var channelActions: ChannelActions = .unavailable
     var strandedRadios: [StoredClaimedRadio] = []
     var isRevokingStrandedRadios = false
@@ -131,15 +130,10 @@ struct SettingsView: View {
                 // held by it, and switching identities would change the set.
                 if identity != nil {
                     NavigationLink {
-                        ChannelsView(
-                            channels: channels,
-                            unknownDeviceChannels: unknownDeviceChannels,
-                            radioSnapshot: radioSnapshot,
-                            actions: channelActions
-                        )
+                        ChannelsView(channels: channels, actions: channelActions)
                     } label: {
                         LabeledContent("Channels") {
-                            Text("\(channels.filter(\.isJoined).count)")
+                            Text("\(channels.filter(\.joinedPhone).count)")
                         }
                     }
                 }

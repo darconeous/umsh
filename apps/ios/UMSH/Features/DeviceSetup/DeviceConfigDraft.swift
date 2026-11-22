@@ -679,7 +679,9 @@ protocol DeviceAdministering: AnyObject, DeviceConfigurationWriting {
     var problem: String? { get }
     /// Whether this session can record the device in Peers.
     var canSavePeer: Bool { get }
-    func savePeer(role: PeerRole) async -> Bool
+    /// Record the device in Peers. A `nil` role keeps whatever kind it is
+    /// already filed under.
+    func savePeer(role: PeerRole?) async throws
     /// Open the management screens over the device just set up, and start
     /// again on another one: both are steps of the setup sheet's navigation.
     func reviewAllSettings()
@@ -688,7 +690,7 @@ protocol DeviceAdministering: AnyObject, DeviceConfigurationWriting {
 
 extension DeviceAdministering {
     var canSavePeer: Bool { false }
-    func savePeer(role: PeerRole) async -> Bool { false }
+    func savePeer(role: PeerRole?) async throws { throw MobileAppError.InvalidRequest }
     func setTime(epochSeconds: UInt32?) async throws {
         throw RadioConnectionError.radioNotFound
     }

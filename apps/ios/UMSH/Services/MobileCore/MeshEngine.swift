@@ -100,6 +100,9 @@ struct MeshNodeIdentity: Hashable, Sendable {
 }
 
 struct MeshNodeURIPreview: Equatable, Sendable {
+    /// The text this preview was read from. Saving hands it back to the
+    /// core, which reads it again rather than trusting what was shown.
+    let input: String
     let publicIdentity: MeshPublicIdentity
     let hasIdentityData: Bool
     let identity: MeshNodeIdentity?
@@ -169,22 +172,6 @@ protocol MeshEngine: Actor {
     /// A fresh secret for a new local identity, redrawn while the hint
     /// filter matches its key.
     func generateIdentitySecret() -> Data
-    func generateChannelKey() -> Data
-    func deriveChannelID(key: Data) throws -> Data
-    /// The address the mesh facade keys this channel's chat records by.
-    /// Derived rather than stored, so it can never disagree with the records
-    /// it is matched against.
-    func channelConversationAddress(key: Data) throws -> String
-    /// Three presentation octets for a key—the identifier extended by one
-    /// byte, so a channel's color is stable wherever it is shown.
-    func deriveChannelTint(key: Data) throws -> Data
-    func formatChannelInvitation(
-        key: Data,
-        name: String?,
-        displayName: String?,
-        maxFloodHops: UInt8?,
-        regionCode: Data?
-    ) throws -> String
     /// Read a routing region written as a short code, an agreed name, or a
     /// raw `0xXXXX` code.
     func regionCode(from text: String) throws -> Data

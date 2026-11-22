@@ -12,7 +12,7 @@ struct DeviceSetupResultView: View {
     let deviceNoun: String
     let deviceName: String?
     /// Nil when this app has nowhere to file a peer.
-    let savePeer: (() async -> Bool)?
+    let savePeer: (() async throws -> Void)?
     let isPeerSaved: Bool
     let reviewAllSettings: () -> Void
     let setUpAnother: () -> Void
@@ -23,7 +23,8 @@ struct DeviceSetupResultView: View {
 
     @State private var savingPeer = false
     @State private var savedPeer = false
-    @State private var savePeerFailed = false
+    /// Why the last save did not happen, if it did not.
+    @State private var savePeerProblem: String?
 
     var body: some View {
         NavigationStack {
@@ -111,16 +112,20 @@ struct DeviceSetupResultView: View {
     }
 
     @ViewBuilder
-    private func savePeerRow(_ savePeer: @escaping () async -> Bool) -> some View {
+    private func savePeerRow(_ savePeer: @escaping () async throws -> Void) -> some View {
         // The device's role is only certain now: before the write it would
         // have been filed under whatever it used to be.
         let saved = isPeerSaved || savedPeer
         Button {
-            savePeerFailed = false
+            savePeerProblem = nil
             savingPeer = true
             Task {
-                savedPeer = await savePeer()
-                savePeerFailed = !savedPeer
+                do {
+                    try await savePeer()
+                    savedPeer = true
+                } catch {
+                    savePeerProblem = MobileAppError.message(for: error)
+                }
                 savingPeer = false
             }
         } label: {
@@ -131,10 +136,14 @@ struct DeviceSetupResultView: View {
             }
         }
         .disabled(saved || savingPeer)
-        if savePeerFailed {
-            Label("Could not save it. Try again from the device's identity.", systemImage: "exclamationmark.circle")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        if let savePeerProblem {
+            Label {
+                Text(verbatim: savePeerProblem)
+            } icon: {
+                Image(systemName: "exclamationmark.circle")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
     }
 

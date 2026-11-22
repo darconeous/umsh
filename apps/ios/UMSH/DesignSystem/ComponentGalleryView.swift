@@ -45,7 +45,7 @@ struct ComponentGalleryExamples: View {
         id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
         kind: .privateKey, canonicalName: nil, name: "Trail Crew", alias: nil,
         channelIDHex: "0a3c", tint: Data([0x3A, 0x8F, 0xD2]), regionCode: nil,
-        maxFloodHops: nil, joinedPhone: true, joinedDevice: false,
+        maxFloodHops: nil, joinedPhone: true,
         notificationsEnabled: false, joinedAt: nil
     )
 

@@ -134,6 +134,9 @@ impl MobileAppStore {
     /// `created_at_ms` is used only when it is created. Fails with
     /// [`MobileStoreError::RecordNotFound`] when the identity has no row
     /// for the peer.
+    ///
+    /// For tests and tools that seed a store with no core running; the app
+    /// edits through `MobileAppCore`'s commands.
     pub fn ensure_direct_conversation(
         &self,
         owner_identity_id: String,
@@ -175,6 +178,9 @@ impl MobileAppStore {
     /// a message arrives. An existing conversation keeps its address and
     /// creation time. Fails with [`MobileStoreError::RecordNotFound`] when
     /// there is no such channel.
+    ///
+    /// For tests and tools that seed a store with no core running; the app
+    /// edits through `MobileAppCore`'s commands.
     pub fn ensure_channel_conversation(
         &self,
         owner_identity_id: String,
@@ -228,6 +234,9 @@ impl MobileAppStore {
     /// group chat is not leaving the channel: the key stays, so traffic
     /// still arrives and a later message opens the conversation again. A
     /// conversation that does not exist is not an error.
+    ///
+    /// For tests and tools that seed a store with no core running; the app
+    /// edits through `MobileAppCore`'s commands.
     pub fn delete_channel_conversation(
         &self,
         owner_identity_id: String,
@@ -330,6 +339,9 @@ impl MobileAppStore {
     /// answered Unavailable—the protocol handles that; keeping deleted
     /// content on disk would not be acceptable. A conversation that does
     /// not exist is not an error.
+    ///
+    /// For tests and tools that seed a store with no core running; the app
+    /// edits through `MobileAppCore`'s commands.
     pub fn delete_direct_conversation(
         &self,
         owner_identity_id: String,
@@ -363,6 +375,9 @@ impl MobileAppStore {
     /// companion radio is refused, returning `false`. What hangs off the
     /// node row—its manual route, management card, cached properties, and
     /// repeater listing—goes with it.
+    ///
+    /// For tests and tools that seed a store with no core running; the app
+    /// edits through `MobileAppCore`'s commands.
     pub fn delete_peer_and_conversation(
         &self,
         owner_identity_id: String,
@@ -394,6 +409,9 @@ impl MobileAppStore {
 
     /// Turn notifications for one direct conversation on or off. A
     /// conversation that does not exist is not an error.
+    ///
+    /// For tests and tools that seed a store with no core running; the app
+    /// edits through `MobileAppCore`'s commands.
     pub fn set_direct_conversation_notifications(
         &self,
         owner_identity_id: String,
@@ -425,6 +443,83 @@ impl MobileAppStore {
             return Err(MobileStoreError::RecordNotFound);
         }
         Ok(())
+    }
+}
+
+impl MobileAppStore {
+    /// As [`Self::ensure_channel_conversation`], only while the phone has
+    /// joined the channel, as an arrival's conversation is: `None` when it
+    /// has not, or there is no such channel. Otherwise whether the
+    /// conversation is new.
+    pub(crate) fn open_joined_channel_conversation(
+        &self,
+        owner_identity_id: &str,
+        channel_id: &str,
+        conversation_address: &str,
+        created_at_ms: i64,
+    ) -> Result<Option<bool>, MobileStoreError> {
+        let channel_id = self::channel_id(channel_id)?;
+        self.write(|transaction| {
+            let joined = transaction
+                .query_row(
+                    "SELECT 1 FROM channel
+                    WHERE id = ? AND owner_identity_id = ? AND joined_phone = 1",
+                    params![channel_id, owner_identity_id],
+                    |_| Ok(()),
+                )
+                .optional()?;
+            if joined.is_none() {
+                return Ok(None);
+            }
+            let inserted = transaction.execute(
+                "INSERT OR IGNORE INTO channel_conversation (
+                    owner_identity_id, channel_id, conversation_address, created_at_ms
+                ) VALUES (?, ?, ?, ?)",
+                params![
+                    owner_identity_id,
+                    channel_id,
+                    conversation_address,
+                    created_at_ms
+                ],
+            )?;
+            Ok(Some(inserted > 0))
+        })
+    }
+
+    /// The ID of the identity's conversation with a peer, or `None`.
+    pub(crate) fn direct_conversation_id(
+        &self,
+        owner_identity_id: &str,
+        peer_address: &str,
+    ) -> Result<Option<i64>, MobileStoreError> {
+        Ok(self
+            .connection()
+            .query_row(
+                "SELECT c.id FROM direct_conversation c JOIN node n ON n.id = c.node_id
+                WHERE c.owner_identity_id = ? AND n.public_address = ?",
+                params![owner_identity_id, peer_address],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    /// The ID and channel of the identity's channel conversation kept under
+    /// `conversation_address`, or `None`.
+    pub(crate) fn channel_conversation_by_address(
+        &self,
+        owner_identity_id: &str,
+        conversation_address: &str,
+    ) -> Result<Option<(i64, String)>, MobileStoreError> {
+        let row = self
+            .connection()
+            .query_row(
+                "SELECT id, channel_id FROM channel_conversation
+                WHERE owner_identity_id = ? AND conversation_address = ?",
+                params![owner_identity_id, conversation_address],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+        Ok(row.and_then(|(id, channel_id)| Some((id, canonical_uuid(&channel_id)?))))
     }
 }
 

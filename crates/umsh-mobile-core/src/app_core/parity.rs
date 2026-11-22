@@ -814,7 +814,6 @@ mod render {
             .put("region_code", optional_bytes(stored.region_code.as_deref()))
             .put("max_flood_hops", optional_number(stored.max_flood_hops))
             .put("joined_phone", number(stored.joined_phone))
-            .put("joined_device", number(stored.joined_device))
             .put("notifications", number(stored.notifications_enabled))
             .put("joined_at", optional_number(stored.joined_at_ms))
             .line("channel")

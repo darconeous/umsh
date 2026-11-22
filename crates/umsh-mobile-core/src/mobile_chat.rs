@@ -1377,6 +1377,12 @@ pub(crate) fn channel_address(channel: ChannelTag) -> String {
     format!("{CHANNEL_ADDRESS_PREFIX}{}", hex(&channel.0))
 }
 
+/// The tag a channel's group conversation address names, whether or not
+/// the channel is held; `None` for any other address.
+pub(crate) fn parse_channel_address(value: &str) -> Option<ChannelTag> {
+    parse_channel_tag(value.strip_prefix(CHANNEL_ADDRESS_PREFIX)?)
+}
+
 fn parse_channel_tag(value: &str) -> Option<ChannelTag> {
     if value.len() != 32 {
         return None;

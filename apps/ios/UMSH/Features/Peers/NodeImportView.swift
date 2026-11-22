@@ -3,7 +3,9 @@ import UMSHMobileCore
 
 struct NodeImportView: View {
     let inspectPeerIdentity: (String) async -> Result<MeshNodeURIPreview, MeshEngineError>
-    let save: (MeshNodeURIPreview, PeerImportDetails, Bool) async -> Void
+    /// Save the previewed node, starting a conversation when asked. A
+    /// failure stays on this sheet and says why.
+    let save: (MeshNodeURIPreview, PeerImportDetails, Bool) async throws -> Void
     // Prefilled by a URL-scheme open that did not parse, so the sheet can
     // show it and say why; validation then runs immediately instead of
     // waiting for the button.
@@ -66,11 +68,11 @@ struct NodeImportView: View {
                 }
                 Section {
                     Button("Message") {
-                        Task { await save(preview, details, true) }
+                        Task { await importPeer(preview, startConversation: true) }
                     }
                     .buttonStyle(.borderedProminent)
                     Button("Save Peer") {
-                        Task { await save(preview, details, false) }
+                        Task { await importPeer(preview, startConversation: false) }
                     }
                 }
             }
@@ -143,7 +145,18 @@ struct NodeImportView: View {
             problem = nil
         case .failure:
             preview = nil
-            problem = "Enter a valid UMSH node URI, canonical Base58 address, or 64-digit hexadecimal public key. Nothing was imported."
+            problem = String(
+                localized: "Enter a valid UMSH node URI, canonical Base58 address, or 64-digit hexadecimal public key. Nothing was imported.",
+                comment: "Importing a peer: what was entered is not a node's address."
+            )
+        }
+    }
+
+    private func importPeer(_ preview: MeshNodeURIPreview, startConversation: Bool) async {
+        do {
+            try await save(preview, details, startConversation)
+        } catch {
+            problem = MobileAppError.message(for: error)
         }
     }
 

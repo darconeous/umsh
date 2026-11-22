@@ -97,12 +97,6 @@ protocol RadioConnection: AnyObject, Sendable {
     /// Forget a Wi-Fi network by name. Idempotent: an SSID the radio does
     /// not hold resolves as success.
     func removeDeviceWifiNetwork(ssid: Data) async throws
-    /// Store a channel key on the radio's device identity
-    /// (`PROP_DEV_CHANNEL_KEYS`), persisting it with a chained save. This is
-    /// the device's own membership, separate from the phone's. Idempotent.
-    func addDeviceChannel(_ channelKey: Data) async throws
-    /// Remove a channel key from the radio's device identity. Idempotent.
-    func removeDeviceChannel(_ channelKey: Data) async throws
     /// Read named properties from the companion radio itself, over the
     /// local link, and answer with what it said about each—values and
     /// refusals alike. The local counterpart of `fetchRemoteProperties`,

@@ -19,7 +19,7 @@ use super::channels::ChannelCache;
 use super::clock::Clock;
 use super::pipeline::PipelineState;
 use super::policy::PolicyState;
-use super::records::{MobileAppConfigRecord, MobileAppLifecycle};
+use super::records::{MobileAppChangesRecord, MobileAppConfigRecord, MobileAppLifecycle};
 use super::settings::Settings;
 use super::waiters::Waiters;
 use super::{MobileAppError, Shared};
@@ -84,6 +84,10 @@ pub(super) struct Worker {
     pub(super) counter_store: RefCell<Option<Arc<MobileCounterStore>>>,
     pub(super) driver: RefCell<Option<Arc<MobileRadioDriver>>>,
     pub(super) channels: RefCell<ChannelCache>,
+    /// Held by `refresh_channels`, so two never interleave: a command's
+    /// registration and its rollback, a removal, and the pass's each run
+    /// whole.
+    pub(super) channel_refresh: tokio::sync::Mutex<()>,
     pub(super) settings: RefCell<Settings>,
     pub(super) policy: RefCell<PolicyState>,
     pub(super) pipeline: RefCell<PipelineState>,
@@ -171,6 +175,12 @@ impl Worker {
         self.driver.borrow().clone()
     }
 
+    /// Raise `changes`: flags for what a write moved, which no snapshot
+    /// field holds.
+    pub(super) fn raise(&self, changes: MobileAppChangesRecord) {
+        self.shared.publish(|_| changes);
+    }
+
     /// The owner the core runs for, when one is set.
     pub(super) fn owner(&self) -> Option<String> {
         self.shared.snapshot().owner.clone()
@@ -239,6 +249,7 @@ pub(super) fn run(
                 counter_store: RefCell::new(None),
                 driver: RefCell::new(None),
                 channels: RefCell::new(ChannelCache::default()),
+                channel_refresh: tokio::sync::Mutex::new(()),
                 settings: RefCell::new(Settings::default()),
                 policy: RefCell::new(PolicyState::default()),
                 pipeline: RefCell::new(PipelineState::default()),

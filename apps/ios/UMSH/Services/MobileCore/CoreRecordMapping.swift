@@ -55,7 +55,6 @@ extension ChannelSummary {
             regionCode: stored.regionCode,
             maxFloodHops: stored.maxFloodHops,
             joinedPhone: stored.joinedPhone,
-            joinedDevice: stored.joinedDevice,
             notificationsEnabled: stored.notificationsEnabled,
             joinedAt: stored.joinedAt
         )
@@ -157,11 +156,13 @@ extension PeerRepeaterListing {
 }
 
 extension ChannelPreview {
-    init(_ record: MobileAppChannelPreviewRecord) {
+    init(_ record: MobileAppChannelPreviewRecord, input: String) {
         self.init(
+            input: input,
             preview: RustMeshEngine.channelPreview(from: record.preview),
             existing: record.existing.flatMap(ChannelSummary.init),
-            nameConflict: record.nameConflict.flatMap(ChannelSummary.init)
+            nameConflict: record.nameConflict.flatMap(ChannelSummary.init),
+            wellKnown: wellKnownChannel(canonicalName: record.preview.canonicalName)
         )
     }
 }
@@ -171,26 +172,16 @@ struct MappedApplicationState {
     /// `nil` when the read asked for conversations only.
     var peers: [PeerSummary]?
     var channels: [ChannelSummary]
-    /// Each channel's conversation address, where its row exists.
-    var channelAddresses: [UUID: String]
     var conversations: [DirectConversationSummary]
     var channelConversations: [ChannelConversationSummary]
     /// `nil` when the read asked for conversations only.
     var neighborReports: [PeerRepeaterNeighborReport]?
     var advertisedName: String?
-    var unknownDeviceChannels: [UnknownDeviceChannel]
 
     init(_ record: MobileAppStateRecord, chatRevisions: [String: Int]) {
         let peers = record.peers?.map(PeerSummary.init)
         self.peers = peers
-        let channelRecords = record.channels.compactMap { channel in
-            ChannelSummary(channel.stored).map { ($0, channel.conversationAddress) }
-        }
-        channels = channelRecords.map(\.0)
-        channelAddresses = Dictionary(
-            channelRecords.compactMap { channel, address in address.map { (channel.id, $0) } },
-            uniquingKeysWith: { first, _ in first }
-        )
+        channels = record.channels.compactMap { ChannelSummary($0.stored) }
         conversations = record.directConversations.map { conversation in
             let peer = PeerSummary(conversation.peer)
             return DirectConversationSummary(
@@ -221,7 +212,6 @@ struct MappedApplicationState {
             }
         }
         advertisedName = record.advertisedName
-        unknownDeviceChannels = record.unknownDeviceChannels.map(UnknownDeviceChannel.init(identifier:))
     }
 }
 

@@ -31,7 +31,6 @@ final class AppRuntime {
     init(
         radioConnection: any RadioConnection,
         opened: Result<AppCoreHost.Opened, any Error>,
-        channelKeyVault: any SecretVault,
         isStaging: Bool = false,
         identityVault: (any IdentityVault)? = nil
     ) {
@@ -39,17 +38,29 @@ final class AppRuntime {
         self.meshEngine = meshEngine
         self.identityVault = identityVault ?? KeychainIdentityVault(meshEngine: meshEngine)
         self.radioConnection = radioConnection
-        self.channelKeyVault = channelKeyVault
         self.isStaging = isStaging
         switch opened {
         case let .success(opened):
             core = opened.core
             applicationStore = opened.store
             applicationStoreError = nil
+            #if DEBUG
+            writeStagedSeed = { [store = opened.store, vault = opened.vault] owner in
+                try await seedStaging(
+                    store: store.coreStore,
+                    vault: vault,
+                    ownerIdentityId: owner,
+                    nowMs: Date.now.storeMilliseconds
+                )
+            }
+            #endif
         case let .failure(error):
             core = nil
             applicationStore = nil
             applicationStoreError = error
+            #if DEBUG
+            writeStagedSeed = nil
+            #endif
         }
         identityOperations = IdentityOperations(
             vault: self.identityVault,
@@ -120,9 +131,6 @@ final class AppRuntime {
     var conversations: [DirectConversationSummary] = []
     var channelConversations: [ChannelConversationSummary] = []
     var channels: [ChannelSummary] = []
-    /// Channels the radio's device identity holds that this phone has no key
-    /// for, so they can be shown as present without being named.
-    var unknownDeviceChannels: [UnknownDeviceChannel] = []
     var advertisedName = ""
     /// Bumped by every write of `advertisedName` other than a state reload's,
     /// so a reload whose read began before such a write leaves it standing.
@@ -155,7 +163,6 @@ final class AppRuntime {
     // MARK: - Dependencies
 
     let meshEngine: RustMeshEngine
-    let channelKeyVault: any SecretVault
     /// The app core this runtime observes, over ``applicationStore``.
     /// `nil` exactly when the store is.
     let core: MobileAppCore?
@@ -213,6 +220,10 @@ final class AppRuntime {
     #if DEBUG
     /// The staged seed this runtime began, which may still be writing.
     private var stagedSeed: Task<Void, Never>?
+    /// Writes the staged mesh for an owner into the store and the
+    /// channel-key vault the core was made with. Nothing else here touches
+    /// the vault: the core holds the keys.
+    private let writeStagedSeed: (@Sendable (String) async throws -> Void)?
     #endif
     /// Each reason a start failed for that has been shown, so a retry that
     /// fails the same way says nothing new.
@@ -435,11 +446,6 @@ final class AppRuntime {
         } else if changes.conversationsChanged || !transcripts.isEmpty {
             await reloadConversationState()
         }
-        if changes.lifecycle == .running {
-            // From the lists just reloaded: `running` comes with the
-            // channels the start wrote.
-            await refreshChannelAddresses()
-        }
         if changes.claimedRadiosChanged || changes.radio != nil {
             await reloadStrandedRadios()
         }
@@ -612,20 +618,30 @@ final class AppRuntime {
         return session
     }
 
-    /// After a write the core did not make itself, or one a core command
-    /// made without raising a change: let it re-derive what it keeps from
-    /// the store, then read the lists again.
-    private func afterWrite() async {
-        if let core {
-            do {
-                try await core.contentChanged()
-            } catch MobileAppError.NotRunning {
-                // Not started yet: the start reads the store whole.
-            } catch {
-                Self.logger.debug("Content change not taken: \(String(describing: error), privacy: .public)")
-            }
-        }
+    /// A core command, then the lists read again, so the caller can find what
+    /// the command returned. Other observers learn of it through the changes.
+    private func run<T: Sendable>(
+        _ body: @Sendable (MobileAppCore) async throws -> T
+    ) async throws -> T {
+        guard let core else { throw MobileAppError.NotRunning }
+        let value = try await body(core)
         await reloadApplicationState()
+        return value
+    }
+
+    /// A core command that sends a request and changes nothing stored: the
+    /// answer, if one comes, arrives through the changes.
+    private func ask(_ body: @Sendable (MobileAppCore) async throws -> Void) async throws {
+        guard let core else { throw MobileAppError.NotRunning }
+        try await body(core)
+    }
+
+    /// The direct conversation a command just returned the address of.
+    private func directConversation(at address: String) throws -> DirectConversationSummary {
+        guard let conversation = conversations.first(where: { $0.conversationAddress == address }) else {
+            throw MobileAppError.NotFound
+        }
+        return conversation
     }
 
     // MARK: - Contact exchange
@@ -1077,24 +1093,20 @@ final class AppRuntime {
     /// the view's business rather than the pipeline's, so the caller passes
     /// what to do with the conversation this resolves.
     func channelActions(
-        enterConversation: @escaping (ChannelConversationSummary?) -> Void
+        enterConversation: @escaping (ChannelConversationSummary) -> Void
     ) -> ChannelActions {
         ChannelActions(
             preview: previewChannel,
             join: joinChannel,
-            rejoin: { channel in
-                await self.setChannelPhoneMembership(channel, joined: true)
-            },
+            rejoin: rejoinChannel,
             leave: leaveChannel,
             createPrivate: createPrivateChannel,
-            updateDetails: updateChannelDetails,
-            setDeviceMembership: setChannelDeviceMembership,
+            setAlias: setChannelAlias,
+            setRouting: setChannelRouting,
+            setNotifications: setChannelNotifications,
             invitation: channelInvitation,
-            revealKey: { channel in
-                try? self.channelKeyVault.loadKey(channelID: channel.id)
-            },
             enterConversation: { channel in
-                enterConversation(await self.startChannelConversation(channel))
+                enterConversation(try await self.startChannelConversation(channel))
             },
             parseRegion: { text in try? await self.meshEngine.regionCode(from: text) },
             describeRegion: { code in try? await self.meshEngine.regionDescription(code) }
@@ -1162,9 +1174,6 @@ final class AppRuntime {
         case .idle, .failed: break
         case .running:
             Self.logger.notice("Attached to the running core")
-            // No `running` will come to derive them from: derive them
-            // from the lists just read.
-            await refreshChannelAddresses()
             return
         default:
             Self.logger.notice("Attached to the core as it stands")
@@ -1339,7 +1348,16 @@ final class AppRuntime {
                     continue
                 } catch let error as MobileAppError {
                     Self.logger.error("The core did not erase everything: \(String(describing: error), privacy: .public)")
-                    failureNotice = FailureNotice(title: failureTitle, message: error.message)
+                    // A vault code here is about erasing keys, not reading one.
+                    let message = if case .Vault = error {
+                        String(
+                            localized: "Channel keys could not be erased.",
+                            comment: "Erasing this phone's identity: the channel keys stayed in the Keychain."
+                        )
+                    } else {
+                        error.message
+                    }
+                    failureNotice = FailureNotice(title: failureTitle, message: message)
                 } catch {
                     Self.logger.error("The core did not erase everything: \(String(describing: error), privacy: .public)")
                 }
@@ -1536,46 +1554,26 @@ final class AppRuntime {
         }
     }
 
+    /// Save the node `preview` was read from, with this phone's name for it,
+    /// and open a conversation with it when `startConversation` asks.
+    ///
+    /// The core reads the preview's text again rather than taking what was
+    /// shown, and decides whether the link's identity replaces one already
+    /// held. Returns the conversation when one was asked for.
     func savePeer(
         _ preview: MeshNodeURIPreview,
         details: PeerImportDetails,
         startConversation: Bool
-    ) async -> DirectConversationSummary? {
-        guard let applicationStore, let localIdentity else { return nil }
-        let identity = preview.publicIdentity
-        do {
-            try await applicationStore.upsertPeer(
-                ownerIdentityID: localIdentity.id,
-                publicAddress: identity.canonicalAddress,
+    ) async throws -> DirectConversationSummary? {
+        let address = try await run {
+            try await $0.savePeer(
+                input: preview.input,
                 alias: details.alias,
-                advertisedName: preview.identity?.name,
-                // The role comes from the bundle, not the operator. An
-                // imported payload is only ever handed over with a verified
-                // signature, so it needs no MAC authentication to be believed.
-                isSaved: true,
-                nodeKind: preview.identity.map { PeerRole(roleCode: $0.roleCode).storedKind },
-                advertisement: preview.identityPayload
+                startConversation: startConversation
             )
-            if startConversation {
-                _ = try await applicationStore.ensureDirectConversation(
-                    ownerIdentityID: localIdentity.id,
-                    peerAddress: identity.canonicalAddress
-                )
-            }
-            // Best effort, for the same reason as in `startConversation`: the
-            // peer and any conversation are already on disk, and a core that
-            // is not running must not turn that into a failed import.
-            try? await meshSession()?.registerPeers(peers: [
-                MobilePeerRegistrationRecord(
-                    address: identity.canonicalAddress,
-                    mobile: preview.identity?.capabilityBits.contains(.mobile) == true
-                )
-            ])
-            await afterWrite()
-            return conversations.first { $0.peer.identity.canonicalAddress == identity.canonicalAddress }
-        } catch {
-            return nil
         }
+        guard startConversation else { return nil }
+        return try directConversation(at: address)
     }
 
     /// The stored row for the node a link names, so its peer page has a row
@@ -1585,89 +1583,44 @@ final class AppRuntime {
     /// whatever identity the link did, the same tier a node heard over the
     /// air lands in. Saving it stays the operator's call, made on that page.
     /// A node already on file is returned as it stands: a link's bundle is no
-    /// fresher than what was heard. `nil` when there is nothing to record it
-    /// in, and for this phone's own address, which is not a peer.
-    func peer(forLink preview: MeshNodeURIPreview) async -> PeerSummary? {
-        let address = preview.publicIdentity.canonicalAddress
-        if let known = peers.first(where: { $0.identity.canonicalAddress == address }) {
-            return known
-        }
-        guard let applicationStore, let localIdentity,
-              address != localIdentity.publicIdentity.canonicalAddress
-        else { return nil }
-        do {
-            try await applicationStore.upsertPeer(
-                ownerIdentityID: localIdentity.id,
-                publicAddress: address,
-                alias: nil,
-                advertisedName: preview.identity?.name,
-                nodeKind: preview.identity.map { PeerRole(roleCode: $0.roleCode).storedKind },
-                advertisement: preview.identityPayload
-            )
-            // No retention pass here: a row never heard is the oldest-heard
-            // there is, so a full tier would evict it before its page opened.
-            await afterWrite()
-            return peers.first { $0.identity.canonicalAddress == address }
-        } catch {
+    /// fresher than what was heard. `nil` for this phone's own address,
+    /// which is not a peer.
+    func peer(forLink preview: MeshNodeURIPreview) async throws -> PeerSummary? {
+        guard let address = try await run({ try await $0.recordLinkPeer(input: preview.input) }) else {
             return nil
         }
+        guard let peer = peers.first(where: { $0.identity.canonicalAddress == address }) else {
+            throw MobileAppError.NotFound
+        }
+        return peer
     }
 
     /// Record a device the phone has been configuring as an ordinary peer.
     ///
     /// Deliberately not a chat peer: a repeater is infrastructure the operator
     /// wants to find again, not someone to talk to. Starting a conversation
-    /// with it remains an ordinary Peers action.
+    /// with it remains an ordinary Peers action. A `nil` role keeps whatever
+    /// kind the node is already filed under.
     func saveAdministeredDevice(
         _ identity: MeshPublicIdentity,
         name: String?,
-        role: PeerRole
-    ) async -> Bool {
-        guard let applicationStore, let localIdentity else { return false }
-        do {
-            try await applicationStore.upsertPeer(
-                ownerIdentityID: localIdentity.id,
-                publicAddress: identity.canonicalAddress,
-                alias: nil,
-                advertisedName: name,
-                isSaved: true,
-                nodeKind: role.storedKind
+        role: PeerRole?
+    ) async throws {
+        try await run {
+            try await $0.saveAdministeredDevice(
+                address: identity.canonicalAddress,
+                name: name,
+                role: role?.roleCode
             )
-            await afterWrite()
-            return true
-        } catch {
-            return false
         }
     }
 
-    private func updateAlias(_ peer: PeerSummary, _ alias: String?) async -> Bool {
-        guard let applicationStore, let localIdentity else { return false }
-        do {
-            try await applicationStore.updateNodeAlias(
-                ownerIdentityID: localIdentity.id,
-                publicAddress: peer.identity.canonicalAddress,
-                alias: alias
-            )
-            await afterWrite()
-            return true
-        } catch {
-            return false
-        }
+    private func updateAlias(_ peer: PeerSummary, _ alias: String?) async throws {
+        try await run { try await $0.setAlias(address: peer.identity.canonicalAddress, alias: alias) }
     }
 
-    private func setPeerFavorite(_ peer: PeerSummary, _ favorite: Bool) async -> Bool {
-        guard let applicationStore, let localIdentity else { return false }
-        do {
-            try await applicationStore.setPeerFavorite(
-                ownerIdentityID: localIdentity.id,
-                publicAddress: peer.identity.canonicalAddress,
-                isFavorite: favorite
-            )
-            await afterWrite()
-            return true
-        } catch {
-            return false
-        }
+    private func setPeerFavorite(_ peer: PeerSummary, _ favorite: Bool) async throws {
+        try await run { try await $0.setFavorite(address: peer.identity.canonicalAddress, favorite: favorite) }
     }
 
     /// Arm or disarm the one-shot watch on a node.
@@ -1675,88 +1628,34 @@ final class AppRuntime {
     /// Arming asks for a notification, so it is also the moment to make sure
     /// the app can post one: a watch set on a phone that has never been asked
     /// about notifications would come due and produce nothing.
-    private func setPeerNotifyWhenHeard(_ peer: PeerSummary, _ armed: Bool) async -> Bool {
-        guard let applicationStore, let localIdentity else { return false }
-        do {
-            try await applicationStore.setNotifyWhenHeard(
-                ownerIdentityID: localIdentity.id,
-                publicAddress: peer.identity.canonicalAddress,
-                enabled: armed
-            )
-            if armed { notificationService.requestAuthorizationIfNeeded() }
-            await afterWrite()
-            return true
-        } catch {
-            return false
-        }
+    private func setPeerNotifyWhenHeard(_ peer: PeerSummary, _ armed: Bool) async throws {
+        try await run { try await $0.setNotifyWhenHeard(address: peer.identity.canonicalAddress, armed: armed) }
+        if armed { notificationService.requestAuthorizationIfNeeded() }
     }
 
-    private func promotePeerToSaved(_ peer: PeerSummary) async -> Bool {
-        guard let applicationStore, let localIdentity else { return false }
-        do {
-            try await applicationStore.promotePeerToSaved(
-                ownerIdentityID: localIdentity.id,
-                publicAddress: peer.identity.canonicalAddress
-            )
-            await afterWrite()
-            return true
-        } catch {
-            return false
-        }
+    private func promotePeerToSaved(_ peer: PeerSummary) async throws {
+        try await run { try await $0.promotePeer(address: peer.identity.canonicalAddress) }
     }
 
     /// Take a peer off the local identity while keeping its row, history, and
     /// searchability. The mesh session keeps the peer registered when a
     /// conversation exists—chat continuity is the point of demoting.
-    private func demotePeerToTransient(_ peer: PeerSummary) async -> Bool {
-        guard let applicationStore, let localIdentity else { return false }
-        do {
-            try await applicationStore.demotePeerToTransient(
-                ownerIdentityID: localIdentity.id,
-                publicAddress: peer.identity.canonicalAddress
-            )
-            await afterWrite()
-            return true
-        } catch {
-            return false
+    private func demotePeerToTransient(_ peer: PeerSummary) async throws {
+        try await run { try await $0.demotePeer(address: peer.identity.canonicalAddress) }
+    }
+
+    /// Delete a node with no conversation. The core refuses one that has
+    /// gained a conversation since the page offered this.
+    private func deletePeer(_ peer: PeerSummary) async throws {
+        try await run {
+            try await $0.deletePeer(address: peer.identity.canonicalAddress, withConversation: false)
         }
     }
 
-    private func deletePeer(_ peer: PeerSummary) async -> Bool {
-        guard let applicationStore, let localIdentity else { return false }
-        do {
-            guard try await applicationStore.deletePeer(
-                ownerIdentityID: localIdentity.id,
-                publicAddress: peer.identity.canonicalAddress
-            ) else { return false }
-            await removeMeshPeer(peer)
-            await afterWrite()
-            return true
-        } catch {
-            return false
+    private func deletePeerAndConversation(_ peer: PeerSummary) async throws {
+        try await run {
+            try await $0.deletePeer(address: peer.identity.canonicalAddress, withConversation: true)
         }
-    }
-
-    private func deletePeerAndConversation(_ peer: PeerSummary) async -> Bool {
-        guard let applicationStore, let localIdentity else { return false }
-        do {
-            guard try await applicationStore.deletePeerAndConversation(
-                ownerIdentityID: localIdentity.id,
-                publicAddress: peer.identity.canonicalAddress
-            ) else { return false }
-            await removeMeshPeer(peer)
-            await afterWrite()
-            return true
-        } catch {
-            return false
-        }
-    }
-
-    /// Best-effort removal from the mesh session behind a store delete. A
-    /// core that is not running is not an error: the store is the
-    /// authority, and the next start registers peers from it.
-    private func removeMeshPeer(_ peer: PeerSummary) async {
-        try? await meshSession()?.removePeers(peerAddresses: [peer.identity.canonicalAddress])
     }
 
     // MARK: - Channels
@@ -1766,7 +1665,7 @@ final class AppRuntime {
     /// needs to see before committing.
     private func previewChannel(_ input: String) async -> Result<ChannelPreview, MeshEngineError> {
         do {
-            return .success(ChannelPreview(try await read { try $0.previewChannel(input: input) }))
+            return .success(ChannelPreview(try await read { try $0.previewChannel(input: input) }, input: input))
         } catch MobileAppError.InvalidInput(let error) {
             return .failure(RustMeshEngine.inputError(error, invalidURI: .invalidChannelURI))
         } catch {
@@ -1774,275 +1673,70 @@ final class AppRuntime {
         }
     }
 
-    /// Join on the phone identity, or update local details when the key is
-    /// already held. Registering with the mesh session is what actually
-    /// makes traffic arrive; the core gives the radio the key behind it.
+    /// Join by the text a preview was read from, which the core reads again:
+    /// a key the phone already holds keeps its routing and takes the alias,
+    /// one it does not is stored and registered. With `openConversation`
+    /// the channel's conversation opens too, and its address is returned.
     private func joinChannel(
-        _ preview: MeshChannelPreview,
-        details: ChannelDetails
-    ) async -> ChannelActionOutcome {
-        guard let applicationStore, let localIdentity else { return .failed }
-        let digest = channelKeyDigest(key: preview.key)
-        do {
-            if let existing = try await storedChannel(keyDigest: digest) {
-                _ = await updateChannelDetails(existing, details: details)
-                if !existing.joinedPhone {
-                    return await setChannelPhoneMembership(existing, joined: true)
-                }
-                await afterWrite()
-                return .success
-            }
-
-            let id = UUID()
-            // The key goes to the Keychain first: a row whose key cannot be
-            // read is a channel that silently does nothing.
-            try channelKeyVault.storeKey(preview.key, channelID: id)
-            let channel = StoredChannel(
-                id: id,
-                ownerIdentityID: localIdentity.id,
-                kind: preview.kind == .namedPublic ? .named : .privateKey,
-                canonicalName: preview.canonicalName,
-                // The channel's own name comes from the invitation or what was
-                // typed; the alias is this user's override on top of it.
-                name: preview.displayName,
-                alias: details.alias,
-                channelIDHex: Self.hex(preview.channelID),
-                tint: preview.tint,
-                regionCode: details.regionCode ?? preview.regionCode,
-                maxFloodHops: details.maxFloodHops ?? preview.maxFloodHops.map(Int.init),
-                joinedPhone: true,
-                joinedDevice: false,
-                notificationsEnabled: details.notificationsEnabled,
-                joinedAt: Date()
-            )
-            do {
-                try await applicationStore.insertChannel(channel, keyDigest: digest)
-            } catch {
-                try? channelKeyVault.deleteKey(channelID: id)
-                throw error
-            }
-            let registered = await registerChannels([
-                ChannelRegistration(key: preview.key, maxFloodHops: channel.maxFloodHops),
-            ])
-            guard registered else {
-                try? await applicationStore.deleteChannel(id: id)
-                try? channelKeyVault.deleteKey(channelID: id)
-                return .phoneFull
-            }
-            // Derived here, from the key in hand, because the address map is
-            // otherwise only rebuilt at session start—without this entry,
-            // "Enter Conversation" and inbound traffic cannot find the
-            // channel until the app relaunches.
-            if let address = try? await meshEngine.channelConversationAddress(key: preview.key) {
-                coordinator.channelAddresses[id] = address
-            }
-            await afterWrite()
-            return .success
-        } catch {
-            return .failed
-        }
+        input: String,
+        alias: String?,
+        openConversation: Bool
+    ) async throws -> String? {
+        try await run {
+            try await $0.joinChannel(input: input, alias: alias, openConversation: openConversation)
+        }.conversationAddress
     }
 
-    /// Create a private channel from a freshly generated key.
-    private func createPrivateChannel(
-        name: String,
-        details: ChannelDetails
-    ) async -> ChannelActionOutcome {
-        let key = await meshEngine.generateChannelKey()
-        guard let channelID = try? await meshEngine.deriveChannelID(key: key),
-              let tint = try? await meshEngine.deriveChannelTint(key: key)
-        else {
-            return .failed
-        }
-        return await joinChannel(
-            MeshChannelPreview(
-                kind: .privateKey,
-                canonicalName: nil,
-                key: key,
-                channelID: channelID,
-                tint: tint,
-                displayName: name,
-                maxFloodHops: details.maxFloodHops.map(UInt8.init),
-                regionCode: details.regionCode
-            ),
-            details: details
-        )
+    /// Create a private channel under a key the core makes and keeps.
+    private func createPrivateChannel(name: String) async throws {
+        _ = try await run { try await $0.createPrivateChannel(name: name) }
     }
 
-    /// Leave on the phone identity. A private channel's key cannot be
-    /// recovered afterwards, so its row and key are deleted together; a named
-    /// or built-in channel keeps its row so it can be offered again.
-    private func leaveChannel(_ channel: ChannelSummary) async -> ChannelActionOutcome {
-        guard let applicationStore, let localIdentity else { return .failed }
-        let key = try? channelKeyVault.loadKey(channelID: channel.id)
-        // The group chat cannot outlive membership: without the key there is
-        // nothing to send with, and nothing further will arrive.
-        if let conversation = channelConversations.first(where: { $0.channel.id == channel.id }) {
-            try? await applicationStore.deleteChannelConversation(
-                ownerIdentityID: localIdentity.id,
-                conversationID: conversation.id
-            )
-        }
-        coordinator.channelAddresses[channel.id] = nil
-        do {
-            if channel.kind == .builtin {
-                try await applicationStore.setChannelMembership(
-                    id: channel.id,
-                    joinedPhone: false,
-                    joinedDevice: channel.joinedDevice
-                )
-            } else if channel.joinedDevice {
-                // Still joined on the device: keep the row and the key, since
-                // removing it from the device later needs the key as selector.
-                try await applicationStore.setChannelMembership(
-                    id: channel.id,
-                    joinedPhone: false,
-                    joinedDevice: true
-                )
-            } else {
-                try await applicationStore.deleteChannel(id: channel.id)
-                try? channelKeyVault.deleteKey(channelID: channel.id)
-            }
-        } catch {
-            return .failed
-        }
-        // After the store: the core registers again whatever the store
-        // still says is joined.
-        if let key {
-            try? await meshSession()?.removeChannels(keys: [key])
-        }
-        await afterWrite()
-        return .success
+    /// Leave on the phone identity. The conversation and its messages go,
+    /// and every channel but a built-in loses its row and key.
+    private func leaveChannel(_ channel: ChannelSummary) async throws {
+        let id = channel.id.uuidString
+        try await run { try await $0.leaveChannel(id: id) }
     }
 
-    private func setChannelPhoneMembership(
+    /// Join a channel the phone left but still holds.
+    private func rejoinChannel(_ channel: ChannelSummary) async throws {
+        let id = channel.id.uuidString
+        try await run { try await $0.rejoinChannel(id: id) }
+    }
+
+    private func setChannelAlias(_ channel: ChannelSummary, _ alias: String?) async throws {
+        let id = channel.id.uuidString
+        try await run { try await $0.setChannelAlias(id: id, alias: alias) }
+    }
+
+    /// A channel's region and flood-hop ceiling; `nil` for either is the
+    /// default. A changed ceiling applies at once.
+    private func setChannelRouting(
         _ channel: ChannelSummary,
-        joined: Bool
-    ) async -> ChannelActionOutcome {
-        guard let applicationStore,
-              let key = try? channelKeyVault.loadKey(channelID: channel.id)
-        else { return .failed }
-        if joined {
-            guard await registerChannels([
-                ChannelRegistration(key: key, maxFloodHops: channel.maxFloodHops),
-            ]) else { return .phoneFull }
+        _ regionCode: Data?,
+        _ maxFloodHops: Int?
+    ) async throws {
+        let id = channel.id.uuidString
+        // The stored code is the region's two bytes, big-endian.
+        let regions = try regionCode.map { code -> [UInt16] in
+            guard code.count == 2 else { throw MobileAppError.InvalidRequest }
+            return [code.reduce(UInt16(0)) { $0 << 8 | UInt16($1) }]
+        } ?? []
+        let hops = try maxFloodHops.map { hops in
+            guard let hops = UInt8(exactly: hops) else { throw MobileAppError.InvalidRequest }
+            return hops
         }
-        do {
-            try await applicationStore.setChannelMembership(
-                id: channel.id,
-                joinedPhone: joined,
-                joinedDevice: channel.joinedDevice
-            )
-        } catch {
-            return .failed
-        }
-        if !joined {
-            // After the store, as in `leaveChannel`.
-            try? await meshSession()?.removeChannels(keys: [key])
-        }
-        // The address map is otherwise only rebuilt when the core starts,
-        // and leaving cleared this entry—a rejoin that skipped it would
-        // leave the channel unreachable from chat until relaunch.
-        if joined, let address = try? await meshEngine.channelConversationAddress(key: key) {
-            coordinator.channelAddresses[channel.id] = address
-        } else if !joined {
-            coordinator.channelAddresses[channel.id] = nil
-        }
-        if joined, channel.canonicalName == "public", let localIdentity,
-           let address = coordinator.channelAddresses[channel.id] {
-            // Rejoining public restores its always-present conversation,
-            // the same invariant the core's start establishes. Before the
-            // core is told, so its pass reads the row.
-            _ = try? await applicationStore.ensureChannelConversation(
-                ownerIdentityID: localIdentity.id,
-                channelID: channel.id,
-                conversationAddress: address
-            )
-        }
-        await afterWrite()
-        return .success
+        try await run { try await $0.setChannelRouting(id: id, regions: regions, maxFloodHops: hops) }
     }
 
-    /// Add or remove the channel on the companion radio's own device identity,
-    /// which is membership for the radio, not for this phone.
-    private func setChannelDeviceMembership(
-        _ channel: ChannelSummary,
-        joined: Bool
-    ) async -> ChannelActionOutcome {
-        guard let applicationStore,
-              let key = try? channelKeyVault.loadKey(channelID: channel.id)
-        else { return .failed }
-        do {
-            if joined {
-                try await radioConnection.addDeviceChannel(key)
-            } else {
-                try await radioConnection.removeDeviceChannel(key)
-            }
-            try? await applicationStore.setChannelMembership(
-                id: channel.id,
-                joinedPhone: channel.joinedPhone,
-                joinedDevice: joined
-            )
-            await afterWrite()
-            return .success
-        } catch let error as DevicePeerError {
-            return switch error {
-            case .radioUnavailable: .radioUnavailable
-            case .deviceFull: .deviceFull
-            case .unsupported: .unsupported
-            case .unrecognizedAnswer: .unrecognizedAnswer
-            case .failed: .failed
-            }
-        } catch {
-            return .failed
-        }
-    }
-
-    private func updateChannelDetails(
-        _ channel: ChannelSummary,
-        details: ChannelDetails
-    ) async -> Bool {
-        guard let applicationStore else { return false }
-        do {
-            try await applicationStore.updateChannelDetails(
-                id: channel.id,
-                alias: details.alias,
-                regionCode: details.regionCode,
-                maxFloodHops: details.maxFloodHops,
-                notificationsEnabled: details.notificationsEnabled
-            )
-            // The ceiling lives in the mesh session's channel table, so a
-            // changed one is re-registered—re-registering a held channel
-            // restates it. A channel the phone has not joined has no entry
-            // to restate; joining registers it with whatever is stored.
-            if channel.joinedPhone, details.maxFloodHops != channel.maxFloodHops,
-               let key = try? channelKeyVault.loadKey(channelID: channel.id) {
-                _ = await registerChannels([
-                    ChannelRegistration(key: key, maxFloodHops: details.maxFloodHops),
-                ])
-            }
-            await afterWrite()
-            return true
-        } catch {
-            return false
-        }
-    }
-
-    /// Toggle a channel's banners from inside its conversation, where the
-    /// question actually comes up. Everything else the user set stays put:
-    /// this is one field of the same local details the Channels tab edits.
-    /// The same switch decides, through the core, whether a companion radio
-    /// holding this channel's traffic makes a sound about it.
-    func setChannelNotifications(_ channel: ChannelSummary, _ enabled: Bool) async {
-        _ = await updateChannelDetails(
-            channel,
-            details: ChannelDetails(
-                alias: channel.alias,
-                regionCode: channel.regionCode,
-                maxFloodHops: channel.maxFloodHops,
-                notificationsEnabled: enabled
-            )
-        )
+    /// Toggle a channel's banners, from its page or from inside its
+    /// conversation, where the question actually comes up. The same switch
+    /// decides, through the core, whether a companion radio holding this
+    /// channel's traffic makes a sound about it.
+    func setChannelNotifications(_ channel: ChannelSummary, _ enabled: Bool) async throws {
+        let id = channel.id.uuidString
+        try await run { try await $0.setChannelNotifications(id: id, enabled: enabled) }
     }
 
     /// Toggle a direct conversation's banners, from the same sheet the
@@ -2052,89 +1746,22 @@ final class AppRuntime {
     func setConversationNotifications(
         _ conversation: DirectConversationSummary,
         _ enabled: Bool
-    ) async {
-        guard let applicationStore, let localIdentity else { return }
-        do {
-            try await applicationStore.setDirectConversationNotifications(
-                ownerIdentityID: localIdentity.id,
-                conversationID: conversation.id,
-                enabled: enabled
-            )
-            await afterWrite()
-        } catch {
-            // The toggle re-reads the store, so a failed write shows the
-            // old value rather than a lie.
+    ) async throws {
+        try await run {
+            try await $0.setConversationNotifications(address: conversation.conversationAddress, enabled: enabled)
         }
     }
 
-    /// Build the URI that invites someone else to this channel. A named
-    /// channel shares only its name; a private one shares the key itself.
-    ///
-    /// The name goes out written the way it is read—`umsh:cs:Trail%20Crew`,
-    /// not the folded form. Recipients percent-decode first and canonicalize
-    /// after, so casing travels without changing which channel is meant.
-    private func channelInvitation(_ channel: ChannelSummary) async -> String? {
-        guard let key = try? channelKeyVault.loadKey(channelID: channel.id) else {
-            return nil
-        }
-        // The alias is this phone's label and stays here; what goes out is the
-        // channel's own name.
-        let sharedName = channel.name ?? channel.canonicalName
-        return try? await meshEngine.formatChannelInvitation(
-            key: key,
-            name: channel.invitationIsSecret ? nil : sharedName,
-            displayName: channel.invitationIsSecret ? channel.name : nil,
-            // A protocol-fixed ceiling is not a recommendation to pass on: the
-            // recipient derives it from the channel exactly as this phone did.
-            maxFloodHops: channel.protocolMaxFloodHops == nil
-                ? channel.maxFloodHops.map(UInt8.init)
-                : nil,
-            regionCode: channel.regionCode
-        )
-    }
-
-    private func storedChannel(keyDigest: String) async throws -> ChannelSummary? {
-        guard let applicationStore, let localIdentity else { return nil }
-        let stored = try await applicationStore.channel(
-            ownerIdentityID: localIdentity.id,
-            keyDigest: keyDigest
-        )
-        return stored.map { ChannelSummary($0) }
-    }
-
-    /// Register channels with the phone's mesh session, reporting whether
-    /// they all fit. With no session running there is nothing to fit into
-    /// yet: the core registers every joined channel when it starts.
-    private func registerChannels(_ channels: [ChannelRegistration]) async -> Bool {
-        guard !channels.isEmpty, let session = await meshSession() else { return true }
-        do {
-            try await session.registerChannels(channels: channels.map(\.record))
-            return true
-        } catch {
-            return false
-        }
-    }
-
-    /// Derive each joined channel's conversation address once, so the rest of
-    /// the app can match a record to a channel without touching Keychain.
-    private func refreshChannelAddresses() async {
-        var addresses: [UUID: String] = [:]
-        for channel in channels where channel.joinedPhone {
-            guard let key = try? channelKeyVault.loadKey(channelID: channel.id),
-                  let address = try? await meshEngine.channelConversationAddress(key: key)
-            else { continue }
-            addresses[channel.id] = address
-        }
-        coordinator.channelAddresses = addresses
-    }
-
-    private static func hex(_ data: Data) -> String {
-        data.map { String(format: "%02x", $0) }.joined()
+    /// The URI that invites someone else to this channel: a named channel
+    /// shares only its name, a private one its key. The alias stays here.
+    private func channelInvitation(_ channel: ChannelSummary) async throws -> String {
+        guard let core else { throw MobileAppError.NotRunning }
+        return try await core.channelInvitation(id: channel.id.uuidString)
     }
 
     /// One broadcast Identity Request for the Discover sheet: matching nodes
-    /// reply with their identities, which the core records. Returns whether
-    /// the request was handed to the radio.
+    /// reply with their identities, which the core records. Returns once the
+    /// request was handed to the radio.
     ///
     /// Without a vantage it is zero-hop, answered by nodes in this phone's own
     /// range. With one it is steered down that route and answered by whatever
@@ -2142,21 +1769,9 @@ final class AppRuntime {
     func solicitNearbyIdentities(
         _ roleFilter: PeerRole?,
         _ vantage: SolicitVantage?
-    ) async -> Bool {
-        guard radioSnapshot.linkState == .attached,
-              radioSnapshot.hostState == .matchesCurrentIdentity,
-              let session = await meshSession()
-        else { return false }
-        do {
-            try await session.discoverIdentities(
-                roleCode: roleFilter?.roleCode,
-                capabilityBits: nil,
-                nodeHint: nil,
-                sourceRoute: vantage?.repeaters ?? []
-            )
-            return true
-        } catch {
-            return false
+    ) async throws {
+        try await ask {
+            try await $0.discover(role: roleFilter?.roleCode, nodeHint: nil, route: vantage?.repeaters ?? [])
         }
     }
 
@@ -2171,31 +1786,15 @@ final class AppRuntime {
     private func identifyRepeater(
         _ hint: Data,
         precededBy precedingRepeaters: [Data]
-    ) async -> Bool {
-        guard radioSnapshot.linkState == .attached,
-              radioSnapshot.hostState == .matchesCurrentIdentity,
-              let session = await meshSession()
-        else { return false }
-        do {
-            try await session.discoverIdentities(
-                roleCode: nil,
-                capabilityBits: nil,
-                nodeHint: hint,
-                sourceRoute: precedingRepeaters
-            )
-            return true
-        } catch {
-            return false
-        }
+    ) async throws {
+        try await ask { try await $0.discover(role: nil, nodeHint: hint, route: precedingRepeaters) }
     }
 
     /// Drop every transient row nothing depends on, from the Discover
     /// sheet's overflow. Saved peers, conversations, device-identity rows,
     /// and the companion radio are untouched by the store's guards.
-    func clearDiscoveredNodes() async {
-        guard let applicationStore, let localIdentity else { return }
-        try? await applicationStore.clearTransientPeers(ownerIdentityID: localIdentity.id)
-        await afterWrite()
+    func clearDiscoveredNodes() async throws {
+        try await run { try await $0.clearDiscovered() }
     }
 
     @discardableResult
@@ -2649,51 +2248,24 @@ final class AppRuntime {
     /// Open a channel's group conversation, creating it the first time.
     func startChannelConversation(
         _ channel: ChannelSummary
-    ) async -> ChannelConversationSummary? {
-        guard let applicationStore, let localIdentity else { return nil }
-        guard let address = coordinator.channelAddresses[channel.id] else { return nil }
-        do {
-            _ = try await applicationStore.ensureChannelConversation(
-                ownerIdentityID: localIdentity.id,
-                channelID: channel.id,
-                conversationAddress: address
-            )
-            await afterWrite()
-            return channelConversations.first { $0.channel.id == channel.id }
-        } catch {
-            Self.logger.error(
-                "Could not open channel conversation: \(String(describing: error), privacy: .public)"
-            )
-            return nil
-        }
+    ) async throws -> ChannelConversationSummary {
+        let id = channel.id.uuidString
+        let address = try await run { try await $0.openChannelConversation(id: id) }
+        return try channelConversation(at: address)
     }
 
-    /// Open the conversation for a channel that was just joined, resolving
-    /// the freshly stored row from the key the invitation carried.
-    func startConversationAfterJoin(
-        _ preview: MeshChannelPreview
-    ) async -> ChannelConversationSummary? {
-        await refreshChannelAddresses()
-        guard let channel = (try? await storedChannel(keyDigest: channelKeyDigest(key: preview.key)))
-            ?? nil
-        else { return nil }
-
-        return await startChannelConversation(channel)
+    /// The channel conversation a command just returned the address of.
+    func channelConversation(at address: String) throws -> ChannelConversationSummary {
+        guard let conversation = channelConversations.first(where: { $0.conversationAddress == address }) else {
+            throw MobileAppError.NotFound
+        }
+        return conversation
     }
 
-    func deleteChannelConversation(_ conversation: ChannelConversationSummary) async {
-        guard let applicationStore, let localIdentity else { return }
-        do {
-            try await applicationStore.deleteChannelConversation(
-                ownerIdentityID: localIdentity.id,
-                conversationID: conversation.id
-            )
-            await afterWrite()
-        } catch {
-            Self.logger.error(
-                "Could not delete channel conversation \(conversation.id): \(String(describing: error), privacy: .public)"
-            )
-        }
+    /// Leave a channel's group chat: its transcript goes, the membership
+    /// stays.
+    func deleteChannelConversation(_ conversation: ChannelConversationSummary) async throws {
+        try await run { try await $0.deleteConversation(address: conversation.conversationAddress) }
     }
 
     @discardableResult
@@ -2734,14 +2306,14 @@ final class AppRuntime {
         else { await reloadApplicationState() }
     }
 
+    /// Ask a channel member known only by their hint to identify themselves.
     func requestMemberIdentity(
         _ conversation: ChannelConversationSummary,
         _ hint: Data
-    ) async {
-        try? await meshSession()?.requestIdentityByHint(
-            conversationAddress: conversation.conversationAddress,
-            hint: hint
-        )
+    ) async throws {
+        try await ask {
+            try await $0.requestMemberIdentity(address: conversation.conversationAddress, hint: hint)
+        }
     }
 
     /// Erase a conversation's transcript, keeping the conversation. Local
@@ -2855,18 +2427,13 @@ final class AppRuntime {
     /// taken next month. Every write is keyed, so repeating it replaces
     /// rather than accumulates.
     private func seedStagedContentIfNeeded(owner: String) async {
-        guard isStaging, !isDetached, let applicationStore else { return }
+        guard isStaging, !isDetached, let writeStagedSeed else { return }
         // Kept, because canceling does not stop it: the seed writes in
         // several steps, and an erase of the staged store must not land
         // between them.
-        let seed = Task { [channelKeyVault] in
+        let seed = Task {
             do {
-                try await seedStaging(
-                    store: applicationStore.coreStore,
-                    vault: channelKeyVault,
-                    ownerIdentityId: owner,
-                    nowMs: Date.now.storeMilliseconds
-                )
+                try await writeStagedSeed(owner)
             } catch {
                 Self.logger.error(
                     "Could not seed staged content: \(String(describing: error), privacy: .public)"
@@ -3022,41 +2589,17 @@ final class AppRuntime {
         (try? await read { Int(try $0.messageCount(conversationAddress: address)) }) ?? 0
     }
 
-    func deleteConversation(_ conversation: DirectConversationSummary) async {
-        guard let applicationStore, let localIdentity else { return }
-        do {
-            try await applicationStore.deleteDirectConversation(
-                ownerIdentityID: localIdentity.id,
-                conversationID: conversation.id
-            )
-            // The core sheds the peer's key from the radio: a closed
-            // conversation takes its custody with it.
-            await afterWrite()
-        } catch {
-            Self.logger.error("Could not delete conversation \(conversation.id): \(String(describing: error), privacy: .public)")
-        }
+    /// Delete a direct conversation and its history. The core sheds the
+    /// peer's key from the radio: a closed conversation takes its custody
+    /// with it.
+    func deleteConversation(_ conversation: DirectConversationSummary) async throws {
+        try await run { try await $0.deleteConversation(address: conversation.conversationAddress) }
     }
 
-    private func startConversation(_ peer: PeerSummary) async -> DirectConversationSummary? {
-        guard let applicationStore, let localIdentity else { return nil }
-        do {
-            _ = try await applicationStore.ensureDirectConversation(
-                ownerIdentityID: localIdentity.id,
-                peerAddress: peer.identity.canonicalAddress
-            )
-            // Telling the mesh session is an optimization for a running
-            // core, not part of creating the conversation: the core registers
-            // every conversation peer when it starts. Letting it fail the
-            // whole operation would leave a conversation that exists on disk
-            // but that nothing ever opens.
-            try? await meshSession()?.registerPeers(peers: [peer.meshRegistration])
-            await afterWrite()
-            return conversations.first {
-                $0.peer.identity.canonicalAddress == peer.identity.canonicalAddress
-            }
-        } catch {
-            return nil
-        }
+    /// Open the conversation with `peer`, creating it the first time.
+    private func startConversation(_ peer: PeerSummary) async throws -> DirectConversationSummary {
+        let address = try await run { try await $0.startConversation(address: peer.identity.canonicalAddress) }
+        return try directConversation(at: address)
     }
 
     private func pingPeer(_ peer: PeerSummary) async -> PeerPingResult {
@@ -3121,7 +2664,7 @@ final class AppRuntime {
                 holdMs: UInt64(hold.duration * 1000),
                 position: position
             )
-            await afterWrite()
+            await reloadApplicationState()
             return held
         } catch {
             Self.logger.error("A manual path was not kept: \(String(describing: error), privacy: .public)")
@@ -3132,20 +2675,20 @@ final class AppRuntime {
     /// Drop a held path and what the phone kept about it.
     private func clearManualPath(_ peer: PeerSummary) async -> Bool {
         let cleared = (try? await core?.clearManualPath(address: peer.identity.canonicalAddress)) ?? false
-        await afterWrite()
+        await reloadApplicationState()
         return cleared
     }
 
     /// Switch a held path for the one learned while it was held.
     private func adoptLearnedPath(_ peer: PeerSummary) async -> Bool {
         let adopted = (try? await core?.adoptLearnedPath(address: peer.identity.canonicalAddress)) ?? false
-        await afterWrite()
+        await reloadApplicationState()
         return adopted
     }
 
     private func keepManualPath(_ peer: PeerSummary) async {
         try? await core?.keepManualPath(address: peer.identity.canonicalAddress)
-        await afterWrite()
+        await reloadApplicationState()
     }
 
     /// The held route, when the path learned while holding it is due to be
@@ -3241,19 +2784,10 @@ final class AppRuntime {
 
     /// Solicit a peer's current identity over the mesh. The response is not
     /// awaited here—the core records it when it arrives, which refreshes
-    /// the sheet. Returns whether the request was sent, for a brief UI
+    /// the sheet. Returns once the request was sent, for a brief UI
     /// confirmation.
-    private func fetchIdentity(_ peer: PeerSummary) async -> Bool {
-        guard radioSnapshot.linkState == .attached,
-              radioSnapshot.hostState == .matchesCurrentIdentity,
-              let session = await meshSession()
-        else { return false }
-        do {
-            try await session.requestIdentity(peerAddress: peer.identity.canonicalAddress)
-            return true
-        } catch {
-            return false
-        }
+    private func fetchIdentity(_ peer: PeerSummary) async throws {
+        try await ask { try await $0.fetchIdentity(address: peer.identity.canonicalAddress) }
     }
 
     /// Tell the user a peer they were waiting on was heard.
@@ -3474,7 +3008,6 @@ final class AppRuntime {
             }
             var loaded = MappedApplicationState(record, chatRevisions: coordinator.chatRevisions)
             guard localIdentity?.id == owner, !Task.isCancelled else { return }
-            coordinator.channelAddresses.merge(loaded.channelAddresses) { _, read in read }
             for index in loaded.conversations.indices {
                 let key = ConversationDraftKey(owner: owner, kind: .direct, id: loaded.conversations[index].id)
                 if let text = drafts.pendingText(for: key) { loaded.conversations[index].draftText = text }
@@ -3492,9 +3025,6 @@ final class AppRuntime {
             if let read = loaded.neighborReports, neighborReports != read { neighborReports = read }
             if conversations != loaded.conversations { conversations = loaded.conversations }
             if channelConversations != loaded.channelConversations { channelConversations = loaded.channelConversations }
-            if unknownDeviceChannels != loaded.unknownDeviceChannels {
-                unknownDeviceChannels = loaded.unknownDeviceChannels
-            }
             // A name saved while the read ran is newer than the one it read.
             let name = loaded.advertisedName ?? ""
             if advertisedNameRevision == nameRevision, advertisedName != name {
@@ -3522,12 +3052,6 @@ final class AppRuntime {
     }
 }
 
-/// A failure the person is told about once, with what failed and why.
-struct FailureNotice: Equatable, Sendable {
-    let title: String
-    let message: String
-}
-
 /// Wakes the drain loop. Called on whichever thread the core published
 /// from, so it only schedules.
 private final class CoreWake: MobileAppCoreListener {
@@ -3546,10 +3070,6 @@ private final class CoreWake: MobileAppCoreListener {
 /// updating it never invalidates the view graph.
 @MainActor
 private final class AppStateCoordinator {
-    /// Each joined channel's conversation address, derived from its key when
-    /// the key is unlocked. Kept here rather than on `ChannelSummary` because
-    /// deriving it needs the key, which the summary deliberately never holds.
-    var channelAddresses: [UUID: String] = [:]
     /// A reload that has been queued but has not begun reading storage yet;
     /// later callers can safely join it.
     var pendingReload: Task<Void, Never>?

@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UMSHMobileCore
 
 /// A live view of the nodes heard while this sheet is open.
 ///
@@ -34,11 +35,11 @@ struct DiscoverPeersView: View {
     /// The name the announcement carries, for the confirmation preview.
     var advertisedName: String = ""
     /// Drop every transient row nothing depends on.
-    var clearDiscoveredNodes: (() async -> Void)? = nil
+    var clearDiscoveredNodes: (() async throws -> Void)? = nil
     /// Send one Identity Request asking matching nodes to identify
     /// themselves—in this phone's own range, or in range of the vantage's
-    /// landing point. Returns whether it was handed to the radio.
-    var solicitNearbyIdentities: ((PeerRole?, SolicitVantage?) async -> Bool)? = nil
+    /// landing point. Returns once it was handed to the radio.
+    var solicitNearbyIdentities: ((PeerRole?, SolicitVantage?) async throws -> Void)? = nil
     /// Where the ask is aimed; nil is this phone's own neighborhood. A
     /// binding because the sheet is presented once at the app root and
     /// re-aimed by deep links from peer pages—`@State` seeded from a
@@ -62,6 +63,7 @@ struct DiscoverPeersView: View {
     @State private var isSoliciting = false
     @State private var lastSolicitedAt: Date?
     @State private var solicitNotice: String?
+    @State private var failure: FailureNotice?
 
     /// Minimum spacing between solicitations—one ask is one broadcast,
     /// and mashing the button must not become airtime.
@@ -125,12 +127,17 @@ struct DiscoverPeersView: View {
                 titleVisibility: .visible
             ) {
                 Button("Clear Discovered Nodes", role: .destructive) {
-                    Task { await clearDiscoveredNodes?() }
+                    Task {
+                        await $failure.attempt(String(localized: "Nodes not cleared", comment: "Alert title.")) {
+                            try await clearDiscoveredNodes?()
+                        }
+                    }
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("Removes every node heard over the air that is not saved, has no conversation, and is not stored on the radio. Saved nodes are untouched.")
             }
+            .failureAlert($failure)
         }
         // Outside the NavigationStack so both the root list and any pushed
         // peer page are descendants, and the nearest-ancestor rule points
@@ -198,13 +205,20 @@ struct DiscoverPeersView: View {
     }
 
     private static func vantageLabel(_ vantage: SolicitVantage) -> String {
-        let hops = vantage.repeaters.count
-        return "\(hops) \(hops == 1 ? "hop" : "hops") to \(vantage.peerName)"
+        String(
+            localized: "\(vantage.repeaters.count) hops to \(vantage.peerName)",
+            comment: "Where a Discover ask goes: the hops it takes to reach a peer. Has plural variants."
+        )
     }
 
     private var askButtonTitle: String {
-        guard let vantage else { return "Ask Nearby Nodes to Identify" }
-        return "Ask Nodes Near \(vantage.peerName) to Identify"
+        guard let vantage else {
+            return String(localized: "Ask Nearby Nodes to Identify", comment: "Button: ask the nodes in range to identify themselves.")
+        }
+        return String(
+            localized: "Ask Nodes Near \(vantage.peerName) to Identify",
+            comment: "Button: ask the nodes in range of a peer to identify themselves. The placeholder is the peer's name."
+        )
     }
 
     private func cooldownRemaining(_ now: Date) -> TimeInterval {
@@ -217,13 +231,21 @@ struct DiscoverPeersView: View {
             return solicitNotice
         }
         if !radioListening {
-            return "Connect a companion radio set up for this phone to ask."
+            return String(
+                localized: "Connect a companion radio set up for this phone to ask.",
+                comment: "Footer under Discover's ask when no radio can send it."
+            )
         }
         let cooldown = cooldownRemaining(now)
         if cooldown > 0 {
             // One cooldown covers both kinds of ask: each is a transmission
             // whatever it is aimed at, so re-aiming does not buy a free one.
-            return "Asked—replies appear below. Ask again in \(Int(cooldown.rounded(.up))) s."
+            let wait = Duration.seconds(Int(cooldown.rounded(.up)))
+                .formatted(.units(allowed: [.seconds], width: .abbreviated))
+            return String(
+                localized: "Asked—replies appear below. Ask again in \(wait).",
+                comment: "Footer under Discover's ask after it was sent. The placeholder is a duration, such as 40 sec."
+            )
         }
         return vantageFooter
     }
@@ -236,18 +258,28 @@ struct DiscoverPeersView: View {
         guard let vantage else { return nil }
         // Hops to the landing node, which is the route's last hint: one
         // transmission per hint.
-        let hops = vantage.repeaters.count == 1 ? "1 hop" : "\(vantage.repeaters.count) hops"
+        let hops = vantage.repeaters.count
+        let peer = vantage.peerName
         switch (vantage.landsAtPeer, vantage.evidence) {
         case (true, .yes):
-            return "Sent \(hops) to \(vantage.peerName), which answers along with whatever else is in range of it—not of this phone."
+            return String(
+                localized: "Sent \(hops) hops to \(peer), which answers along with whatever else is in range of it—not of this phone.",
+                comment: "Footer under Discover's ask aimed at a peer known to repeat. Has plural variants."
+            )
         case (true, _):
             // Aimed at the peer on no evidence it repeats. Say so: if it does
             // not forward, the ask simply goes unanswered.
-            return "Sent \(hops) to \(vantage.peerName). This phone has never heard what \(vantage.peerName) is, so this only reaches anything if it forwards traffic; if it does not, nothing answers."
+            return String(
+                localized: "Sent \(hops) hops to \(peer). This phone has never heard what \(peer) is, so this only reaches anything if it forwards traffic; if it does not, nothing answers.",
+                comment: "Footer under Discover's ask aimed at a peer not known to repeat. Has plural variants."
+            )
         case (false, _):
             guard let landing = vantage.landingRepeater else { return nil }
             let name = RouterHintNaming.label(landing, among: peerActions.knownPeers)
-            return "This phone has no evidence \(vantage.peerName) repeats, so the ask stops at \(name), the last repeater on the way there, and is answered by whatever is in range of it. \(RouterHintNaming.ambiguityNote)"
+            return String(
+                localized: "This phone has no evidence \(peer) repeats, so the ask stops at \(name), the last repeater on the way there, and is answered by whatever is in range of it. \(RouterHintNaming.ambiguityNote)",
+                comment: "Footer under Discover's ask that stops short of a peer. The first placeholder is the peer, the second the repeater it stops at, the last a sentence about guessed repeater names."
+            )
         }
     }
 
@@ -255,13 +287,15 @@ struct DiscoverPeersView: View {
         guard let solicitNearbyIdentities, !isSoliciting else { return }
         isSoliciting = true
         defer { isSoliciting = false }
-        if await solicitNearbyIdentities(roleFilter, vantage) {
+        do {
+            try await solicitNearbyIdentities(roleFilter, vantage)
             lastSolicitedAt = Date()
             solicitNotice = nil
-        } else {
-            solicitNotice = "The request could not be sent. Check that the companion radio is connected."
+        } catch {
+            solicitNotice = MobileAppError.message(for: error)
         }
     }
+
 
     @ViewBuilder
     private var resultsSection: some View {
@@ -324,7 +358,11 @@ struct DiscoverPeersView: View {
         .swipeActions(edge: .leading, allowsFullSwipe: false) {
             if !peer.isSaved, peerActions.promoteToSaved != nil {
                 Button {
-                    Task { _ = await peerActions.promoteToSaved?(peer) }
+                    Task {
+                        await $failure.attempt(String(localized: "Peer not saved", comment: "Alert title.")) {
+                            try await peerActions.promoteToSaved?(peer)
+                        }
+                    }
                 } label: {
                     Label("Save", systemImage: "square.and.arrow.down")
                 }
@@ -383,9 +421,13 @@ struct DiscoverPeersView: View {
 
     private func message(_ peer: PeerSummary) async {
         guard let startConversation = peerActions.startConversation else { return }
-        guard let conversation = await startConversation(peer) else { return }
-        dismiss()
-        openConversation(conversation)
+        do {
+            let conversation = try await startConversation(peer)
+            dismiss()
+            openConversation(conversation)
+        } catch {
+            failure = FailureNotice(String(localized: "Conversation unavailable", comment: "Alert title."), error)
+        }
     }
 
     private static func heardLabel(_ date: Date?) -> String {

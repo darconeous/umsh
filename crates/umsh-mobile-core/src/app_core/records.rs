@@ -86,7 +86,11 @@ pub struct MobileAppChangesRecord {
     /// Pushes let go of past the newest kept. Nonzero means read the
     /// properties again.
     pub property_pushes_dropped: u64,
+    /// Read the peers again, and the conversation lists too: each direct
+    /// conversation carries its peer whole.
     pub peers_changed: bool,
+    /// Read the channels again, and the conversation lists too: each
+    /// channel conversation carries its channel whole.
     pub channels_changed: bool,
     pub conversations_changed: bool,
     /// The whole list, when it changed.
@@ -404,9 +408,14 @@ pub struct MobileAppStateRecord {
     pub neighbor_reports: Option<Vec<MobileAppNeighborReportRecord>>,
     /// The name the owner advertises, when it set one.
     pub advertised_name: Option<String>,
-    /// Identifiers of channels on the attached radio that no stored channel
-    /// derives.
-    pub unknown_device_channels: Vec<Vec<u8>>,
+}
+
+/// A channel just joined.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct MobileAppJoinedChannelRecord {
+    pub channel_id: String,
+    /// The channel's conversation, when the join opened it.
+    pub conversation_address: Option<String>,
 }
 
 /// A channel about to be joined.

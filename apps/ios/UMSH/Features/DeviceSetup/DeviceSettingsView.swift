@@ -73,7 +73,7 @@ struct DeviceSettingsView: View {
                     deviceNoun: draft.plan.deviceNoun,
                     deviceName: snapshot.name,
                     savePeer: controller.canSavePeer && snapshot.deviceIdentity != nil
-                        ? { await controller.savePeer(role: draft.advertisedPeerRole) }
+                        ? { try await controller.savePeer(role: draft.advertisedPeerRole) }
                         : nil,
                     isPeerSaved: snapshot.deviceIdentity
                         .map { isPeerSaved($0.canonicalAddress) } ?? false,

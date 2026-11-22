@@ -1,4 +1,5 @@
 import SwiftUI
+import UMSHMobileCore
 
 /// The single way into a channel: a public name, or an invitation URI.
 ///
@@ -14,9 +15,10 @@ struct ChannelJoinView: View {
     /// Prefilled by a `umsh:cs:` or `umsh:ck:` link, which then validates
     /// immediately rather than waiting for the button.
     var initialInput: String? = nil
-    /// Called after a successful join, for callers that join in order to do
-    /// something with the channel. Joining alone dismisses without it.
-    var onJoined: ((MeshChannelPreview) async -> Void)? = nil
+    /// Called with the conversation's address after a join that opened it,
+    /// for callers that join in order to talk in the channel. Joining alone
+    /// dismisses without it.
+    var onJoined: ((String) async throws -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var input = ""
@@ -26,6 +28,7 @@ struct ChannelJoinView: View {
     @State private var isJoining = false
     @State private var alias = ""
     @State private var revealsKey = false
+    @State private var failure: FailureNotice?
 
     var body: some View {
         Form {
@@ -46,11 +49,9 @@ struct ChannelJoinView: View {
                 Section {
                     ForEach(rejoinable) { channel in
                         Button(channel.title) {
-                            Task {
-                                if await actions.rejoin?(channel) == .success { dismiss() }
-                            }
+                            Task { await rejoin(channel) }
                         }
-                        .disabled(actions.rejoin == nil)
+                        .disabled(actions.rejoin == nil || isJoining)
                     }
                 } header: {
                     Text("Suggested Channels")
@@ -79,6 +80,7 @@ struct ChannelJoinView: View {
                 await inspect()
             }
         }
+        .failureAlert($failure)
     }
 
     @ViewBuilder
@@ -107,7 +109,7 @@ struct ChannelJoinView: View {
                     .foregroundStyle(.secondary)
             }
 
-            if resolved.preview.canonicalName == "emergency" {
+            if resolved.wellKnown?.channel == .emergency {
                 Text("Traffic here is unencrypted and signed, so anyone in range can read it and every message identifies its sender.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -185,38 +187,63 @@ struct ChannelJoinView: View {
         }
     }
 
+    /// Join what was looked up, by the text it was looked up from. An empty
+    /// alias keeps whatever the channel already has.
     private func join(_ resolved: ChannelPreview) async {
+        guard let join = actions.join else { return }
         isJoining = true
         defer { isJoining = false }
         let trimmedAlias = alias.trimmingCharacters(in: .whitespacesAndNewlines)
-        let details = ChannelDetails(
-            alias: trimmedAlias.isEmpty ? nil : trimmedAlias,
-            regionCode: resolved.preview.regionCode,
-            maxFloodHops: resolved.preview.maxFloodHops.map(Int.init),
-            notificationsEnabled: resolved.existing?.notificationsEnabled ?? false
-        )
-        switch await actions.join?(resolved.preview, details) {
-        case .success:
-            if let onJoined {
-                await onJoined(resolved.preview)
-            } else {
-                dismiss()
-            }
-        case .phoneFull:
-            problem = "This phone is already holding as many channels as it can. Leave one to make room."
-        case .none, .failed, .deviceFull, .radioUnavailable, .unsupported, .unrecognizedAnswer:
-            problem = "The channel could not be joined. Nothing was changed."
+        var address: String?
+        let didJoin = await $failure.attempt(Self.notJoinedTitle) {
+            address = try await join(
+                resolved.input,
+                trimmedAlias.isEmpty ? nil : trimmedAlias,
+                onJoined != nil
+            )
         }
+        guard didJoin else { return }
+        if let onJoined, let address {
+            await $failure.attempt(Self.conversationUnavailableTitle) { try await onJoined(address) }
+        } else {
+            dismiss()
+        }
+    }
+
+    private func rejoin(_ channel: ChannelSummary) async {
+        guard let rejoin = actions.rejoin else { return }
+        isJoining = true
+        defer { isJoining = false }
+        if await $failure.attempt(Self.notJoinedTitle, { try await rejoin(channel) }) {
+            dismiss()
+        }
+    }
+
+    private static var notJoinedTitle: String {
+        String(localized: "Channel not joined", comment: "Alert title: joining a channel failed.")
+    }
+
+    private static var conversationUnavailableTitle: String {
+        String(localized: "Conversation unavailable", comment: "Alert title.")
     }
 
     private func message(for error: MeshEngineError) -> String {
         switch error {
         case .channelNameNotASCII:
-            "Channel names use plain ASCII letters, digits, and punctuation. A name with other characters has no channel behind it; share a private invitation instead."
+            String(
+                localized: "Channel names use plain ASCII letters, digits, and punctuation. A name with other characters has no channel behind it; share a private invitation instead.",
+                comment: "A typed channel name has characters no channel can be named with."
+            )
         case .channelNameTooLong:
-            "That channel name is too long. Use 64 characters or fewer."
+            String(
+                localized: "That channel name is too long. Use 64 characters or fewer.",
+                comment: "A typed channel name is too long."
+            )
         default:
-            "Enter a public channel name, or a umsh:cs: or umsh:ck: invitation. Nothing was joined."
+            String(
+                localized: "Enter a public channel name, or a umsh:cs: or umsh:ck: invitation. Nothing was joined.",
+                comment: "Typed text is neither a channel name nor a channel invitation."
+            )
         }
     }
 

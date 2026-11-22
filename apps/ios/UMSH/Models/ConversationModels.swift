@@ -124,16 +124,6 @@ struct PeerSummary: Identifiable, Hashable, Sendable {
         }
     }
 
-    /// The peer as the mesh session registers it: its address, and whether
-    /// its own attributable advertisement says it moves.
-    var meshRegistration: MobilePeerRegistrationRecord {
-        MobilePeerRegistrationRecord(
-            address: identity.canonicalAddress,
-            mobile: advertisedIdentityIsAttributable
-                && advertisedIdentity?.capabilityBits.contains(.mobile) == true
-        )
-    }
-
     /// Whether this node answers to a search query, across the names a user
     /// would type and the identifiers they would paste. An empty query
     /// matches everything, so a caller can filter unconditionally.
@@ -728,19 +718,18 @@ struct ChatMessageActions: Sendable {
 /// same way the channel-management actions are.
 struct ChannelConversationActions: Sendable {
     /// Open a channel's conversation, creating it if this is the first time.
-    let start: @Sendable (ChannelSummary) async -> ChannelConversationSummary?
-    /// Open the conversation for a channel that was just joined. Joining from
-    /// here is a request to talk in the channel, so the chat opens with it—
-    /// unlike joining from Settings, which is membership alone.
-    let startAfterJoin: @Sendable (MeshChannelPreview) async -> ChannelConversationSummary?
+    let start: @Sendable (ChannelSummary) async throws -> ChannelConversationSummary
+    /// The channel conversation at `address`, as a join that opened it
+    /// returned it.
+    let conversation: @Sendable (String) async throws -> ChannelConversationSummary
     /// Leave the group chat: the transcript goes, channel membership stays.
-    let delete: @Sendable (ChannelConversationSummary) async -> Void
+    let delete: @Sendable (ChannelConversationSummary) async throws -> Void
     /// Ask a member known only by their hint to identify themselves.
-    let requestMemberIdentity: @Sendable (ChannelConversationSummary, Data) async -> Void
+    let requestMemberIdentity: @Sendable (ChannelConversationSummary, Data) async throws -> Void
     /// Turn this channel's banners on or off. The same setting the Channels
     /// tab carries, reachable from the conversation it actually affects.
     /// Unread counts are unaffected—muting silences banners, not the channel.
-    let setNotifications: @Sendable (ChannelSummary, Bool) async -> Void
+    let setNotifications: @Sendable (ChannelSummary, Bool) async throws -> Void
     /// Whether the warning before sending on `EMERGENCY` has been certified
     /// since the app launched.
     let emergencyCertified: @MainActor @Sendable () -> Bool
@@ -748,8 +737,8 @@ struct ChannelConversationActions: Sendable {
     let certifyEmergency: @MainActor @Sendable () -> Void
 
     static let unavailable = ChannelConversationActions(
-        start: { _ in nil },
-        startAfterJoin: { _ in nil },
+        start: { _ in throw MobileAppError.NotRunning },
+        conversation: { _ in throw MobileAppError.NotRunning },
         delete: { _ in },
         requestMemberIdentity: { _, _ in },
         setNotifications: { _, _ in },
@@ -1128,10 +1117,11 @@ struct PeerRepeaterNeighborReport: Hashable, Sendable {
 struct PeerActions {
     /// Nodes recorded on this phone, used to put names to router hints.
     var knownPeers: [PeerSummary] = []
-    var startConversation: ((PeerSummary) async -> DirectConversationSummary?)? = nil
+    /// Open the conversation with the node, creating it the first time.
+    var startConversation: ((PeerSummary) async throws -> DirectConversationSummary)? = nil
     var ping: ((PeerSummary) async -> PeerPingResult)? = nil
-    var fetchIdentity: ((PeerSummary) async -> Bool)? = nil
-    var updateAlias: ((PeerSummary, String?) async -> Bool)? = nil
+    var fetchIdentity: ((PeerSummary) async throws -> Void)? = nil
+    var updateAlias: ((PeerSummary, String?) async throws -> Void)? = nil
     /// Read the route this phone would use for the next frame to the node.
     var loadRoute: ((PeerSummary) async -> PeerRoute)? = nil
     /// Discard that route, reporting whether one was held.
@@ -1141,7 +1131,7 @@ struct PeerActions {
     ///
     /// A route names its hops by two bytes and nothing else, so the answer is
     /// the only way to know who is actually carrying the traffic.
-    var identifyRepeater: ((Data, [Data]) async -> Bool)? = nil
+    var identifyRepeater: ((Data, [Data]) async throws -> Void)? = nil
     /// What a repeater last said about its neighbors, from this phone's cache.
     /// Nothing goes on the air.
     var cachedPeerRepeaters: ((PeerSummary) async -> PeerRepeaterListing?)? = nil
@@ -1176,23 +1166,23 @@ struct PeerActions {
     /// Render two key bytes as a router hint.
     var renderRouterHint: ((Data) async -> MeshRouterHint?)? = nil
     /// Mark or unmark the node as a favorite. Saved nodes only.
-    var setFavorite: ((PeerSummary, Bool) async -> Bool)? = nil
+    var setFavorite: ((PeerSummary, Bool) async throws -> Void)? = nil
     /// Arm or disarm the one-shot watch on the node: notify once, the next
     /// time anything is heard from it, then disarm itself.
-    var setNotifyWhenHeard: ((PeerSummary, Bool) async -> Bool)? = nil
+    var setNotifyWhenHeard: ((PeerSummary, Bool) async throws -> Void)? = nil
     /// Turn a direct conversation's notifications on or off—on the phone,
     /// and on a companion radio holding its messages while the phone is away.
-    var setConversationNotifications: ((DirectConversationSummary, Bool) async -> Void)? = nil
+    var setConversationNotifications: ((DirectConversationSummary, Bool) async throws -> Void)? = nil
     /// Save a transient node onto the local identity.
-    var promoteToSaved: ((PeerSummary) async -> Bool)? = nil
+    var promoteToSaved: ((PeerSummary) async throws -> Void)? = nil
     /// Take a saved node off the local identity, keeping its history and
     /// searchability. The row survives as a transient.
-    var demoteToTransient: ((PeerSummary) async -> Bool)? = nil
-    /// Delete the node's row outright. Refused by the store when a
+    var demoteToTransient: ((PeerSummary) async throws -> Void)? = nil
+    /// Delete the node's row outright. Refused when a
     /// conversation exists—offer `deletePeerAndConversation` instead.
-    var deletePeer: ((PeerSummary) async -> Bool)? = nil
+    var deletePeer: ((PeerSummary) async throws -> Void)? = nil
     /// Delete the node and its conversation history in one transaction.
-    var deletePeerAndConversation: ((PeerSummary) async -> Bool)? = nil
+    var deletePeerAndConversation: ((PeerSummary) async throws -> Void)? = nil
     /// The way to read and change this node's settings, chosen per peer:
     /// the companion radio is managed over its own link, everything else
     /// across the mesh. Nil only where no backend could exist at all.

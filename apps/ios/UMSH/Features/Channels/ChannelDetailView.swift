@@ -1,10 +1,9 @@
 import SwiftUI
 
-/// Everything about one channel: what it is, who has joined it, how to invite
-/// someone, and how to leave.
+/// Everything about one channel: what it is, how to invite someone, and how
+/// to leave.
 struct ChannelDetailView: View {
     let channel: ChannelSummary
-    let radioSnapshot: RadioSnapshot
     let actions: ChannelActions
 
     @Environment(\.dismiss) private var dismiss
@@ -12,12 +11,20 @@ struct ChannelDetailView: View {
     @State private var region = ""
     @State private var maxFloodHops: Int
     @State private var regionProblem: String?
+    /// What the notification switch shows until the lists come back with
+    /// the new value, so it does not spring back mid-write.
+    @State private var pendingNotifications: Bool?
+    /// Notification writes still under way. The switch holds its pending
+    /// value until the last of them is done, not the first.
+    @State private var notificationWrites = 0
+    /// The latest alias or routing save. Each waits for the one before it,
+    /// so the saves reach the core in the order the edits were made.
+    @State private var lastSave: Task<Void, Never>?
     /// Carries the URI itself rather than a presentation flag: a sheet driven
     /// by a separate boolean can be built before the value it needs lands.
     @State private var invitation: ChannelInvitation?
     @State private var confirmsLeave = false
-    @State private var deviceProblem: String?
-    @State private var isWorking = false
+    @State private var failure: FailureNotice?
     /// Whether test messages on `EMERGENCY` notify. The runtime reads the
     /// same key.
     @AppStorage("notifications.testMessages") private var testMessageAlerts = false
@@ -27,9 +34,8 @@ struct ChannelDetailView: View {
         let uri: String
     }
 
-    init(channel: ChannelSummary, radioSnapshot: RadioSnapshot, actions: ChannelActions) {
+    init(channel: ChannelSummary, actions: ChannelActions) {
         self.channel = channel
-        self.radioSnapshot = radioSnapshot
         self.actions = actions
         _alias = State(initialValue: channel.alias ?? "")
         // 0 stands for "unset", which is the protocol's own default rather
@@ -46,8 +52,7 @@ struct ChannelDetailView: View {
                 conversationSection
             }
             localDetailsSection
-            membershipSection
-            if channel.isJoined {
+            if channel.joinedPhone {
                 leaveSection
             }
             behaviorSection
@@ -60,9 +65,11 @@ struct ChannelDetailView: View {
                 // sheet directly: a private channel's URI is key material and
                 // has to be disclosed before it can leave the app.
                 Button {
+                    guard let make = actions.invitation else { return }
                     Task {
-                        guard let uri = await actions.invitation?(channel) else { return }
-                        invitation = ChannelInvitation(uri: uri)
+                        await $failure.attempt(Self.notSharedTitle) {
+                            invitation = ChannelInvitation(uri: try await make(channel))
+                        }
                     }
                 } label: {
                     Label("Share Channel", systemImage: "square.and.arrow.up")
@@ -81,19 +88,23 @@ struct ChannelDetailView: View {
             }
         }
         .confirmationDialog(
-            leaveTitle,
+            channel.leaveTitle,
             isPresented: $confirmsLeave,
             titleVisibility: .visible
         ) {
             Button("Leave Channel", role: .destructive) {
+                guard let leave = actions.leave else { return }
                 Task {
-                    if await actions.leave?(channel) == .success { dismiss() }
+                    if await $failure.attempt(Self.notLeftTitle, { try await leave(channel) }) {
+                        dismiss()
+                    }
                 }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text(leaveMessage)
+            Text(verbatim: channel.leaveMessage)
         }
+        .failureAlert($failure)
     }
 
     private var identitySection: some View {
@@ -115,7 +126,10 @@ struct ChannelDetailView: View {
     private var conversationSection: some View {
         Section {
             Button {
-                Task { await actions.enterConversation?(channel) }
+                guard let enter = actions.enterConversation else { return }
+                Task {
+                    await $failure.attempt(Self.conversationUnavailableTitle) { try await enter(channel) }
+                }
             } label: {
                 Label("Enter Conversation", systemImage: "bubble.left.and.bubble.right")
             }
@@ -127,14 +141,14 @@ struct ChannelDetailView: View {
             LabeledContent("Alias") {
                 TextField(channel.name ?? "Optional", text: $alias)
                     .multilineTextAlignment(.trailing)
-                    .onSubmit { Task { await saveDetails() } }
+                    .onSubmit { save(saveAlias) }
             }
             LabeledContent("Region") {
                 TextField("None", text: $region)
                     .multilineTextAlignment(.trailing)
                     .textInputAutocapitalization(.characters)
                     .autocorrectionDisabled()
-                    .onSubmit { Task { await saveDetails() } }
+                    .onSubmit { save(saveRouting) }
             }
             if let fixed = channel.protocolMaxFloodHops {
                 // Fixed by the protocol for this channel, and moving with the
@@ -150,11 +164,11 @@ struct ChannelDetailView: View {
                         Text("\(hops)").tag(hops)
                     }
                 }
-                .onChange(of: maxFloodHops) { Task { await saveDetails() } }
+                .onChange(of: maxFloodHops) { save(saveRouting) }
             }
             Toggle("Notifications", isOn: Binding(
-                get: { channel.notificationsEnabled },
-                set: { enabled in Task { await saveDetails(notificationsEnabled: enabled) } }
+                get: { pendingNotifications ?? channel.notificationsEnabled },
+                set: { enabled in Task { await setNotifications(enabled) } }
             ))
             if channel.isEmergency {
                 Toggle(
@@ -188,32 +202,6 @@ struct ChannelDetailView: View {
         }
     }
 
-    private var membershipSection: some View {
-        Section {
-            Toggle("This phone", isOn: Binding(
-                get: { channel.joinedPhone },
-                set: { _ in confirmsLeave = channel.joinedPhone }
-            ))
-            .disabled(!channel.joinedPhone || isWorking)
-
-            Toggle("Companion radio", isOn: Binding(
-                get: { channel.joinedDevice },
-                set: { joined in Task { await setDeviceMembership(joined) } }
-            ))
-            .disabled(!deviceMembershipAvailable || isWorking)
-
-            if let deviceProblem {
-                Text(deviceProblem)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-            }
-        } header: {
-            Text("Joined By")
-        } footer: {
-            Text(membershipFooter)
-        }
-    }
-
     private var leaveSection: some View {
         Section {
             Button("Leave Channel", role: .destructive) { confirmsLeave = true }
@@ -221,61 +209,66 @@ struct ChannelDetailView: View {
         }
     }
 
-    /// The radio's device identity is a separate member with its own key
-    /// table, so this control needs a radio that actually has one.
-    private var deviceMembershipAvailable: Bool {
-        (radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready)
-            && radioSnapshot.hostState == .matchesCurrentIdentity
-            && radioSnapshot.provisioning?.supportsDeviceIdentity == true
-            && actions.setDeviceMembership != nil
+    private static var notChangedTitle: String {
+        String(localized: "Channel not changed", comment: "Alert title: a channel's alias, region, hops or notifications were not saved.")
     }
 
-    private var membershipFooter: String {
-        if !deviceMembershipAvailable {
-            return "The companion radio keeps its own channel membership, used for its own beacons and for forwarding. Connect a radio with its own identity to manage it."
-        }
-        return "The radio's own identity joins channels separately from this phone. It uses them for its own beacons and for recognizing traffic addressed to it."
+    private static var notLeftTitle: String {
+        String(localized: "Channel not left", comment: "Alert title: leaving a channel failed.")
     }
 
-    private var leaveTitle: String {
-        "Leave “\(channel.title)”?"
+    private static var notSharedTitle: String {
+        String(localized: "Invitation unavailable", comment: "Alert title: a channel's invitation could not be made.")
     }
 
-    private var leaveMessage: String {
-        if channel.canRejoinAfterLeaving {
-            return "You can join again at any time using the channel's name. Messages already received stay on this phone."
-        }
-        return "The channel key is deleted from this phone. Joining again requires a new invitation from someone still in the channel."
+    private static var conversationUnavailableTitle: String {
+        String(localized: "Conversation unavailable", comment: "Alert title.")
     }
 
-    private func setDeviceMembership(_ joined: Bool) async {
-        isWorking = true
-        defer { isWorking = false }
-        deviceProblem = nil
-        switch await actions.setDeviceMembership?(channel, joined) {
-        case .success, .none:
-            break
-        case .deviceFull:
-            deviceProblem = "The radio is already holding as many channels as it can (\(deviceChannelCapacity))."
-        case .radioUnavailable:
-            deviceProblem = "The companion radio is not connected."
-        case .unsupported:
-            deviceProblem = "This radio does not have an identity of its own."
-        case .unrecognizedAnswer:
-            deviceProblem = "The radio answered in a form this app does not understand, so whether it made the change is unknown. Its firmware and this app may be out of step."
-        case .failed, .phoneFull:
-            deviceProblem = "The radio did not accept the change."
+    private func setNotifications(_ enabled: Bool) async {
+        guard let set = actions.setNotifications else { return }
+        pendingNotifications = enabled
+        notificationWrites += 1
+        await $failure.attempt(Self.notChangedTitle) { try await set(channel, enabled) }
+        notificationWrites -= 1
+        // The lists have reloaded by now, so the switch follows them again:
+        // the new value, or the old one when the write did not happen.
+        if notificationWrites == 0 {
+            pendingNotifications = nil
         }
     }
 
-    private func saveDetails(notificationsEnabled: Bool? = nil) async {
-        let trimmedAlias = alias.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// Run `work` after the save before it.
+    private func save(_ work: @escaping @MainActor () async -> Void) {
+        let previous = lastSave
+        lastSave = Task {
+            await previous?.value
+            await work()
+        }
+    }
+
+    /// Send the alias as the field now holds it. Always sent, never compared
+    /// with `channel`: that copy is only as new as the last reload, so an
+    /// edit back to it before then would be skipped and the earlier one kept.
+    private func saveAlias() async {
+        guard let setAlias = actions.setAlias else { return }
+        let trimmed = alias.trimmingCharacters(in: .whitespacesAndNewlines)
+        let newAlias = trimmed.isEmpty ? nil : trimmed
+        await $failure.attempt(Self.notChangedTitle) { try await setAlias(channel, newAlias) }
+    }
+
+    /// Send the region and hop limit as the fields now hold them, for the
+    /// same reason as `saveAlias`.
+    private func saveRouting() async {
         let trimmedRegion = region.trimmingCharacters(in: .whitespacesAndNewlines)
 
         var regionCode: Data?
         if !trimmedRegion.isEmpty {
             guard let parsed = await actions.parseRegion?(trimmedRegion) else {
-                regionProblem = "That is not a region. Use a short code like SJC or WA, a name your mesh has agreed on, or a raw 0xXXXX code."
+                regionProblem = String(
+                    localized: "That is not a region. Use a short code like SJC or WA, a name your mesh has agreed on, or a raw 0xXXXX code.",
+                    comment: "A channel's region field holds text that names no region."
+                )
                 return
             }
             regionCode = parsed
@@ -287,22 +280,15 @@ struct ChannelDetailView: View {
         let hops = channel.protocolMaxFloodHops == nil && maxFloodHops != 0
             ? maxFloodHops
             : nil
-        _ = await actions.updateDetails?(
-            channel,
-            ChannelDetails(
-                alias: trimmedAlias.isEmpty ? nil : trimmedAlias,
-                regionCode: regionCode,
-                maxFloodHops: hops,
-                notificationsEnabled: notificationsEnabled ?? channel.notificationsEnabled
-            )
-        )
+        if let setRouting = actions.setRouting {
+            await $failure.attempt(Self.notChangedTitle) { try await setRouting(channel, regionCode, hops) }
+        }
         // Adopt the canonical rendering so the field shows the code the mesh
         // actually carries, not only what was typed.
         if let regionCode, let described = await actions.describeRegion?(regionCode) {
             region = described
         }
     }
-
 }
 
 /// A channel invitation as a QR code and copyable URI.
@@ -361,11 +347,9 @@ struct ChannelShareView: View {
                 regionCode: nil,
                 maxFloodHops: 3,
                 joinedPhone: true,
-                joinedDevice: false,
                 notificationsEnabled: false,
                 joinedAt: .now
             ),
-            radioSnapshot: .previewReady,
             actions: .unavailable
         )
     }

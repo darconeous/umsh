@@ -23,7 +23,7 @@ use crate::store::{
     MobileStoredChatDeliveryFailureRecord, MobileStoredNodeKind, MobileStoredNodeRecord,
 };
 use crate::ulcp::UlcpHostOwnership;
-use crate::{IdentitySignatureState, NodeHint};
+use crate::{IdentitySignatureState, NodeHint, NodeUriPreviewRecord};
 
 /// Transient peers kept past this many go, oldest heard first.
 const TRANSIENT_PEERS_KEPT: u32 = 256;
@@ -209,6 +209,8 @@ impl Worker {
         }
         let now_ms = self.clock.now_ms();
         let address = advertisement.peer_address;
+        // It arrived now, so it replaces whatever is stored: only a link's
+        // bundle, of unknown age, must earn that (`link_identity_replaces`).
         let stored = self
             .store
             .upsert_peer(
@@ -283,6 +285,15 @@ impl Worker {
                 Err(error) => log::warn!(error:? = error; "a hearing was not kept"),
             }
         }
+    }
+
+    /// Forget what the pipeline keeps about a conversation or a peer that
+    /// was deleted: a chat batch that opens it again is then new to the
+    /// pass, and its next hearing is written.
+    pub(super) fn forget_conversation(&self, address: &str) {
+        let mut pipeline = self.pipeline.borrow_mut();
+        pipeline.heard_at.remove(address);
+        pipeline.known_conversations.remove(address);
     }
 
     /// Peers changed, and maybe one being watched for was heard.
@@ -447,6 +458,8 @@ impl Worker {
             contact.identity_bundle.clone(),
         )
         .ok();
+        // Exchanged now, so it replaces whatever is stored, as a heard
+        // advertisement does.
         let stored = self.store.upsert_peer(
             owner,
             contact.peer_address.clone(),
@@ -675,8 +688,40 @@ struct Subject {
     reaction: Option<MobileNotificationReactionRecord>,
 }
 
+/// Whether a link's identity replaces the one stored for its peer: always
+/// over none; otherwise only a validly signed bundle with a timestamp,
+/// over one with no timestamp or an older one. A link is of unknown age,
+/// so an unsigned or undated one never replaces what was heard. The name,
+/// kind and payload travel together, so the caller writes all of them or
+/// none.
+pub(super) fn link_identity_replaces(
+    stored: Option<&MobileStoredNodeRecord>,
+    link: &NodeUriPreviewRecord,
+) -> bool {
+    let (Some(identity), Some(_)) = (&link.identity, &link.identity_payload) else {
+        return false;
+    };
+    let Some((address, payload)) = stored.and_then(|node| {
+        node.advertisement
+            .as_ref()
+            .map(|payload| (node.public_address.clone(), payload.clone()))
+    }) else {
+        return true;
+    };
+    if identity.signature != IdentitySignatureState::Valid {
+        return false;
+    }
+    let Some(timestamp) = identity.timestamp else {
+        return false;
+    };
+    crate::decode_node_identity(address, payload)
+        .ok()
+        .and_then(|stored| stored.timestamp)
+        .is_none_or(|stored| stored < timestamp)
+}
+
 /// What an advertised role is stored as.
-fn node_kind(role_code: u8) -> MobileStoredNodeKind {
+pub(super) fn node_kind(role_code: u8) -> MobileStoredNodeKind {
     match role_code {
         1 => MobileStoredNodeKind::Repeater,
         2 => MobileStoredNodeKind::Chat,

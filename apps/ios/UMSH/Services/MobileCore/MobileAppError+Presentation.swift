@@ -7,6 +7,16 @@ import UMSHMobileCore
 /// something more specific to say about its own context says that instead,
 /// and nothing shows a core error's own description.
 extension MobileAppError {
+    /// What a failed command says, whatever it threw. The core throws only
+    /// its own codes; anything else is a fault of this app's.
+    static func message(for error: any Error) -> String {
+        if let error = error as? MobileAppError { return error.message }
+        return String(
+            localized: "Something went wrong on this phone.",
+            comment: "A command failed for a reason the app has no words for."
+        )
+    }
+
     var message: String {
         switch self {
         case .Store:
@@ -20,6 +30,16 @@ extension MobileAppError {
             String(
                 localized: "This request can't be made.",
                 comment: "The phone's mesh session would not make a request as asked."
+            )
+        case .NotFound:
+            String(
+                localized: "It is no longer on this phone.",
+                comment: "A peer, channel or conversation was removed while its screen was open."
+            )
+        case .ChannelTableFull:
+            String(
+                localized: "This phone is already holding as many channels as it can. Leave one to make room.",
+                comment: "Joining a channel: the phone holds as many as it can."
             )
         case .NoOwner, .NotRunning:
             String(
@@ -38,10 +58,15 @@ extension MobileAppError {
             )
         case let .StartFailed(reason):
             reason.message
-        case .Vault:
+        case .Vault(.Unavailable):
             String(
-                localized: "Channel keys could not be erased.",
-                comment: "Erasing this phone's identity: the channel keys stayed in the Keychain."
+                localized: "Channel keys aren't available right now.",
+                comment: "The Keychain would not hand over a channel key yet, as before the phone's first unlock."
+            )
+        case .Vault(.Failed):
+            String(
+                localized: "The channel key could not be read.",
+                comment: "The Keychain refused to read a channel key."
             )
         case .CountersNotRemoved:
             String(

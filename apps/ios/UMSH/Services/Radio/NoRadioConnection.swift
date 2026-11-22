@@ -42,10 +42,6 @@ final class NoRadioConnection: RadioConnection, Sendable {
     func removeDeviceAdmin(_ publicKey: Data) async throws { throw DevicePeerError.radioUnavailable }
     func addDeviceWifiNetwork(_ item: Data) async throws { throw RemoteManagementError.unavailable }
     func removeDeviceWifiNetwork(ssid: Data) async throws { throw RemoteManagementError.unavailable }
-    func addDeviceChannel(_ channelKey: Data) async throws { throw DevicePeerError.radioUnavailable }
-    func removeDeviceChannel(_ channelKey: Data) async throws {
-        throw DevicePeerError.radioUnavailable
-    }
     func fetchCompanionProperties(
         _ propertyIDs: [UInt32]
     ) async throws -> [MobileMeshManagementAnswerRecord] {

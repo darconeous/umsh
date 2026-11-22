@@ -124,7 +124,7 @@ struct PeerRepeatersScreen: View {
             } else {
                 NeighborRow(neighbor: neighbor, reporter: peer, knownPeers: actions.knownPeers) {
                     if let identify = actions.identifyRepeater, let path = pathToRepeater {
-                        HintDiscoveryButton { await identify(neighbor.hint, path) }
+                        HintDiscoveryButton { try await identify(neighbor.hint, path) }
                     }
                 }
             }

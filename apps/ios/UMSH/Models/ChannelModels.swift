@@ -3,9 +3,8 @@ import UMSHMobileCore
 
 /// A channel as the interface presents it.
 ///
-/// Carries no key material: the key lives in the Keychain vault under `id`,
-/// and is fetched only when something actually needs it (registering with the
-/// MAC, provisioning the radio, building an invitation).
+/// Carries no key material: the core keeps the key in its vault under `id`,
+/// and reads it only when something needs it.
 struct ChannelSummary: Identifiable, Hashable, Sendable {
     let id: UUID
     let kind: StoredChannelKind
@@ -28,11 +27,40 @@ struct ChannelSummary: Identifiable, Hashable, Sendable {
     let regionCode: Data?
     let maxFloodHops: Int?
     let joinedPhone: Bool
-    /// Whether the companion radio's device identity has joined. The device
-    /// is authoritative; this is reconciled from it on attach.
-    let joinedDevice: Bool
     let notificationsEnabled: Bool
     let joinedAt: Date?
+    /// Which channel the protocol fixes rules for this is, if any: the
+    /// core's rule, read once from the canonical name.
+    let wellKnown: MobileWellKnownChannelRecord?
+
+    init(
+        id: UUID,
+        kind: StoredChannelKind,
+        canonicalName: String?,
+        name: String?,
+        alias: String?,
+        channelIDHex: String,
+        tint: Data,
+        regionCode: Data?,
+        maxFloodHops: Int?,
+        joinedPhone: Bool,
+        notificationsEnabled: Bool,
+        joinedAt: Date?
+    ) {
+        self.id = id
+        self.kind = kind
+        self.canonicalName = canonicalName
+        self.name = name
+        self.alias = alias
+        self.channelIDHex = channelIDHex
+        self.tint = tint
+        self.regionCode = regionCode
+        self.maxFloodHops = maxFloodHops
+        self.joinedPhone = joinedPhone
+        self.notificationsEnabled = notificationsEnabled
+        self.joinedAt = joinedAt
+        wellKnown = wellKnownChannel(canonicalName: canonicalName)
+    }
 
     /// What to call this channel anywhere it is listed or titled. A private
     /// channel that was never named still needs a stable label, so it falls
@@ -59,24 +87,20 @@ struct ChannelSummary: Identifiable, Hashable, Sendable {
     }
 
     /// The flood-hop ceiling the protocol fixes for this channel, when it
-    /// fixes one. `public` and `EMERGENCY` are capped at ten hops, so it is
-    /// not the user's to choose. The mesh session enforces the same ceiling
-    /// whatever it is asked to register.
+    /// fixes one, so it is not the user's to choose. The mesh session
+    /// enforces the same ceiling whatever it is asked to register.
     ///
     /// Keyed on the canonical name rather than the record's kind, because the
     /// name is what derives the key: joining `umsh:cs:public` by hand reaches
     /// the same channel and inherits the same rules.
     var protocolMaxFloodHops: Int? {
-        switch canonicalName {
-        case "public", "emergency": 10
-        default: nil
-        }
+        wellKnown.map { Int($0.fixedMaxFloodHops) }
     }
 
     /// Whether this is `EMERGENCY`, keyed on the canonical name for the same
     /// reason as `protocolMaxFloodHops`.
     var isEmergency: Bool {
-        canonicalName == "emergency"
+        wellKnown?.channel == .emergency
     }
 
     /// How this channel behaves, where the protocol decides it.
@@ -84,19 +108,34 @@ struct ChannelSummary: Identifiable, Hashable, Sendable {
     /// Written as statements of fact, not instructions: the app applies these
     /// itself and the user has nothing to comply with.
     var protocolBehavior: [String] {
-        switch canonicalName {
-        case "public":
+        switch wellKnown?.channel {
+        case .public:
             [
-                "Every sender is identified. Messages that arrive without a full sender key are ignored.",
-                "This channel carries group traffic only—it is never used to conceal a direct message.",
+                String(
+                    localized: "Every sender is identified. Messages that arrive without a full sender key are ignored.",
+                    comment: "How the Public channel works."
+                ),
+                String(
+                    localized: "This channel carries group traffic only—it is never used to conceal a direct message.",
+                    comment: "How the Public channel works."
+                ),
             ]
-        case "emergency":
+        case .emergency:
             [
-                "All traffic here is unencrypted, so any node in range can read it—including nodes that never joined.",
-                "Every message is signed and identifies its sender. Anything unsigned or unattributed is ignored.",
-                "Repeaters give this channel priority.",
+                String(
+                    localized: "All traffic here is unencrypted, so any node in range can read it—including nodes that never joined.",
+                    comment: "How the EMERGENCY channel works."
+                ),
+                String(
+                    localized: "Every message is signed and identifies its sender. Anything unsigned or unattributed is ignored.",
+                    comment: "How the EMERGENCY channel works."
+                ),
+                String(
+                    localized: "Repeaters give this channel priority.",
+                    comment: "How the EMERGENCY channel works."
+                ),
             ]
-        default:
+        case nil:
             []
         }
     }
@@ -108,7 +147,24 @@ struct ChannelSummary: Identifiable, Hashable, Sendable {
         kind != .privateKey
     }
 
-    var isJoined: Bool { joinedPhone || joinedDevice }
+    /// The question before leaving this channel.
+    var leaveTitle: String {
+        String(localized: "Leave “\(title)”?", comment: "Confirmation title before leaving a channel. The placeholder is its name.")
+    }
+
+    /// What leaving this channel costs, said before it happens.
+    var leaveMessage: String {
+        if canRejoinAfterLeaving {
+            return String(
+                localized: "You can join again with its name. Its messages are removed from this phone.",
+                comment: "Confirmation before leaving a channel joined by name."
+            )
+        }
+        return String(
+            localized: "The channel key is deleted from this phone. Joining again requires a new invitation from someone still in the channel. Its messages are removed from this phone.",
+            comment: "Confirmation before leaving a private channel."
+        )
+    }
 
     /// Whether this channel answers to a search query, across the names a user
     /// would type and the identifier they might read off someone else's
@@ -129,27 +185,12 @@ struct ChannelSummary: Identifiable, Hashable, Sendable {
     }
 }
 
-/// A channel the radio's device identity has joined that this phone cannot
-/// name, because the key was never on this phone. The device reports only
-/// derived identifiers, so this is all that can be shown.
-struct UnknownDeviceChannel: Identifiable, Hashable, Sendable {
-    /// The full sixteen-octet identifier the radio reports.
-    let identifier: Data
-
-    var id: String { identifierHex }
-    var identifierHex: String {
-        identifier.map { String(format: "%02x", $0) }.joined()
-    }
-    /// The leading two octets—the `channel_id` frames on the air carry,
-    /// and the width a row has room for. The full identifier is what the
-    /// explanation shows.
-    var wireIDHex: String {
-        identifier.prefix(2).map { String(format: "%02x", $0) }.joined()
-    }
-}
-
 /// What a join flow resolved before anything was committed.
 struct ChannelPreview: Equatable, Sendable {
+    /// The text the preview was read from. Joining hands it back to the
+    /// core, which reads it again, so an edit after Look Up cannot join
+    /// something else.
+    let input: String
     let preview: MeshChannelPreview
     /// The channel this phone already holds for the same key, when there is
     /// one. Its presence turns a join into an update of local details.
@@ -158,78 +199,37 @@ struct ChannelPreview: Equatable, Sendable {
     /// legitimately share a display name with different keys; the user should
     /// see that before joining.
     let nameConflict: ChannelSummary?
+    /// Which channel the protocol fixes rules for this is, if any.
+    let wellKnown: MobileWellKnownChannelRecord?
 }
 
-/// One channel as the phone's mesh session registers it: the key, and the
-/// user's flood-hop ceiling for it, with `nil` for the session-wide
-/// default. The well-known channels are held to their protocol ceiling by
-/// the session whatever is passed here.
-struct ChannelRegistration: Hashable, Sendable {
-    let key: Data
-    let maxFloodHops: UInt8?
-
-    init(key: Data, maxFloodHops: Int?) {
-        self.key = key
-        self.maxFloodHops = maxFloodHops.flatMap { UInt8(exactly: $0) }
-    }
-
-    var record: MobileChannelRegistrationRecord {
-        MobileChannelRegistrationRecord(key: key, maxFloodHops: maxFloodHops)
-    }
-}
-
-/// Local details a user may set on a channel, at join time or later.
-struct ChannelDetails: Equatable, Sendable {
-    /// What this user calls the channel, overriding its own name.
-    var alias: String?
-    var regionCode: Data?
-    var maxFloodHops: Int?
-    var notificationsEnabled: Bool = false
-}
-
-/// Why a channel operation could not be completed, in the terms the interface
-/// explains it.
-enum ChannelActionOutcome: Equatable, Sendable {
-    case success
-    /// The phone's own channel table is full.
-    case phoneFull
-    /// The radio's device channel list is full; its `NOMEM` is authoritative.
-    case deviceFull
-    case radioUnavailable
-    /// The radio has no device identity domain to join channels with.
-    case unsupported
-    /// The radio answered the change in a form this app does not
-    /// understand, so what it did is not something this app can read: its
-    /// firmware and this app are out of step.
-    case unrecognizedAnswer
-    case failed
-}
-
-/// The channel operations the Channels tab is built from. Assembled where the
-/// store, the vault, the radio, and the mesh engine are held together.
+/// The channel operations the Channels tab is built from. Each runs a core
+/// command and throws the core's reason when it does not happen.
 struct ChannelActions {
     /// Resolve a pasted URI or a typed public name without committing.
     var preview: ((String) async -> Result<ChannelPreview, MeshEngineError>)? = nil
-    /// Join, or update local details when the key is already held.
-    var join: ((MeshChannelPreview, ChannelDetails) async -> ChannelActionOutcome)? = nil
+    /// Join by the text a preview was read from, or update the alias when
+    /// the key is already held. With `openConversation`, the channel's
+    /// conversation opens too, and its address is returned.
+    var join: ((_ input: String, _ alias: String?, _ openConversation: Bool) async throws -> String?)? = nil
     /// Re-join a channel whose row and key this phone still holds—a
     /// built-in the user left. No invitation is involved.
-    var rejoin: ((ChannelSummary) async -> ChannelActionOutcome)? = nil
-    /// Leave on the phone. A private channel's key is deleted with it.
-    var leave: ((ChannelSummary) async -> ChannelActionOutcome)? = nil
+    var rejoin: ((ChannelSummary) async throws -> Void)? = nil
+    /// Leave on the phone. Every channel but a built-in loses its key.
+    var leave: ((ChannelSummary) async throws -> Void)? = nil
     /// Create a private channel with a freshly generated key. The name is the
     /// channel's own—it travels with the invitation—not a local alias.
-    var createPrivate: ((String, ChannelDetails) async -> ChannelActionOutcome)? = nil
-    var updateDetails: ((ChannelSummary, ChannelDetails) async -> Bool)? = nil
-    /// Add or remove the channel on the companion radio's device identity.
-    var setDeviceMembership: ((ChannelSummary, Bool) async -> ChannelActionOutcome)? = nil
-    /// Build a shareable URI. Returns nil when the key can no longer be read.
-    var invitation: ((ChannelSummary) async -> String?)? = nil
-    /// Reveal the channel key for display, on explicit user action only.
-    var revealKey: ((ChannelSummary) async -> Data?)? = nil
+    var createPrivate: ((String) async throws -> Void)? = nil
+    /// What this user calls the channel; `nil` clears it.
+    var setAlias: ((ChannelSummary, String?) async throws -> Void)? = nil
+    /// The channel's region and flood-hop ceiling; `nil` is the default.
+    var setRouting: ((ChannelSummary, Data?, Int?) async throws -> Void)? = nil
+    var setNotifications: ((ChannelSummary, Bool) async throws -> Void)? = nil
+    /// Build a shareable URI.
+    var invitation: ((ChannelSummary) async throws -> String)? = nil
     /// Open this channel's group conversation, creating it the first time.
     /// Joining a channel does not start a chat; this is what does.
-    var enterConversation: ((ChannelSummary) async -> Void)? = nil
+    var enterConversation: ((ChannelSummary) async throws -> Void)? = nil
     /// Read a routing region written as a short code, an agreed name, or a
     /// raw code. Returns nil when the text names no region.
     var parseRegion: ((String) async -> Data?)? = nil

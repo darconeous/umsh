@@ -43,7 +43,8 @@ struct PeerDetailView: View {
     @State private var pingHistory: [PingRecord] = []
     @State private var showsShare = false
     @State private var isRefreshingIdentity = false
-    @State private var feedback: Feedback?
+    @State private var isSendingIdentityRequest = false
+    @State private var failure: FailureNotice?
     // The pushed view keeps its own copy so a saved alias is visible
     // immediately even though the parent's peer list refreshes later.
     @State private var currentAlias: String?
@@ -117,7 +118,7 @@ struct PeerDetailView: View {
                 }
                 if offersAddToPeers {
                     Button {
-                        Task { _ = await actions.promoteToSaved?(peer) }
+                        Task { await addToPeers() }
                     } label: {
                         Label {
                             Text("Add to Peers", comment: "Button: save a node this phone has only heard of.")
@@ -207,14 +208,7 @@ struct PeerDetailView: View {
         .sheet(isPresented: $showsShare) {
             PeerShareSheet(peer: peer)
         }
-        .alert(
-            feedback?.title ?? "",
-            isPresented: Binding(get: { feedback != nil }, set: { if !$0 { feedback = nil } })
-        ) {
-            Button(role: .cancel) {} label: { Text("OK", comment: "Dismisses an alert.") }
-        } message: {
-            Text(feedback?.message ?? "")
-        }
+        .failureAlert($failure)
         .transientNoticePresenter()
     }
 
@@ -225,7 +219,7 @@ struct PeerDetailView: View {
             PeerAvatar(peer: peer, diameter: diameter)
         } content: {
             VStack(spacing: 4) {
-                if actions.updateAlias != nil, !peer.isUlcpDevice {
+                if actions.updateAlias != nil, isStoredLocally, !peer.isUlcpDevice {
                     // Emptied, it goes back to the name the node advertises
                     // for itself, which is what having no name of our own
                     // means.
@@ -310,7 +304,10 @@ struct PeerDetailView: View {
     // MARK: Verbs
 
     private var verbs: [PeerVerb] {
-        PeerVerb.offered(for: peer, availability: PeerVerb.Availability(actions))
+        var availability = PeerVerb.Availability(actions)
+        // A conversation is kept with a node the phone has a row for.
+        availability.message = availability.message && isStoredLocally
+        return PeerVerb.offered(for: peer, availability: availability)
     }
 
     private func isBusy(_ verb: PeerVerb) -> Bool {
@@ -362,9 +359,11 @@ struct PeerDetailView: View {
                         set: { enabled in
                             pendingConversationNotifications = enabled
                             Task {
-                                await actions.setConversationNotifications?(conversation, enabled)
-                                // The store has reloaded by now, so hand the
-                                // switch back to it—including when the write
+                                await $failure.attempt(Self.notChangedTitle) {
+                                    try await actions.setConversationNotifications?(conversation, enabled)
+                                }
+                                // The lists have reloaded by now, so hand the
+                                // switch back to them—including when the write
                                 // failed and the old value is the answer.
                                 pendingConversationNotifications = nil
                             }
@@ -380,9 +379,10 @@ struct PeerDetailView: View {
                         set: { newValue in
                             pendingWatch = newValue
                             Task {
-                                if await actions.setNotifyWhenHeard?(peer, newValue) != true {
-                                    pendingWatch = nil
+                                let armed = await $failure.attempt(Self.notChangedTitle) {
+                                    try await actions.setNotifyWhenHeard?(peer, newValue)
                                 }
+                                if !armed { pendingWatch = nil }
                             }
                         }
                     )) {
@@ -450,6 +450,7 @@ struct PeerDetailView: View {
                                 .accessibilityLabel(Text("Ask Again", comment: "VoiceOver label: ask a node for its identity again."))
                         }
                         .buttonStyle(.borderless)
+                        .disabled(isSendingIdentityRequest)
                         .accessibilityIdentifier("peer.advertised.refresh")
                     }
                 }
@@ -529,7 +530,11 @@ struct PeerDetailView: View {
         if conversation != nil {
             if actions.demoteToTransient != nil {
                 Button {
-                    Task { _ = await actions.demoteToTransient?(peer) }
+                    Task {
+                        await $failure.attempt(String(localized: "Peer not removed", comment: "Alert title.")) {
+                            try await actions.demoteToTransient?(peer)
+                        }
+                    }
                 } label: {
                     Text("Remove Peer", comment: "Confirms taking a node off the Peers list, keeping its conversation.")
                 }
@@ -651,7 +656,8 @@ struct PeerDetailView: View {
 
     /// Whether this node has a stored row at all. The page can be opened on
     /// a synthetic summary—a device being set up, the radio's own identity
-    /// before it is recorded—and those have nothing to favorite or remove.
+    /// before it is recorded—and those have nothing to name, message,
+    /// favorite or remove.
     private var isStoredLocally: Bool {
         actions.knownPeers.contains {
             $0.identity.canonicalAddress == pushedPeer.identity.canonicalAddress
@@ -686,13 +692,26 @@ struct PeerDetailView: View {
 
     // MARK: Actions
 
+    /// The title of a failed switch or star.
+    private static var notChangedTitle: String {
+        String(localized: "Not changed", comment: "Alert title: a setting on a peer or conversation could not be changed.")
+    }
+
+
+    private func addToPeers() async {
+        await $failure.attempt(String(localized: "Peer not saved", comment: "Alert title.")) {
+            try await actions.promoteToSaved?(peer)
+        }
+    }
+
     private func toggleFavorite() {
         let newValue = !currentFavorite
         currentFavorite = newValue
         Task {
-            if await actions.setFavorite?(peer, newValue) != true {
-                currentFavorite = !newValue
+            let changed = await $failure.attempt(Self.notChangedTitle) {
+                try await actions.setFavorite?(peer, newValue)
             }
+            if !changed { currentFavorite = !newValue }
         }
     }
 
@@ -706,17 +725,16 @@ struct PeerDetailView: View {
         let trimmed = nameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         let newAlias = trimmed.isEmpty ? nil : trimmed
         guard newAlias != currentAlias else { return }
-        if await updateAlias(peer, newAlias) {
+        let saved = await $failure.attempt(String(localized: "Name not saved", comment: "Alert title.")) {
+            try await updateAlias(peer, newAlias)
+        }
+        if saved {
             currentAlias = newAlias
             nameDraft = newAlias ?? ""
         } else {
             // Put the field back to what the peer is actually called, so it
             // does not go on showing a name nothing stored.
             nameDraft = currentAlias ?? ""
-            feedback = Feedback(
-                title: String(localized: "Name not saved", comment: "Alert title."),
-                message: String(localized: "The name could not be stored. Try again.", comment: "Alert message.")
-            )
         }
     }
 
@@ -742,12 +760,12 @@ struct PeerDetailView: View {
         guard let startConversation = actions.startConversation, !isOpeningConversation else { return }
         isOpeningConversation = true
         defer { isOpeningConversation = false }
-        if let conversation = await startConversation(peer) {
-            destination = .conversation(conversation)
-        } else {
-            feedback = Feedback(
-                title: String(localized: "Conversation unavailable", comment: "Alert title."),
-                message: String(localized: "A conversation with this node could not be started.", comment: "Alert message.")
+        do {
+            destination = .conversation(try await startConversation(peer))
+        } catch {
+            failure = FailureNotice(
+                String(localized: "Conversation unavailable", comment: "Alert title."),
+                error
             )
         }
     }
@@ -755,15 +773,15 @@ struct PeerDetailView: View {
     /// Ask the node who it is. The answer lands in the page on its own, so
     /// all this shows is that a request is outstanding.
     private func refreshIdentity() async {
-        guard let fetchIdentity = actions.fetchIdentity, !isRefreshingIdentity else { return }
-        if await fetchIdentity(peer) {
-            isRefreshingIdentity = true
-        } else {
-            feedback = Feedback(
-                title: String(localized: "Not sent", comment: "Alert title: a request could not go out."),
-                message: String(localized: "Connect a companion radio set up for this phone.", comment: "Alert message when no radio can send.")
-            )
+        guard let fetchIdentity = actions.fetchIdentity, !isRefreshingIdentity, !isSendingIdentityRequest else { return }
+        // Held until the radio has it, so a second tap meanwhile does not
+        // become a second request on the air.
+        isSendingIdentityRequest = true
+        defer { isSendingIdentityRequest = false }
+        let sent = await $failure.attempt(String(localized: "Not sent", comment: "Alert title: a request could not go out.")) {
+            try await fetchIdentity(peer)
         }
+        if sent { isRefreshingIdentity = true }
     }
 
     private func loadRoute() async {
@@ -800,16 +818,12 @@ struct PeerDetailView: View {
         messageCount = await messageActions.countMessages(conversation.conversationAddress)
     }
 
-    private func deleteAndDismiss(_ action: ((PeerSummary) async -> Bool)?) async {
+    private func deleteAndDismiss(_ action: ((PeerSummary) async throws -> Void)?) async {
         guard let action else { return }
-        if await action(peer) {
-            dismiss()
-        } else {
-            feedback = Feedback(
-                title: String(localized: "Peer not deleted", comment: "Alert title."),
-                message: String(localized: "The node could not be deleted. Try again.", comment: "Alert message.")
-            )
+        let deleted = await $failure.attempt(String(localized: "Peer not deleted", comment: "Alert title.")) {
+            try await action(peer)
         }
+        if deleted { dismiss() }
     }
 }
 
@@ -826,11 +840,6 @@ private struct PeerLocation: Hashable {
     let latitude: Double
     let longitude: Double
     let cellMeters: Double?
-}
-
-private struct Feedback {
-    let title: String
-    let message: String
 }
 
 /// What the page watches to decide the cached route needs re-reading: the

@@ -50,7 +50,6 @@ struct ChannelAvatar: View {
             regionCode: nil,
             maxFloodHops: nil,
             joinedPhone: true,
-            joinedDevice: false,
             notificationsEnabled: false,
             joinedAt: .now
         )

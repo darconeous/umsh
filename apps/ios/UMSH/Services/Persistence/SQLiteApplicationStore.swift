@@ -234,9 +234,6 @@ struct StoredChannel: Equatable, Sendable {
     /// Whether the phone identity has joined. Drives MAC registration and the
     /// radio's host channel table.
     let joinedPhone: Bool
-    /// Whether the companion radio's device identity has joined. A cache: the
-    /// device is authoritative and this is reconciled from it on attach.
-    let joinedDevice: Bool
     /// Reserved for channel chat; no notification path reads it yet.
     let notificationsEnabled: Bool
     let joinedAt: Date?
@@ -522,98 +519,6 @@ actor SQLiteApplicationStore {
         try run { try $0.knowsIdentity(id: id, publicAddress: publicAddress) }
     }
 
-    func upsertPeer(
-        ownerIdentityID: String,
-        publicAddress: String,
-        alias: String?,
-        advertisedName: String? = nil,
-        isSaved: Bool = false,
-        nodeKind: MobileStoredNodeKind? = nil,
-        systemRole: MobileStoredSystemRole? = nil,
-        radioIdentifier: String? = nil,
-        advertisement: Data? = nil,
-        advertisementAuthenticated: Bool = false,
-        advertisementReceivedAt: Date? = nil
-    ) throws {
-        let peer = MobilePeerUpsertRecord(
-            alias: alias,
-            advertisedName: advertisedName,
-            isSaved: isSaved,
-            nodeKind: nodeKind,
-            systemRole: systemRole,
-            radioIdentifier: radioIdentifier,
-            advertisement: advertisement,
-            advertisementAuthenticated: advertisementAuthenticated,
-            advertisementReceivedAtMs: advertisementReceivedAt?.storeMilliseconds
-        )
-        try run { try $0.upsertPeer(ownerIdentityId: ownerIdentityID, publicAddress: publicAddress, peer: peer) }
-    }
-
-    func updateNodeAlias(
-        ownerIdentityID: String,
-        publicAddress: String,
-        alias: String?
-    ) throws {
-        try run { try $0.updateNodeAlias(ownerIdentityId: ownerIdentityID, publicAddress: publicAddress, alias: alias) }
-    }
-
-    func setPeerFavorite(
-        ownerIdentityID: String,
-        publicAddress: String,
-        isFavorite: Bool
-    ) throws {
-        try run {
-            try $0.setPeerFavorite(ownerIdentityId: ownerIdentityID, publicAddress: publicAddress, isFavorite: isFavorite)
-        }
-    }
-
-    /// Record a transient node on the local identity, making it visible in
-    /// the main Peers list.
-    func promotePeerToSaved(ownerIdentityID: String, publicAddress: String) throws {
-        try run { try $0.promotePeerToSaved(ownerIdentityId: ownerIdentityID, publicAddress: publicAddress) }
-    }
-
-    /// Remove a node from the local identity without touching its history:
-    /// the row stays as a transient (searchable, discoverable) and any
-    /// conversation keeps working. Favorite and alias are local statements
-    /// about a saved peer, so they clear with it. Refuses the
-    /// companion radio, whose row is system-managed.
-    func demotePeerToTransient(ownerIdentityID: String, publicAddress: String) throws {
-        try run { try $0.demotePeerToTransient(ownerIdentityId: ownerIdentityID, publicAddress: publicAddress) }
-    }
-
-    @discardableResult
-    func deletePeer(ownerIdentityID: String, publicAddress: String) throws -> Bool {
-        try run { try $0.deletePeer(ownerIdentityId: ownerIdentityID, publicAddress: publicAddress) }
-    }
-
-    @discardableResult
-    func deletePeerAndConversation(
-        ownerIdentityID: String,
-        publicAddress: String
-    ) throws -> Bool {
-        try run { try $0.deletePeerAndConversation(ownerIdentityId: ownerIdentityID, publicAddress: publicAddress) }
-    }
-
-    /// Drop every transient row that nothing else depends on: saved peers,
-    /// the companion radio, rows on the device identity, rows with a
-    /// conversation, and rows carrying a pending watch all stay.
-    func clearTransientPeers(ownerIdentityID: String) throws {
-        try run { try $0.clearTransientPeers(ownerIdentityId: ownerIdentityID) }
-    }
-
-    /// Arm or disarm the one-shot "tell me the next time this node is heard"
-    /// watch. Unlike favoriting, this does not save a transient node: the
-    /// retention queries exempt armed rows instead, so asking to be told
-    /// about a node is not the same as deciding to keep it.
-    func setNotifyWhenHeard(
-        ownerIdentityID: String,
-        publicAddress: String,
-        enabled: Bool
-    ) throws {
-        try run { try $0.setNotifyWhenHeard(ownerIdentityId: ownerIdentityID, publicAddress: publicAddress, enabled: enabled) }
-    }
-
     func listNodes(ownerIdentityID: String) throws -> [StoredNode] {
         try run { try $0.listNodes(ownerIdentityId: ownerIdentityID) }.map(StoredNode.init)
     }
@@ -624,101 +529,11 @@ actor SQLiteApplicationStore {
         try run { try $0.channels(ownerIdentityId: ownerIdentityID) }.compactMap(StoredChannel.init)
     }
 
-    /// The channel this identity already holds under `keyDigest`, if any.
-    ///
-    /// Import checks this before inserting so a re-scanned invitation updates
-    /// the existing channel instead of creating a second one for the same key.
-    func channel(ownerIdentityID: String, keyDigest: String) throws -> StoredChannel? {
-        try run { try $0.channel(ownerIdentityId: ownerIdentityID, keyDigest: keyDigest) }
-            .flatMap(StoredChannel.init)
-    }
-
-    func insertChannel(_ channel: StoredChannel, keyDigest: String) throws {
-        try run {
-            try $0.insertChannel(
-                channel: MobileStoredChannelRecord(channel),
-                keyDigest: keyDigest,
-                createdAtMs: Date.now.storeMilliseconds
-            )
-        }
-    }
-
-    /// Update the parts of a channel the user controls, leaving membership and
-    /// key-derived columns alone.
-    func updateChannelDetails(
-        id: UUID,
-        alias: String?,
-        regionCode: Data?,
-        maxFloodHops: Int?,
-        notificationsEnabled: Bool
-    ) throws {
-        try run {
-            try $0.updateChannelDetails(
-                id: id.uuidString,
-                alias: alias,
-                regionCode: regionCode,
-                maxFloodHops: maxFloodHops.map { UInt8(clamping: $0) },
-                notificationsEnabled: notificationsEnabled
-            )
-        }
-    }
-
-    /// Record which identities have joined. `joinedAt` is stamped the first
-    /// time the phone joins and left alone after.
-    func setChannelMembership(id: UUID, joinedPhone: Bool, joinedDevice: Bool) throws {
-        try run {
-            try $0.setChannelMembership(
-                id: id.uuidString,
-                joinedPhone: joinedPhone,
-                joinedDevice: joinedDevice,
-                nowMs: Date.now.storeMilliseconds
-            )
-        }
-    }
-
-    /// Forget a channel. Its transcript stays: delete the conversation first
-    /// with ``deleteChannelConversation(ownerIdentityID:conversationID:)``.
-    func deleteChannel(id: UUID) throws {
-        try run { try $0.deleteChannel(id: id.uuidString) }
-    }
-
     // MARK: Conversations
-
-    func ensureDirectConversation(
-        ownerIdentityID: String,
-        peerAddress: String
-    ) throws -> Int64 {
-        try run {
-            try $0.ensureDirectConversation(
-                ownerIdentityId: ownerIdentityID,
-                peerAddress: peerAddress,
-                createdAtMs: Date.now.storeMilliseconds
-            )
-        }
-    }
 
     func listDirectConversations(ownerIdentityID: String) throws -> [StoredDirectConversation] {
         try run { try $0.listDirectConversations(ownerIdentityId: ownerIdentityID) }
             .map(StoredDirectConversation.init)
-    }
-
-    /// The channel conversation for a channel, created if this is the first
-    /// time the user has entered it. Channels are joined without a chat; the
-    /// conversation appears when someone asks for one, or when a message
-    /// arrives.
-    func ensureChannelConversation(
-        ownerIdentityID: String,
-        channelID: UUID,
-        conversationAddress: String
-    ) throws -> Int64 {
-        try run {
-            try $0.ensureChannelConversation(
-                ownerIdentityId: ownerIdentityID,
-                channelId: channelID.uuidString,
-                conversationAddress: conversationAddress,
-                createdAtMs: Date.now.storeMilliseconds
-            )
-        }
     }
 
     func listChannelConversations(
@@ -726,13 +541,6 @@ actor SQLiteApplicationStore {
     ) throws -> [StoredChannelConversation] {
         try run { try $0.listChannelConversations(ownerIdentityId: ownerIdentityID) }
             .compactMap(StoredChannelConversation.init)
-    }
-
-    /// Remove a channel conversation and its local transcript. Leaving a group
-    /// chat is not leaving the channel: the key stays, so traffic still
-    /// arrives and a later message opens the conversation again.
-    func deleteChannelConversation(ownerIdentityID: String, conversationID: Int64) throws {
-        try run { try $0.deleteChannelConversation(ownerIdentityId: ownerIdentityID, conversationId: conversationID) }
     }
 
     /// Erase a conversation's messages while keeping the conversation itself.
@@ -769,31 +577,6 @@ actor SQLiteApplicationStore {
                 ownerIdentityId: ownerIdentityID,
                 conversationAddress: conversationAddress,
                 readAtMs: Date.now.storeMilliseconds
-            )
-        }
-    }
-
-    /// Remove a conversation and its local history. Outbound stream
-    /// checkpoints are deliberately retained: sequence continuity with the
-    /// peer must survive the transcript, or the next message would announce
-    /// a Sequence Reset. Archived outbound payloads go with the history, so
-    /// a late resend request for them is answered Unavailable—the protocol
-    /// handles that; keeping deleted content on disk would not be acceptable.
-    func deleteDirectConversation(ownerIdentityID: String, conversationID: Int64) throws {
-        try run { try $0.deleteDirectConversation(ownerIdentityId: ownerIdentityID, conversationId: conversationID) }
-    }
-
-    /// Turn notifications for one direct conversation on or off.
-    func setDirectConversationNotifications(
-        ownerIdentityID: String,
-        conversationID: Int64,
-        enabled: Bool
-    ) throws {
-        try run {
-            try $0.setDirectConversationNotifications(
-                ownerIdentityId: ownerIdentityID,
-                conversationId: conversationID,
-                enabled: enabled
             )
         }
     }
@@ -1159,16 +942,6 @@ extension StoredChannelKind {
     }
 }
 
-extension MobileStoredChannelKind {
-    fileprivate init(_ kind: StoredChannelKind) {
-        switch kind {
-        case .builtin: self = .builtin
-        case .named: self = .named
-        case .privateKey: self = .privateKey
-        }
-    }
-}
-
 extension StoredChannel {
     /// `nil` when the stored ID is not a UUID.
     init?(_ record: MobileStoredChannelRecord) {
@@ -1185,30 +958,8 @@ extension StoredChannel {
             regionCode: record.regionCode,
             maxFloodHops: record.maxFloodHops.map { Int($0) },
             joinedPhone: record.joinedPhone,
-            joinedDevice: record.joinedDevice,
             notificationsEnabled: record.notificationsEnabled,
             joinedAt: record.joinedAtMs.map(Date.init(storeMilliseconds:))
-        )
-    }
-}
-
-extension MobileStoredChannelRecord {
-    fileprivate init(_ channel: StoredChannel) {
-        self.init(
-            id: channel.id.uuidString,
-            ownerIdentityId: channel.ownerIdentityID,
-            kind: MobileStoredChannelKind(channel.kind),
-            canonicalName: channel.canonicalName,
-            name: channel.name,
-            alias: channel.alias,
-            channelIdHex: channel.channelIDHex,
-            tint: channel.tint,
-            regionCode: channel.regionCode,
-            maxFloodHops: channel.maxFloodHops.map { UInt8(clamping: $0) },
-            joinedPhone: channel.joinedPhone,
-            joinedDevice: channel.joinedDevice,
-            notificationsEnabled: channel.notificationsEnabled,
-            joinedAtMs: channel.joinedAt?.storeMilliseconds
         )
     }
 }

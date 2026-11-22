@@ -266,15 +266,6 @@ extension RadioDriverAdapter {
         try await deviceTable { try await $0.removeDeviceAdmin(publicKey: publicKey) }
     }
 
-    func addDeviceChannel(_ channelKey: Data) async throws {
-        try await deviceTable { try await $0.insertDeviceChannelKey(channelKey: channelKey) }
-    }
-
-    func removeDeviceChannel(_ channelKey: Data) async throws {
-        try await deviceTable { try await $0.removeDeviceChannelKey(channelKey: channelKey) }
-    }
-
-
     /// A table edit, resolved by the update that carries its outcome. The
     /// driver queues it behind other exchanges and mesh traffic, and
     /// reports `operationInProgress` only when its queue is full.
@@ -638,7 +629,6 @@ extension RadioProvisioningSummary {
                         .canonicalAddress
                 }
             },
-            devChannelIDs: sync.devChannelIds,
             // The host key tables are read exactly when the radio
             // advertises CAP_HOST_KEYS, so a reported count is the
             // capability.

@@ -80,11 +80,25 @@ pub(crate) mod memory {
         /// Loads answer `Unavailable`, as a vault does before the first
         /// unlock.
         locked: AtomicBool,
+        /// Every call answers `Unavailable`, as a vault whose store is not
+        /// open at all.
+        unavailable: AtomicBool,
     }
 
     impl MemoryVault {
         pub(crate) fn set_locked(&self, locked: bool) {
             self.locked.store(locked, Ordering::SeqCst);
+        }
+
+        pub(crate) fn set_unavailable(&self, unavailable: bool) {
+            self.unavailable.store(unavailable, Ordering::SeqCst);
+        }
+
+        fn refuses(&self) -> Result<(), SecretVaultError> {
+            if self.unavailable.load(Ordering::SeqCst) {
+                return Err(SecretVaultError::Unavailable);
+            }
+            Ok(())
         }
 
         pub(crate) fn accounts(&self) -> Vec<String> {
@@ -98,6 +112,7 @@ pub(crate) mod memory {
 
     impl SecretVault for MemoryVault {
         fn load(&self, account: String) -> Result<Option<Vec<u8>>, SecretVaultError> {
+            self.refuses()?;
             if self.locked.load(Ordering::SeqCst) {
                 return Err(SecretVaultError::Unavailable);
             }
@@ -105,16 +120,19 @@ pub(crate) mod memory {
         }
 
         fn store(&self, account: String, secret: Vec<u8>) -> Result<(), SecretVaultError> {
+            self.refuses()?;
             self.secrets().insert(account.to_uppercase(), secret);
             Ok(())
         }
 
         fn delete(&self, account: String) -> Result<(), SecretVaultError> {
+            self.refuses()?;
             self.secrets().remove(&account.to_uppercase());
             Ok(())
         }
 
         fn delete_all(&self) -> Result<(), SecretVaultError> {
+            self.refuses()?;
             self.secrets().clear();
             Ok(())
         }

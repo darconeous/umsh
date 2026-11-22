@@ -640,19 +640,19 @@ Titles](../channel-badges.md).
 
 ### Channel list
 
-Sections appear only when they contain something:
+The list holds the channels this identity is in, with no section
+header—everything listed is joined, which the screen title already says. Each
+row shows the channel's badge, its title, a type label (**Built-in**,
+**Public**, **Private**), and the two-octet derived identifier in monospace. A
+muted channel carries a bell-slash glyph with a text equivalent for VoiceOver.
+Swiping a row offers to leave, confirmed.
 
-- The channels this identity is in, with no section header—everything listed
-  is joined, which the screen title already says. Each row shows the channel's
-  badge, its title, a type label (**Built-in**, **Public**,
-  **Private**), the two-octet derived identifier in monospace, and which
-  identities have joined it (**Phone**, **Radio**, or **Phone and radio**). A
-  muted channel carries a bell-slash glyph with a text equivalent for
-  VoiceOver. Swiping a row offers to leave, confirmed.
-- **On the radio only**—identifiers the companion radio's device identity
-  reports that this phone holds no key for. They are shown, not named: the
-  device reports derived identifiers and never key material. Selecting one
-  explains that, rather than implying the phone could open it.
+The list is the phone's membership alone. The companion radio's own channels
+are managed apart from it and never appear here.
+
+Leaving a channel removes its messages from this phone. A channel joined by
+name can be joined again by its name; a private channel's key is deleted, so
+joining it again needs a new invitation.
 
 `public` and `EMERGENCY` are joined on first run with notifications off. They
 are the channels a new user is expected to be reachable on, but neither should
@@ -697,13 +697,10 @@ distinct channels and messages never cross between them.
 ### Channel detail
 
 Leads with the channel itself—name as written, type, derived identifier, and
-join date—then local details, then membership. The key is not shown: it is
+join date—then local details, and ends with **Leave Channel**. The key is not shown: it is
 not something to read, and the invitation is the way it leaves the phone. **Alias** is the local override; it takes display precedence
 everywhere but never changes the channel's own name, exactly as a peer alias
-behaves, and it is what travels nowhere when the channel is shared. The phone and the companion radio are separate members with separate
-key tables, so each has its own control. When no radio with an identity of its
-own is attached, the radio control is unavailable and says why—never simply
-"not joined".
+behaves, and it is what travels nowhere when the channel is shared.
 
 Where the protocol fixes a channel's behavior, the screen states it instead of
 offering a control the user could contradict. `public` and `EMERGENCY` show

@@ -1116,8 +1116,8 @@ enum WorkerCommand {
         channels: Vec<(ChannelKey, Option<u8>)>,
         response: oneshot::Sender<Result<(), MobileMeshError>>,
     },
-    RemoveChannels {
-        keys: Vec<ChannelKey>,
+    RemoveChannelsByTag {
+        tags: Vec<ChannelTag>,
         response: oneshot::Sender<Result<(), MobileMeshError>>,
     },
     Ping {
@@ -2769,24 +2769,11 @@ impl MobileMeshSession {
     /// Drop channel keys from the live MAC, so its traffic is no longer
     /// decrypted. Idempotent, like [`Self::remove_peers`].
     pub async fn remove_channels(&self, keys: Vec<Vec<u8>>) -> Result<(), MobileMeshError> {
-        let keys = decode_channel_keys(keys)?;
-        let addresses = keys.iter().map(channel_conversation).collect::<Vec<_>>();
-        let (response, result) = oneshot::channel();
-        self.commands
-            .send(WorkerCommand::RemoveChannels { keys, response })
-            .await
-            .map_err(|_| MobileMeshError::SessionUnavailable)?;
-        result
-            .await
-            .map_err(|_| MobileMeshError::SessionUnavailable)??;
-        let mut digests = self
-            .channel_digests
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        for address in addresses {
-            digests.remove(&address);
-        }
-        Ok(())
+        let addresses = decode_channel_keys(keys)?
+            .iter()
+            .map(channel_conversation)
+            .collect();
+        self.remove_channels_by_address(addresses).await
     }
 
     pub fn receive(&self, frame: MobileMeshRxRecord) -> Result<(), MobileMeshError> {
@@ -3014,6 +3001,40 @@ impl MobileMeshSession {
     pub(crate) fn hold(&self, listener: Arc<dyn MobileMeshWakeListener>) {
         self.held.store(true, Ordering::Release);
         self.wake.set_listener(Some(listener));
+    }
+
+    /// Drop channels from the live MAC by their conversation addresses: the
+    /// session already holds each key under its address, so no key need be
+    /// read to let one go. [`Self::remove_channels`] comes here by key. A
+    /// channel the session does not hold is already gone. An address that
+    /// is not a channel's is `InvalidRequest`.
+    pub(crate) async fn remove_channels_by_address(
+        &self,
+        addresses: Vec<String>,
+    ) -> Result<(), MobileMeshError> {
+        let tags = addresses
+            .iter()
+            .map(|address| {
+                crate::mobile_chat::parse_channel_address(address)
+                    .ok_or(MobileMeshError::InvalidRequest)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let (response, result) = oneshot::channel();
+        self.commands
+            .send(WorkerCommand::RemoveChannelsByTag { tags, response })
+            .await
+            .map_err(|_| MobileMeshError::SessionUnavailable)?;
+        result
+            .await
+            .map_err(|_| MobileMeshError::SessionUnavailable)??;
+        let mut digests = self
+            .channel_digests
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        for address in addresses {
+            digests.remove(&address);
+        }
+        Ok(())
     }
 
     /// End the session and wait for its threads: fail every transmission
@@ -4648,13 +4669,15 @@ async fn run_worker(
                             }
                             let _ = response.send(result);
                         }
-                        Some(WorkerCommand::RemoveChannels { keys, response }) => {
-                            for key in keys {
-                                // Not-joined is success, as for peers.
+                        Some(WorkerCommand::RemoveChannelsByTag { tags, response }) => {
+                            for tag in tags {
+                                // Not held is success, as for peers. Only
+                                // a registered channel is joined.
+                                let Some(key) = chat.facade.channels().key(&tag) else {
+                                    continue;
+                                };
                                 let _ = node.leave(&umsh_node::Channel::private(key, "")).await;
-                                chat.facade
-                                    .channels_mut()
-                                    .remove(&crate::channel_tag(&key));
+                                chat.facade.channels_mut().remove(&tag);
                             }
                             let _ = response.send(Ok(()));
                         }

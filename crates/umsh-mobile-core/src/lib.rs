@@ -35,15 +35,15 @@ mod virtual_radio;
 pub use app_core::{
     MobileAppChangesRecord, MobileAppChannelConversationRecord, MobileAppChannelPreviewRecord,
     MobileAppChannelRecord, MobileAppConfigRecord, MobileAppCore, MobileAppCoreListener,
-    MobileAppDirectConversationRecord, MobileAppError, MobileAppLearnedPathOffer,
-    MobileAppLifecycle, MobileAppMessageRecord, MobileAppMessageRepeaterRecord,
-    MobileAppNeighborReportRecord, MobileAppOperationProgressRecord, MobileAppPeerRecord,
-    MobileAppPingReplyRecord, MobileAppPingResult, MobileAppPolicyRecord, MobileAppPositionReading,
-    MobileAppPreviewRecord, MobileAppRepeaterListingRecord, MobileAppRepeaterNeighborRecord,
-    MobileAppRouteCandidateRecord, MobileAppRouteRecord, MobileAppStartFailure,
-    MobileAppStateRecord, MobileAppStatusRecord, MobileAppTranscriptPageRecord,
-    MobileNotificationEventRecord, MobileNotificationReactionRecord, MobileOperation,
-    MobilePositionRecord,
+    MobileAppDirectConversationRecord, MobileAppError, MobileAppJoinedChannelRecord,
+    MobileAppLearnedPathOffer, MobileAppLifecycle, MobileAppMessageRecord,
+    MobileAppMessageRepeaterRecord, MobileAppNeighborReportRecord,
+    MobileAppOperationProgressRecord, MobileAppPeerRecord, MobileAppPingReplyRecord,
+    MobileAppPingResult, MobileAppPolicyRecord, MobileAppPositionReading, MobileAppPreviewRecord,
+    MobileAppRepeaterListingRecord, MobileAppRepeaterNeighborRecord, MobileAppRouteCandidateRecord,
+    MobileAppRouteRecord, MobileAppStartFailure, MobileAppStateRecord, MobileAppStatusRecord,
+    MobileAppTranscriptPageRecord, MobileNotificationEventRecord, MobileNotificationReactionRecord,
+    MobileOperation, MobilePositionRecord,
 };
 pub use counter_store::{CounterStoreError, MobileCounterStore};
 pub use logging::{MobileLogField, MobileLogLevel, MobileLogRecord, MobileLogger, set_logger};
@@ -121,7 +121,7 @@ uniffi::setup_scaffolding!();
 ///
 /// Increment this when a binding-visible operation, record, or error contract
 /// changes incompatibly. It is independent of the UMSH wire version.
-pub const MOBILE_API_VERSION: u16 = 89;
+pub const MOBILE_API_VERSION: u16 = 90;
 
 /// Stable error categories consumed by platform adapters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Error)]
@@ -463,6 +463,40 @@ pub fn inspect_channel_uri(uri: String) -> Result<ChannelPreviewRecord, MobileEr
 #[uniffi::export]
 pub fn inspect_channel_name(name: String) -> Result<ChannelPreviewRecord, MobileError> {
     named_channel_preview(&name)
+}
+
+/// A channel the protocol fixes rules for (`multicast-channels.md`
+/// §Default Channels).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum MobileWellKnownChannel {
+    Public,
+    Emergency,
+}
+
+/// A well-known channel and the rules it carries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct MobileWellKnownChannelRecord {
+    pub channel: MobileWellKnownChannel,
+    /// The flood-hop ceiling the protocol holds its messages to, whatever
+    /// a user or an invitation asks.
+    pub fixed_max_flood_hops: u8,
+}
+
+/// The well-known channel a canonical name derives, or `None` for any
+/// other channel. The one rule both apps and the core read.
+#[uniffi::export]
+pub fn well_known_channel(canonical_name: Option<String>) -> Option<MobileWellKnownChannelRecord> {
+    use umsh_text::WellKnownChannels;
+
+    let channel = match canonical_name.as_deref()? {
+        WellKnownChannels::PUBLIC_NAME => MobileWellKnownChannel::Public,
+        WellKnownChannels::EMERGENCY_NAME => MobileWellKnownChannel::Emergency,
+        _ => return None,
+    };
+    Some(MobileWellKnownChannelRecord {
+        channel,
+        fixed_max_flood_hops: umsh_text::node_adapter::WELL_KNOWN_CHANNEL_MAX_FLOOD_HOPS,
+    })
 }
 
 /// Whether `body`, the text of a message on `EMERGENCY`, marks it as a

@@ -52,7 +52,7 @@ struct PathRail: View {
     var open: ((PeerSummary) -> Void)? = nil
     /// Asks the node behind a hint to identify itself, given the hint and the
     /// repeaters ahead of it. `nil` hides the control.
-    var identifyRepeater: ((Data, [Data]) async -> Bool)? = nil
+    var identifyRepeater: ((Data, [Data]) async throws -> Void)? = nil
 
     static let columnWidth: CGFloat = IdentityRowSize.compact.avatarDiameter
 
@@ -61,7 +61,7 @@ struct PathRail: View {
         legs: [PathRailLeg],
         isTentative: Bool = false,
         open: ((PeerSummary) -> Void)? = nil,
-        identifyRepeater: ((Data, [Data]) async -> Bool)? = nil
+        identifyRepeater: ((Data, [Data]) async throws -> Void)? = nil
     ) {
         precondition(legs.count == max(stops.count - 1, 0), "a leg between each pair of stops")
         self.stops = stops
@@ -136,7 +136,7 @@ struct PathRail: View {
                     hint: hint,
                     named: named,
                     discover: identifyRepeater.map { identify in
-                        { await identify(hint.bytes, preceding.map(\.bytes)) }
+                        { try await identify(hint.bytes, preceding.map(\.bytes)) }
                     }
                 )
             }

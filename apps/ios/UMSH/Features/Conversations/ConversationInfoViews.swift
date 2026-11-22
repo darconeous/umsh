@@ -4,12 +4,11 @@ import SwiftUI
 /// header the way a peer's profile is.
 struct ChannelConversationDetailView: View {
     let conversation: ChannelConversationSummary
-    let radioSnapshot: RadioSnapshot
     /// The channel-management operations, for the row leading to the channel
     /// itself. `enterConversation` is deliberately not offered here: it is
     /// this conversation.
     var channelActions: ChannelActions = .unavailable
-    var setNotifications: (ChannelSummary, Bool) async -> Void = { _, _ in }
+    var setNotifications: (ChannelSummary, Bool) async throws -> Void = { _, _ in }
     var clearMessages: (() async -> Void)? = nil
     /// Counted when the sheet appears rather than carried on the summary, which
     /// holds only the tail of the transcript.
@@ -20,6 +19,7 @@ struct ChannelConversationDetailView: View {
     /// even though the write is on its way.
     @State private var pendingNotifications: Bool?
     @State private var messageCount: Int?
+    @State private var failure: FailureNotice?
     /// Whether test messages on `EMERGENCY` notify. The runtime reads the
     /// same key.
     @AppStorage("notifications.testMessages") private var testMessageAlerts = false
@@ -30,7 +30,6 @@ struct ChannelConversationDetailView: View {
                 NavigationLink {
                     ChannelDetailView(
                         channel: conversation.channel,
-                        radioSnapshot: radioSnapshot,
                         actions: channelWithoutConversationEntry
                     )
                 } label: {
@@ -41,7 +40,7 @@ struct ChannelConversationDetailView: View {
                     }
                 }
             } footer: {
-                Text("The channel itself: who has joined it, how to invite someone, and how to leave.")
+                Text("The channel itself: how to invite someone and how to leave.")
             }
             Section {
                 Toggle("Notifications", isOn: Binding(
@@ -49,7 +48,12 @@ struct ChannelConversationDetailView: View {
                     set: { enabled in
                         pendingNotifications = enabled
                         Task {
-                            await setNotifications(conversation.channel, enabled)
+                            await $failure.attempt(
+                                String(
+                                    localized: "Channel not changed",
+                                    comment: "Alert title: a channel's alias, region, hops or notifications were not saved."
+                                )
+                            ) { try await setNotifications(conversation.channel, enabled) }
                             // The store has reloaded by now, so hand the toggle
                             // back to it—including when the write failed and
                             // the honest answer is the old value.
@@ -94,6 +98,7 @@ struct ChannelConversationDetailView: View {
         }
         .navigationTitle(conversation.channel.title)
         .task { messageCount = await countMessages() }
+        .failureAlert($failure)
     }
 
     /// Entering the conversation is what got the user here, so the channel

@@ -74,9 +74,11 @@ final class AppDelegate: NSObject, UIApplicationDelegate, ObservableObject {
             runtime = AppRuntime(
                 radioConnection: NoRadioConnection(),
                 opened: Result {
-                    try AppCoreHost.radioLess(over: SQLiteApplicationStore(path: ":memory:"))
+                    try AppCoreHost.radioLess(
+                        over: SQLiteApplicationStore(path: ":memory:"),
+                        vault: host.channelKeyVault
+                    )
                 },
-                channelKeyVault: host.channelKeyVault,
                 isStaging: true
             )
             super.init()
@@ -167,7 +169,6 @@ final class AppDelegate: NSObject, UIApplicationDelegate, ObservableObject {
         return AppRuntime(
             radioConnection: connection,
             opened: opened,
-            channelKeyVault: host.channelKeyVault,
             isStaging: isStaging
         )
     }

@@ -13,7 +13,7 @@ struct ChannelIdentityRow<Subtitle: View>: View {
         } title: {
             HStack(spacing: IdentityPresentation.accessorySpacing) {
                 Text(channel.title)
-                if showsMutedState && !channel.notificationsEnabled && channel.isJoined {
+                if showsMutedState && !channel.notificationsEnabled && channel.joinedPhone {
                     Image(systemName: "bell.slash")
                         .font(.caption)
                         .foregroundStyle(.secondary)

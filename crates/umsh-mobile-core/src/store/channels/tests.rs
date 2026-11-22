@@ -482,3 +482,117 @@ fn the_uuid_form_is_foundation_s() {
     // Multi-byte text of the right byte length is not hex.
     assert_eq!(canonical_uuid("0F8E2D4C-1B3A-4C5D-9E8F-A1B2C3D4E5é"), None);
 }
+
+fn messages(store: &MobileAppStore) -> i64 {
+    store
+        .connection()
+        .query_row("SELECT count(*) FROM chat_message", [], |row| row.get(0))
+        .unwrap()
+}
+
+fn with_conversation(store: &MobileAppStore, id: &str, address: &str) {
+    store
+        .ensure_channel_conversation(OWNER.into(), id.into(), address.into(), 20)
+        .unwrap();
+    store
+        .connection()
+        .execute(
+            "INSERT INTO chat_message (owner_identity_id, session_id, handle,
+                conversation_address, direction, body, created_at_ms)
+            VALUES ('alice', 's', 1, ?, 0, 'hello', 30)",
+            [address],
+        )
+        .unwrap();
+}
+
+#[test]
+fn leaving_deletes_the_row_and_purges_the_conversation() {
+    let (_directory, store) = open();
+    insert(
+        &store,
+        MobileStoredChannelRecord {
+            joined_device: true,
+            ..channel(ID)
+        },
+        "digest",
+        10,
+    );
+    with_conversation(&store, ID, "channel-address");
+    assert_eq!(
+        store.leave_channel(OWNER, &ID.to_ascii_lowercase()),
+        Ok(Some(LeftChannel {
+            deleted: true,
+            conversation_address: Some("channel-address".into()),
+        }))
+    );
+    assert_eq!(store.channels(OWNER.into()), Ok(vec![]));
+    assert_eq!(store.list_channel_conversations(OWNER.into()), Ok(vec![]));
+    assert_eq!(messages(&store), 0);
+    assert_eq!(store.leave_channel(OWNER, ID), Ok(None));
+}
+
+#[test]
+fn leaving_a_built_in_channel_keeps_its_row() {
+    let (_directory, store) = open();
+    insert(
+        &store,
+        MobileStoredChannelRecord {
+            kind: MobileStoredChannelKind::Builtin,
+            joined_at_ms: Some(5),
+            ..channel(ID)
+        },
+        "digest",
+        10,
+    );
+    assert_eq!(
+        store.leave_channel(OWNER, ID),
+        Ok(Some(LeftChannel {
+            deleted: false,
+            conversation_address: None,
+        }))
+    );
+    let stored = only(&store);
+    assert!(!stored.joined_phone);
+    assert_eq!(stored.joined_at_ms, Some(5));
+    // Another identity's channel is not this one's to leave.
+    assert_eq!(store.leave_channel("bob", ID), Ok(None));
+}
+
+#[test]
+fn the_core_s_writes_change_one_thing_each() {
+    let (_directory, store) = open();
+    insert(
+        &store,
+        MobileStoredChannelRecord {
+            joined_phone: false,
+            ..channel(ID)
+        },
+        "digest",
+        10,
+    );
+    assert_eq!(
+        store.channel_by_id(OWNER, "bad"),
+        Err(MobileStoreError::InvalidArgument)
+    );
+    assert_eq!(store.channel_by_id("bob", ID), Ok(None));
+
+    store.set_channel_alias(ID, Some("Mine".into())).unwrap();
+    store.set_channel_notifications(ID, true).unwrap();
+    store.set_channel_joined_phone(ID, true, 100).unwrap();
+    store
+        .set_channel_routing(ID, Some(vec![0x55, 0x53]), Some(4))
+        .unwrap();
+    let stored = store
+        .channel_by_id(OWNER, &ID.to_ascii_lowercase())
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.alias.as_deref(), Some("Mine"));
+    assert!(stored.notifications_enabled && stored.joined_phone && !stored.joined_device);
+    assert_eq!(stored.joined_at_ms, Some(100));
+    assert_eq!(stored.region_code, Some(vec![0x55, 0x53]));
+    assert_eq!(stored.max_flood_hops, Some(4));
+    // The stamp is kept through a leave and a rejoin.
+    store.set_channel_joined_phone(ID, false, 200).unwrap();
+    store.set_channel_joined_phone(ID, true, 300).unwrap();
+    assert_eq!(only(&store).joined_at_ms, Some(100));
+}

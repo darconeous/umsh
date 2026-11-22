@@ -54,6 +54,21 @@ impl Core {
         self.directory.path().join("counters")
     }
 
+    /// Another core over the same store and vault, as at the next launch.
+    pub(super) fn relaunched(&self) -> Arc<MobileAppCore> {
+        MobileAppCore::with_parts(
+            self.store.clone(),
+            self.vault.clone(),
+            MobileAppConfigRecord {
+                counter_directory: self.counter_directory().display().to_string(),
+                platform_model: 0,
+            },
+            self.clock.clone(),
+            Options::default(),
+        )
+        .unwrap()
+    }
+
     /// Start `seed`'s identity, and answer with its public identity.
     pub(super) async fn start(&self, seed: u8) -> PublicIdentityRecord {
         let identity = identity(seed);
