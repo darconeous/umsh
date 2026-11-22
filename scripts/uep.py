@@ -96,12 +96,6 @@ def check(header, path):
         values = header.get(key, [])
         if not isinstance(values, list) or not all(is_reference(v) for v in values):
             raise HeaderError(f"`{key}` is not a list of UEP numbers and draft names")
-    if is_uep:
-        later = [n for n in header.get("requires", []) if is_number(n) and n >= header["uep"]]
-        if later:
-            raise HeaderError(
-                "requires UEPs that come after it: " + ", ".join(f"UEP-{n:04}" for n in later)
-            )
 
 
 def link(value, src, chapter_dir, anchor=None):

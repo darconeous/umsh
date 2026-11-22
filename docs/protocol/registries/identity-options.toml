@@ -37,7 +37,7 @@ anchor = "timestamp"
 [[value]]
 value = 4
 name = "Supported Regions"
-uep = 14
+uep = 13
 
 [[value]]
 value = 5
