@@ -1,0 +1,43 @@
+title = "MAC Commands"
+created-by = 6
+anchor = "registry-considerations"
+min = 0
+max = 255
+policy = """
+Values 0 to 127, allocated by a standards UEP whose definition states \
+whether the command may be carried by multicast or broadcast."""
+
+[[range]]
+from = 128
+to = 255
+use = "reserved"
+
+[[value]]
+value = 4
+name = "Echo Request"
+uep = 6
+anchor = "echo-request"
+
+[[value]]
+value = 5
+name = "Echo Response"
+uep = 6
+anchor = "echo-response"
+
+[[value]]
+value = 9
+name = "No-Op"
+uep = 6
+anchor = "no-op"
+
+[[value]]
+value = 12
+name = "Verify Frame"
+uep = 7
+anchor = "verify-frame"
+
+[[value]]
+value = 13
+name = "Frame Verified"
+uep = 7
+anchor = "frame-verified"

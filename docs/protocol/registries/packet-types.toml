@@ -1,0 +1,53 @@
+title = "Packet Types"
+created-by = 5
+anchor = "packet-types-registry"
+min = 0
+max = 7
+policy = "Values 0 to 7, allocated by a standards UEP."
+
+[[range]]
+from = 5
+to = 5
+use = "reserved"
+
+[[value]]
+value = 0
+name = "Broadcast (`BCST`)"
+uep = 5
+anchor = "broadcast"
+
+[[value]]
+value = 1
+name = "MAC ack (`UACK`)"
+uep = 5
+anchor = "mac-ack"
+
+[[value]]
+value = 2
+name = "Unicast (`UNIC`)"
+uep = 5
+anchor = "unicast"
+
+[[value]]
+value = 3
+name = "Unicast, ack requested (`UNAR`)"
+uep = 5
+anchor = "unicast"
+
+[[value]]
+value = 4
+name = "Multicast (`MCST`)"
+uep = 5
+anchor = "multicast"
+
+[[value]]
+value = 6
+name = "Group unicast (`GUNI`)"
+uep = 5
+anchor = "group-unicast"
+
+[[value]]
+value = 7
+name = "Group unicast, ack requested (`GUAR`)"
+uep = 5
+anchor = "group-unicast"

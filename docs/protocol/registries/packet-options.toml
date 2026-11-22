@@ -1,0 +1,26 @@
+title = "Packet Options"
+created-by = 5
+anchor = "packet-options-registry"
+min = 0
+max = 65535
+policy = """
+Values 0 to 65535, allocated by a standards UEP. An option's number has the \
+attributes its definition gives it, as
+[UEP-0005 §option-attributes](../uep-0005.md#option-attributes) defines."""
+
+[[range]]
+from = 60000
+to = 65535
+use = "experimental"
+
+[[value]]
+value = 0
+name = "Frame Signature"
+uep = 7
+anchor = "frame-signature-option"
+
+[[value]]
+value = 8
+name = "Ack MIC"
+uep = 7
+anchor = "ack-mic-option"
