@@ -1,5 +1,5 @@
 title = "Identity Request Options"
-created-by = 10
+created-by = 11
 anchor = "registry-considerations"
 min = 0
 max = 65535
@@ -15,23 +15,23 @@ use = "experimental"
 [[value]]
 value = 1
 name = "NONCE"
-uep = 10
+uep = 11
 anchor = "identity-request-options"
 
 [[value]]
 value = 3
 name = "FILTER_NODE_HINT"
-uep = 10
+uep = 11
 anchor = "identity-request-options"
 
 [[value]]
 value = 5
 name = "FILTER_NODE_ROLE"
-uep = 10
+uep = 11
 anchor = "identity-request-options"
 
 [[value]]
 value = 7
 name = "FILTER_NODE_CAPS"
-uep = 10
+uep = 11
 anchor = "identity-request-options"

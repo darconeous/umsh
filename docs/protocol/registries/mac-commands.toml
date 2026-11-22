@@ -15,7 +15,7 @@ use = "reserved"
 [[value]]
 value = 1
 name = "Identity Request"
-uep = 10
+uep = 11
 anchor = "identity-request"
 
 [[value]]

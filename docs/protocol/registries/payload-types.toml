@@ -23,7 +23,7 @@ anchor = "compatibility"
 [[value]]
 value = 1
 name = "Node Identity"
-uep = 10
+uep = 11
 anchor = "payload"
 
 [[value]]
@@ -35,4 +35,4 @@ anchor = "encoding"
 [[value]]
 value = 3
 name = "Text Message"
-uep = 19
+uep = 20
