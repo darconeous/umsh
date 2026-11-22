@@ -1181,7 +1181,7 @@ gh-pages-site: site docs
 
 
 clean-workspaces:
-	for DIR in .claude/worktrees/* ; do ( cd $$DIR ; cargo clean && rm -fr target packages/UMSHMobileCore/Artifacts/UMSHMobileCoreFFI.xcframework docs/protocol/book docs/protocol-legacy/book && cd firmware-esp32 && rm -fr target && cargo clean )  ; done
+	for DIR in .claude/worktrees/* ; do ( cd $$DIR ; cargo clean && rm -fr target fuzz/target packages/UMSHMobileCore/Artifacts/UMSHMobileCoreFFI.xcframework docs/protocol/book docs/protocol-legacy/book && cd firmware-esp32 && rm -fr target && cargo clean )  ; done
 
 # --- Fuzzing ------------------------------------------------------------
 # Targets live in crates/umsh-fuzz-harness; fuzz/ is thin libFuzzer wrappers
