@@ -4112,6 +4112,7 @@ name = "umsh-node-mgmt"
 version = "0.1.0"
 dependencies = [
  "umsh-core",
+ "umsh-mac",
  "umsh-ulcp",
 ]
 
@@ -4198,6 +4199,7 @@ version = "0.1.0"
 dependencies = [
  "heapless 0.8.0",
  "umsh-core",
+ "umsh-grapheme",
  "umsh-mac",
  "umsh-node",
 ]

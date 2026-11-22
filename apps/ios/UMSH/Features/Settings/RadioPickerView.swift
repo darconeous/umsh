@@ -156,7 +156,7 @@ struct RadioAccessoryActions: View {
             Text(removalProblem ?? accessories.inventory.problem
                  ?? "Keep the radio nearby and open its pairing window. iOS will ask you to allow access.")
         }
-        .confirmationDialog("Forget the previous radio?", isPresented: $confirmsForget, titleVisibility: .visible) {
+        .confirmationDialog("Forget the Previous Radio?", isPresented: $confirmsForget, titleVisibility: .visible) {
             Button("Forget Previous Radio", role: .destructive) {
                 guard let id = accessories.inventory.migrationID else { return }
                 Task {

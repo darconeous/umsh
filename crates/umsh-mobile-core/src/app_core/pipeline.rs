@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 
 use super::MobileAppError;
+use super::chat::reaction_from_body;
 use super::records::{
     MobileAppChangesRecord, MobileNotificationEventRecord, MobileNotificationReactionRecord,
 };
@@ -633,6 +634,7 @@ impl Mutes {
                     body: target.body.clone(),
                     is_status: false,
                     reaction: Some(MobileNotificationReactionRecord {
+                        reaction: reaction_from_body(&target.body),
                         token: target.body,
                         target_body: target.target_body,
                     }),

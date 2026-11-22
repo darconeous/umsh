@@ -287,6 +287,9 @@ impl MobileAppStore {
 
     /// Fails with [`MobileStoreError::RecordNotFound`] when the identity
     /// has no such channel conversation.
+    ///
+    /// For tests and tools that seed a store with no core running; the app
+    /// edits through `MobileAppCore`'s commands.
     pub fn update_channel_draft(
         &self,
         owner_identity_id: String,
@@ -307,6 +310,9 @@ impl MobileAppStore {
     /// Mark everything in a conversation read as of `read_at_ms`.
     /// Addressed rather than keyed by row so one call serves both kinds of
     /// conversation. An address with no conversation is not an error.
+    ///
+    /// For tests and tools that seed a store with no core running; the app
+    /// edits through `MobileAppCore`'s commands.
     pub fn mark_conversation_read(
         &self,
         owner_identity_id: String,
@@ -428,6 +434,9 @@ impl MobileAppStore {
 
     /// Fails with [`MobileStoreError::RecordNotFound`] when the identity
     /// has no such direct conversation.
+    ///
+    /// For tests and tools that seed a store with no core running; the app
+    /// edits through `MobileAppCore`'s commands.
     pub fn update_draft(
         &self,
         owner_identity_id: String,
@@ -443,6 +452,239 @@ impl MobileAppStore {
             return Err(MobileStoreError::RecordNotFound);
         }
         Ok(())
+    }
+}
+
+/// The two statements that write a conversation's draft by address, one
+/// per kind: `?1` is what the draft becomes, `?2` the owner, `?3` the
+/// address. Each appends `condition` to its `WHERE`.
+fn draft_updates(set: &str, condition: &str) -> [String; 2] {
+    [
+        format!(
+            "UPDATE direct_conversation SET draft_text = {set}
+            WHERE owner_identity_id = ?2 AND node_id IN (
+                SELECT id FROM node WHERE owner_identity_id = ?2 AND public_address = ?3
+            ) {condition}"
+        ),
+        format!(
+            "UPDATE channel_conversation SET draft_text = {set}
+            WHERE owner_identity_id = ?2 AND conversation_address = ?3 {condition}"
+        ),
+    ]
+}
+
+/// A conversation's draft and read time, by address; `None` with no
+/// conversation there.
+fn draft_and_read_at(
+    connection: &Connection,
+    owner_identity_id: &str,
+    conversation_address: &str,
+) -> Result<Option<(String, i64)>, MobileStoreError> {
+    Ok(connection
+        .query_row(
+            "SELECT c.draft_text, c.last_read_at_ms FROM direct_conversation c
+                JOIN node n ON n.id = c.node_id
+            WHERE c.owner_identity_id = ?1 AND n.owner_identity_id = ?1
+                AND n.public_address = ?2
+            UNION ALL
+            SELECT draft_text, last_read_at_ms FROM channel_conversation
+            WHERE owner_identity_id = ?1 AND conversation_address = ?2
+            LIMIT 1",
+            params![owner_identity_id, conversation_address],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?)
+}
+
+/// How many messages in a conversation read as unread after `read_at_ms`,
+/// counted as the list rows count them.
+fn unread_after(
+    connection: &Connection,
+    owner_identity_id: &str,
+    conversation_address: &str,
+    read_at_ms: i64,
+) -> Result<i64, MobileStoreError> {
+    Ok(connection.query_row(
+        "SELECT COUNT(*) FROM chat_message
+        WHERE owner_identity_id = ? AND conversation_address = ?
+            AND direction = 0 AND deleted = 0 AND presence = 0
+            AND is_reaction = 0 AND silent = 0
+            AND created_at_ms > ?",
+        params![owner_identity_id, conversation_address, read_at_ms],
+        |row| row.get(0),
+    )?)
+}
+
+impl MobileAppStore {
+    /// Whether a conversation is stored under `conversation_address`: a
+    /// direct conversation, or the conversation of a channel the phone has
+    /// joined.
+    pub(crate) fn conversation_stored(
+        &self,
+        owner_identity_id: &str,
+        conversation_address: &str,
+    ) -> Result<bool, MobileStoreError> {
+        Ok(self
+            .connection()
+            .query_row(
+                "SELECT 1 FROM direct_conversation c JOIN node n ON n.id = c.node_id
+                WHERE c.owner_identity_id = ?1 AND n.owner_identity_id = ?1
+                    AND n.public_address = ?2
+                UNION ALL
+                SELECT 1 FROM channel_conversation c JOIN channel ch
+                    ON ch.id = c.channel_id AND ch.owner_identity_id = c.owner_identity_id
+                WHERE c.owner_identity_id = ?1 AND c.conversation_address = ?2
+                    AND ch.joined_phone = 1
+                LIMIT 1",
+                params![owner_identity_id, conversation_address],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
+
+    /// A conversation's draft, by address; `None` with no conversation
+    /// there.
+    #[cfg(test)]
+    pub(crate) fn draft(
+        &self,
+        owner_identity_id: &str,
+        conversation_address: &str,
+    ) -> Result<Option<String>, MobileStoreError> {
+        Ok(
+            draft_and_read_at(&self.connection(), owner_identity_id, conversation_address)?
+                .map(|(draft, _)| draft),
+        )
+    }
+
+    /// Make `text` a conversation's draft, as it stands. Whether the stored
+    /// text changed; [`MobileStoreError::RecordNotFound`] with no
+    /// conversation there.
+    pub(crate) fn set_draft(
+        &self,
+        owner_identity_id: &str,
+        conversation_address: &str,
+        text: &str,
+    ) -> Result<bool, MobileStoreError> {
+        self.write(|transaction| {
+            let Some((stored, _)) =
+                draft_and_read_at(transaction, owner_identity_id, conversation_address)?
+            else {
+                return Err(MobileStoreError::RecordNotFound);
+            };
+            if stored == text {
+                return Ok(false);
+            }
+            for statement in draft_updates("?1", "") {
+                transaction.execute(
+                    &statement,
+                    params![text, owner_identity_id, conversation_address],
+                )?;
+            }
+            Ok(true)
+        })
+    }
+
+    /// Keep `text` in a conversation's draft: as the draft when it is
+    /// empty, otherwise on a line of its own under it. One statement per
+    /// kind, so no other write lands between the read and the write.
+    /// [`MobileStoreError::RecordNotFound`] with no conversation there.
+    pub(crate) fn append_draft(
+        &self,
+        owner_identity_id: &str,
+        conversation_address: &str,
+        text: &str,
+    ) -> Result<(), MobileStoreError> {
+        self.write(|transaction| {
+            let mut changed = 0;
+            for statement in draft_updates(
+                "CASE WHEN draft_text = '' THEN ?1 ELSE draft_text || char(10) || ?1 END",
+                "",
+            ) {
+                changed += transaction.execute(
+                    &statement,
+                    params![text, owner_identity_id, conversation_address],
+                )?;
+            }
+            if changed == 0 {
+                return Err(MobileStoreError::RecordNotFound);
+            }
+            Ok(())
+        })
+    }
+
+    /// Empty a conversation's draft if it still reads `text`. Whether it
+    /// did.
+    pub(crate) fn clear_draft_if(
+        &self,
+        owner_identity_id: &str,
+        conversation_address: &str,
+        text: &str,
+    ) -> Result<bool, MobileStoreError> {
+        self.write(|transaction| {
+            let mut changed = 0;
+            for statement in draft_updates("''", "AND draft_text = ?1") {
+                changed += transaction.execute(
+                    &statement,
+                    params![text, owner_identity_id, conversation_address],
+                )?;
+            }
+            Ok(changed > 0)
+        })
+    }
+
+    /// Mark a conversation read as of `read_at_ms`, or with
+    /// `never_backward` only when that is later than its read time now.
+    /// Whether its unread count changed. An address with no conversation is
+    /// not an error, and changes nothing.
+    pub(crate) fn mark_read_counting(
+        &self,
+        owner_identity_id: &str,
+        conversation_address: &str,
+        read_at_ms: i64,
+        never_backward: bool,
+    ) -> Result<bool, MobileStoreError> {
+        self.write(|transaction| {
+            let Some((_, read_before)) =
+                draft_and_read_at(transaction, owner_identity_id, conversation_address)?
+            else {
+                return Ok(false);
+            };
+            let read_at_ms = if never_backward {
+                read_at_ms.max(read_before)
+            } else {
+                read_at_ms
+            };
+            if read_at_ms == read_before {
+                return Ok(false);
+            }
+            let unread_before = unread_after(
+                transaction,
+                owner_identity_id,
+                conversation_address,
+                read_before,
+            )?;
+            transaction.execute(
+                "UPDATE direct_conversation SET last_read_at_ms = ?1
+                WHERE owner_identity_id = ?2 AND node_id IN (
+                    SELECT id FROM node
+                    WHERE owner_identity_id = ?2 AND public_address = ?3
+                )",
+                params![read_at_ms, owner_identity_id, conversation_address],
+            )?;
+            transaction.execute(
+                "UPDATE channel_conversation SET last_read_at_ms = ?1
+                WHERE owner_identity_id = ?2 AND conversation_address = ?3",
+                params![read_at_ms, owner_identity_id, conversation_address],
+            )?;
+            let unread_now = unread_after(
+                transaction,
+                owner_identity_id,
+                conversation_address,
+                read_at_ms,
+            )?;
+            Ok(unread_before != unread_now)
+        })
     }
 }
 

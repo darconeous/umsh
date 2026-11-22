@@ -554,3 +554,224 @@ async fn a_channel_member_answers_by_its_hint() {
         .unwrap();
     identity_heard(&staged, "the member's identity", Some(&speaker)).await;
 }
+
+// --- Chat over the air. ---
+
+/// The stored messages of the phone's conversation at `address`.
+fn stored_messages(staged: &Staged, address: &str) -> Vec<crate::MobileStoredChatMessageRecord> {
+    staged
+        .core
+        .store
+        .chat_message_page_newest(staged.owner.clone(), address.to_owned(), 50)
+        .unwrap()
+        .messages
+}
+
+/// Wait, in real time, until the phone's conversation at `address` holds
+/// a message `found` picks.
+async fn until_stored(
+    staged: &Staged,
+    address: &str,
+    what: &str,
+    mut found: impl FnMut(&crate::MobileStoredChatMessageRecord) -> bool,
+) -> crate::MobileStoredChatMessageRecord {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        if let Some(message) = stored_messages(staged, address)
+            .into_iter()
+            .find(&mut found)
+        {
+            return message;
+        }
+        assert!(tokio::time::Instant::now() < deadline, "never: {what}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+#[tokio::test]
+async fn a_phone_message_reaches_a_peer_and_its_answers_name_each_other() {
+    use super::{MobileAppChatRequest, MobileReaction};
+    let staged = Staged::new().await;
+    let speaker = staged_speaker_address();
+    staged
+        .core
+        .core
+        .send_chat(
+            speaker.clone(),
+            MobileAppChatRequest::Typed {
+                text: "On my way".into(),
+                forward_secret: None,
+            },
+            Some("On my way".into()),
+        )
+        .await
+        .unwrap();
+    staged.reset();
+    // The peer reacts to what it heard, which it can only name once it has
+    // it: the notification says which emote.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    while staged.air.peer_reacts("+1".to_owned()).await
+        == Err(MobileStagingAirError::NothingToAnswer)
+    {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the peer never heard it"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    staged
+        .until("the reaction's notification", |changes| {
+            changes.notifications.iter().any(|event| {
+                matches!(event, MobileNotificationEventRecord::Message {
+                    reaction: Some(reaction), ..
+                } if reaction.reaction == Some(MobileReaction::ThumbsUp))
+            })
+        })
+        .await;
+    staged
+        .air
+        .peer_replies("See you there".to_owned())
+        .await
+        .unwrap();
+    let theirs = until_stored(&staged, &speaker, "the peer's reply", |message| {
+        !message.outbound && message.body == "See you there"
+    })
+    .await;
+    // The phone answers that message by its stored reference.
+    for request in [
+        MobileAppChatRequest::Reply {
+            target: theirs.reference.clone(),
+            text: "Great".into(),
+            forward_secret: None,
+        },
+        MobileAppChatRequest::React {
+            message: theirs.reference.clone(),
+            reaction: Some(MobileReaction::Heart),
+        },
+    ] {
+        staged
+            .core
+            .core
+            .send_chat(speaker.clone(), request, None)
+            .await
+            .unwrap();
+    }
+    let reply = until_stored(&staged, &speaker, "the phone's reply", |message| {
+        message.outbound && message.body == "Great"
+    })
+    .await;
+    assert!(reply.is_reply);
+    let page = staged
+        .core
+        .core
+        .transcript_newest(speaker.clone(), 50)
+        .unwrap();
+    let answered = page
+        .messages
+        .iter()
+        .find(|message| message.stored.reference == theirs.reference)
+        .unwrap();
+    assert_eq!(answered.reactions, [Some(MobileReaction::Heart)]);
+    assert!(answered.stored.reactions[0].outbound);
+}
+
+#[tokio::test]
+async fn a_failed_message_resent_in_place_is_moved_before_the_answer() {
+    use super::{MobileAppChatRequest, MobileAppResent};
+    let staged = Staged::new().await;
+    let speaker = staged_speaker_address();
+    staged.air.set_transmissions_failing(true);
+    staged
+        .core
+        .core
+        .send_chat(
+            speaker.clone(),
+            MobileAppChatRequest::Typed {
+                text: "Anyone there?".into(),
+                forward_secret: Some(false),
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    let failed = until_stored(&staged, &speaker, "the message failing", |message| {
+        message.outbound
+            && matches!(
+                message.delivery_state,
+                Some(
+                    crate::MobileStoredChatDeliveryState::Failed
+                        | crate::MobileStoredChatDeliveryState::Undelivered
+                )
+            )
+    })
+    .await;
+    staged.air.set_transmissions_failing(false);
+    assert_eq!(
+        staged
+            .core
+            .core
+            .resend(speaker.clone(), failed.reference.clone(), false)
+            .await,
+        Ok(MobileAppResent::InPlace)
+    );
+    // Read at once: the row already follows the frames that went again.
+    let resent = staged
+        .core
+        .store
+        .chat_message(&staged.owner, &speaker, &failed.reference)
+        .unwrap()
+        .unwrap();
+    assert!(!matches!(
+        resent.delivery_state,
+        Some(
+            crate::MobileStoredChatDeliveryState::Failed
+                | crate::MobileStoredChatDeliveryState::Undelivered
+        )
+    ));
+    until_stored(&staged, &speaker, "the resend acknowledged", |message| {
+        message.reference == failed.reference
+            && message.delivery_state == Some(crate::MobileStoredChatDeliveryState::Acknowledged)
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_lost_channel_message_is_asked_for_and_arrives() {
+    let staged = Staged::new().await;
+    staged.reset();
+    staged
+        .air
+        .peer_says_losing_one("First".to_owned(), "Lost".to_owned(), "Last".to_owned())
+        .await
+        .unwrap();
+    staged
+        .until("the channel's transcript", |changes| {
+            changes
+                .transcripts
+                .iter()
+                .any(|address| address.starts_with("ch:"))
+        })
+        .await;
+    let channel = staged
+        .seen
+        .borrow()
+        .transcripts
+        .iter()
+        .find(|address| address.starts_with("ch:"))
+        .unwrap()
+        .clone();
+    let gap = until_stored(&staged, &channel, "the gap", |message| {
+        message.presence == crate::mobile_chat::MobileChatPresence::GapIdle
+    })
+    .await;
+    staged
+        .core
+        .core
+        .request_missing(channel.clone(), vec![gap.reference])
+        .await
+        .unwrap();
+    until_stored(&staged, &channel, "the lost message", |message| {
+        message.body == "Lost"
+    })
+    .await;
+}

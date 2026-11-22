@@ -759,7 +759,7 @@ struct RemoteStatisticsScreen: View {
         }
         .remoteCategoryChrome(model: model, category: .statistics, title: "Statistics")
         .confirmationDialog(
-            "Reset all counters?",
+            "Reset All Counters?",
             isPresented: $confirmsReset,
             titleVisibility: .visible
         ) {

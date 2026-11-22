@@ -41,10 +41,10 @@ struct PersistenceSmokeTest {
         }
     }
 
-    /// The calls the Swift store still wraps, each written with a different
-    /// value in every argument and read back, so one it drops or crosses
-    /// with its neighbor shows. Peers, channels and conversations are
-    /// seeded as the core writes them; its own tests check those writes.
+    /// The reads the Swift store still wraps, and the conversions behind
+    /// them. Rows are seeded through the core store's exports (the core's
+    /// own tests check its writes), with a different value in every field,
+    /// so one a conversion drops or crosses with its neighbor shows.
     private static func checkRemainingCalls(
         _ store: SQLiteApplicationStore,
         path: String
@@ -72,7 +72,7 @@ struct PersistenceSmokeTest {
         let unknown = try await store.knowsIdentity(id: "nobody", publicAddress: "nobody-public")
         precondition(known && !unknown)
 
-        // Rows for the chat to land in, as the core's commands write them.
+        // Rows for the chat to land in, through the core store's exports.
         let core = store.coreStore
         try core.upsertPeer(
             ownerIdentityId: owner, publicAddress: "friend",
@@ -94,9 +94,9 @@ struct PersistenceSmokeTest {
         )
 
         // Drafts.
-        try await store.updateDraft(ownerIdentityID: owner, conversationID: direct, text: "direct draft")
-        try await store.updateChannelDraft(ownerIdentityID: owner, conversationID: general, text: "channel draft")
-        var directs = try await store.listDirectConversations(ownerIdentityID: owner)
+        try core.updateDraft(ownerIdentityId: owner, conversationId: direct, text: "direct draft")
+        try core.updateChannelDraft(ownerIdentityId: owner, conversationId: general, text: "channel draft")
+        let directs = try await store.listDirectConversations(ownerIdentityID: owner)
         precondition(directs.map(\.id) == [direct] && directs[0].node.publicAddress == "friend")
         precondition(directs[0].draftText == "direct draft")
         let channelConversations = try await store.listChannelConversations(ownerIdentityID: owner)
@@ -147,35 +147,10 @@ struct PersistenceSmokeTest {
         )
         precondition(cursor == hello?.cursor && strayCursor == nil)
 
-        try await store.resolveGapsUnavailable(ownerIdentityID: owner, rows: [(sessionID: "700", handle: 4)])
+        try execute(path, "UPDATE chat_message SET presence = 2 WHERE session_id = '700' AND handle = 4")
         messages = try await transcript("friend")
         precondition(!messages.contains { $0.isGapPlaceholder })
         precondition(messages.contains { $0.isUnavailable })
-
-        // What a resend of a message puts back on the air.
-        try execute(path, """
-            INSERT INTO chat_outbound_archive
-                (owner_identity_id, conversation_address, message_id, fragment_index, payload)
-                VALUES ('dana', 'friend', 4, 0, x'010203'), ('dana', 'friend', 4, 1, x'0405');
-            """)
-        let frames = try await store.chatResendFrames(
-            ownerIdentityID: owner, conversationAddress: "friend", sessionID: "720", handle: 1, wireID: 4
-        )
-        precondition(frames.map(\.payload) == [Data([1, 2, 3]), Data([4, 5])])
-        precondition(frames.map(\.fragmentIndex) == [0, 1])
-
-        // A message that failed can be taken back out; no other can.
-        try stage("friend", session: "720", [
-            MobileStagedChatMessageRecord(
-                handle: 2, body: "Never released", outbound: true, createdAtMs: ms(74),
-                deliveryState: .undelivered
-            ),
-        ])
-        try await store.removeFailedMessage(ownerIdentityID: owner, sessionID: "720", handle: 2)
-        try await store.removeFailedMessage(ownerIdentityID: owner, sessionID: "700", handle: 1)
-        messages = try await transcript("friend")
-        precondition(!messages.contains { $0.body == "Never released" })
-        precondition(messages.contains { $0.body == "Hello" }, "only a failed message can be removed")
 
         // The management card's stamp goes to the nearest millisecond on its
         // way into the core. Rows already stored were written so.
@@ -210,22 +185,6 @@ struct PersistenceSmokeTest {
             handle: 1, radius: 1
         )
         precondition(window?.messages.contains { $0.body == "Staged inbound" } == true)
-        let before = try await store.chatMessageCount(ownerIdentityID: owner, conversationAddress: "general-address")
-        try await store.seedGeneratedMessages(
-            ownerIdentityID: owner, conversationAddress: "general-address", count: 25
-        )
-        let after = try await store.chatMessageCount(ownerIdentityID: owner, conversationAddress: "general-address")
-        precondition(after == before + 25)
-
-        // Clearing keeps the conversation.
-        try await store.clearConversationMessages(ownerIdentityID: owner, conversationAddress: "friend")
-        messages = try await transcript("friend")
-        directs = try await store.listDirectConversations(ownerIdentityID: owner)
-        precondition(messages.isEmpty && directs.map(\.id) == [direct])
-        let clearedFrames = try await store.chatResendFrames(
-            ownerIdentityID: owner, conversationAddress: "friend", sessionID: "720", handle: 1, wireID: 4
-        )
-        precondition(clearedFrames.isEmpty, "clearing takes the archive")
     }
 
     /// A second connection to the same file reads what the first wrote, and
@@ -249,10 +208,10 @@ struct PersistenceSmokeTest {
         let readGroups = try await reopened.listChannelConversations(ownerIdentityID: owner)
         precondition(readGroups == writtenGroups)
         let page = try await store.chatMessagePage(
-            ownerIdentityID: owner, conversationAddress: "general-address", newest: 100
+            ownerIdentityID: owner, conversationAddress: "friend", newest: 100
         )
         let reread = try await reopened.chatMessagePage(
-            ownerIdentityID: owner, conversationAddress: "general-address", newest: 100
+            ownerIdentityID: owner, conversationAddress: "friend", newest: 100
         )
         precondition(!page.messages.isEmpty && reread == page)
 
@@ -582,9 +541,10 @@ extension PersistenceSmokeTest {
         precondition(empty.lastMessage == nil && empty.unreadCount == 0)
 
         // Marking read must clear the badge without touching the preview.
-        try await store.markConversationRead(
-            ownerIdentityID: benchmarkOwner,
-            conversationAddress: deepAddress
+        try store.coreStore.markConversationRead(
+            ownerIdentityId: benchmarkOwner,
+            conversationAddress: deepAddress,
+            readAtMs: Date.now.storeMilliseconds
         )
         guard let afterRead = (try await store.listDirectConversations(ownerIdentityID: benchmarkOwner))
             .first(where: { $0.node.publicAddress == deepAddress })
@@ -607,9 +567,10 @@ extension PersistenceSmokeTest {
         // The reload again, with every conversation read. Unread counting starts
         // at the read cursor, so this is the steady-state cost; the figure above
         // is its worst case, a 20 000-message channel never once opened.
-        try await store.markConversationRead(
-            ownerIdentityID: benchmarkOwner,
-            conversationAddress: benchmarkChannelAddress
+        try store.coreStore.markConversationRead(
+            ownerIdentityId: benchmarkOwner,
+            conversationAddress: benchmarkChannelAddress,
+            readAtMs: Date.now.storeMilliseconds
         )
         start = ContinuousClock.now
         for _ in 0..<20 {

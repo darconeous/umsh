@@ -81,7 +81,7 @@ struct RemoteBluetoothScreen: View {
 
         }
         .confirmationDialog(
-            "Clear every pairing?",
+            "Clear Every Pairing?",
             isPresented: $isConfirmingClear,
             titleVisibility: .visible
         ) {

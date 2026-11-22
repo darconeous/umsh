@@ -153,8 +153,8 @@ The Rust app core (`MobileAppCore`, opened by `AppCoreHost`) runs the radio,
 the mesh session, and which arrivals notify; `CoreRecordMapping` maps its
 read records onto the view models. `AppRuntime` holds the observable state,
 redraws it from the core's change batches, and composes identity decisions
-(`IdentityOperations`), draft writes (`ConversationDraftStore`), and a send
-and its draft (`ChatSubmissionCoordinator`). A full read is authoritative and
+(`IdentityOperations`) and draft writes (`ConversationDraftStore`); a send
+and its draft are one core command. A full read is authoritative and
 publishes only once it succeeds. Sending and marking a conversation read use
 the narrower conversations read; a conversation naming an unknown peer
 escalates it to a full one. Failed draft writes retain text in memory and

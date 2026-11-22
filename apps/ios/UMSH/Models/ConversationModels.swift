@@ -527,18 +527,21 @@ struct ChatMessageSummary: Identifiable, Hashable, Sendable {
         return Date(timeIntervalSince1970: Double(createdAtMilliseconds) / 1000)
     }
 
-    /// How long a message stays revisable in place—editable, or resendable
-    /// under its own wire ID. Wire references only reach the recent past:
-    /// peers keep a bounded window of recent IDs, and the stream may have
-    /// reset since. Four hours is comfortably inside what survives.
-    static let reviseWindow: TimeInterval = 4 * 60 * 60
+    /// Until when this message, one of ours not deleted, may be edited or
+    /// resent as itself, as the core reports it; nil for any other.
+    var reviseUntilMilliseconds: Int64? = nil
 
     /// Whether in-place revision is still offered for this message. Beyond
-    /// the window a failed message can only go out again as a genuinely new
-    /// one, and editing is not offered at all.
+    /// it a failed message can only go out again as a new one, and editing
+    /// is not offered at all.
     var isWithinReviseWindow: Bool {
-        guard let sentDate else { return false }
-        return Date.now.timeIntervalSince(sentDate) <= Self.reviseWindow
+        guard let reviseUntilMilliseconds else { return false }
+        return Date.now.storeMilliseconds <= reviseUntilMilliseconds
+    }
+
+    /// How the core names this message in a command.
+    var reference: MobileStoredChatMessageRefRecord {
+        MobileStoredChatMessageRefRecord(sessionId: sessionID, handle: handle)
     }
 
     /// One of ours that delivery gave up on, either way
@@ -580,6 +583,9 @@ struct MessageReaction: Identifiable, Hashable, Sendable {
     var id: String { "\(sessionID):\(handle)" }
     /// The emote body as it arrived, before normalization.
     let body: String
+    /// What the body reads as, as the core reads it; nil for a body with
+    /// nothing in it.
+    let kind: MobileReaction?
     let isMine: Bool
     let senderAddress: String?
     let senderHint: Data?
@@ -595,7 +601,7 @@ struct MessageReaction: Identifiable, Hashable, Sendable {
     var isForwardSecret = false
 
     /// The single glyph this reaction renders as.
-    var glyph: String { ReactionEmoji.displayGlyph(for: body) }
+    var glyph: String { ReactionEmoji.glyph(for: kind) }
 
     /// Spoken description, so a reaction is never conveyed by color or
     /// glyph alone.
@@ -606,33 +612,18 @@ struct MessageReaction: Identifiable, Hashable, Sendable {
     }
 }
 
-/// The reaction vocabulary: what the picker offers, what goes on the wire,
-/// and how an arriving body becomes one glyph.
-///
-/// Short tokens are what the wire carries—they are what the protocol's own
-/// examples use, and two characters of airtime instead of four matters more
-/// here than anywhere else in the app. Reading is deliberately looser than
-/// writing: anything recognizable maps to the same glyph, and anything else
-/// falls back to its own first character rather than being dropped.
+/// The reaction palette: what the picker offers and what each kind looks
+/// like. What goes on the wire, and what an arriving body reads as, is the
+/// core's.
 enum ReactionEmoji {
     /// The picker's palette, in the order it is offered.
-    static let palette: [(glyph: String, token: String)] = [
-        ("🩷", "<3"),
-        ("👍", "+1"),
-        ("👎", "-1"),
-        ("🤣", "ha"),
-        ("‼️", "!"),
-        ("❓", "?"),
-    ]
-
-    /// Bodies that stand for a palette glyph, lowercased.
-    private static let upgrades: [String: String] = [
-        "<3": "🩷", "♥": "🩷", "♥︎": "🩷", "❤": "🩷", "❤️": "🩷",
-        "+1": "👍", "👍🏻": "👍", "👍🏼": "👍", "👍🏽": "👍", "👍🏾": "👍", "👍🏿": "👍",
-        "-1": "👎", "👎🏻": "👎", "👎🏼": "👎", "👎🏽": "👎", "👎🏾": "👎", "👎🏿": "👎",
-        "ha": "🤣", "haha": "🤣", "hahaha": "🤣", "lol": "🤣", "lmao": "🤣",
-        "!": "‼️", "!!": "‼️", "❗": "‼️", "❕": "‼️",
-        "?": "❓", "??": "❓", "❔": "❓",
+    static let palette: [(glyph: String, kind: MobileReaction)] = [
+        ("🩷", .heart),
+        ("👍", .thumbsUp),
+        ("👎", .thumbsDown),
+        ("🤣", .laugh),
+        ("‼️", .exclaim),
+        ("❓", .question),
     ]
 
     private static let names: [String: String] = [
@@ -640,23 +631,20 @@ enum ReactionEmoji {
         "🤣": "laughing", "‼️": "exclamation", "❓": "question",
     ]
 
-    /// The wire token for a palette glyph, or the glyph itself for anything
-    /// outside the palette.
-    static func token(for glyph: String) -> String {
-        palette.first { $0.glyph == glyph }?.token ?? glyph
+    /// What a reaction renders as: its palette glyph, or the one character
+    /// it is when it is none of them. Only ever one glyph—a peer that sends
+    /// a sentence still gets a chip.
+    static func glyph(for kind: MobileReaction?) -> String {
+        switch kind {
+        case nil: ""
+        case let .other(cluster)?: cluster
+        case let kind?: palette.first { $0.kind == kind }?.glyph ?? ""
+        }
     }
 
-    /// What a reaction body renders as: a palette glyph when the body is one
-    /// of its spellings, otherwise the body's own first character. Only ever
-    /// one glyph—a peer that sends a sentence still gets a chip.
-    static func displayGlyph(for body: String) -> String {
-        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let upgraded = upgrades[trimmed.lowercased()] { return upgraded }
-        guard let first = trimmed.first else { return "" }
-        // A single character may still be a spelling we know—a bare "?"
-        // reaches this only if the table above missed it.
-        if let upgraded = upgrades[String(first).lowercased()] { return upgraded }
-        return String(first)
+    /// The reaction a picked glyph stands for.
+    static func kind(for glyph: String) -> MobileReaction {
+        palette.first { $0.glyph == glyph }?.kind ?? .other(cluster: glyph)
     }
 
     static func name(for glyph: String) -> String {
@@ -664,54 +652,95 @@ enum ReactionEmoji {
     }
 }
 
-enum MessageSendResult: Sendable {
-    case sent(ConversationListItem, warning: String? = nil)
-    case cancelled
-    case failed(String)
+/// Words added to a conversation's stored draft from outside its composer:
+/// a notification reply that did not go out. A composer open on the
+/// conversation holds the draft as it stood when the composer opened, and
+/// its next save would write over them, so it adds them to what it holds.
+struct DraftAddition: Equatable, Sendable {
+    /// Rises with each addition, so a composer knows which it has seen.
+    let sequence: Int
+    let address: String
+    let text: String
+
+    /// `draft` with these words added, as the core adds them to a stored
+    /// draft: on a line of their own, unless the draft is empty.
+    func added(to draft: String) -> String {
+        draft.isEmpty ? text : draft + "\n" + text
+    }
 }
 
 /// Message-level operations on an open transcript. Bundled so intermediate
 /// views do not grow a parameter per operation.
+///
+/// Each throws the core's reason when nothing was kept, except
+/// `MobileAppError.MessageNotQueued`, which means the message is in the
+/// transcript as not delivered.
 struct ChatMessageActions: Sendable {
-    let edit: @Sendable (ConversationListItem, ChatMessageSummary, String) async -> MessageSendResult
-    let delete: @Sendable (ConversationListItem, ChatMessageSummary) async -> MessageSendResult
-    /// React with one of the palette glyphs, or withdraw the existing
-    /// reaction by passing the one already chosen.
-    var react: @Sendable (ConversationListItem, ChatMessageSummary, String) async
-        -> MessageSendResult = { _, _, _ in .failed("Messaging is unavailable.") }
-    /// Send text in reply to a message, quoting it, under forward secrecy as
-    /// the flag says the composer showed it.
-    var reply: @Sendable (ConversationListItem, ChatMessageSummary, String, Bool) async
-        -> MessageSendResult = { _, _, _, _ in .failed("Messaging is unavailable.") }
-    /// Put a failed message back on the air as itself—its unacknowledged
-    /// frames under its own wire ID, so a peer who already has it never sees
-    /// it twice—under forward secrecy or not, as the flag says. Recent
-    /// failures only (``ChatMessageSummary/isWithinReviseWindow``).
-    var resend: @Sendable (ConversationListItem, ChatMessageSummary, Bool) async
-        -> MessageSendResult = { _, _, _ in .failed("Messaging is unavailable.") }
-    /// Send a failed message's text again as a genuinely new message, for
-    /// failures too old to resend in place: the old row is removed and the
-    /// text goes out (and lands in the transcript) as the newest message,
-    /// under forward secrecy or not, as the flag says.
-    var resendAsNew: @Sendable (ConversationListItem, ChatMessageSummary, Bool) async
-        -> MessageSendResult = { _, _, _ in .failed("Messaging is unavailable.") }
+    /// Keep the composer's text, untrimmed, as the draft of the conversation
+    /// at this address.
+    var saveDraft: @Sendable (String, String) async -> AppOperationResult = { _, _ in
+        .failure(.unavailable(String(
+            localized: "Saving is unavailable.",
+            comment: "Error when a draft cannot be stored."
+        )))
+    }
+    /// The conversation at this address is on screen: what it holds has been
+    /// seen.
+    var markRead: @Sendable (String) async -> Void = { _ in }
+    /// Send the composer's text, untrimmed as it stood when Send was
+    /// pressed, under forward secrecy as the flag says the composer showed
+    /// it.
+    var send: @Sendable (ConversationListItem, String, Bool) async throws -> Void = { _, _, _ in
+        throw MobileAppError.NotRunning
+    }
+    /// Send the composer's text in reply to a message, quoting it, as `send`
+    /// does.
+    var reply: @Sendable (ConversationListItem, ChatMessageSummary, String, Bool) async throws -> Void = { _, _, _, _ in
+        throw MobileAppError.NotRunning
+    }
+    var edit: @Sendable (ConversationListItem, ChatMessageSummary, String) async throws -> Void = { _, _, _ in
+        throw MobileAppError.NotRunning
+    }
+    var delete: @Sendable (ConversationListItem, ChatMessageSummary) async throws -> Void = { _, _ in
+        throw MobileAppError.NotRunning
+    }
+    /// React to a message, or with nil withdraw this phone's reaction.
+    var react: @Sendable (ConversationListItem, ChatMessageSummary, MobileReaction?) async throws -> Void = { _, _, _ in
+        throw MobileAppError.NotRunning
+    }
+    /// Put a failed message back on the air, under forward secrecy or not,
+    /// as the flag says: as itself while it can still land, so a peer who
+    /// already has it never sees it twice, otherwise as a new message that
+    /// replaces it. Says which.
+    var resend: @Sendable (ConversationListItem, ChatMessageSummary, Bool) async throws -> MobileAppResent = { _, _, _ in
+        throw MobileAppError.NotRunning
+    }
     /// Ask for a run of missing messages no repair is under way for
     /// (``ChatMessageSummary/isGapIdle``).
-    var requestMissing: @Sendable (ConversationListItem, [ChatMessageSummary]) async
-        -> MessageSendResult = { _, _ in .failed("Messaging is unavailable.") }
+    var requestMissing: @Sendable (ConversationListItem, [ChatMessageSummary]) async throws -> Void = { _, _ in
+        throw MobileAppError.NotRunning
+    }
     /// Erase every message in the conversation at this address. Local only:
     /// nothing is sent, and everyone else keeps their copy. The conversation
     /// itself survives, as does its place in the wire stream.
-    var clearMessages: @Sendable (String) async -> Void = { _ in }
+    var clearMessages: @Sendable (String) async throws -> Void = { _ in
+        throw MobileAppError.NotRunning
+    }
     /// How many messages the conversation at this address holds. Asked for on
     /// demand rather than carried on the summary: it is the one figure that has
     /// to walk a whole transcript, and only the info sheet wants it.
     var countMessages: @Sendable (String) async -> Int = { _ in 0 }
 
-    static let unavailable = ChatMessageActions(
-        edit: { _, _, _ in .failed("Messaging is unavailable.") },
-        delete: { _, _ in .failed("Messaging is unavailable.") }
-    )
+    static let unavailable = ChatMessageActions()
+
+    /// The title of the dialog that says why ``clearMessages`` did not
+    /// happen, wherever it was asked from.
+    static var messagesNotClearedTitle: String {
+        String(
+            localized: "Messages Not Cleared",
+            comment: "Alert title: a conversation's messages were not erased. The message says why."
+        )
+    }
 }
 
 /// Operations on a channel's group conversation, beyond sending. Bundled the
@@ -730,11 +759,13 @@ struct ChannelConversationActions: Sendable {
     /// tab carries, reachable from the conversation it actually affects.
     /// Unread counts are unaffected—muting silences banners, not the channel.
     let setNotifications: @Sendable (ChannelSummary, Bool) async throws -> Void
-    /// Whether the warning before sending on `EMERGENCY` has been certified
-    /// since the app launched.
+    /// Whether the core holds the user's agreement to the warning before
+    /// sending on `EMERGENCY`.
     let emergencyCertified: @MainActor @Sendable () -> Bool
-    /// Certify that warning, until the app next launches.
-    let certifyEmergency: @MainActor @Sendable () -> Void
+    /// Agree to that warning. The core keeps the agreement until the
+    /// identity changes or the app next launches. Throws when the core does
+    /// not take it.
+    let certifyEmergency: @MainActor @Sendable () throws -> Void
 
     static let unavailable = ChannelConversationActions(
         start: { _ in throw MobileAppError.NotRunning },
@@ -743,7 +774,7 @@ struct ChannelConversationActions: Sendable {
         requestMemberIdentity: { _, _ in },
         setNotifications: { _, _ in },
         emergencyCertified: { false },
-        certifyEmergency: {}
+        certifyEmergency: { throw MobileAppError.NotRunning }
     )
 }
 

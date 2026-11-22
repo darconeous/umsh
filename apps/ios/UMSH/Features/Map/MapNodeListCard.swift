@@ -24,8 +24,6 @@ struct MapNodeListCard: View {
     @Binding var radioSnapshot: RadioSnapshot
     @Binding var conversations: [DirectConversationSummary]
     var peerActions: PeerActions = .unavailable
-    let updateDraft: ((Int64, String) async -> AppOperationResult)?
-    let sendMessage: ((DirectConversationSummary, String, Bool) async -> MessageSendResult)?
     var messageActions: ChatMessageActions = .unavailable
 
     /// The row's own tap belongs to the map—it selects and focuses, which
@@ -65,8 +63,6 @@ struct MapNodeListCard: View {
                 radioSnapshot: $radioSnapshot,
                 conversations: $conversations,
                 actions: peerActions,
-                updateDraft: updateDraft,
-                sendMessage: sendMessage,
                 messageActions: messageActions
             )
             // Already on the map: going back to it is enough, with the node

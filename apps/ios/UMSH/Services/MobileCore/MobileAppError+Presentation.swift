@@ -17,6 +17,9 @@ extension MobileAppError {
         )
     }
 
+    /// The channel's protocol name, never translated.
+    private static let emergencyChannelName = "EMERGENCY"
+
     var message: String {
         switch self {
         case .Store:
@@ -107,6 +110,21 @@ extension MobileAppError {
             DfuEntryError.refused(status).localizedDescription
         case .DfuUnconfirmed:
             DfuEntryError.unconfirmed.localizedDescription
+        case .EmergencyNotCertified:
+            String(
+                localized: "Sending on \(Self.emergencyChannelName) needs its warning accepted first.",
+                comment: "A send was refused because the EMERGENCY channel's warning has not been accepted. The placeholder is the channel's name, EMERGENCY, which is not translated."
+            )
+        case .MessageNotQueued(recorded: true):
+            String(
+                localized: "It was saved but could not go out. It's marked Not Delivered.",
+                comment: "A message was kept in the conversation, but the radio could not take it."
+            )
+        case .MessageNotQueued(recorded: false):
+            String(
+                localized: "It could not go out, and that could not be saved. It may show as sending until UMSH restarts.",
+                comment: "A message was kept, the radio could not take it, and recording that failed too."
+            )
         }
     }
 }

@@ -59,7 +59,7 @@ struct RemoteWifiScreen: View {
             WifiNetworkEditSheet(model: model, network: target.network)
         }
         .confirmationDialog(
-            "Forget this network?",
+            "Forget This Network?",
             isPresented: Binding(
                 get: { forgetting != nil },
                 set: { if !$0 { forgetting = nil } }

@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use umsh_core::{NodeHint, PublicKey, RouterHint};
 
+use super::chat::{REVISE_WINDOW_MS, reaction_from_body};
 use super::records::{
     MobileAppChannelConversationRecord, MobileAppChannelRecord, MobileAppDirectConversationRecord,
     MobileAppMessageRecord, MobileAppMessageRepeaterRecord, MobileAppNeighborReportRecord,
@@ -374,7 +375,16 @@ fn message(
             }
         })
         .collect();
+    let reactions = stored
+        .reactions
+        .iter()
+        .map(|reaction| reaction_from_body(&reaction.body))
+        .collect();
+    let revise_until_ms = (stored.outbound && !stored.is_deleted)
+        .then(|| stored.created_at_ms.saturating_add(REVISE_WINDOW_MS));
     MobileAppMessageRecord {
+        reactions,
+        revise_until_ms,
         sender_node_hint: stored.sender_hint.as_deref().and_then(node_hint_text),
         quoted_sender_node_hint: stored
             .quote

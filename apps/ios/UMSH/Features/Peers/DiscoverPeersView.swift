@@ -26,12 +26,10 @@ struct DiscoverPeersView: View {
     @Binding var conversations: [DirectConversationSummary]
     let peers: [PeerSummary]
     var peerActions: PeerActions = .unavailable
-    let updateDraft: ((Int64, String) async -> AppOperationResult)?
-    let sendMessage: ((DirectConversationSummary, String, Bool) async -> MessageSendResult)?
     var messageActions: ChatMessageActions = .unavailable
-    /// Broadcast this phone's signed identity; returns a failure message or
-    /// nil. Offered behind a confirmation that previews what is sent.
-    var advertiseIdentity: (() async -> String?)? = nil
+    /// Broadcast this phone's signed identity; throws why it did not go.
+    /// Offered behind a confirmation that previews what is sent.
+    var advertiseIdentity: (() async throws -> Void)? = nil
     /// The name the announcement carries, for the confirmation preview.
     var advertisedName: String = ""
     /// Drop every transient row nothing depends on.
@@ -56,7 +54,6 @@ struct DiscoverPeersView: View {
     /// Lower bound of the displayed window: nodes heard since the sheet opened.
     @State private var startedAt = Date()
     @State private var showsAnnounceConfirmation = false
-    @State private var announceNotice: String?
     @State private var didAnnounce = false
     @State private var showsClearConfirmation = false
     @State private var roleFilter: PeerRole?
@@ -86,8 +83,6 @@ struct DiscoverPeersView: View {
                     radioSnapshot: $radioSnapshot,
                     conversations: $conversations,
                     actions: peerActions,
-                    updateDraft: updateDraft,
-                    sendMessage: sendMessage,
                     messageActions: messageActions
                 )
             }
@@ -110,7 +105,7 @@ struct DiscoverPeersView: View {
                 }
             }
             .confirmationDialog(
-                "Announce your identity?",
+                "Announce Your Identity?",
                 isPresented: $showsAnnounceConfirmation,
                 titleVisibility: .visible
             ) {
@@ -122,13 +117,13 @@ struct DiscoverPeersView: View {
                 Text(announcePreview)
             }
             .confirmationDialog(
-                "Clear discovered nodes?",
+                "Clear Discovered Nodes?",
                 isPresented: $showsClearConfirmation,
                 titleVisibility: .visible
             ) {
                 Button("Clear Discovered Nodes", role: .destructive) {
                     Task {
-                        await $failure.attempt(String(localized: "Nodes not cleared", comment: "Alert title.")) {
+                        await $failure.attempt(String(localized: "Nodes Not Cleared", comment: "Alert title.")) {
                             try await clearDiscoveredNodes?()
                         }
                     }
@@ -330,9 +325,7 @@ struct DiscoverPeersView: View {
                 }
                 .disabled(!radioListening)
             } footer: {
-                if let announceNotice {
-                    Text(announceNotice)
-                } else if !radioListening {
+                if !radioListening {
                     Text("Connect a companion radio set up for this phone to announce your identity.")
                 } else if didAnnounce {
                     Text("Announced. Nearby nodes that heard it may announce themselves in reply.")
@@ -359,7 +352,7 @@ struct DiscoverPeersView: View {
             if !peer.isSaved, peerActions.promoteToSaved != nil {
                 Button {
                     Task {
-                        await $failure.attempt(String(localized: "Peer not saved", comment: "Alert title.")) {
+                        await $failure.attempt(String(localized: "Peer Not Saved", comment: "Alert title.")) {
                             try await peerActions.promoteToSaved?(peer)
                         }
                     }
@@ -399,10 +392,7 @@ struct DiscoverPeersView: View {
             }
     }
 
-    private var radioListening: Bool {
-        (radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready)
-            && radioSnapshot.hostState == .matchesCurrentIdentity
-    }
+    private var radioListening: Bool { radioSnapshot.carriesThisPhone }
 
     private var announcePreview: String {
         let name = advertisedName.isEmpty
@@ -413,10 +403,12 @@ struct DiscoverPeersView: View {
 
     private func announce() async {
         guard let advertiseIdentity else { return }
-        announceNotice = await advertiseIdentity()
-        if announceNotice == nil {
-            didAnnounce = true
+        let sent = await $failure.attempt(
+            String(localized: "Identity Not Advertised", comment: "Alert title: this phone's identity advertisement did not go out. The message says why.")
+        ) {
+            try await advertiseIdentity()
         }
+        if sent { didAnnounce = true }
     }
 
     private func message(_ peer: PeerSummary) async {
@@ -426,7 +418,7 @@ struct DiscoverPeersView: View {
             dismiss()
             openConversation(conversation)
         } catch {
-            failure = FailureNotice(String(localized: "Conversation unavailable", comment: "Alert title."), error)
+            failure = FailureNotice(String(localized: "Conversation Unavailable", comment: "Alert title."), error)
         }
     }
 

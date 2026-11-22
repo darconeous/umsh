@@ -239,6 +239,11 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
     /// `channel` is what makes this a group message: it names the room, and
     /// its badge becomes the icon, so the notification says where as well as
     /// who.
+    ///
+    /// `offersReply` false posts it with no actions, so it can only be
+    /// opened. A reply from a notification would skip the EMERGENCY warning,
+    /// which is shown only in the app, and the app may be relaunched to send
+    /// it without the agreement it had when the notification was posted.
     func postInboundMessage(
         conversationAddress: String,
         displayName: String,
@@ -246,6 +251,7 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
         senderAddress: String?,
         senderHint: MeshNodeHint?,
         channel: AvatarStyle?,
+        offersReply: Bool,
         body: String
     ) {
         let content = UNMutableNotificationContent()
@@ -256,7 +262,9 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
         content.body = body
         content.sound = .default
         content.threadIdentifier = conversationAddress
-        content.categoryIdentifier = Self.messageCategoryIdentifier
+        if offersReply {
+            content.categoryIdentifier = Self.messageCategoryIdentifier
+        }
         content.userInfo = [Self.conversationAddressKey: conversationAddress]
         let styled = communicationContent(
             from: content,
@@ -310,16 +318,21 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
     ///
     /// Failed sends are never silently queued; from a notification or a
     /// watch there is no transcript on screen to say so, so this is where
-    /// the failure surfaces. Tapping it opens the transcript where the
-    /// preserved draft is waiting.
-    func postReplyFailure(conversationAddress: String, displayName: String) {
+    /// the failure surfaces. Tapping it opens the transcript, where the
+    /// reply waits in the draft when `savedAsDraft` says it was kept there.
+    func postReplyFailure(conversationAddress: String, displayName: String, savedAsDraft: Bool) {
         postNotice(
             conversationAddress: conversationAddress,
             title: displayName,
-            body: String(
-                localized: "Your reply couldn't be sent. It's saved as a draft.",
-                comment: "Notification body: a reply typed into a notification did not go out."
-            )
+            body: savedAsDraft
+                ? String(
+                    localized: "Your reply couldn't be sent. It's saved as a draft.",
+                    comment: "Notification body: a reply typed into a notification did not go out."
+                )
+                : String(
+                    localized: "Your reply couldn't be sent.",
+                    comment: "Notification body: a reply typed into a notification did not go out, and was not kept as a draft."
+                )
         )
     }
 

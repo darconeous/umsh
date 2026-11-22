@@ -20,13 +20,16 @@ use crate::mobile_mesh::{UpdateListener, WakeSignal};
 use crate::radio_driver::{MobileRadioDriver, MobileRadioStateRecord};
 use crate::secret_vault::{SecretVault, SecretVaultError};
 use crate::store::{MobileAppStore, MobileStoreError};
-use crate::{MobileError, MobileIdentity, MobileMeshError, MobileMeshSession};
+use crate::{MobileError, MobileIdentity, MobileMeshError};
 
 #[cfg(test)]
 mod air_tests;
 mod bootstrap;
 mod channel_commands;
 mod channels;
+mod chat;
+#[cfg(test)]
+mod chat_tests;
 mod clock;
 #[cfg(test)]
 mod command_tests;
@@ -52,6 +55,7 @@ mod tests;
 mod waiters;
 mod worker;
 
+pub use chat::{MobileAppChatRequest, MobileAppResent, MobileReaction, radio_carries_this_phone};
 pub(crate) use clock::Clock;
 use clock::SystemClock;
 pub use commands::{MobileAppPingReplyRecord, MobileAppPingResult};
@@ -126,6 +130,14 @@ pub enum MobileAppError {
     DfuRefused { status: u32 },
     /// The device did not confirm entering firmware update.
     DfuUnconfirmed,
+    /// The conversation is `EMERGENCY`'s, and its warning has not been
+    /// agreed to under this owner (`certify_emergency`).
+    EmergencyNotCertified,
+    /// The message was kept, but could not go out. `recorded`, it is
+    /// stored as not delivered; otherwise that could not be stored either,
+    /// and it may read as sending until the next start. The only error a
+    /// chat command answers after keeping a message.
+    MessageNotQueued { recorded: bool },
 }
 
 impl std::fmt::Display for MobileAppError {
@@ -159,6 +171,15 @@ impl std::fmt::Display for MobileAppError {
                 write!(formatter, "firmware update refused with status {status}")
             }
             Self::DfuUnconfirmed => formatter.write_str("firmware update was not confirmed"),
+            Self::EmergencyNotCertified => {
+                formatter.write_str("the EMERGENCY warning has not been agreed to")
+            }
+            Self::MessageNotQueued { recorded } => {
+                write!(
+                    formatter,
+                    "the message was kept but not queued (recorded: {recorded})"
+                )
+            }
         }
     }
 }
@@ -213,6 +234,23 @@ struct Snapshot {
     forward_secret_conversations: Vec<String>,
     meet: Option<crate::MobileMeetStateRecord>,
     revoking_claimed_radios: bool,
+    /// The user agreed to `EMERGENCY`'s warning under `owner`.
+    emergency_certified: bool,
+}
+
+impl Snapshot {
+    /// Read for `owner` from now on. A certification belongs to the owner
+    /// it was given under, so another owner clears it; reports the flag
+    /// when that changed it.
+    fn change_owner(&mut self, owner: Option<String>) -> Option<bool> {
+        let cleared = self.owner != owner && self.emergency_certified;
+        self.owner = owner;
+        if cleared {
+            self.emergency_certified = false;
+            return Some(false);
+        }
+        None
+    }
 }
 
 /// What the object and its worker share.
@@ -338,8 +376,10 @@ impl MobileAppCore {
                 refused = Some(MobileAppError::Stopped);
                 return MobileAppChangesRecord::default();
             }
-            snapshot.owner = owner_identity_id;
-            MobileAppChangesRecord::every_list()
+            MobileAppChangesRecord {
+                emergency_certified: snapshot.change_owner(owner_identity_id),
+                ..MobileAppChangesRecord::every_list()
+            }
         });
         refused.map_or(Ok(()), Err)
     }
@@ -354,6 +394,7 @@ impl MobileAppCore {
                 forward_secret_conversations: snapshot.forward_secret_conversations.clone(),
                 meet: snapshot.meet.clone(),
                 revoking_claimed_radios: snapshot.revoking_claimed_radios,
+                emergency_certified: snapshot.emergency_certified,
             }),
         }
     }
@@ -438,17 +479,6 @@ impl MobileAppCore {
         });
         let _ = self.jobs.send(job);
     }
-
-    /// The running identity's session, for the commands native code has
-    /// not moved here yet. Fetch it for each call; never keep it. Deleted
-    /// once they have moved.
-    pub async fn mesh_session(&self) -> Result<Arc<MobileMeshSession>, MobileAppError> {
-        self.on_worker(|worker| async move {
-            let _command = worker.begin_command().await?;
-            worker.session().ok_or(MobileAppError::NotRunning)
-        })
-        .await
-    }
 }
 
 /// What tests change about a core.
@@ -478,6 +508,7 @@ impl MobileAppCore {
                 forward_secret_conversations: Vec::new(),
                 meet: None,
                 revoking_claimed_radios: false,
+                emergency_certified: false,
             }),
             changes: Mutex::new(MobileAppChangesRecord::default()),
             wake: WakeSignal::new(),

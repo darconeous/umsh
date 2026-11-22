@@ -123,10 +123,11 @@ impl Worker {
         // publish: a list raised while erasing was read as busy, and must
         // be read again once it can be.
         self.shared.publish(|snapshot| {
-            snapshot.owner = None;
+            let emergency_certified = snapshot.change_owner(None);
             snapshot.lifecycle = MobileAppLifecycle::Idle;
             MobileAppChangesRecord {
                 lifecycle: Some(MobileAppLifecycle::Idle),
+                emergency_certified,
                 ..MobileAppChangesRecord::every_list()
             }
         });
@@ -225,9 +226,9 @@ impl Worker {
 
     /// Set whose rows the queries read, raising every list.
     pub(super) fn set_owner(&self, owner: Option<String>) {
-        self.shared.publish(|snapshot| {
-            snapshot.owner = owner;
-            MobileAppChangesRecord::every_list()
+        self.shared.publish(|snapshot| MobileAppChangesRecord {
+            emergency_certified: snapshot.change_owner(owner),
+            ..MobileAppChangesRecord::every_list()
         });
     }
 

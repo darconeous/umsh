@@ -137,6 +137,7 @@ fn queries_need_an_owner() {
             forward_secret_conversations: Vec::new(),
             meet: None,
             revoking_claimed_radios: false,
+            emergency_certified: false,
         })
     );
 }
@@ -186,6 +187,7 @@ fn while_stopping_queries_are_busy_and_status_answers() {
             forward_secret_conversations: Vec::new(),
             meet: None,
             revoking_claimed_radios: false,
+            emergency_certified: false,
         })
     );
     // Kept, for when the core runs again.

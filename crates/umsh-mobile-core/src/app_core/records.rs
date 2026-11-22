@@ -8,6 +8,7 @@
 //! mapped record; their mapping destructures the stored record whole.
 //! Display text (names and their fallbacks, labels) is native.
 
+use super::chat::MobileReaction;
 use crate::meet::MobileMeetStateRecord;
 use crate::radio_driver::MobileRadioStateRecord;
 use crate::store::{
@@ -70,6 +71,8 @@ pub struct MobileAppStatusRecord {
     pub meet: Option<MobileMeetStateRecord>,
     /// Whether claimed radios are being revoked now.
     pub revoking_claimed_radios: bool,
+    /// Whether the user agreed to `EMERGENCY`'s warning under this owner.
+    pub emergency_certified: bool,
 }
 
 /// What changed since the last `poll_changes`. A raised flag says to read
@@ -115,6 +118,9 @@ pub struct MobileAppChangesRecord {
     pub claimed_radios_changed: bool,
     /// Whether claimed radios are being revoked, when that changed.
     pub revoking_claimed_radios: Option<bool>,
+    /// Whether the user agreed to `EMERGENCY`'s warning, when that
+    /// changed.
+    pub emergency_certified: Option<bool>,
 }
 
 /// How far a remote operation has come.
@@ -171,6 +177,8 @@ pub enum MobileNotificationEventRecord {
 pub struct MobileNotificationReactionRecord {
     /// The wire token, such as `<3`.
     pub token: String,
+    /// What the token reads as; `None` for a body with nothing in it.
+    pub reaction: Option<MobileReaction>,
     pub target_body: String,
 }
 
@@ -216,6 +224,7 @@ impl MobileAppChangesRecord {
             operation_progress,
             claimed_radios_changed,
             revoking_claimed_radios,
+            emergency_certified,
         } = later;
         if lifecycle.is_some() {
             self.lifecycle = lifecycle;
@@ -263,6 +272,9 @@ impl MobileAppChangesRecord {
         self.claimed_radios_changed |= claimed_radios_changed;
         if revoking_claimed_radios.is_some() {
             self.revoking_claimed_radios = revoking_claimed_radios;
+        }
+        if emergency_certified.is_some() {
+            self.emergency_certified = emergency_certified;
         }
         for progress in operation_progress {
             self.operation_progress
@@ -380,6 +392,12 @@ pub struct MobileAppMessageRecord {
     pub quoted_sender_node_hint: Option<String>,
     /// `stored.repeats`' repeaters, in the same order.
     pub repeaters: Vec<MobileAppMessageRepeaterRecord>,
+    /// What each of `stored.reactions` reads as, in the same order; `None`
+    /// for a body with nothing in it.
+    pub reactions: Vec<Option<MobileReaction>>,
+    /// Until when a message of ours, not deleted, may be edited or resent
+    /// in place; `None` for any other.
+    pub revise_until_ms: Option<i64>,
 }
 
 /// One slice of a transcript, oldest first. The flags say whether storage

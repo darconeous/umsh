@@ -75,14 +75,9 @@ final class AppRuntime {
                 try await core.setAdvertisedName(name: name ?? "")
             }
         )
-        drafts = ConversationDraftStore { [applicationStore] key, text in
-            guard let applicationStore else { throw AppOperationError.unavailable("The database is unavailable.") }
-            switch key.kind {
-            case .direct:
-                try await applicationStore.updateDraft(ownerIdentityID: key.owner, conversationID: key.id, text: text)
-            case .channel:
-                try await applicationStore.updateChannelDraft(ownerIdentityID: key.owner, conversationID: key.id, text: text)
-            }
+        drafts = ConversationDraftStore { [core] key, text in
+            guard let core else { throw MobileAppError.NotRunning }
+            try await core.saveDraft(address: key.address, text: text)
         }
     }
 
@@ -114,6 +109,7 @@ final class AppRuntime {
         // identity is current.
         didSet {
             guard localIdentity?.id != oldValue?.id else { return }
+            drafts.owner = localIdentity?.id
             do {
                 try core?.setOwner(ownerIdentityId: localIdentity?.id)
             } catch {
@@ -130,6 +126,13 @@ final class AppRuntime {
     var neighborReports: [PeerRepeaterNeighborReport] = []
     var conversations: [DirectConversationSummary] = []
     var channelConversations: [ChannelConversationSummary] = []
+    /// The latest words added to drafts from outside a composer, oldest
+    /// first, for a composer open on one of them to take in.
+    private(set) var draftAdditions: [DraftAddition] = []
+    @ObservationIgnored private var draftAdditionSequence = 0
+    /// A composer takes in what it has not seen as it changes, so only the
+    /// newest few need be held.
+    private static let draftAdditionsKept = 8
     var channels: [ChannelSummary] = []
     var advertisedName = ""
     /// Bumped by every write of `advertisedName` other than a state reload's,
@@ -179,9 +182,10 @@ final class AppRuntime {
     let regionService = RegionService()
     private let identityVault: any IdentityVault
     var stateLoadError: AppOperationError?
-    /// Whether the warning before sending on `EMERGENCY` has been certified
-    /// since the app launched. Never kept: every launch asks again.
-    var emergencyCertified = false
+    /// Whether the core holds the user's agreement to the warning before
+    /// sending on `EMERGENCY`, for the views' synchronous checks. The core
+    /// drops it when the identity changes, and never keeps it.
+    private(set) var emergencyCertified = false
     private var failedReadAddress: String?
     private let identityOperations: IdentityOperations
     private let drafts: ConversationDraftStore
@@ -428,6 +432,9 @@ final class AppRuntime {
         if let revoking = changes.revokingClaimedRadios, revoking != isRevokingClaimedRadios {
             isRevokingClaimedRadios = revoking
         }
+        if let certified = changes.emergencyCertified, certified != emergencyCertified {
+            emergencyCertified = certified
+        }
         // Before the lists publish: the reload is what carries a bumped
         // revision to an open transcript.
         var transcripts = Set(changes.transcripts)
@@ -469,6 +476,7 @@ final class AppRuntime {
         forwardSecretConversations = Set(status.forwardSecretConversations)
         applyMeet(status.meet)
         isRevokingClaimedRadios = status.revokingClaimedRadios
+        emergencyCertified = status.emergencyCertified
     }
 
     private func apply(_ lifecycle: MobileAppLifecycle) {
@@ -478,7 +486,7 @@ final class AppRuntime {
         guard shownStartFailures.insert(reason).inserted else { return }
         failureNotice = FailureNotice(
             title: String(
-                localized: "Couldn't start",
+                localized: "Couldn't Start",
                 comment: "Alert title: this phone's identity did not start. The message says why."
             ),
             message: reason.message
@@ -604,18 +612,6 @@ final class AppRuntime {
                 listener.yield(.resync)
             }
         }
-    }
-
-    /// The core's mesh session, fetched for each use; `nil` while the core
-    /// is not running.
-    private func meshSession() async -> MobileMeshSession? {
-        try? await core?.meshSession()
-    }
-
-    /// The core's mesh session, for a command that cannot go without one.
-    private func requireSession() async throws -> MobileMeshSession {
-        guard let session = await meshSession() else { throw MobileMeshError.SessionUnavailable }
-        return session
     }
 
     /// A core command, then the lists read again, so the caller can find what
@@ -1309,7 +1305,7 @@ final class AppRuntime {
         isLoadingIdentity = true
         defer { isLoadingIdentity = false }
         let failureTitle = String(
-            localized: "Couldn't erase",
+            localized: "Couldn't Erase",
             comment: "Alert title: erasing this phone's identity did not finish. The message says why."
         )
 
@@ -1445,37 +1441,18 @@ final class AppRuntime {
         } catch { return .failure(AppOperationError.storage(error)) }
     }
 
-    /// Broadcast a signed identity advertisement. Returns a user-facing
-    /// failure message, or nil on success.
-    func advertiseIdentity() async -> String? {
-        guard let core else { return MobileAppError.Stopped.message }
-        do {
-            try await core.advertiseIdentity()
-            return nil
-        } catch let error as MobileAppError {
-            return error.message
-        } catch {
-            return MobileAppError.SendFailed.message
-        }
+    /// Broadcast a signed identity advertisement.
+    func advertiseIdentity() async throws {
+        try await ask { try await $0.advertiseIdentity() }
     }
 
-    /// The shareable identity URI: bundle-bearing (name, role, capabilities,
-    /// signed) when the mesh session can sign, bare public key otherwise.
+    /// This phone's link: carrying its signed identity while the identity
+    /// runs, otherwise the bare address.
     func identityShareURI() async -> String {
         guard let localIdentity else { return "" }
-        let bare = localIdentity.publicIdentity.nodeURI
-        let name = advertisedName.isEmpty ? nil : advertisedName
-        guard let session = await meshSession(),
-              let bundle = try? await session.signIdentityBundle(
-                  name: name,
-                  timestamp: UInt32(clamping: Int(Date.now.timeIntervalSince1970))
-              ),
-              let uri = try? nodeUriWithIdentity(
-                  address: localIdentity.publicIdentity.canonicalAddress,
-                  identityPayload: bundle
-              )
-        else { return bare }
-        return uri
+        if let uri = try? await core?.identityShareUri() { return uri }
+        let address = localIdentity.publicIdentity.canonicalAddress
+        return (try? nodeUriForAddress(address: address)) ?? localIdentity.publicIdentity.nodeURI
     }
 
     func connectRadio() async {
@@ -1797,33 +1774,142 @@ final class AppRuntime {
         try await run { try await $0.clearDiscovered() }
     }
 
-    @discardableResult
-    func updateDraft(_ conversationID: Int64, _ text: String) async -> AppOperationResult {
-        guard let owner = localIdentity?.id else {
-            return .failure(.unavailable("The local identity is unavailable."))
+    // MARK: - Chat
+
+    /// The chat operations every transcript gets, wherever it is opened
+    /// from.
+    var messageActions: ChatMessageActions {
+        ChatMessageActions(
+            saveDraft: { address, text in await self.updateDraft(address, text) },
+            markRead: { address in await self.markConversationRead(address) },
+            send: { conversation, submitted, forwardSecret in
+                try await self.sendMessage(conversation, submitted, forwardSecret: forwardSecret)
+            },
+            reply: replyToMessage,
+            edit: editMessage,
+            delete: deleteMessage,
+            react: reactToMessage,
+            resend: resendMessage,
+            requestMissing: requestMissingMessages,
+            clearMessages: clearConversationMessages,
+            countMessages: countConversationMessages
+        )
+    }
+
+    /// A chat command on one conversation, then its transcript and the
+    /// conversation lists read again, whether or not it went: a message kept
+    /// as not delivered must show before the caller says so.
+    private func runChat<T: Sendable>(
+        _ address: String,
+        _ body: @Sendable (MobileAppCore) async throws -> T
+    ) async throws -> T {
+        guard let core else { throw MobileAppError.NotRunning }
+        do {
+            let value = try await body(core)
+            await redraw(address)
+            return value
+        } catch {
+            await redraw(address)
+            throw error
         }
-        let key = ConversationDraftKey(owner: owner, kind: .direct, id: conversationID)
+    }
+
+    /// Read the transcript at `address` and the conversation lists again,
+    /// before the caller scrolls: the core's own word of the change reaches
+    /// the drain later.
+    private func redraw(_ address: String) async {
+        coordinator.bumpChatRevisions([address])
+        await reloadConversationState()
+    }
+
+    /// Send into `conversation`. With `clearDraft`, the composer's text as
+    /// submitted: the core keeps it as the draft until the message is kept,
+    /// then clears the draft if it still reads the same. The draft store
+    /// drops saves of that text from then on, unless the send is refused with
+    /// nothing kept.
+    private func compose(
+        _ conversation: ConversationListItem,
+        _ request: MobileAppChatRequest,
+        clearDraft: String?
+    ) async throws {
+        // A save of older text still on its way must land before the core
+        // writes the submitted text, or it would follow it; a save of the
+        // submitted text itself is dropped from here on, or it could follow
+        // the core's clear.
+        guard let core else { throw MobileAppError.NotRunning }
+        let address = conversation.conversationAddress
+        var submission: ConversationDraftStore.Submission?
+        if let clearDraft, let key = draftKey(address) {
+            submission = await drafts.submit(clearDraft, for: key)
+        }
+        var refusal: (any Error)?
+        do {
+            try await core.sendChat(address: address, request: request, clearDraft: clearDraft)
+        } catch {
+            refusal = error
+        }
+        if let submission {
+            if let refusal, !Self.wasKept(refusal) {
+                // Refused with nothing kept: the words stay the draft.
+                drafts.withdraw(submission)
+            } else {
+                // Kept, and the core cleared the draft: text held as
+                // unsaved from before the tap must not come back as a draft.
+                drafts.forget(submission)
+            }
+        }
+        // Whether or not it went: a message kept as not delivered must show
+        // before the caller says so.
+        await redraw(address)
+        if let refusal { throw refusal }
+    }
+
+    /// Whether a send that failed with `error` still kept its message, as
+    /// not delivered.
+    private static func wasKept(_ error: any Error) -> Bool {
+        if case .MessageNotQueued = error as? MobileAppError { return true }
+        return false
+    }
+
+    private func draftKey(_ address: String) -> ConversationDraftKey? {
+        localIdentity.map { ConversationDraftKey(owner: $0.id, address: address) }
+    }
+
+    /// Keep what the composer holds for the conversation at `address`. The
+    /// lists show it at once, and keep showing it while it is unsaved.
+    @discardableResult
+    func updateDraft(_ address: String, _ text: String) async -> AppOperationResult {
+        guard let key = draftKey(address) else {
+            return .failure(.unavailable(String(
+                localized: "The local identity is unavailable.",
+                comment: "Error when a draft cannot be stored because no identity is loaded."
+            )))
+        }
+        // Words just sent: the core holds this draft, and the list follows it.
+        if drafts.isSubmitted(text, for: key) { return .success(()) }
         let result = await drafts.save(text, for: key)
-        guard localIdentity?.id == owner else { return .failure(.cancelled) }
-        if let index = conversations.firstIndex(where: { $0.id == conversationID }) {
-            // Retain unsaved text in memory, without reporting persistence success.
-            conversations[index].draftText = drafts.pendingText(for: key) ?? text
+        guard localIdentity?.id == key.owner else { return .failure(.cancelled) }
+        // Retain unsaved text in memory, without reporting persistence success.
+        let shown = drafts.pendingText(for: key) ?? text
+        if let index = conversations.firstIndex(where: { $0.conversationAddress == address }) {
+            conversations[index].draftText = shown
+        } else if let index = channelConversations.firstIndex(where: { $0.conversationAddress == address }) {
+            channelConversations[index].draftText = shown
         }
         return result
     }
 
-    /// Send what was typed in `conversation`, under forward secrecy as
-    /// `forwardSecret` says the composer showed it; where nothing showed
-    /// it, as a notification's reply, under it as a session is held.
+    /// Send the composer's text, untrimmed as it stood, under forward
+    /// secrecy as `forwardSecret` says the composer showed it.
     func sendMessage(
         _ conversation: ConversationListItem,
-        _ body: String,
-        forwardSecret: Bool? = nil
-    ) async -> MessageSendResult {
-        await performChatCompose(
+        _ submitted: String,
+        forwardSecret: Bool
+    ) async throws {
+        try await compose(
             conversation,
-            clearsDraft: true,
-            .typed(text: body, forwardSecret: forwardSecret)
+            .typed(text: submitted, forwardSecret: forwardSecret),
+            clearDraft: submitted
         )
     }
 
@@ -1832,11 +1918,10 @@ final class AppRuntime {
     ///
     /// Runs with no scene, often in a process the reply action itself just
     /// launched: bootstrap and the radio link are awaited, briefly, rather
-    /// than assumed. A reply that cannot go out is never queued for later—
-    /// a compose that fails after persisting shows as the transcript's
-    /// `.failed` state as always, and one the radio guard refuses outright
-    /// lands in the conversation's draft with a failure notification saying
-    /// so. Either way the text is somewhere the user can see and act on.
+    /// than assumed. A reply that cannot go out is never queued for later:
+    /// one refused with nothing kept lands under the conversation's draft,
+    /// and a notification says what became of it. The draft the user left
+    /// there is not the reply, so the send leaves it alone.
     func deliverNotificationReply(conversationAddress: String, text: String) async -> Bool {
         // A cold launch is still opening the store and reading the identity.
         await waitUntil(timeout: .seconds(10)) {
@@ -1850,46 +1935,67 @@ final class AppRuntime {
         guard let item else {
             notificationService.postReplyFailure(
                 conversationAddress: conversationAddress,
-                displayName: "UMSH"
+                displayName: "UMSH",
+                savedAsDraft: false
             )
             return false
         }
         // A radio behind a background wake can still be dialing; give the
         // link the launch it is already making before giving up on it.
         await waitUntil(timeout: .seconds(15)) {
-            self.lifecycle == .running
-                && self.radioSnapshot.linkState == .attached
-                && self.radioSnapshot.hostState == .matchesCurrentIdentity
+            self.lifecycle == .running && self.radioSnapshot.carriesThisPhone
         }
-        switch await sendMessage(item, text) {
-        case .sent:
+        do {
+            try await compose(item, .typed(text: text, forwardSecret: nil), clearDraft: nil)
             return true
-        case .cancelled:
-            return false
-        case let .failed(reason):
+        } catch {
             Self.chatLogger.warning(
-                "Notification reply not sent: \(reason, privacy: .public)"
+                "Notification reply not sent: \(String(describing: error), privacy: .public)"
             )
-            await preserveUndeliveredReply(item, text)
             notificationService.postReplyFailure(
                 conversationAddress: conversationAddress,
-                displayName: item.title
+                displayName: item.title,
+                savedAsDraft: await keepUnsentReply(text, at: conversationAddress, refusal: error)
             )
             return false
         }
     }
 
-    /// Keep the text of a reply that never reached the compose pipeline.
-    /// Appended under any draft already sitting there rather than replacing
-    /// it—both are words the user typed and has not sent.
-    private func preserveUndeliveredReply(_ item: ConversationListItem, _ text: String) async {
-        let existing = item.draftText
-        let combined = existing.isEmpty ? text : existing + "\n" + text
-        switch item {
-        case let .direct(conversation):
-            await updateDraft(conversation.id, combined)
-        case let .channel(conversation):
-            await updateChannelDraft(conversation.id, combined)
+    /// Keep the words of a reply that did not go out, under whatever draft
+    /// the conversation holds: both are words the user typed and has not
+    /// sent. Not when the transcript already holds it, or the conversation
+    /// is not stored. Reports whether they were kept.
+    ///
+    /// A session that no longer holds the peer or channel refuses the send
+    /// with `NotFound` while the conversation is still stored, so the core's
+    /// own lookup decides, not the refusal.
+    private func keepUnsentReply(_ text: String, at address: String, refusal: any Error) async -> Bool {
+        if case .MessageNotQueued = refusal as? MobileAppError { return false }
+        guard let core else { return false }
+        // A composer starts from the lists' draft and takes in the additions
+        // newer than when it opened, so the lists must not show the words
+        // before the addition says so. In turn with the reloads, none can
+        // publish the stored draft between the write and the addition.
+        return await inReloadOrder {
+            do {
+                try await core.appendDraft(address: address, text: text)
+            } catch MobileAppError.NotFound {
+                return false
+            } catch {
+                Self.chatLogger.error(
+                    "Notification reply not kept: \(String(describing: error), privacy: .public)"
+                )
+                return false
+            }
+            await self.performApplicationStateReload(includingPeers: false)
+            self.draftAdditionSequence += 1
+            self.draftAdditions.append(DraftAddition(
+                sequence: self.draftAdditionSequence,
+                address: address,
+                text: text
+            ))
+            self.draftAdditions.removeFirst(max(0, self.draftAdditions.count - Self.draftAdditionsKept))
+            return true
         }
     }
 
@@ -1915,31 +2021,59 @@ final class AppRuntime {
         }
     }
 
+    /// Send `submitted` in reply to `message`, as ``sendMessage(_:_:forwardSecret:)``
+    /// sends. Where the original can no longer be named the text goes as a
+    /// plain message, as it does from a communicator.
+    func replyToMessage(
+        _ conversation: ConversationListItem,
+        _ message: ChatMessageSummary,
+        _ submitted: String,
+        _ forwardSecret: Bool
+    ) async throws {
+        try await compose(
+            conversation,
+            .reply(target: message.reference, text: submitted, forwardSecret: forwardSecret),
+            clearDraft: submitted
+        )
+    }
+
     func editMessage(
         _ conversation: ConversationListItem,
         _ message: ChatMessageSummary,
         _ newBody: String
-    ) async -> MessageSendResult {
-        guard message.isWithinReviseWindow else {
-            return .failed("This message is too old to edit.")
-        }
-        return await performChatCompose(
+    ) async throws {
+        try await compose(conversation, .edit(message: message.reference, text: newBody), clearDraft: nil)
+    }
+
+    func deleteMessage(
+        _ conversation: ConversationListItem,
+        _ message: ChatMessageSummary
+    ) async throws {
+        try await compose(conversation, .delete(message: message.reference), clearDraft: nil)
+    }
+
+    /// React to a message, or with nil withdraw this phone's reaction.
+    /// Replacing one is just another reaction: the newest from a sender is
+    /// the one that counts, so there is nothing to retract first.
+    func reactToMessage(
+        _ conversation: ConversationListItem,
+        _ message: ChatMessageSummary,
+        _ reaction: MobileReaction?
+    ) async throws {
+        try await compose(
             conversation,
-            clearsDraft: false,
-            .edit(original: originalRef(message), body: newBody)
+            .react(message: message.reference, reaction: reaction),
+            clearDraft: nil
         )
     }
 
-    /// Put a message delivery gave up on back on the air, as itself.
+    /// Put a message delivery gave up on back on the air.
     ///
-    /// Its unacknowledged fragments go again from the archive, under its
-    /// original wire ID: a peer who received it and lost only the
+    /// While peers can still place it, its unacknowledged fragments go again
+    /// under its original wire ID: a peer who received it and lost only the
     /// acknowledgment drops the duplicate, and one who never received it gets
-    /// an ordinary message, notification and all. Never an edit, which a peer
-    /// without the original could only show as an edit of something unknown.
-    /// The core reports the frames ahead of any word of them, and the store
-    /// re-aims the row's delivery tracking at them, so the badge clears—or
-    /// comes back—on the resend's real fate.
+    /// an ordinary message, notification and all. Otherwise its words go as a
+    /// new message, which replaces the failed one at the bottom.
     ///
     /// `forwardSecret` is the user's choice for a message that went under
     /// forward secrecy: under it, the core uses the session held or asks the
@@ -1949,284 +2083,25 @@ final class AppRuntime {
         _ conversation: ConversationListItem,
         _ message: ChatMessageSummary,
         _ forwardSecret: Bool
-    ) async -> MessageSendResult {
-        // Past the revise window the original's wire ID could not land
-        // anywhere; give the caller the behavior that is right for the
-        // message's age instead of an error.
-        guard message.isWithinReviseWindow, let wireID = message.wireID else {
-            return await resendMessageAsNew(conversation, message, forwardSecret)
+    ) async throws -> MobileAppResent {
+        let address = conversation.conversationAddress
+        let reference = message.reference
+        return try await runChat(address) {
+            try await $0.resend(address: address, message: reference, forwardSecret: forwardSecret)
         }
-        guard message.isDeliveryFailed else {
-            return .failed("Only a message that was not delivered can be resent.")
-        }
-        if let refusal = chatSendRefusal(conversation) { return refusal }
-        guard let applicationStore, let localIdentity else {
-            return .failed("The local identity or message database is unavailable.")
-        }
-        do {
-            let frames = try await applicationStore.chatResendFrames(
-                ownerIdentityID: localIdentity.id,
-                conversationAddress: conversation.conversationAddress,
-                sessionID: message.sessionID,
-                handle: message.handle,
-                wireID: wireID
-            )
-            guard !frames.isEmpty else {
-                return await resendMessageAsNew(conversation, message, forwardSecret)
-            }
-            try await requireSession().resendChat(
-                conversationAddress: conversation.conversationAddress,
-                original: originalRef(message),
-                frames: frames,
-                forwardSecret: forwardSecret
-            )
-        } catch MobileMeshError.ChatResendNotInPlace {
-            // The stream has moved on past it: only new words can still land.
-            return await resendMessageAsNew(conversation, message, forwardSecret)
-        } catch let error as MobileMeshError {
-            return .failed(ChatSubmissionCoordinator.composeError(error).localizedDescription)
-        } catch {
-            return .failed(error.localizedDescription)
-        }
-        coordinator.bumpChatRevisions([conversation.conversationAddress])
-        await reloadConversationState()
-        let updated = conversationItems.first(where: { $0.id == conversation.id }) ?? conversation
-        return .sent(updated, warning: nil)
-    }
-
-    /// Send a failed message's text again as a genuinely new message—the
-    /// path for failures that can no longer go as themselves: their wire ID
-    /// has slid out of the reference window peers keep, or nothing of them
-    /// is archived under it.
-    ///
-    /// The old row is removed only after the new compose is durable and
-    /// released; a compose that fails leaves the transcript exactly as it
-    /// was. On success the failed bubble disappears and the same words
-    /// arrive at the bottom as the newest message—a fresh wire identity
-    /// with its own delivery tracking. A peer who did receive the original
-    /// will see it twice; at this age, the resend being asked for is
-    /// literally "send these words again."
-    func resendMessageAsNew(
-        _ conversation: ConversationListItem,
-        _ message: ChatMessageSummary,
-        _ forwardSecret: Bool
-    ) async -> MessageSendResult {
-        guard message.isDeliveryFailed else {
-            return .failed("Only a message that was not delivered can be resent.")
-        }
-        let result = await performChatCompose(
-            conversation,
-            clearsDraft: false,
-            .again(body: message.body, status: message.isStatus, forwardSecret: forwardSecret)
-        )
-        guard case .sent = result else { return result }
-        if let applicationStore, let localIdentity {
-            do {
-                try await applicationStore.removeFailedMessage(
-                    ownerIdentityID: localIdentity.id,
-                    sessionID: message.sessionID,
-                    handle: message.handle
-                )
-                coordinator.bumpChatRevisions([conversation.conversationAddress])
-                await reloadApplicationState()
-            } catch {
-                // The new message is on its way regardless; the worst case is
-                // the old red bubble lingering above it.
-                Self.chatLogger.error(
-                    "Could not remove a resent failed message: \(String(describing: error), privacy: .public)"
-                )
-            }
-        }
-        return result
-    }
-
-    func deleteMessage(
-        _ conversation: ConversationListItem,
-        _ message: ChatMessageSummary
-    ) async -> MessageSendResult {
-        await performChatCompose(
-            conversation,
-            clearsDraft: false,
-            .delete(original: originalRef(message))
-        )
-    }
-
-    /// React to a message, or withdraw the reaction already on it when the
-    /// user taps the glyph they already chose. Replacing one is just another
-    /// reaction: the newest from a sender is the one that counts, so there is
-    /// nothing to retract first.
-    func reactToMessage(
-        _ conversation: ConversationListItem,
-        _ message: ChatMessageSummary,
-        _ glyph: String
-    ) async -> MessageSendResult {
-        guard !message.isDeliveryFailed else {
-            return .failed("This message was not delivered, so there is nothing to react to.")
-        }
-        let withdrawing = message.myReaction?.glyph == glyph
-        let body = withdrawing ? "" : ReactionEmoji.token(for: glyph)
-        return await performChatCompose(
-            conversation,
-            clearsDraft: false,
-            .reaction(target: regardingRef(message), body: body)
-        )
-    }
-
-    /// Send `body` in reply to `message`. Where the original can no longer
-    /// be named the text goes as a plain message, as it does from a
-    /// communicator. It goes under forward secrecy as `forwardSecret` says
-    /// the composer showed it.
-    func replyToMessage(
-        _ conversation: ConversationListItem,
-        _ message: ChatMessageSummary,
-        _ body: String,
-        _ forwardSecret: Bool
-    ) async -> MessageSendResult {
-        await performChatCompose(
-            conversation,
-            clearsDraft: true,
-            .reply(target: regardingRef(message), body: body, forwardSecret: forwardSecret)
-        )
     }
 
     /// Ask for missing messages no repair is under way for, one request
-    /// each; the engine paces them. A gap the engine no longer holds, one
-    /// left by an earlier mesh session, can never be asked for, so it is
+    /// each; the engine paces them. A gap that can no longer be asked for is
     /// resolved as unavailable rather than left to be tapped again.
     func requestMissingMessages(
         _ conversation: ConversationListItem,
         _ messages: [ChatMessageSummary]
-    ) async -> MessageSendResult {
-        if let refusal = uncertifiedEmergencyRefusal(conversation) { return refusal }
-        guard let applicationStore, let localIdentity else {
-            return .failed("The local identity or message database is unavailable.")
-        }
-        guard radioSnapshot.linkState == .attached,
-              radioSnapshot.hostState == .matchesCurrentIdentity
-        else { return .failed("Connect a companion radio configured for this phone before sending.") }
-        var lost: [ChatMessageSummary] = []
-        for message in messages where message.isGapIdle {
-            do {
-                let held = try await requireSession().requestChatRepair(
-                    sessionId: UInt64(message.sessionID) ?? 0,
-                    handle: message.handle
-                )
-                if !held { lost.append(message) }
-            } catch {
-                return .failed(error.localizedDescription)
-            }
-        }
-        if !lost.isEmpty {
-            do {
-                try await applicationStore.resolveGapsUnavailable(
-                    ownerIdentityID: localIdentity.id,
-                    rows: lost.map { ($0.sessionID, $0.handle) }
-                )
-            } catch {
-                return .failed(error.localizedDescription)
-            }
-            coordinator.bumpChatRevisions([conversation.conversationAddress])
-        }
-        await reloadConversationState()
-        let updated = conversationItems.first(where: { $0.id == conversation.id }) ?? conversation
-        return .sent(updated)
-    }
-
-    /// A transmission on `EMERGENCY` refused because its warning has not been
-    /// certified since launch. The thread view asks first; this catches
-    /// what has no screen to ask on, such as a reply from a notification.
-    private func uncertifiedEmergencyRefusal(_ conversation: ConversationListItem) -> MessageSendResult? {
-        guard case let .channel(item) = conversation, item.channel.isEmergency, !emergencyCertified else {
-            return nil
-        }
-        let channelName = "EMERGENCY"
-        return .failed(String(
-            localized: "Open the conversation to send on \(channelName).",
-            comment: "Why a reply from a notification was not sent: the channel's warning must be certified in the app first. The placeholder is the channel's name, EMERGENCY, which is not translated."
-        ))
-    }
-
-    /// The engine accepts either the live handle (same facade session) or
-    /// the persisted wire identity (after an app restart); send both and let
-    /// Rust pick, so the transcript never has to care which run composed a
-    /// message.
-    private func originalRef(_ message: ChatMessageSummary) -> MobileChatOriginalRef {
-        MobileChatOriginalRef(
-            sessionId: UInt64(message.sessionID) ?? 0,
-            handle: message.handle,
-            wireId: message.wireID,
-            epoch: message.epoch
-        )
-    }
-
-    /// The same idea as ``originalRef(_:)``, but for a message that may be
-    /// either party's: the direction says whose stream the wire ID belongs
-    /// to, and the hint says whose within a channel group.
-    private func regardingRef(_ message: ChatMessageSummary) -> MobileChatRegardingRef {
-        MobileChatRegardingRef(
-            sessionId: UInt64(message.sessionID) ?? 0,
-            handle: message.handle,
-            wireId: message.wireID,
-            direction: message.isOutbound ? .outbound : .inbound,
-            senderHint: message.senderHint,
-            epoch: message.epoch
-        )
-    }
-
-    /// Why nothing can go on the air in this conversation right now, or
-    /// `nil` when something can.
-    private func chatSendRefusal(_ conversation: ConversationListItem) -> MessageSendResult? {
-        if let refusal = uncertifiedEmergencyRefusal(conversation) { return refusal }
-        guard radioSnapshot.linkState == .attached,
-              radioSnapshot.hostState == .matchesCurrentIdentity
-        else { return .failed("Connect a companion radio configured for this phone before sending.") }
-        return nil
-    }
-
-    private func performChatCompose(
-        _ conversation: ConversationListItem,
-        clearsDraft: Bool,
-        _ request: MobileChatSendRequest
-    ) async -> MessageSendResult {
-        if let refusal = chatSendRefusal(conversation) { return refusal }
-        guard applicationStore != nil, let localIdentity else {
-            return .failed("The local identity or message database is unavailable.")
-        }
-        let owner = localIdentity.id
-        let draftKey: ConversationDraftKey
-        switch conversation {
-        case let .direct(item): draftKey = .init(owner: owner, kind: .direct, id: item.id)
-        case let .channel(item): draftKey = .init(owner: owner, kind: .channel, id: item.id)
-        }
-        let submittedDraft = drafts.latestText(for: draftKey) ?? conversation.draftText
-        let outcome = await ChatSubmissionCoordinator().submit(
-            send: {
-                try await self.requireSession().sendChat(
-                    conversationAddress: conversation.conversationAddress,
-                    request: request
-                )
-            },
-            didChange: {
-                self.coordinator.bumpChatRevisions([conversation.conversationAddress])
-                await self.reloadConversationState()
-            },
-            clearDraft: {
-                guard clearsDraft else { return }
-                try await self.drafts.clear(for: draftKey, preserving: submittedDraft)
-            }
-        )
-        switch outcome {
-        case let .failed(error):
-            if error == .cancelled { return .cancelled }
-            return .failed(error.localizedDescription)
-        case let .submitted(warning):
-            await reloadConversationState()
-            let updated = conversationItems.first(where: { $0.id == conversation.id }) ?? conversation
-            // Only the submission's own cleanup failure is a send warning: it
-            // is the one case where the composer must keep its text. A reload
-            // failure is reported by the root view's banner, and repeating it
-            // here would hold a sent message in the composer as a draft.
-            return .sent(updated, warning: warning?.localizedDescription)
+    ) async throws {
+        let address = conversation.conversationAddress
+        let references = messages.map(\.reference)
+        try await runChat(address) {
+            try await $0.requestMissing(address: address, messages: references)
         }
     }
 
@@ -2268,42 +2143,40 @@ final class AppRuntime {
         try await run { try await $0.deleteConversation(address: conversation.conversationAddress) }
     }
 
-    @discardableResult
-    func updateChannelDraft(_ conversationID: Int64, _ text: String) async -> AppOperationResult {
-        guard let owner = localIdentity?.id else {
-            return .failure(.unavailable("The local identity is unavailable."))
-        }
-        let key = ConversationDraftKey(owner: owner, kind: .channel, id: conversationID)
-        let result = await drafts.save(text, for: key)
-        guard localIdentity?.id == owner else { return .failure(.cancelled) }
-        if let index = channelConversations.firstIndex(where: { $0.id == conversationID }) {
-            // Retain unsaved text in memory, without reporting persistence success.
-            channelConversations[index].draftText = drafts.pendingText(for: key) ?? text
-        }
-        return result
-    }
-
     /// Mark a conversation read. Driven by the transcript appearing, so the
-    /// badge clears when the user actually looks at it.
+    /// badge clears when the user actually looks at it. The lists follow
+    /// the core's word that the count changed.
     func markConversationRead(_ address: String) async {
-        guard let applicationStore, let localIdentity else { return }
+        guard let core, localIdentity != nil else { return }
         do {
-            try await applicationStore.markConversationRead(
-                ownerIdentityID: localIdentity.id, conversationAddress: address)
+            try await core.markRead(address: address, throughMs: nil)
             if failedReadAddress == address {
                 failedReadAddress = nil
                 stateLoadError = nil
             }
-            await reloadConversationState()
         } catch {
+            Self.logger.error("Could not mark read: \(String(describing: error), privacy: .public)")
             failedReadAddress = address
-            stateLoadError = .persistence("The conversation could not be marked as read. Open it again to retry.")
+            stateLoadError = .persistence(String(
+                localized: "The conversation could not be marked as read.",
+                comment: "Banner when opening a conversation could not clear its unread count."
+            ))
         }
     }
 
     func retryStateLoad() async {
         if let failedReadAddress { await markConversationRead(failedReadAddress) }
         else { await reloadApplicationState() }
+    }
+
+    /// The user agreed to `EMERGENCY`'s warning. The core holds the
+    /// agreement that gates its commands; ``emergencyCertified`` follows it,
+    /// and is set here too so a view reading it right after sees it. Throws
+    /// when the core does not take it, so nothing that waited on it goes.
+    func certifyEmergency() throws {
+        guard let core else { throw MobileAppError.NotRunning }
+        try core.certifyEmergency()
+        emergencyCertified = true
     }
 
     /// Ask a channel member known only by their hint to identify themselves.
@@ -2322,20 +2195,8 @@ final class AppRuntime {
     /// Addressed rather than keyed by row so one path serves both kinds, and
     /// `@Sendable` because it is handed to views as a bare closure.
     @Sendable
-    func clearConversationMessages(_ address: String) async {
-        guard let applicationStore, let localIdentity else { return }
-        do {
-            try await applicationStore.clearConversationMessages(
-                ownerIdentityID: localIdentity.id,
-                conversationAddress: address
-            )
-            coordinator.bumpChatRevisions([address])
-            await reloadApplicationState()
-        } catch {
-            Self.logger.error(
-                "Could not clear conversation messages: \(String(describing: error), privacy: .public)"
-            )
-        }
+    func clearConversationMessages(_ address: String) async throws {
+        try await runChat(address) { try await $0.clearMessages(address: address) }
     }
 
     /// Bounded transcript reads for whichever thread view is open.
@@ -2457,18 +2318,13 @@ final class AppRuntime {
     /// Fill a conversation with generated messages, so a transcript can be
     /// exercised at a size no test account reaches by hand.
     @Sendable
-    func seedGeneratedMessages(_ address: String, _ count: Int) async {
-        guard let applicationStore, let localIdentity else { return }
-        try? await applicationStore.seedGeneratedMessages(
-            ownerIdentityID: localIdentity.id,
-            conversationAddress: address,
-            count: count
-        )
-        coordinator.bumpChatRevisions([address])
-        await reloadApplicationState()
+    func seedGeneratedMessages(_ address: String, _ count: Int) async throws {
+        try await runChat(address) {
+            try await $0.generateMessages(address: address, count: UInt32(clamping: count))
+        }
     }
     #else
-    var seedGeneratedMessages: ((String, Int) async -> Void)? { nil }
+    var seedGeneratedMessages: ((String, Int) async throws -> Void)? { nil }
     #endif
 
     #if DEBUG
@@ -2492,13 +2348,14 @@ final class AppRuntime {
     /// after the same delay and for the same reason as a staged message.
     func stagedPeerReacts() {
         guard let staging = radioConnection as? StagingRadioConnection else { return }
-        let glyph = ReactionEmoji.palette.randomElement()?.token ?? "+1"
+        // As another client spells them on the wire.
+        let token = ["<3", "+1", "-1", "ha", "!", "?"].randomElement() ?? "+1"
         Task {
             let assertion = UIApplication.shared.beginBackgroundTask(
                 withName: "umsh.staging.delayed-reaction"
             )
             try? await Task.sleep(for: .seconds(5))
-            await staging.stagedPeerReacts(body: glyph)
+            await staging.stagedPeerReacts(body: token)
             if assertion != .invalid {
                 UIApplication.shared.endBackgroundTask(assertion)
             }
@@ -2808,7 +2665,7 @@ final class AppRuntime {
     private func post(_ notification: MobileNotificationEventRecord) {
         switch notification {
         case let .message(conversation, channelId, senderAddress, senderHandle, senderHint, body, isStatus, reaction):
-            let text = reaction.map { Self.reactionLine($0.token, on: $0.targetBody) } ?? body
+            let text = reaction.map { Self.reactionLine($0.reaction, on: $0.targetBody) } ?? body
             if let channelId {
                 let channel = channel(withID: channelId)
                 // A group message is from someone in particular, and the
@@ -2824,6 +2681,7 @@ final class AppRuntime {
                     senderAddress: senderAddress,
                     senderHint: senderPeer?.identity.hint,
                     channel: channel?.avatarStyle,
+                    offersReply: channel?.isEmergency != true,
                     body: isStatus ? statusLine(name: sender, body: text) : text
                 )
             } else {
@@ -2836,6 +2694,7 @@ final class AppRuntime {
                     senderAddress: conversation,
                     senderHint: peer?.identity.hint,
                     channel: nil,
+                    offersReply: true,
                     body: isStatus ? statusLine(name: displayName, body: text) : text
                 )
             }
@@ -2889,8 +2748,8 @@ final class AppRuntime {
 
     /// A reaction, said out loud: what was done, the glyph it renders as, and
     /// the message it landed on.
-    private static func reactionLine(_ token: String, on target: String) -> String {
-        let glyph = ReactionEmoji.displayGlyph(for: token)
+    private static func reactionLine(_ reaction: MobileReaction?, on target: String) -> String {
+        let glyph = ReactionEmoji.glyph(for: reaction)
         let quoted = quotedBody(target, limit: reactionQuoteLimit)
         return String(
             localized: "Reacted \(glyph) to \(quoted)",
@@ -2992,6 +2851,21 @@ final class AppRuntime {
         await task.value
     }
 
+    /// Run `body` in turn with the reloads: after every reload queued before
+    /// it, and before any queued after it, so no reload publishes the lists
+    /// between its steps.
+    private func inReloadOrder<Result: Sendable>(
+        _ body: @escaping @MainActor () async -> Result
+    ) async -> Result {
+        let running = coordinator.runningReload
+        let work = Task { @MainActor in
+            await running?.value
+            return await body()
+        }
+        coordinator.runningReload = Task { _ = await work.value }
+        return await work.value
+    }
+
     private func performApplicationStateReload(includingPeers: Bool) async {
         guard core != nil, let owner = localIdentity?.id, !Task.isCancelled else { return }
         do {
@@ -3009,11 +2883,11 @@ final class AppRuntime {
             var loaded = MappedApplicationState(record, chatRevisions: coordinator.chatRevisions)
             guard localIdentity?.id == owner, !Task.isCancelled else { return }
             for index in loaded.conversations.indices {
-                let key = ConversationDraftKey(owner: owner, kind: .direct, id: loaded.conversations[index].id)
+                let key = ConversationDraftKey(owner: owner, address: loaded.conversations[index].conversationAddress)
                 if let text = drafts.pendingText(for: key) { loaded.conversations[index].draftText = text }
             }
             for index in loaded.channelConversations.indices {
-                let key = ConversationDraftKey(owner: owner, kind: .channel, id: loaded.channelConversations[index].id)
+                let key = ConversationDraftKey(owner: owner, address: loaded.channelConversations[index].conversationAddress)
                 if let text = drafts.pendingText(for: key) { loaded.channelConversations[index].draftText = text }
             }
             // Assign only on a real change: most reloads are triggered by

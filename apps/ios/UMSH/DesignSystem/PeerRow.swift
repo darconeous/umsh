@@ -151,7 +151,7 @@ struct HintDiscoveryButton: View {
                     // Marked only once the radio has it, so the spinner never
                     // claims an ask that never went out.
                     let sent = await $failure.attempt(
-                        String(localized: "Not sent", comment: "Alert title: a request could not go out.")
+                        String(localized: "Not Sent", comment: "Alert title: a request could not go out.")
                     ) {
                         try await ask()
                     }

@@ -328,6 +328,37 @@ impl MobileAppStore {
     }
 }
 
+impl MobileAppStore {
+    /// One message of a conversation by its durable identity, without what
+    /// other rows carry about it (its reactions and its quote); `None` when
+    /// it is not in this conversation, or is a reaction.
+    pub(crate) fn chat_message(
+        &self,
+        owner_identity_id: &str,
+        conversation_address: &str,
+        message: &MobileStoredChatMessageRefRecord,
+    ) -> Result<Option<MobileStoredChatMessageRecord>, MobileStoreError> {
+        Ok(self
+            .connection()
+            .query_row(
+                &format!(
+                    "SELECT {columns} FROM chat_message
+                    WHERE owner_identity_id = ? AND conversation_address = ?
+                        AND session_id = ? AND handle = ? AND is_reaction = 0",
+                    columns = message_columns(),
+                ),
+                params![
+                    owner_identity_id,
+                    conversation_address,
+                    message.session_id,
+                    message.handle
+                ],
+                stored_chat_message,
+            )
+            .optional()?)
+    }
+}
+
 /// The columns every transcript read selects. [`stored_chat_message`]
 /// reads them by name, so the two agree on what each is whatever order
 /// they are listed in.

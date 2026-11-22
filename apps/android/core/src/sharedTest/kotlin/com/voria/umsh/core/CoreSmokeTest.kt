@@ -3,8 +3,13 @@ package com.voria.umsh.core
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -129,6 +134,52 @@ class CoreSmokeTest {
             assertTrue(error.error is SecretVaultException.Unavailable)
             assertTrue(store.channels("me").isEmpty())
         }
+    }
+
+    /**
+     * A send with no radio is refused, and the words submitted stay as the
+     * draft; a draft save whose coroutine is cancelled still lands.
+     */
+    @Test
+    fun aRadiolessCoreKeepsWhatWasTyped() = runBlocking {
+        val vault = object : SecretVault {
+            val secrets = mutableMapOf<String, ByteArray>()
+            override fun load(account: String) = secrets[account]
+            override fun store(account: String, secret: ByteArray) {
+                secrets[account] = secret
+            }
+            override fun delete(account: String) {
+                secrets.remove(account)
+            }
+            override fun deleteAll() = secrets.clear()
+        }
+        val store = MobileAppStore.open(temp.newFolder().resolve("application.sqlite").path)
+        val core = MobileAppCore(store, vault, MobileAppConfigRecord(temp.newFolder().path, 0u))
+        core.start(identity(31))
+        val peer = core.savePeer(identity(32).publicIdentity().canonicalAddress, null, true)
+        fun draft() = core.state(true).directConversations.single().draftText
+
+        val refused = runCatching {
+            core.sendChat(peer, MobileAppChatRequest.Typed("hello", null), "hello ")
+        }
+        assertTrue(refused.exceptionOrNull() is MobileAppException.NoRadio)
+        assertEquals("hello ", draft())
+        assertFalse(radioCarriesThisPhone(core.status().radio))
+
+        val saving = launch(Dispatchers.Default, start = CoroutineStart.UNDISPATCHED) {
+            core.saveDraft(peer, "kept anyway")
+        }
+        saving.cancel()
+        var waited = 0
+        while (draft() != "kept anyway" && waited < 5_000) {
+            delay(10)
+            waited += 10
+        }
+        assertEquals("kept anyway", draft())
+
+        core.stop()
+        core.close()
+        store.close()
     }
 
     @Test

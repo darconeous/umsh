@@ -21,8 +21,6 @@ struct PeersView: View {
     /// to the Conversations tab and pushes the transcript.
     var openConversation: (DirectConversationSummary) -> Void = { _ in }
     var peerActions: PeerActions = .unavailable
-    let updateDraft: ((Int64, String) async -> AppOperationResult)?
-    let sendMessage: ((DirectConversationSummary, String, Bool) async -> MessageSendResult)?
     var messageActions: ChatMessageActions = .unavailable
     /// Open the Discover Peers sheet, which the app root owns and presents.
     var discoverPeers: () -> Void = {}
@@ -95,8 +93,6 @@ struct PeersView: View {
                 radioSnapshot: $radioSnapshot,
                 conversations: $conversations,
                 actions: peerActions,
-                updateDraft: updateDraft,
-                sendMessage: sendMessage,
                 messageActions: messageActions
             )
         }
@@ -122,8 +118,6 @@ struct PeersView: View {
                         radioSnapshot: $radioSnapshot,
                         conversations: $conversations,
                         actions: peerActions,
-                        updateDraft: updateDraft,
-                        sendMessage: sendMessage,
                         messageActions: messageActions
                     )
                     .toolbar {
@@ -139,7 +133,7 @@ struct PeersView: View {
             }
         }
         .confirmationDialog(
-            peerPendingRemoval.map { Text("Remove \($0.displayName)?") } ?? Text("Remove peer?"),
+            peerPendingRemoval.map { Text("Remove \($0.displayName)?") } ?? Text("Remove Peer?"),
             isPresented: Binding(
                 get: { peerPendingRemoval != nil },
                 set: { if !$0 { peerPendingRemoval = nil } }
@@ -151,7 +145,7 @@ struct PeersView: View {
                 if peerActions.demoteToTransient != nil {
                     Button("Remove Peer") {
                         Task {
-                            await $failure.attempt(String(localized: "Peer not removed", comment: "Alert title.")) {
+                            await $failure.attempt(String(localized: "Peer Not Removed", comment: "Alert title.")) {
                                 try await peerActions.demoteToTransient?(peer)
                             }
                         }
@@ -160,7 +154,7 @@ struct PeersView: View {
                 if peerActions.deletePeerAndConversation != nil {
                     Button("Delete Peer and Conversation", role: .destructive) {
                         Task {
-                            await $failure.attempt(String(localized: "Peer not deleted", comment: "Alert title.")) {
+                            await $failure.attempt(String(localized: "Peer Not Deleted", comment: "Alert title.")) {
                                 try await peerActions.deletePeerAndConversation?(peer)
                             }
                         }
@@ -169,7 +163,7 @@ struct PeersView: View {
             } else if peerActions.deletePeer != nil {
                 Button("Delete Peer", role: .destructive) {
                     Task {
-                        await $failure.attempt(String(localized: "Peer not deleted", comment: "Alert title.")) {
+                        await $failure.attempt(String(localized: "Peer Not Deleted", comment: "Alert title.")) {
                             try await peerActions.deletePeer?(peer)
                         }
                     }
@@ -190,7 +184,7 @@ struct PeersView: View {
         guard let pending = pendingImport else { return }
         pendingImport = nil
         Task {
-            await $failure.attempt(String(localized: "Peer not saved", comment: "Alert title.")) {
+            await $failure.attempt(String(localized: "Peer Not Saved", comment: "Alert title.")) {
                 let conversation = try await savePeer(
                     pending.preview, pending.details, pending.startConversation
                 )
@@ -279,8 +273,6 @@ struct PeersView: View {
                 radioSnapshot: $radioSnapshot,
                 conversations: $conversations,
                 actions: peerActions,
-                updateDraft: updateDraft,
-                sendMessage: sendMessage,
                 messageActions: messageActions
             )
         } label: {
@@ -290,7 +282,7 @@ struct PeersView: View {
             if peer.isSaved, !peer.isUlcpDevice, peerActions.setFavorite != nil {
                 Button {
                     Task {
-                        await $failure.attempt(String(localized: "Not changed", comment: "Alert title: a setting on a peer or conversation could not be changed.")) {
+                        await $failure.attempt(String(localized: "Not Changed", comment: "Alert title: a setting on a peer or conversation could not be changed.")) {
                             try await peerActions.setFavorite?(peer, !peer.isFavorite)
                         }
                     }
@@ -305,7 +297,7 @@ struct PeersView: View {
             if !peer.isSaved, peerActions.promoteToSaved != nil {
                 Button {
                     Task {
-                        await $failure.attempt(String(localized: "Peer not saved", comment: "Alert title.")) {
+                        await $failure.attempt(String(localized: "Peer Not Saved", comment: "Alert title.")) {
                             try await peerActions.promoteToSaved?(peer)
                         }
                     }

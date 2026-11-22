@@ -18,7 +18,7 @@ use crate::test_support::{eventually, linked_driver};
 async fn commands_wait_for_a_running_identity() {
     let core = Core::new();
     assert_eq!(
-        core.core.mesh_session().await.err(),
+        core.core.identity_share_uri().await.err(),
         Some(MobileAppError::NotRunning)
     );
 }
@@ -59,7 +59,7 @@ async fn start_brings_the_identity_up_with_its_built_in_channels() {
         Some("public")
     );
     // The session is the identity's.
-    let session = core.core.mesh_session().await.unwrap();
+    let session = core.session().await.unwrap();
     assert_eq!(
         session.node_public_key(),
         crate::public_identity_bytes(owner).unwrap()
@@ -91,7 +91,7 @@ async fn a_start_that_cannot_open_its_counters_fails_and_can_be_erased() {
         }
     );
     assert_eq!(
-        core.core.mesh_session().await.err(),
+        core.core.identity_share_uri().await.err(),
         Some(MobileAppError::NotRunning)
     );
 
@@ -105,7 +105,7 @@ async fn a_start_that_cannot_open_its_counters_fails_and_can_be_erased() {
 async fn erase_takes_the_identity_down_and_another_starts() {
     let core = Core::new();
     let me = core.start(3).await;
-    let session = core.core.mesh_session().await.unwrap();
+    let session = core.session().await.unwrap();
     // Something to reserve, so the counter directory exists.
     session
         .ping(identity(4).public_identity().canonical_address, None)
@@ -222,8 +222,10 @@ async fn radio_commands_say_why_there_is_no_radio() {
         core.core.remote_save(operation, peer).await,
         Err(MobileAppError::OperationReused)
     );
-    // Advertising needs only the session.
-    core.core.advertise_identity().await.unwrap();
+    assert_eq!(
+        core.core.advertise_identity().await,
+        Err(MobileAppError::NoRadio)
+    );
 }
 
 #[tokio::test]
@@ -252,7 +254,7 @@ async fn the_advertised_name_is_kept_trimmed() {
 async fn with_no_radio_a_frame_fails_at_once() {
     let core = Core::new();
     core.start(3).await;
-    let session = core.core.mesh_session().await.unwrap();
+    let session = core.session().await.unwrap();
     // Without the core failing it, the beacon would wait out the 35 s
     // completion timeout with nobody to carry it.
     tokio::time::timeout(Duration::from_secs(5), session.send_beacon())
@@ -294,7 +296,7 @@ async fn a_radio_carries_the_running_identity_and_native_code_cannot_take_it() {
     let _ = me;
 
     // A frame reaches the air through the radio.
-    let session = core.core.mesh_session().await.unwrap();
+    let session = core.session().await.unwrap();
     session.send_beacon().await.unwrap();
 }
 
@@ -331,7 +333,7 @@ async fn stop_takes_a_running_identity_down_and_lets_go_of_the_radio() {
     core.start(3).await;
     let (_link, driver) = linked_driver();
     core.core.use_radio(Some(driver.clone())).await.unwrap();
-    let session = core.core.mesh_session().await.unwrap();
+    let session = core.session().await.unwrap();
     // A secured frame reserves counters, which makes their directory.
     session
         .ping(identity(4).public_identity().canonical_address, None)
@@ -470,18 +472,20 @@ async fn a_command_made_while_starting_runs_once_the_start_is_done() {
     let owner = identity(3).public_identity().canonical_address;
 
     let app = core.core.clone();
-    let session = tokio::spawn(async move { app.mesh_session().await });
+    let shared = tokio::spawn(async move { app.identity_share_uri().await });
     let app = core.core.clone();
     let named = tokio::spawn(async move { app.set_advertised_name(" Ridge Camp ".into()).await });
     still_waiting(&[&named]).await;
-    assert!(!session.is_finished());
+    assert!(!shared.is_finished());
 
     hooks.start_gate.as_ref().unwrap().add_permits(1);
     starting.await.unwrap().unwrap();
-    let session = session.await.unwrap().unwrap();
+    // Signed by the identity the start brought up.
+    let link = crate::inspect_node_uri(shared.await.unwrap().unwrap()).unwrap();
+    assert_eq!(link.canonical_address, owner);
     assert_eq!(
-        session.node_public_key(),
-        crate::public_identity_bytes(owner.clone()).unwrap()
+        link.identity.map(|identity| identity.signature),
+        Some(crate::IdentitySignatureState::Valid)
     );
     named.await.unwrap().unwrap();
     assert_eq!(
@@ -528,13 +532,10 @@ async fn a_command_made_while_a_start_fails_is_not_running() {
     let starting = start_held(&core, 3).await;
 
     let app = core.core.clone();
-    let session = tokio::spawn(async move { app.mesh_session().await });
-    let app = core.core.clone();
     let advertised = tokio::spawn(async move { app.advertise_identity().await });
     let app = core.core.clone();
     let named = tokio::spawn(async move { app.set_advertised_name("Ridge Camp".into()).await });
     still_waiting(&[&advertised, &named]).await;
-    assert!(!session.is_finished());
 
     hooks.start_gate.as_ref().unwrap().add_permits(1);
     assert_eq!(
@@ -542,10 +543,6 @@ async fn a_command_made_while_a_start_fails_is_not_running() {
         Err(MobileAppError::StartFailed {
             reason: MobileAppStartFailure::Session
         })
-    );
-    assert_eq!(
-        session.await.unwrap().err(),
-        Some(MobileAppError::NotRunning)
     );
     assert_eq!(advertised.await.unwrap(), Err(MobileAppError::NotRunning));
     // Failed with an owner, the name is still kept for the next start.

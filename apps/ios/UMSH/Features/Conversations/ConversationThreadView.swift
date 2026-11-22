@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import UMSHMobileCore
 
 /// One open transcript, whichever kind of conversation it belongs to.
 ///
@@ -41,18 +42,12 @@ struct ConversationThreadView: View {
     @Environment(\.forwardSecretConversations) private var forwardSecretConversations
     @Binding var conversation: ConversationListItem
     let radioSnapshot: RadioSnapshot
-    let updateDraft: (Int64, String) async -> AppOperationResult
-    let updateChannelDraft: (Int64, String) async -> AppOperationResult
-    let sendMessage: (ConversationListItem, String, Bool) async -> MessageSendResult
     let messageActions: ChatMessageActions
     let peerActions: PeerActions
     let channelActions: ChannelConversationActions
     /// Channel management, for the channel sheet the group conversation's
     /// info sheet leads to.
     let channelManagementActions: ChannelActions
-    /// Called when the transcript appears, so its unread badge clears at the
-    /// moment the user actually looks at it.
-    let markRead: (String) async -> Void
     /// The full conversation list, handed to the peer profile sheet so its
     /// own "Message" push lands on a real transcript instead of a blank
     /// destination.
@@ -70,9 +65,10 @@ struct ConversationThreadView: View {
     /// written in violet never turns plain just before it is sent.
     @State private var secretDraft = false
     @State private var showsConversationInfo = false
-    @State private var showsBlockedReason = false
-    @State private var sendFailureMessage: String?
-    @State private var messageWasSubmitted = false
+    /// A command that did not happen, and why.
+    @State private var failure: FailureNotice?
+    /// A send is under way, so another tap of Send is not a second message.
+    @State private var isSending = false
     @State private var draftError: AppOperationError?
     @State private var editingMessage: ChatMessageSummary?
     /// The held route, while the offer to replace it is on screen.
@@ -80,11 +76,16 @@ struct ConversationThreadView: View {
     @State private var editDraft = ""
     @State private var deletingMessage: ChatMessageSummary?
     @State private var resendingMessage: ChatMessageSummary?
-    /// The warning before the first transmission on `EMERGENCY` since
-    /// launch is open.
+    /// The warning before transmitting on `EMERGENCY` is open.
     @State private var showsEmergencyWarning = false
     /// What waits on that warning, when it is not the draft.
     @State private var certifiedAction: (() -> Void)?
+    /// Why the core did not take the agreement, said once the warning has
+    /// gone.
+    @State private var certificationFailure: FailureNotice?
+    /// What waits on that warning once the member sheet, which asked for
+    /// it, has gone.
+    @State private var certifyAfterMemberSheet: (() -> Void)?
     @State private var inspectedMember: InspectedMember?
     @State private var inspectedMessage: ChatMessageSummary?
     /// The message the draft replies to. Held here, like the communicator's
@@ -97,6 +98,10 @@ struct ConversationThreadView: View {
     /// A row already in the window to bring into view, animated.
     @State private var revealRequest = TranscriptRestoreAnchor()
     @Environment(\.visibleConversationReporter) private var visibleConversationReporter
+    @Environment(\.draftAdditions) private var draftAdditions
+    /// The newest draft addition this composer has taken in, or was opened
+    /// after: the draft it started from already held those.
+    @State private var draftAdditionsSeen: Int?
     @Environment(\.transcriptLoader) private var transcriptLoader
     @Environment(\.showOnMap) private var showOnMap
     @Environment(\.dismiss) private var dismiss
@@ -126,28 +131,20 @@ struct ConversationThreadView: View {
     init(
         conversation: Binding<ConversationListItem>,
         radioSnapshot: RadioSnapshot,
-        updateDraft: @escaping (Int64, String) async -> AppOperationResult,
-        updateChannelDraft: @escaping (Int64, String) async -> AppOperationResult = { _, _ in .failure(.unavailable("Saving is unavailable.")) },
-        sendMessage: @escaping (ConversationListItem, String, Bool) async -> MessageSendResult,
         messageActions: ChatMessageActions = .unavailable,
         peerActions: PeerActions = .unavailable,
         channelActions: ChannelConversationActions = .unavailable,
         channelManagementActions: ChannelActions = .unavailable,
-        markRead: @escaping (String) async -> Void = { _ in },
         conversations: Binding<[DirectConversationSummary]> = .constant([]),
         peers: [PeerSummary] = [],
         unreadElsewhere: Int = 0
     ) {
         _conversation = conversation
         self.radioSnapshot = radioSnapshot
-        self.updateDraft = updateDraft
-        self.updateChannelDraft = updateChannelDraft
-        self.sendMessage = sendMessage
         self.messageActions = messageActions
         self.peerActions = peerActions
         self.channelActions = channelActions
         self.channelManagementActions = channelManagementActions
-        self.markRead = markRead
         _conversations = conversations
         self.peers = peers
         self.unreadElsewhere = unreadElsewhere
@@ -489,6 +486,7 @@ struct ConversationThreadView: View {
 
             }
             .onChange(of: draft, initial: true) { settleSecretDraft() }
+            .onChange(of: draftAdditions, initial: true) { takeInDraftAdditions() }
             .onChange(of: holdsSecret) { settleSecretDraft() }
         }
         // A conversation is a place, not a tab: Messages gives the transcript
@@ -508,23 +506,20 @@ struct ConversationThreadView: View {
         }
         .onAppear {
             visibleConversationReporter.appeared(conversation.conversationAddress)
-            Task { await markRead(conversation.conversationAddress) }
+            Task { await messageActions.markRead(conversation.conversationAddress) }
         }
         .onDisappear {
             visibleConversationReporter.disappeared(conversation.conversationAddress)
             // Hand the final text to the runtime-owned draft store even when
             // navigation cancels the view's debounce task.
             let text = draft
-            let leavingConversation = conversation
-            Task {
-                switch leavingConversation {
-                case let .direct(item): _ = await updateDraft(item.id, text)
-                case let .channel(item): _ = await updateChannelDraft(item.id, text)
-                }
-            }
+            let address = conversation.conversationAddress
+            let saveDraft = messageActions.saveDraft
+            Task { _ = await saveDraft(address, text) }
             // Again on the way out: anything that arrived while the
             // transcript was on screen was seen, and must not leave a badge.
-            Task { await markRead(conversation.conversationAddress) }
+            let markRead = messageActions.markRead
+            Task { await markRead(address) }
         }
         // The header is this view's own rather than the navigation bar's. An
         // inline bar squeezes its principal item into the height it would
@@ -536,7 +531,13 @@ struct ConversationThreadView: View {
         .safeAreaInset(edge: .top) { header }
         .background { InteractivePopGestureRestorer() }
         .sheet(isPresented: $showsConversationInfo) { conversationInfoSheet }
-        .sheet(item: $inspectedMember) { inspected in
+        .sheet(item: $inspectedMember, onDismiss: {
+            // The warning is this conversation's, so the member sheet steps
+            // aside for it.
+            guard let action = certifyAfterMemberSheet else { return }
+            certifyAfterMemberSheet = nil
+            afterEmergencyCertified(action)
+        }) { inspected in
             // Resolved here rather than at the tap, so an identity arriving
             // while the sheet is open reaches it.
             let member = member(hint: inspected.hint, nodeHint: inspected.nodeHint)
@@ -546,6 +547,13 @@ struct ConversationThreadView: View {
                     knownPeer: memberPeer(for: member),
                     requestIdentity: channelConversation.map { conversation in
                         { hint in
+                            // Asking goes out over the channel, so on
+                            // EMERGENCY it waits for the warning.
+                            if needsEmergencyCertification {
+                                certifyAfterMemberSheet = { requestMemberIdentity(conversation, hint) }
+                                inspectedMember = nil
+                                return
+                            }
                             try await channelActions.requestMemberIdentity(conversation, hint)
                         }
                     },
@@ -553,11 +561,7 @@ struct ConversationThreadView: View {
                     conversations: $conversations,
                     radioSnapshot: radioSnapshot,
                     peerActions: peerActions,
-                    messageActions: messageActions,
-                    updateDraft: updateDraft,
-                    sendMessage: { conversation, body, forwardSecret in
-                        await sendMessage(.direct(conversation), body, forwardSecret)
-                    }
+                    messageActions: messageActions
                 )
             }
         }
@@ -571,21 +575,7 @@ struct ConversationThreadView: View {
                 ) { inspectedMessage = nil }
             }
         }
-        .alert(messageWasSubmitted ? "Message submitted" : "Message not sent", isPresented: $showsBlockedReason) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            // The reassurance is about the composer's draft, so it only
-            // belongs on a failure that had one. A reaction or a delete has
-            // nothing to preserve, and saying otherwise invites the reader to
-            // look for something that was never there.
-            Text(
-                (sendFailureMessage ?? blockedReason ?? "The message could not be queued.")
-                    + (draft.isEmpty ? "" : " Your text is still in the composer.")
-            )
-        }
-        .onChange(of: showsBlockedReason) { _, isShowing in
-            if !isShowing { messageWasSubmitted = false }
-        }
+        .failureAlert($failure)
         .sheet(item: $editingMessage) { message in
             MessageEditSheet(
                 originalBody: message.body,
@@ -599,14 +589,31 @@ struct ConversationThreadView: View {
         }
         // Turning the warning down before a send, by Cancel or a swipe,
         // leaves EMERGENCY too. The draft stays. Turned down before anything
-        // else, it just drops what was waiting.
+        // else, it just drops what was waiting. Agreed to but not taken by
+        // the core, it drops what was waiting and says why.
         .sheet(isPresented: $showsEmergencyWarning, onDismiss: {
             let wasSend = certifiedAction == nil
             certifiedAction = nil
-            if wasSend, !channelActions.emergencyCertified() { dismiss() }
+            if let notice = certificationFailure {
+                certificationFailure = nil
+                failure = notice
+            } else if wasSend, !channelActions.emergencyCertified() {
+                dismiss()
+            }
         }) {
             EmergencyWarningSheet(sends: certifiedAction == nil) {
-                channelActions.certifyEmergency()
+                do {
+                    try channelActions.certifyEmergency()
+                } catch {
+                    certificationFailure = FailureNotice(
+                        certifiedAction == nil
+                            ? Self.messageNotSentTitle
+                            : String(localized: "Not Sent", comment: "Alert title: a request could not go out."),
+                        error
+                    )
+                    showsEmergencyWarning = false
+                    return
+                }
                 showsEmergencyWarning = false
                 if let action = certifiedAction {
                     certifiedAction = nil
@@ -619,7 +626,7 @@ struct ConversationThreadView: View {
             }
         }
         .confirmationDialog(
-            "Delete this message?",
+            "Delete This Message?",
             isPresented: Binding(
                 get: { deletingMessage != nil },
                 set: { if !$0 { deletingMessage = nil } }
@@ -645,7 +652,14 @@ struct ConversationThreadView: View {
         // choice.
         .confirmationDialog(
             resendingMessage?.isWithinReviseWindow == false
-                ? "Resend this message?" : "Retry sending message?",
+                ? String(
+                    localized: "Resend This Message?",
+                    comment: "Title of the dialog that sends an old undelivered message again as a new one."
+                )
+                : String(
+                    localized: "Retry Sending Message?",
+                    comment: "Title of the dialog that sends a recent undelivered message again."
+                ),
             isPresented: Binding(
                 get: { resendingMessage != nil },
                 set: { if !$0 { resendingMessage = nil } }
@@ -653,15 +667,25 @@ struct ConversationThreadView: View {
             titleVisibility: .visible
         ) {
             if let message = resendingMessage {
-                let again = message.isWithinReviseWindow ? resend : resendAsNew
-                Button(message.isWithinReviseWindow ? "Try Again" : "Resend") {
+                Button {
                     resendingMessage = nil
-                    again(message, message.isForwardSecret)
+                    resend(message, forwardSecret: message.isForwardSecret)
+                } label: {
+                    if message.isWithinReviseWindow {
+                        Text("Try Again", comment: "Button: send a recent undelivered message again.")
+                    } else {
+                        Text("Resend", comment: "Button: send an old undelivered message again as a new one.")
+                    }
                 }
                 if message.isForwardSecret {
-                    Button("Send Without Forward Secrecy") {
+                    Button {
                         resendingMessage = nil
-                        again(message, false)
+                        resend(message, forwardSecret: false)
+                    } label: {
+                        Text(
+                            "Send Without Forward Secrecy",
+                            comment: "Button: send an undelivered message again without forward secrecy."
+                        )
                     }
                 }
             }
@@ -682,10 +706,6 @@ struct ConversationThreadView: View {
                         radioSnapshot: .constant(radioSnapshot),
                         conversations: $conversations,
                         actions: peerActions,
-                        updateDraft: updateDraft,
-                        sendMessage: { conversation, body, forwardSecret in
-                            await sendMessage(.direct(conversation), body, forwardSecret)
-                        },
                         messageActions: messageActions,
                         returnToConversation: { showsConversationInfo = false }
                     )
@@ -765,90 +785,72 @@ struct ConversationThreadView: View {
     private func edit(_ message: ChatMessageSummary, newBody: String) async {
         let body = newBody.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty, body != message.body else { return }
-        switch await messageActions.edit(conversation, message, body) {
-        case let .sent(updated, warning):
-            conversation = updated
-            if let warning {
-                sendFailureMessage = warning
-                messageWasSubmitted = true
-                showsBlockedReason = true
-            }
-        case .cancelled: break
-        case let .failed(reason):
-            sendFailureMessage = reason
-            showsBlockedReason = true
+        await $failure.attempt(String(
+            localized: "Edit Not Sent",
+            comment: "Alert title: an edit of a message did not go out. The message says why."
+        )) {
+            try await messageActions.edit(conversation, message, body)
         }
     }
 
     private func delete(_ message: ChatMessageSummary) async {
-        switch await messageActions.delete(conversation, message) {
-        case let .sent(updated, warning):
-            conversation = updated
-            if let warning {
-                sendFailureMessage = warning
-                messageWasSubmitted = true
-                showsBlockedReason = true
-            }
-        case .cancelled: break
-        case let .failed(reason):
-            sendFailureMessage = reason
-            showsBlockedReason = true
+        await $failure.attempt(String(
+            localized: "Deletion Not Sent",
+            comment: "Alert title: taking back a message did not go out. The message says why."
+        )) {
+            try await messageActions.delete(conversation, message)
         }
     }
 
-    /// Fire-and-forget like a reaction: the message is already in the
-    /// transcript, so nothing new appears and the reader stays put—the
-    /// row's own delivery caption is the progress report.
+    /// A resend that goes as the message itself adds no row, so the reader
+    /// stays put and the row's own delivery caption is the progress report.
+    /// One that goes as a new message replaces the failed bubble with the
+    /// same words as the newest message, and the transcript follows them to
+    /// the bottom the way it follows any send.
     private func resend(_ message: ChatMessageSummary, forwardSecret: Bool) {
+        let title = String(
+            localized: "Not Resent",
+            comment: "Alert title: an undelivered message was not sent again. The message says why."
+        )
         Task {
-            switch await messageActions.resend(conversation, message, forwardSecret) {
-            case let .sent(updated, warning):
-                conversation = updated
-                if let warning {
-                    sendFailureMessage = warning
-                    messageWasSubmitted = true
-                    showsBlockedReason = true
+            do {
+                if try await messageActions.resend(conversation, message, forwardSecret) == .asNew {
+                    await followNewMessage()
                 }
-            case .cancelled: break
-            case let .failed(reason):
-                sendFailureMessage = reason
-                showsBlockedReason = true
+            } catch let error as MobileAppError {
+                // Kept as a new message, marked as not delivered.
+                if case .MessageNotQueued = error { await followNewMessage() }
+                failure = FailureNotice(title, error)
+            } catch {
+                failure = FailureNotice(title, error)
             }
         }
     }
 
-    /// Unlike an in-place resend, this one adds a row: the failed bubble goes
-    /// and the same words arrive as the newest message, so the transcript
-    /// follows them to the bottom the way it follows any send.
-    private func resendAsNew(_ message: ChatMessageSummary, forwardSecret: Bool) {
-        Task {
-            switch await messageActions.resendAsNew(conversation, message, forwardSecret) {
-            case let .sent(updated, warning):
-                conversation = updated
-                if let warning {
-                    sendFailureMessage = warning
-                    messageWasSubmitted = true
-                    showsBlockedReason = true
-                }
-                if transcript.hasNewer {
-                    await landAtLiveEdge()
-                } else {
-                    scroll.followsLatestMessage = true
-                    scrollToBottomRequest += 1
-                }
-            case .cancelled: break
-            case let .failed(reason):
-                sendFailureMessage = reason
-                showsBlockedReason = true
-            }
+    /// Carry the reader to a message just added at the bottom.
+    private func followNewMessage() async {
+        if transcript.hasNewer {
+            // Sent from up in the history, where the new message is not
+            // even loaded. Bring the live edge in and land on it, rather
+            // than scrolling to the bottom of a window that does not hold
+            // it.
+            await landAtLiveEdge()
+        } else {
+            // An explicit navigation to the new item, unlike a passive
+            // update while reading older history.
+            scroll.followsLatestMessage = true
+            scrollToBottomRequest += 1
         }
+    }
+
+    /// Whether a transmission here waits for the `EMERGENCY` warning.
+    private var needsEmergencyCertification: Bool {
+        channelConversation?.channel.isEmergency == true && !channelActions.emergencyCertified()
     }
 
     /// Run `action` now, or once the user agrees to the `EMERGENCY` warning.
     private func afterEmergencyCertified(_ action: @escaping () -> Void) {
-        guard channelConversation?.channel.isEmergency == true,
-              !channelActions.emergencyCertified()
-        else {
+        guard needsEmergencyCertification else {
             action()
             return
         }
@@ -856,36 +858,42 @@ struct ConversationThreadView: View {
         showsEmergencyWarning = true
     }
 
+    /// Ask a member to identify themselves, from here rather than from their
+    /// sheet when the warning came between.
+    private func requestMemberIdentity(_ conversation: ChannelConversationSummary, _ hint: Data) {
+        Task {
+            await $failure.attempt(
+                String(localized: "Not Sent", comment: "Alert title: a request could not go out.")
+            ) {
+                try await channelActions.requestMemberIdentity(conversation, hint)
+            }
+        }
+    }
+
     /// Fire-and-forget: the engine flips the gap to a spinner while it asks.
     private func requestMissing(_ messages: [ChatMessageSummary]) {
         Task {
-            switch await messageActions.requestMissing(conversation, messages) {
-            case let .sent(updated, _):
-                conversation = updated
-            case .cancelled: break
-            case let .failed(reason):
-                sendFailureMessage = reason
-                showsBlockedReason = true
+            await $failure.attempt(String(
+                localized: "Messages Not Requested",
+                comment: "Alert title: asking for missing messages did not go out. The message says why."
+            )) {
+                try await messageActions.requestMissing(conversation, messages)
             }
         }
     }
 
     /// A reaction is fire-and-forget from the transcript's point of view: it
     /// adds no row to follow, so nothing scrolls and the reader stays put.
+    /// Picking the reaction already ours takes it back.
     private func react(to message: ChatMessageSummary, with glyph: String) {
+        let kind = ReactionEmoji.kind(for: glyph)
+        let reaction: MobileReaction? = message.myReaction?.kind == kind ? nil : kind
         Task {
-            switch await messageActions.react(conversation, message, glyph) {
-            case let .sent(updated, warning):
-                conversation = updated
-                if let warning {
-                    sendFailureMessage = warning
-                    messageWasSubmitted = true
-                    showsBlockedReason = true
-                }
-            case .cancelled: break
-            case let .failed(reason):
-                sendFailureMessage = reason
-                showsBlockedReason = true
+            await $failure.attempt(String(
+                localized: "Reaction Not Sent",
+                comment: "Alert title: a reaction to a message did not go out. The message says why."
+            )) {
+                try await messageActions.react(conversation, message, reaction)
             }
         }
     }
@@ -1266,13 +1274,21 @@ struct ConversationThreadView: View {
         }
     }
 
+    /// Add to the composer what was added to this conversation's stored
+    /// draft while it was open, so its next save keeps those words.
+    private func takeInDraftAdditions() {
+        let newest = draftAdditions.last?.sequence ?? 0
+        defer { draftAdditionsSeen = newest }
+        guard let seen = draftAdditionsSeen else { return }
+        for addition in draftAdditions
+        where addition.sequence > seen && addition.address == conversation.conversationAddress {
+            draft = addition.added(to: draft)
+        }
+    }
+
     private func persistDraft() async {
         let text = draft
-        let result: AppOperationResult
-        switch conversation {
-        case let .direct(item): result = await updateDraft(item.id, text)
-        case let .channel(item): result = await updateChannelDraft(item.id, text)
-        }
+        let result = await messageActions.saveDraft(conversation.conversationAddress, text)
         guard draft == text, !Task.isCancelled else { return }
         switch result {
         case .success: draftError = nil
@@ -1280,65 +1296,71 @@ struct ConversationThreadView: View {
         }
     }
 
+    private static var messageNotSentTitle: String {
+        String(
+            localized: "Message Not Sent",
+            comment: "Alert title: a message did not go out. The message says why."
+        )
+    }
+
     private func send() async {
-        sendFailureMessage = nil
+        guard !isSending else { return }
+        // Untrimmed, as the draft stores it: the core trims what it sends.
         let submittedDraft = draft
-        let body = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !body.isEmpty else { return }
-        guard blockedReason == nil else {
-            showsBlockedReason = true
+        guard !submittedDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let title = Self.messageNotSentTitle
+        if let blockedReason {
+            failure = FailureNotice(title: title, message: blockedReason)
             return
         }
-        if channelConversation?.channel.isEmergency == true, !channelActions.emergencyCertified() {
+        if needsEmergencyCertification {
             showsEmergencyWarning = true
             return
         }
+        isSending = true
+        defer { isSending = false }
         let replying = replyTarget
         // As the composer shows it as the button is pressed.
         let forwardSecret = composesSecret
-        let result = if let replying {
-            await messageActions.reply(conversation, replying, body, forwardSecret)
-        } else {
-            await sendMessage(conversation, body, forwardSecret)
-        }
-        switch result {
-        case let .sent(updatedConversation, warning):
-            conversation = updatedConversation
-            if replyTarget == replying {
-                withAnimation(UMSHAnimation.accessory) { replyTarget = nil }
-            }
-            if let warning {
-                sendFailureMessage = warning
-                messageWasSubmitted = true
-                showsBlockedReason = true
-            } else if draft == submittedDraft {
-                draft = ""
-            }
-            if transcript.hasNewer {
-                // Sent from up in the history, where the new message is not
-                // even loaded. Bring the live edge in and land on it, rather
-                // than scrolling to the bottom of a window that does not hold
-                // what was just sent.
-                await landAtLiveEdge()
+        do {
+            if let replying {
+                try await messageActions.reply(conversation, replying, submittedDraft, forwardSecret)
             } else {
-                // Sending is an explicit navigation to the new item, unlike a
-                // passive update while reading older history.
-                scroll.followsLatestMessage = true
-                scrollToBottomRequest += 1
+                try await messageActions.send(conversation, submittedDraft, forwardSecret)
             }
-        case .cancelled: break
-        case let .failed(message):
-            sendFailureMessage = message
-            showsBlockedReason = true
+            await settleSent(submittedDraft, replying: replying)
+        } catch let error as MobileAppError {
+            // Kept, marked as not delivered: the transcript holds it now,
+            // with its own way to send it again, so the composer lets go of
+            // it as it would of one that went.
+            if case .MessageNotQueued = error {
+                await settleSent(submittedDraft, replying: replying)
+            }
+            failure = FailureNotice(title, error)
+        } catch {
+            failure = FailureNotice(title, error)
         }
+    }
+
+    /// The composer after a message it held was kept: emptied, unless more
+    /// was typed while it went, and the transcript at the new message.
+    private func settleSent(_ submittedDraft: String, replying: ChatMessageSummary?) async {
+        if replyTarget == replying {
+            withAnimation(UMSHAnimation.accessory) { replyTarget = nil }
+        }
+        if draft == submittedDraft {
+            draft = ""
+        }
+        await followNewMessage()
     }
 
     /// Erase this conversation's transcript, closing the sheet the action was
     /// taken from: what that sheet described is gone, and leaving it open
     /// would sit a "Clear All Messages" button over an empty conversation.
-    private func clearMessages() async {
+    /// When nothing was erased the sheet stays, and says why.
+    private func clearMessages() async throws {
+        try await messageActions.clearMessages(conversation.conversationAddress)
         showsConversationInfo = false
-        await messageActions.clearMessages(conversation.conversationAddress)
     }
 
     private func countMessages() async -> Int {
@@ -1451,10 +1473,6 @@ struct ConversationThreadView: View {
                     radioSnapshot: .constant(radioSnapshot),
                     conversations: $conversations,
                     actions: peerActions,
-                    updateDraft: updateDraft,
-                    sendMessage: { conversation, body, forwardSecret in
-                        await sendMessage(.direct(conversation), body, forwardSecret)
-                    },
                     messageActions: messageActions
                 )
             )
@@ -1493,14 +1511,20 @@ struct ConversationThreadView: View {
     private var composerBlock: ComposerBlock? {
         if radioIsAbsent {
             return ComposerBlock(
-                reason: "Connect a companion radio to send messages",
-                actionLabel: "Connect Radio"
+                reason: String(
+                    localized: "Connect a companion radio to send messages",
+                    comment: "Why the composer cannot send: no radio is connected."
+                ),
+                actionLabel: String(localized: "Connect Radio", comment: "Button: open the radio's settings to connect one.")
             )
         }
         if hostIsSettledElsewhere {
             return ComposerBlock(
-                reason: "Set up this radio for the current phone identity to send messages",
-                actionLabel: "Radio Settings"
+                reason: String(
+                    localized: "Set up this radio for the current phone identity to send messages",
+                    comment: "Why the composer cannot send: the connected radio is not set up for this phone."
+                ),
+                actionLabel: String(localized: "Radio Settings", comment: "Button: open the connected radio's settings.")
             )
         }
         return nil
@@ -1526,15 +1550,17 @@ struct ConversationThreadView: View {
     /// Whether a message sent this instant can actually go somewhere. False
     /// through the transient link states, where the field stays but the send
     /// button waits with it.
-    private var canSendNow: Bool {
-        (radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready)
-            && radioSnapshot.hostState == .matchesCurrentIdentity
-    }
+    private var canSendNow: Bool { radioSnapshot.carriesThisPhone }
 
     /// The same condition as a sentence, for the alert a blocked send raises.
     private var blockedReason: String? {
         if let composerBlock { return composerBlock.reason }
-        if !canSendNow { return "The companion radio is still connecting." }
+        if !canSendNow {
+            return String(
+                localized: "The companion radio is still connecting.",
+                comment: "Why a message was not sent: the radio has not finished connecting."
+            )
+        }
         return nil
     }
 }

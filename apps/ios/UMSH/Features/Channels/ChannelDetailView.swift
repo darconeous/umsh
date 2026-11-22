@@ -210,19 +210,19 @@ struct ChannelDetailView: View {
     }
 
     private static var notChangedTitle: String {
-        String(localized: "Channel not changed", comment: "Alert title: a channel's alias, region, hops or notifications were not saved.")
+        String(localized: "Channel Not Changed", comment: "Alert title: a channel's alias, region, hops or notifications were not saved.")
     }
 
     private static var notLeftTitle: String {
-        String(localized: "Channel not left", comment: "Alert title: leaving a channel failed.")
+        String(localized: "Channel Not Left", comment: "Alert title: leaving a channel failed.")
     }
 
     private static var notSharedTitle: String {
-        String(localized: "Invitation unavailable", comment: "Alert title: a channel's invitation could not be made.")
+        String(localized: "Invitation Unavailable", comment: "Alert title: a channel's invitation could not be made.")
     }
 
     private static var conversationUnavailableTitle: String {
-        String(localized: "Conversation unavailable", comment: "Alert title.")
+        String(localized: "Conversation Unavailable", comment: "Alert title.")
     }
 
     private func setNotifications(_ enabled: Bool) async {

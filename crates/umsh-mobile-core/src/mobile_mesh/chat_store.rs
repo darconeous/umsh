@@ -13,7 +13,8 @@ use tokio::sync::{Notify, mpsc, oneshot};
 
 use super::{ChatComposeRequest, MobileChatWorkerEvent, MobileMeshError, MobileMeshSession};
 use crate::mobile_chat::{
-    MobileChatArchiveResultKind, MobileChatOriginalRef, MobileChatRegardingRef,
+    MobileChatArchiveResultKind, MobileChatComposeBatchRecord, MobileChatOriginalRef,
+    MobileChatRegardingRef,
 };
 use crate::store::{
     ChatBatchContext, ChatBatchEffects, MobileAppStore, MobileChatChangesRecord, MobileStoreError,
@@ -153,9 +154,24 @@ pub(super) enum ChatStoreCommand {
         request: ChatComposeRequest,
         response: oneshot::Sender<Result<(), MobileChatSendError>>,
     },
+    /// Store what the worker has reported so far, then answer `done`, also
+    /// when a batch is left for a retry.
+    Flush { done: oneshot::Sender<()> },
     /// Store what the worker has reported, once more, then end the thread.
     /// `done` is answered once the thread has ended.
     Stop { done: oneshot::Sender<()> },
+}
+
+/// Faults tests make a chat store meet.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct ChatStoreFaults {
+    /// The store refuses every compose's commit.
+    pub(crate) refuse_commit: std::sync::atomic::AtomicBool,
+    /// The radio refuses every stored message.
+    pub(crate) refuse_release: std::sync::atomic::AtomicBool,
+    /// A release goes out, but its counters are reported as not saved.
+    pub(crate) counters_unsaved: std::sync::atomic::AtomicBool,
 }
 
 /// The session's end of its chat store's thread. Dropping it ends the
@@ -165,10 +181,9 @@ pub(super) struct ChatStore {
     /// Where tests arrive silently. Shared rather than sent, so a batch
     /// stored after a change, on whichever thread, reads it.
     silent_tests_in: Arc<std::sync::Mutex<Option<String>>>,
-    /// Makes the radio refuse every stored message, for the tests of what
-    /// a send does then.
+    /// What a send meets, for the tests of what it does then.
     #[cfg(test)]
-    refuse_release: Arc<std::sync::atomic::AtomicBool>,
+    pub(crate) faults: Arc<ChatStoreFaults>,
     /// How many times a batch could not be stored, for the tests of the
     /// retries.
     #[cfg(test)]
@@ -189,7 +204,7 @@ impl ChatStore {
         let (commands, receiver) = mpsc::unbounded_channel();
         let silent_tests_in = Arc::new(std::sync::Mutex::new(silent_tests_in));
         #[cfg(test)]
-        let refuse_release = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let faults = Arc::new(ChatStoreFaults::default());
         #[cfg(test)]
         let failed_attempts = Arc::new(std::sync::atomic::AtomicU32::new(0));
         let storer = Storer {
@@ -200,7 +215,7 @@ impl ChatStore {
             retry_delay,
             held: None,
             #[cfg(test)]
-            refuse_release: refuse_release.clone(),
+            faults: faults.clone(),
             #[cfg(test)]
             failed_attempts: failed_attempts.clone(),
         };
@@ -224,7 +239,7 @@ impl ChatStore {
             commands,
             silent_tests_in,
             #[cfg(test)]
-            refuse_release,
+            faults,
             #[cfg(test)]
             failed_attempts,
         })
@@ -269,7 +284,7 @@ struct Storer {
     retry_delay: Duration,
     held: Option<HeldBatch>,
     #[cfg(test)]
-    refuse_release: Arc<std::sync::atomic::AtomicBool>,
+    faults: Arc<ChatStoreFaults>,
     #[cfg(test)]
     failed_attempts: Arc<std::sync::atomic::AtomicU32>,
 }
@@ -309,6 +324,15 @@ impl Storer {
                             }
                         }
                         return Some(done);
+                    }
+                    Some(ChatStoreCommand::Flush { done }) => {
+                        let session = self.session.upgrade()?;
+                        // A batch waiting out its retry delay holds every
+                        // one behind it, and keeps its delay.
+                        if retry_at.is_none() && !self.store_waiting(&session) {
+                            retry_at = Some(tokio::time::Instant::now() + self.retry_delay);
+                        }
+                        let _ = done.send(());
                     }
                     Some(ChatStoreCommand::Send {
                         conversation_address,
@@ -426,10 +450,7 @@ impl Storer {
             .compose_chat(conversation_address.clone(), client_token(), request)
             .await
             .map_err(|error| MobileChatSendError::NotComposed { error })?;
-        if let Err(error) =
-            self.store
-                .commit_chat_compose_batch(owner.clone(), batch.clone(), unix_ms())
-        {
+        if let Err(error) = self.commit(owner, &batch) {
             let reset = match self.store.chat_checkpoints(owner.clone()) {
                 Ok(checkpoints) => session
                     .reject_chat_batch(batch.batch_id, checkpoints)
@@ -444,17 +465,47 @@ impl Storer {
             });
         }
         changed();
-        if let Err(error) = self.release(session, batch.batch_id).await {
-            let recorded = self
-                .store
-                .mark_chat_compose_batch_failed(owner.clone(), batch);
-            changed();
-            return Err(match recorded {
-                Ok(()) => MobileChatSendError::NotQueued { error },
-                Err(_) => MobileChatSendError::NotQueuedOrRecorded { error },
-            });
+        match self.release(session, batch.batch_id).await {
+            Ok(()) => {}
+            // The frames went; only their counters were not saved, which
+            // the next save retries. Recorded as not delivered, the message
+            // would be offered again to peers that have it.
+            Err(MobileMeshError::CounterPersistenceFailed) => {
+                log::error!("a message went out, but its counters could not be saved");
+            }
+            Err(error) => {
+                let recorded = self
+                    .store
+                    .mark_chat_compose_batch_failed(owner.clone(), batch);
+                changed();
+                return Err(match recorded {
+                    Ok(()) => MobileChatSendError::NotQueued { error },
+                    Err(_) => MobileChatSendError::NotQueuedOrRecorded { error },
+                });
+            }
         }
         Ok(())
+    }
+
+    /// Keep a composed batch.
+    fn commit(
+        &self,
+        owner: &str,
+        batch: &MobileChatComposeBatchRecord,
+    ) -> Result<(), MobileStoreError> {
+        #[cfg(test)]
+        if self
+            .faults
+            .refuse_commit
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return Err(MobileStoreError::Failed {
+                code: 0,
+                detail: "refused for a test".to_owned(),
+            });
+        }
+        self.store
+            .commit_chat_compose_batch(owner.to_owned(), batch.clone(), unix_ms())
     }
 
     /// Release a stored batch's frames to the radio.
@@ -465,12 +516,23 @@ impl Storer {
     ) -> Result<(), MobileMeshError> {
         #[cfg(test)]
         if self
+            .faults
             .refuse_release
             .load(std::sync::atomic::Ordering::Relaxed)
         {
             return Err(MobileMeshError::SendFailed);
         }
-        session.commit_chat_batch(batch_id).await
+        let released = session.commit_chat_batch(batch_id).await;
+        #[cfg(test)]
+        if released.is_ok()
+            && self
+                .faults
+                .counters_unsaved
+                .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return Err(MobileMeshError::CounterPersistenceFailed);
+        }
+        released
     }
 }
 
@@ -1065,6 +1127,7 @@ mod tests {
             .chat_store
             .get()
             .unwrap()
+            .faults
             .refuse_release
             .store(true, std::sync::atomic::Ordering::Relaxed);
         assert!(matches!(

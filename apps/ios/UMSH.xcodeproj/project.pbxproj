@@ -133,7 +133,6 @@
 		6DECDAF81E0BC26018152908 /* UMSH/App/ConversationDraftStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C89ACCEF04F1CDDB4E109D76 /* UMSH/App/ConversationDraftStore.swift */; };
 		79D4624F1907FBD89ADCB6ED /* UMSH/Features/RemoteManagement/RemoteWifiScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F89A0706209ED4645A7FFD90 /* UMSH/Features/RemoteManagement/RemoteWifiScreen.swift */; };
 		7A1F3C9E2B4D5E6F80A1B2C3 /* UMSH/Features/Peers/PeerRepeatersScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B2E4D0F3C5E6F7A91B2C3D4 /* UMSH/Features/Peers/PeerRepeatersScreen.swift */; };
-		84F9C6AFE8462DF41305DE25 /* UMSH/App/ChatSubmissionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49639CD17EDC87DD05ED742C /* UMSH/App/ChatSubmissionCoordinator.swift */; };
 		897B05888F5549F6CFE33DF1 /* UMSH/DesignSystem/IdentityPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47D7F780B8E5A35F62C5B9EF /* UMSH/DesignSystem/IdentityPresentation.swift */; };
 		8A5934D155AAA5B8AC7395EE /* UMSH/DesignSystem/ComponentGalleryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2CB26B95BF6ED49F301C172 /* UMSH/DesignSystem/ComponentGalleryView.swift */; };
 		8C84BE75B26BAD36700F2992 /* UMSH/Features/RemoteManagement/RemoteStatusScreens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33CDD82E26CE9A507BA4E207 /* UMSH/Features/RemoteManagement/RemoteStatusScreens.swift */; };
@@ -295,7 +294,6 @@
 		4048AA44DEA0BE0ACE259BDA /* UMSH/Services/MobileCore/CoreRecordMapping.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/MobileCore/CoreRecordMapping.swift; sourceTree = "<group>"; };
 		47D7F780B8E5A35F62C5B9EF /* UMSH/DesignSystem/IdentityPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/DesignSystem/IdentityPresentation.swift; sourceTree = "<group>"; };
 		486C2B63FFAA6F5C45337190 /* UMSH/Features/RemoteManagement/ManageDeviceScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/RemoteManagement/ManageDeviceScreen.swift; sourceTree = "<group>"; };
-		49639CD17EDC87DD05ED742C /* UMSH/App/ChatSubmissionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/App/ChatSubmissionCoordinator.swift; sourceTree = "<group>"; };
 		A7E1C0DE00000000000000A2 /* UMSHTests/ReadMappingParityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSHTests/ReadMappingParityTests.swift; sourceTree = "<group>"; };
 		49AD04004A0CEFD14A0E09D6 /* UMSHTests/UMSHTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSHTests/UMSHTests.swift; sourceTree = "<group>"; };
 		4D6E89B15898FBD4FE9B65F9 /* UMSH/App/DebugTestHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/App/DebugTestHost.swift; sourceTree = "<group>"; };
@@ -378,7 +376,6 @@
 				8C78E7E2074741B596606E30 /* UMSH/DesignSystem/OperationFailureView.swift */,
 				4D6E89B15898FBD4FE9B65F9 /* UMSH/App/DebugTestHost.swift */,
 				4048AA44DEA0BE0ACE259BDA /* UMSH/Services/MobileCore/CoreRecordMapping.swift */,
-				49639CD17EDC87DD05ED742C /* UMSH/App/ChatSubmissionCoordinator.swift */,
 				C89ACCEF04F1CDDB4E109D76 /* UMSH/App/ConversationDraftStore.swift */,
 				E0658BFB3A3FF676EBE96770 /* UMSH/App/IdentityOperations.swift */,
 				BB311D8E101CBCDE9E974E35 /* UMSH/App/AppOperationError.swift */,
@@ -727,7 +724,6 @@
 				1D68EF20EE14DD06275D4282 /* UMSH/DesignSystem/OperationFailureView.swift in Sources */,
 				530FE59CA145F07F03343576 /* UMSH/App/DebugTestHost.swift in Sources */,
 				4488F44F088ED11EA4C30E29 /* UMSH/Services/MobileCore/CoreRecordMapping.swift in Sources */,
-				84F9C6AFE8462DF41305DE25 /* UMSH/App/ChatSubmissionCoordinator.swift in Sources */,
 				6DECDAF81E0BC26018152908 /* UMSH/App/ConversationDraftStore.swift in Sources */,
 				A427660E57E1597A554B3DC4 /* UMSH/App/IdentityOperations.swift in Sources */,
 				F3B94716160F0C8088A80A82 /* UMSH/App/AppOperationError.swift in Sources */,

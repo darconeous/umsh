@@ -4,10 +4,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::clock::manual::ManualClock;
-use super::{MobileAppConfigRecord, MobileAppCore, MobileAppLifecycle, Options};
+use super::{MobileAppConfigRecord, MobileAppCore, MobileAppError, MobileAppLifecycle, Options};
 use crate::secret_vault::memory::MemoryVault;
 use crate::store::MobileAppStore;
-use crate::{MobileIdentity, PublicIdentityRecord};
+use crate::{MobileIdentity, MobileMeshSession, PublicIdentityRecord};
 
 pub(super) const NOW_MS: i64 = 1_790_000_000_000;
 
@@ -76,6 +76,16 @@ impl Core {
         self.core.start(identity).await.unwrap();
         assert_eq!(self.lifecycle(), MobileAppLifecycle::Running);
         public
+    }
+
+    /// The running identity's session, reached as a command reaches it.
+    pub(super) async fn session(&self) -> Result<Arc<MobileMeshSession>, MobileAppError> {
+        self.core
+            .on_worker(|worker| async move {
+                let _command = worker.begin_command().await?;
+                worker.session().ok_or(MobileAppError::NotRunning)
+            })
+            .await
     }
 
     pub(super) fn lifecycle(&self) -> MobileAppLifecycle {

@@ -34,16 +34,17 @@ mod virtual_radio;
 
 pub use app_core::{
     MobileAppChangesRecord, MobileAppChannelConversationRecord, MobileAppChannelPreviewRecord,
-    MobileAppChannelRecord, MobileAppConfigRecord, MobileAppCore, MobileAppCoreListener,
-    MobileAppDirectConversationRecord, MobileAppError, MobileAppJoinedChannelRecord,
-    MobileAppLearnedPathOffer, MobileAppLifecycle, MobileAppMessageRecord,
-    MobileAppMessageRepeaterRecord, MobileAppNeighborReportRecord,
+    MobileAppChannelRecord, MobileAppChatRequest, MobileAppConfigRecord, MobileAppCore,
+    MobileAppCoreListener, MobileAppDirectConversationRecord, MobileAppError,
+    MobileAppJoinedChannelRecord, MobileAppLearnedPathOffer, MobileAppLifecycle,
+    MobileAppMessageRecord, MobileAppMessageRepeaterRecord, MobileAppNeighborReportRecord,
     MobileAppOperationProgressRecord, MobileAppPeerRecord, MobileAppPingReplyRecord,
     MobileAppPingResult, MobileAppPolicyRecord, MobileAppPositionReading, MobileAppPreviewRecord,
-    MobileAppRepeaterListingRecord, MobileAppRepeaterNeighborRecord, MobileAppRouteCandidateRecord,
-    MobileAppRouteRecord, MobileAppStartFailure, MobileAppStateRecord, MobileAppStatusRecord,
-    MobileAppTranscriptPageRecord, MobileNotificationEventRecord, MobileNotificationReactionRecord,
-    MobileOperation, MobilePositionRecord,
+    MobileAppRepeaterListingRecord, MobileAppRepeaterNeighborRecord, MobileAppResent,
+    MobileAppRouteCandidateRecord, MobileAppRouteRecord, MobileAppStartFailure,
+    MobileAppStateRecord, MobileAppStatusRecord, MobileAppTranscriptPageRecord,
+    MobileNotificationEventRecord, MobileNotificationReactionRecord, MobileOperation,
+    MobilePositionRecord, MobileReaction, radio_carries_this_phone,
 };
 pub use counter_store::{CounterStoreError, MobileCounterStore};
 pub use logging::{MobileLogField, MobileLogLevel, MobileLogRecord, MobileLogger, set_logger};
@@ -121,7 +122,7 @@ uniffi::setup_scaffolding!();
 ///
 /// Increment this when a binding-visible operation, record, or error contract
 /// changes incompatibly. It is independent of the UMSH wire version.
-pub const MOBILE_API_VERSION: u16 = 90;
+pub const MOBILE_API_VERSION: u16 = 91;
 
 /// Stable error categories consumed by platform adapters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Error)]
@@ -439,6 +440,12 @@ pub fn inspect_channel_uri(uri: String) -> Result<ChannelPreviewRecord, MobileEr
         }
         UmshUri::ChannelByKey(parsed) => {
             let channel = umsh_node::Channel::private(parsed.key, "");
+            // A well-known channel's key is that channel, whatever link
+            // carries it, and its rules come with its name.
+            if let Some(mut record) = well_known_preview(&channel.key().0) {
+                apply_channel_params(&mut record, &parsed.params)?;
+                return Ok(record);
+            }
             let mut record = ChannelPreviewRecord {
                 kind: ChannelKindRecord::PrivateKey,
                 canonical_name: None,
@@ -454,6 +461,15 @@ pub fn inspect_channel_uri(uri: String) -> Result<ChannelPreviewRecord, MobileEr
         }
         UmshUri::Node(_) => Err(MobileError::InvalidUri),
     }
+}
+
+/// The named preview of the well-known channel whose key is `key`, as the
+/// built-in channels are labeled; `None` for any other key.
+fn well_known_preview(key: &[u8]) -> Option<ChannelPreviewRecord> {
+    ["Public", "EMERGENCY"]
+        .into_iter()
+        .filter_map(|name| named_channel_preview(name).ok())
+        .find(|preview| preview.key == key)
 }
 
 /// Derive a public channel from a plain name, without a URI.

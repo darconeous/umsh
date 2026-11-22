@@ -11,7 +11,7 @@ use std::sync::Arc;
 use super::mapping::{self, PeerIndex};
 use super::pipeline::carries_this_phone;
 use super::policy::MANAGEMENT_BACKSTOP_MS;
-use super::records::{MobileAppLifecycle, MobileAppRepeaterListingRecord};
+use super::records::MobileAppRepeaterListingRecord;
 use super::routes::{checked_address, rendered_hints};
 use super::worker::Worker;
 use super::{MobileAppCore, MobileAppError, mesh_error};
@@ -84,11 +84,7 @@ impl Worker {
     /// While idle or failed this is only the store's write, which the next
     /// start pushes. While starting it waits, so it cannot miss that push.
     async fn set_advertised_name(&self, name: String) -> Result<(), MobileAppError> {
-        self.start_settled().await;
-        let command = match self.lifecycle() {
-            MobileAppLifecycle::Idle | MobileAppLifecycle::Failed { .. } => None,
-            _ => Some(self.begin_command().await?),
-        };
+        let command = self.begin_store_command().await?;
         let owner = self.owner().ok_or(MobileAppError::NoOwner)?;
         let trimmed = name.trim();
         let name = (!trimmed.is_empty()).then(|| trimmed.to_owned());
@@ -103,7 +99,7 @@ impl Worker {
     }
 
     async fn advertise_identity(&self) -> Result<(), MobileAppError> {
-        let session = self.session().ok_or(MobileAppError::NotRunning)?;
+        let session = self.radio_session()?;
         let timestamp = u32::try_from(self.clock.now_ms() / 1000).unwrap_or(u32::MAX);
         session
             .advertise_identity(self.advertised_name(), Some(timestamp))
@@ -286,8 +282,8 @@ impl MobileAppCore {
             .await
     }
 
-    /// Broadcast this phone's identity now. Succeeds once queued, whether
-    /// or not a radio carries it yet.
+    /// Broadcast this phone's identity now, over the radio attached as
+    /// this phone's. Succeeds once queued.
     pub async fn advertise_identity(&self) -> Result<(), MobileAppError> {
         self.command(|worker| async move { worker.advertise_identity().await })
             .await

@@ -36,7 +36,7 @@ fn named_address(name: &str) -> String {
 
 /// Whether the running session holds the channel kept under `address`.
 async fn session_holds(core: &Core, address: &str) -> bool {
-    let session = core.core.mesh_session().await.unwrap();
+    let session = core.session().await.unwrap();
     session
         .request_identity_by_hint(address.to_owned(), vec![1, 2, 3])
         .await

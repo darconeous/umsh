@@ -220,11 +220,11 @@ struct ChannelJoinView: View {
     }
 
     private static var notJoinedTitle: String {
-        String(localized: "Channel not joined", comment: "Alert title: joining a channel failed.")
+        String(localized: "Channel Not Joined", comment: "Alert title: joining a channel failed.")
     }
 
     private static var conversationUnavailableTitle: String {
-        String(localized: "Conversation unavailable", comment: "Alert title.")
+        String(localized: "Conversation Unavailable", comment: "Alert title.")
     }
 
     private func message(for error: MeshEngineError) -> String {

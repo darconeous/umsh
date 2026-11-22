@@ -69,6 +69,8 @@ use crate::{MobileCounterStore, MobileError, MobileIdentity};
 
 mod chat_store;
 
+#[cfg(test)]
+pub(crate) use chat_store::ChatStoreFaults;
 use chat_store::{ChatStore, ChatStoreCommand};
 pub use chat_store::{MobileChatSendError, MobileChatSendRequest};
 
@@ -3117,6 +3119,24 @@ impl MobileMeshSession {
 }
 
 impl MobileMeshSession {
+    /// Wait until the chat store has stored what the session reported so
+    /// far, so a read made next sees it. Nothing to wait for without one.
+    pub(crate) async fn flush_chat(&self) {
+        let Some(store) = self.chat_store.get() else {
+            return;
+        };
+        let (done, flushed) = tokio::sync::oneshot::channel();
+        if store.send(ChatStoreCommand::Flush { done }).is_ok() {
+            let _ = flushed.await;
+        }
+    }
+
+    /// The faults the chat store meets, once one is attached.
+    #[cfg(test)]
+    pub(crate) fn chat_faults(&self) -> Option<Arc<ChatStoreFaults>> {
+        self.chat_store.get().map(|store| store.faults.clone())
+    }
+
     /// Hand this session's outbound frames to a radio driver instead of
     /// `poll_update`, taking them from whichever driver had them. The
     /// driver is told at once, for frames queued before it arrived.

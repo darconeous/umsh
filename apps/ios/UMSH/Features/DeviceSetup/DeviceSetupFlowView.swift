@@ -120,9 +120,8 @@ final class AdminFlowController {
     /// This phone's own node key.
     ///
     /// Derived from the identity this session classifies host keys against
-    /// rather than asked of the mesh session, which the setup sheet has no
-    /// business holding: an address is that key rendered, so these are the
-    /// same bytes `MobileMeshSession.nodePublicKey()` reports.
+    /// rather than asked of the core: an address is that key rendered, so
+    /// these are the same bytes `MobileAppCore.phoneNodeKey()` reports.
     private var phoneNodeKey: Data? {
         hostIdentity.flatMap {
             try? UMSHMobileCore.publicIdentityBytes(address: $0.canonicalAddress)
@@ -621,7 +620,7 @@ struct DeviceSetupFlowView: View {
                     do {
                         try await controller.savePeer(role: nil)
                     } catch {
-                        failure = FailureNotice(String(localized: "Peer not saved", comment: "Alert title."), error)
+                        failure = FailureNotice(String(localized: "Peer Not Saved", comment: "Alert title."), error)
                     }
                 }
             } label: {

@@ -88,7 +88,7 @@ struct ManageDeviceScreen: View {
             DfuEntrySheet(model: model)
         }
         .confirmationDialog(
-            "Restart this device?",
+            "Restart This Device?",
             isPresented: $confirmsRestart,
             titleVisibility: .visible
         ) {
@@ -98,7 +98,7 @@ struct ManageDeviceScreen: View {
             Text("The device power-cycles and keeps everything it has saved. It is off the air until it comes back, and anything relaying through it is too.")
         }
         .confirmationDialog(
-            "Factory reset this device?",
+            "Factory Reset This Device?",
             isPresented: $confirmsFactoryReset,
             titleVisibility: .visible
         ) {

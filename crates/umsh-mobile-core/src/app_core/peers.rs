@@ -299,7 +299,6 @@ impl Worker {
         address: String,
         hint: Vec<u8>,
     ) -> Result<(), MobileAppError> {
-        let session = self.radio_session()?;
         let owner = self.owner_or_refuse()?;
         // The cache names the channel when its key was read; a locked one
         // is found through its conversation instead.
@@ -321,6 +320,10 @@ impl Worker {
         if !joined {
             return Err(MobileAppError::NotFound);
         }
+        // It goes out over the channel, so `EMERGENCY`'s warning comes
+        // first, whatever the radio's state.
+        self.emergency_refusal(&owner, &address)?;
+        let session = self.radio_session()?;
         match session.request_identity_by_hint(address, hint).await {
             Ok(()) => Ok(()),
             // Joined, but the session does not hold it.

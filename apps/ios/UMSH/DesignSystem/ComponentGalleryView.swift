@@ -206,8 +206,7 @@ struct MapCardGalleryExample: View {
                         selfPosition: MapSelfPosition(radioPosition: StagingScenario.radioSnapshot.position),
                         hasAnyLocations: true, isFiltered: false,
                         clearFilters: {}, showOlder: {}, discoverPeers: {}, openPeersList: {},
-                        radioSnapshot: .constant(.idle), conversations: .constant([]),
-                        updateDraft: nil, sendMessage: nil
+                        radioSnapshot: .constant(.idle), conversations: .constant([])
                     )
                 }
             }

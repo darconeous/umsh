@@ -98,7 +98,7 @@ struct ChannelsView: View {
     }
 
     private static var notLeftTitle: String {
-        String(localized: "Channel not left", comment: "Alert title: leaving a channel failed.")
+        String(localized: "Channel Not Left", comment: "Alert title: leaving a channel failed.")
     }
 
     private var joined: [ChannelSummary] {

@@ -1,4 +1,5 @@
 import SwiftUI
+import UMSHMobileCore
 
 private enum ChipStyle { case mine, failed, theirs }
 
@@ -221,7 +222,7 @@ private struct ThoughtChip: View {
         ReactionBadgeView(
             reactions: [
                 MessageReaction(
-                    body: "<3", isMine: true, senderAddress: nil, senderHint: nil,
+                    body: "<3", kind: .heart, isMine: true, senderAddress: nil, senderHint: nil,
                     sessionID: "1", handle: 1, wireID: 1, epoch: 0, isFailed: false
                 )
             ],
@@ -231,11 +232,11 @@ private struct ThoughtChip: View {
         ReactionBadgeView(
             reactions: [
                 MessageReaction(
-                    body: "+1", isMine: false, senderAddress: "abc", senderHint: nil,
+                    body: "+1", kind: .thumbsUp, isMine: false, senderAddress: "abc", senderHint: nil,
                     sessionID: "1", handle: 2, wireID: 2, epoch: 0, isFailed: false
                 ),
                 MessageReaction(
-                    body: "haha", isMine: true, senderAddress: nil, senderHint: nil,
+                    body: "haha", kind: .laugh, isMine: true, senderAddress: nil, senderHint: nil,
                     sessionID: "1", handle: 3, wireID: 3, epoch: 0, isFailed: true
                 ),
             ],

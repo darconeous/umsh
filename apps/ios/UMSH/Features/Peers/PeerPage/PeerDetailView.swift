@@ -28,8 +28,6 @@ struct PeerDetailView: View {
     /// What this page can do with the node. One bundle so the page is the
     /// same wherever it is opened from.
     let actions: PeerActions
-    let updateDraft: ((Int64, String) async -> AppOperationResult)?
-    let sendMessage: ((DirectConversationSummary, String, Bool) async -> MessageSendResult)?
     let messageActions: ChatMessageActions
     /// Set when the page is opened from the conversation it would otherwise
     /// open: Message goes back there instead of pushing a second copy.
@@ -77,8 +75,6 @@ struct PeerDetailView: View {
         radioSnapshot: Binding<RadioSnapshot>,
         conversations: Binding<[DirectConversationSummary]> = .constant([]),
         actions: PeerActions = .unavailable,
-        updateDraft: ((Int64, String) async -> AppOperationResult)? = nil,
-        sendMessage: ((DirectConversationSummary, String, Bool) async -> MessageSendResult)? = nil,
         messageActions: ChatMessageActions = .unavailable,
         returnToConversation: (() -> Void)? = nil
     ) {
@@ -86,8 +82,6 @@ struct PeerDetailView: View {
         _radioSnapshot = radioSnapshot
         _conversations = conversations
         self.actions = actions
-        self.updateDraft = updateDraft
-        self.sendMessage = sendMessage
         self.messageActions = messageActions
         self.returnToConversation = returnToConversation
         _currentAlias = State(initialValue: peer.alias)
@@ -482,7 +476,7 @@ struct PeerDetailView: View {
                     .disabled(messageCount == 0)
                     .accessibilityIdentifier("peer.clearMessages")
                     .confirmationDialog(
-                        Text("Clear all messages?", comment: "Confirmation title."),
+                        Text("Clear All Messages?", comment: "Confirmation title."),
                         isPresented: $showsClearDialog,
                         titleVisibility: .visible
                     ) {
@@ -531,7 +525,7 @@ struct PeerDetailView: View {
             if actions.demoteToTransient != nil {
                 Button {
                     Task {
-                        await $failure.attempt(String(localized: "Peer not removed", comment: "Alert title.")) {
+                        await $failure.attempt(String(localized: "Peer Not Removed", comment: "Alert title.")) {
                             try await actions.demoteToTransient?(peer)
                         }
                     }
@@ -591,15 +585,6 @@ struct PeerDetailView: View {
                 ConversationThreadView(
                     conversation: conversation,
                     radioSnapshot: radioSnapshot,
-                    updateDraft: updateDraft ?? { _, _ in
-                        .failure(.unavailable(String(localized: "Saving is unavailable.", comment: "Error when a draft cannot be stored.")))
-                    },
-                    sendMessage: { item, body, forwardSecret in
-                        guard case let .direct(conversation) = item, let sendMessage else {
-                            return .failed(String(localized: "Messaging is unavailable.", comment: "Error when a message cannot be sent at all."))
-                        }
-                        return await sendMessage(conversation, body, forwardSecret)
-                    },
                     messageActions: messageActions,
                     peerActions: actions,
                     conversations: $conversations,
@@ -644,8 +629,6 @@ struct PeerDetailView: View {
                     radioSnapshot: $radioSnapshot,
                     conversations: $conversations,
                     actions: actions,
-                    updateDraft: updateDraft,
-                    sendMessage: sendMessage,
                     messageActions: messageActions
                 )
             )
@@ -694,12 +677,12 @@ struct PeerDetailView: View {
 
     /// The title of a failed switch or star.
     private static var notChangedTitle: String {
-        String(localized: "Not changed", comment: "Alert title: a setting on a peer or conversation could not be changed.")
+        String(localized: "Not Changed", comment: "Alert title: a setting on a peer or conversation could not be changed.")
     }
 
 
     private func addToPeers() async {
-        await $failure.attempt(String(localized: "Peer not saved", comment: "Alert title.")) {
+        await $failure.attempt(String(localized: "Peer Not Saved", comment: "Alert title.")) {
             try await actions.promoteToSaved?(peer)
         }
     }
@@ -725,7 +708,7 @@ struct PeerDetailView: View {
         let trimmed = nameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         let newAlias = trimmed.isEmpty ? nil : trimmed
         guard newAlias != currentAlias else { return }
-        let saved = await $failure.attempt(String(localized: "Name not saved", comment: "Alert title.")) {
+        let saved = await $failure.attempt(String(localized: "Name Not Saved", comment: "Alert title.")) {
             try await updateAlias(peer, newAlias)
         }
         if saved {
@@ -764,7 +747,7 @@ struct PeerDetailView: View {
             destination = .conversation(try await startConversation(peer))
         } catch {
             failure = FailureNotice(
-                String(localized: "Conversation unavailable", comment: "Alert title."),
+                String(localized: "Conversation Unavailable", comment: "Alert title."),
                 error
             )
         }
@@ -778,7 +761,7 @@ struct PeerDetailView: View {
         // become a second request on the air.
         isSendingIdentityRequest = true
         defer { isSendingIdentityRequest = false }
-        let sent = await $failure.attempt(String(localized: "Not sent", comment: "Alert title: a request could not go out.")) {
+        let sent = await $failure.attempt(String(localized: "Not Sent", comment: "Alert title: a request could not go out.")) {
             try await fetchIdentity(peer)
         }
         if sent { isRefreshingIdentity = true }
@@ -814,13 +797,15 @@ struct PeerDetailView: View {
 
     private func clearMessages() async {
         guard let conversation else { return }
-        await messageActions.clearMessages(conversation.conversationAddress)
+        await $failure.attempt(ChatMessageActions.messagesNotClearedTitle) {
+            try await messageActions.clearMessages(conversation.conversationAddress)
+        }
         messageCount = await messageActions.countMessages(conversation.conversationAddress)
     }
 
     private func deleteAndDismiss(_ action: ((PeerSummary) async throws -> Void)?) async {
         guard let action else { return }
-        let deleted = await $failure.attempt(String(localized: "Peer not deleted", comment: "Alert title.")) {
+        let deleted = await $failure.attempt(String(localized: "Peer Not Deleted", comment: "Alert title.")) {
             try await action(peer)
         }
         if deleted { dismiss() }

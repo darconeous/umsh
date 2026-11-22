@@ -271,7 +271,8 @@ extension ChatMessageSummary {
             senderHandle: stored.senderHandle,
             senderNodeHint: MeshNodeHint(bytes: stored.senderHint, text: record.senderNodeHint),
             reception: stored.reception,
-            reactions: stored.reactions.map(MessageReaction.init),
+            // The core reads each reaction in the order it stored them.
+            reactions: zip(stored.reactions, record.reactions).map { MessageReaction($0, kind: $1) },
             reply: stored.quote.map { MessageQuote($0, senderNodeHint: record.quotedSenderNodeHint) },
             repeats: stored.repeats.map { repeats in
                 MessageRepeats(
@@ -279,7 +280,8 @@ extension ChatMessageSummary {
                     anonymous: repeats.anonymous,
                     progressAt: repeats.progressAt
                 )
-            }
+            },
+            reviseUntilMilliseconds: record.reviseUntilMs
         )
     }
 }
@@ -303,9 +305,10 @@ extension MessageQuote {
 }
 
 extension MessageReaction {
-    init(_ stored: StoredMessageReaction) {
+    init(_ stored: StoredMessageReaction, kind: MobileReaction?) {
         self.init(
             body: stored.body,
+            kind: kind,
             isMine: stored.outbound,
             senderAddress: stored.senderAddress,
             senderHint: stored.senderHint,

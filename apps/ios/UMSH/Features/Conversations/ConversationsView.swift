@@ -20,9 +20,6 @@ struct ConversationsView: View {
     var isLoading = false
     let inspectPeerIdentity: (String) async -> Result<MeshNodeURIPreview, MeshEngineError>
     let savePeer: (MeshNodeURIPreview, PeerImportDetails, Bool) async throws -> DirectConversationSummary?
-    let updateDraft: (Int64, String) async -> AppOperationResult
-    var updateChannelDraft: (Int64, String) async -> AppOperationResult = { _, _ in .failure(.unavailable("Saving is unavailable.")) }
-    let sendMessage: (ConversationListItem, String, Bool) async -> MessageSendResult
     var messageActions: ChatMessageActions = .unavailable
     var deleteConversation: (DirectConversationSummary) async throws -> Void = { _ in }
     var peerActions: PeerActions = .unavailable
@@ -30,7 +27,6 @@ struct ConversationsView: View {
     /// Channel management, for joining one from here and for the channel
     /// sheet an open group conversation leads to.
     var channelManagementActions: ChannelActions = .unavailable
-    var markRead: (String) async -> Void = { _ in }
     // Owned by the app root so URL-scheme imports can open a transcript
     // directly from outside this view.
     @Binding var openedConversation: DirectConversationSummary?
@@ -107,14 +103,10 @@ struct ConversationsView: View {
                 ConversationThreadView(
                     conversation: conversation,
                     radioSnapshot: radioSnapshot,
-                    updateDraft: updateDraft,
-                    updateChannelDraft: updateChannelDraft,
-                    sendMessage: sendMessage,
                     messageActions: messageActions,
                     peerActions: peerActions,
                     channelActions: channelActions,
                     channelManagementActions: channelManagementActions,
-                    markRead: markRead,
                     conversations: $conversations,
                     peers: peers,
                     unreadElsewhere: unreadCount(excluding: itemID)
@@ -126,14 +118,10 @@ struct ConversationsView: View {
                 ConversationThreadView(
                     conversation: conversation,
                     radioSnapshot: radioSnapshot,
-                    updateDraft: updateDraft,
-                    updateChannelDraft: updateChannelDraft,
-                    sendMessage: sendMessage,
                     messageActions: messageActions,
                     peerActions: peerActions,
                     channelActions: channelActions,
                     channelManagementActions: channelManagementActions,
-                    markRead: markRead,
                     conversations: $conversations,
                     peers: peers,
                     unreadElsewhere: unreadCount(excluding: "direct:\(conversation.id)")
@@ -145,14 +133,10 @@ struct ConversationsView: View {
                 ConversationThreadView(
                     conversation: conversation,
                     radioSnapshot: radioSnapshot,
-                    updateDraft: updateDraft,
-                    updateChannelDraft: updateChannelDraft,
-                    sendMessage: sendMessage,
                     messageActions: messageActions,
                     peerActions: peerActions,
                     channelActions: channelActions,
                     channelManagementActions: channelManagementActions,
-                    markRead: markRead,
                     conversations: $conversations,
                     peers: peers,
                     unreadElsewhere: unreadCount(excluding: "channel:\(conversation.id)")
@@ -170,7 +154,7 @@ struct ConversationsView: View {
             }
         }
         .confirmationDialog(
-            "Delete this conversation?",
+            "Delete This Conversation?",
             isPresented: Binding(
                 get: { conversationPendingDeletion != nil },
                 set: { if !$0 { conversationPendingDeletion = nil } }
@@ -189,7 +173,7 @@ struct ConversationsView: View {
             Text("The message history on this phone is removed. The peer keeps their copy.")
         }
         .confirmationDialog(
-            channelConversationPendingDeletion.map { "Leave “\($0.channel.title)” chat?" } ?? "",
+            channelConversationPendingDeletion.map { "Leave “\($0.channel.title)” Chat?" } ?? "",
             isPresented: Binding(
                 get: { channelConversationPendingDeletion != nil },
                 set: { if !$0 { channelConversationPendingDeletion = nil } }
@@ -247,7 +231,7 @@ struct ConversationsView: View {
     }
 
     private static var notDeletedTitle: String {
-        String(localized: "Conversation not deleted", comment: "Alert title.")
+        String(localized: "Conversation Not Deleted", comment: "Alert title.")
     }
 
     private var isSearching: Bool {
@@ -377,7 +361,7 @@ struct ConversationsView: View {
                 conversation = try await startConversation(peer)
             } catch {
                 failure = FailureNotice(
-                    String(localized: "Conversation unavailable", comment: "Alert title."),
+                    String(localized: "Conversation Unavailable", comment: "Alert title."),
                     error
                 )
             }
@@ -397,7 +381,7 @@ struct ConversationsView: View {
             openedChannelConversation = conversation
         } catch {
             failure = FailureNotice(
-                String(localized: "Conversation unavailable", comment: "Alert title."),
+                String(localized: "Conversation Unavailable", comment: "Alert title."),
                 error
             )
         }
@@ -552,6 +536,8 @@ extension EnvironmentValues {
     /// The addresses of the direct conversations whose next message goes
     /// under a session with forward secrecy.
     @Entry var forwardSecretConversations: Set<String> = []
+    /// Words added to drafts from outside a composer, newest last.
+    @Entry var draftAdditions: [DraftAddition] = []
     /// Reads a bounded slice of whichever transcript is open. In the
     /// environment rather than passed down, because a transcript is reached
     /// from several places—the conversations list, a peer's profile, a

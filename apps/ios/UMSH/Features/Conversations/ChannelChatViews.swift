@@ -50,7 +50,7 @@ struct ChannelChatChooserView: View {
                         Button {
                             Task {
                                 await $failure.attempt(
-                                    String(localized: "Conversation unavailable", comment: "Alert title.")
+                                    String(localized: "Conversation Unavailable", comment: "Alert title.")
                                 ) { try await start(channel) }
                             }
                         } label: {
@@ -111,8 +111,6 @@ struct ChannelMemberSheet: View {
     let radioSnapshot: RadioSnapshot
     var peerActions: PeerActions = .unavailable
     var messageActions: ChatMessageActions = .unavailable
-    var updateDraft: ((Int64, String) async -> AppOperationResult)? = nil
-    var sendMessage: ((DirectConversationSummary, String, Bool) async -> MessageSendResult)? = nil
 
     @State private var requested = false
     @State private var failure: FailureNotice?
@@ -131,8 +129,6 @@ struct ChannelMemberSheet: View {
                             radioSnapshot: .constant(radioSnapshot),
                             conversations: $conversations,
                             actions: peerActions,
-                            updateDraft: updateDraft,
-                            sendMessage: sendMessage,
                             messageActions: messageActions
                         )
                     } label: {
@@ -179,7 +175,7 @@ struct ChannelMemberSheet: View {
                         requested = true
                         Task {
                             requested = await $failure.attempt(
-                                String(localized: "Not sent", comment: "Alert title: a request could not go out.")
+                                String(localized: "Not Sent", comment: "Alert title: a request could not go out.")
                             ) {
                                 try await requestIdentity(member.hint)
                             }

@@ -9,7 +9,7 @@ struct SettingsView: View {
     let createIdentity: () async -> Void
     var advertisedName: String = ""
     var saveAdvertisedName: (String) async -> AppOperationResult = { _ in .failure(.unavailable("Saving is unavailable.")) }
-    var advertiseIdentity: () async -> String? = { nil }
+    var advertiseIdentity: () async throws -> Void = { throw MobileAppError.NotRunning }
     var identityShareURI: (() async -> String)? = nil
     /// Whether this phone answers nearby nodes' identity requests, and the
     /// action that changes it. Absent when no mesh session can exist.
@@ -43,8 +43,6 @@ struct SettingsView: View {
     /// radio identity's peer sheet so its "Message" button opens a working
     /// transcript instead of a blank destination.
     var conversations: Binding<[DirectConversationSummary]> = .constant([])
-    var updateDraft: ((Int64, String) async -> AppOperationResult)? = nil
-    var sendMessage: ((DirectConversationSummary, String, Bool) async -> MessageSendResult)? = nil
     var messageActions: ChatMessageActions = .unavailable
     var channels: [ChannelSummary] = []
     var channelActions: ChannelActions = .unavailable
@@ -55,7 +53,7 @@ struct SettingsView: View {
     /// Fills a conversation with generated messages, for exercising the
     /// transcript at a size no test account reaches by hand. Only supplied by
     /// debug builds; the control that calls it only exists there too.
-    var seedMessages: ((String, Int) async -> Void)? = nil
+    var seedMessages: ((String, Int) async throws -> Void)? = nil
 
     /// Has a staged peer message this phone after a short delay, to exercise
     /// notifications end to end—arrival, styling, and the inline reply.
@@ -73,6 +71,7 @@ struct SettingsView: View {
     @Environment(\.regionService) private var regionService
     @State private var showsDeviceSetup = false
     @State private var isSeeding = false
+    @State private var failure: FailureNotice?
     #if DEBUG
     /// Read straight from storage, as the announcement schedules above are:
     /// `UMSHApp` reads the same key to decide which store and radio to build,
@@ -91,7 +90,11 @@ struct SettingsView: View {
 
     private func seedConversation(_ count: Int) async {
         guard let seedMessages, let first = conversations.wrappedValue.first else { return }
-        await seedMessages(first.conversationAddress, count)
+        await $failure.attempt(
+            String(localized: "Messages Not Generated", comment: "Alert title: the debug filler did not write its messages.")
+        ) {
+            try await seedMessages(first.conversationAddress, count)
+        }
     }
 
     var body: some View {
@@ -101,6 +104,7 @@ struct SettingsView: View {
                     NavigationLink {
                         IdentityDetailView(
                             identity: identity,
+                            radioSnapshot: $radioSnapshot,
                             advertisedName: advertisedName,
                             saveAdvertisedName: saveAdvertisedName,
                             advertiseIdentity: advertiseIdentity,
@@ -162,8 +166,6 @@ struct SettingsView: View {
                         stopDiscovery: stopDiscovery,
                         peerActions: peerActions,
                         conversations: conversations,
-                        updateDraft: updateDraft,
-                        sendMessage: sendMessage,
                         messageActions: messageActions,
                         strandedRadios: strandedRadios,
                         isRevokingStrandedRadios: isRevokingStrandedRadios,
@@ -323,6 +325,7 @@ struct SettingsView: View {
             #endif
         }
         .navigationTitle("Settings")
+        .failureAlert($failure)
         .sheet(isPresented: $showsDeviceSetup) {
             DeviceSetupFlowView(
                 hostIdentity: identity?.publicIdentity,
@@ -342,9 +345,11 @@ struct SettingsView: View {
 
 struct IdentityDetailView: View {
     let identity: LocalIdentitySnapshot
+    /// Advertising goes out only through a radio carrying this phone.
+    @Binding var radioSnapshot: RadioSnapshot
     var advertisedName: String = ""
     var saveAdvertisedName: (String) async -> AppOperationResult = { _ in .failure(.unavailable("Saving is unavailable.")) }
-    var advertiseIdentity: () async -> String? = { nil }
+    var advertiseIdentity: () async throws -> Void = { throw MobileAppError.NotRunning }
     var identityShareURI: (() async -> String)? = nil
     var phoneDiscoverable: Bool = true
     var setPhoneDiscoverable: ((Bool) async -> Void)? = nil
@@ -358,6 +363,7 @@ struct IdentityDetailView: View {
     @State private var nameDraft = ""
     @State private var isAdvertising = false
     @State private var advertiseFeedback: AdvertiseFeedback?
+    @State private var failure: FailureNotice?
     @State private var discoverableDraft = true
     @State private var confirmsErase = false
     @State private var confirmsStartOver = false
@@ -409,10 +415,6 @@ struct IdentityDetailView: View {
                 CanonicalAddressView(address: identity.publicIdentity.canonicalAddress)
             } header: {
                 Text("Identity")
-            } footer: {
-                Text(shareURI.count > identity.publicIdentity.nodeURI.count
-                     ? "The QR code carries your public key plus your signed identity details."
-                     : "The QR code carries your public key. Connect the companion radio to include signed identity details.")
             }
 
             Section {
@@ -425,7 +427,7 @@ struct IdentityDetailView: View {
                     Label(isAdvertising ? "Advertising…" : "Advertise Identity",
                           systemImage: "dot.radiowaves.left.and.right")
                 }
-                .disabled(isAdvertising)
+                .disabled(isAdvertising || !radioSnapshot.carriesThisPhone)
                 if let advertiseFeedback {
                     Label(advertiseFeedback.message, systemImage: advertiseFeedback.symbol)
                         .font(.caption)
@@ -529,6 +531,7 @@ struct IdentityDetailView: View {
         }
         .navigationTitle("Your identity")
         .transientNoticePresenter()
+        .failureAlert($failure)
         .alert(
             "Warning",
             isPresented: Binding(
@@ -556,7 +559,7 @@ struct IdentityDetailView: View {
             await refreshShareURI()
         }
         .confirmationDialog(
-            "Erase this identity?",
+            "Erase This Identity?",
             isPresented: $confirmsErase,
             titleVisibility: .visible
         ) {
@@ -568,7 +571,7 @@ struct IdentityDetailView: View {
             Text("Destroys the private key; this phone becomes a new node. Old messages stay but are unreachable.")
         }
         .confirmationDialog(
-            "Start over?",
+            "Start Over?",
             isPresented: $confirmsStartOver,
             titleVisibility: .visible
         ) {
@@ -647,15 +650,21 @@ struct IdentityDetailView: View {
             advertiseFeedback = AdvertiseFeedback(message: error.localizedDescription, isSuccess: false)
             return
         }
-        if let message = await advertiseIdentity() {
-            advertiseFeedback = AdvertiseFeedback(message: message, isSuccess: false)
-        } else {
-            advertiseFeedback = AdvertiseFeedback(
-                message: "Advertisement broadcast",
-                isSuccess: true
-            )
-            await refreshShareURI()
+        advertiseFeedback = nil
+        let sent = await $failure.attempt(
+            String(localized: "Identity Not Advertised", comment: "Alert title: this phone's identity advertisement did not go out. The message says why.")
+        ) {
+            try await advertiseIdentity()
         }
+        guard sent else { return }
+        advertiseFeedback = AdvertiseFeedback(
+            message: String(
+                localized: "Advertisement broadcast",
+                comment: "Shown under Advertise Identity once the advertisement went out."
+            ),
+            isSuccess: true
+        )
+        await refreshShareURI()
     }
 
     private func refreshShareURI() async {
@@ -693,8 +702,6 @@ struct RadioDetailView: View {
     /// Conversation list plus messaging closures for that peer sheet, so
     /// "Message" there opens a working transcript.
     var conversations: Binding<[DirectConversationSummary]> = .constant([])
-    var updateDraft: ((Int64, String) async -> AppOperationResult)? = nil
-    var sendMessage: ((DirectConversationSummary, String, Bool) async -> MessageSendResult)? = nil
     var messageActions: ChatMessageActions = .unavailable
     /// Radios other than this one still holding this phone's identity.
     var strandedRadios: [StoredClaimedRadio] = []
@@ -849,8 +856,6 @@ struct RadioDetailView: View {
                             radioSnapshot: $snapshot,
                             conversations: conversations,
                             actions: peerActions,
-                            updateDraft: updateDraft,
-                            sendMessage: sendMessage,
                             messageActions: messageActions
                         )
                     } label: {
@@ -875,7 +880,7 @@ struct RadioDetailView: View {
             }
         }
         .confirmationDialog(
-            "Replace the radio's existing host?",
+            "Replace the Radio's Existing Host?",
             isPresented: $confirmsHostReplacement,
             titleVisibility: .visible
         ) {
@@ -887,7 +892,7 @@ struct RadioDetailView: View {
             Text("The previous host's keys, filters, and queued traffic will be erased. The radio's own identity and device settings remain unchanged.")
         }
         .confirmationDialog(
-            "Forget this companion radio?",
+            "Forget This Companion Radio?",
             isPresented: $confirmsForget,
             titleVisibility: .visible
         ) {
@@ -904,7 +909,7 @@ struct RadioDetailView: View {
                  : "The app stops reconnecting to this radio and drops it from Bluetooth's standing connections. The radio keeps its own bond until you re-pair; add it again later with \"Find companion radio\".")
         }
         .confirmationDialog(
-            "Restart this radio?",
+            "Restart This Radio?",
             isPresented: $confirmsReboot,
             titleVisibility: .visible
         ) {
@@ -922,7 +927,7 @@ struct RadioDetailView: View {
             Text("The radio power-cycles and keeps everything it has saved, including its pairing with this phone. It disconnects while it restarts and reconnects on its own.")
         }
         .confirmationDialog(
-            "Factory reset this radio?",
+            "Factory Reset This Radio?",
             isPresented: $confirmsFactoryReset,
             titleVisibility: .visible
         ) {
@@ -941,7 +946,7 @@ struct RadioDetailView: View {
             Text("Permanently erases the radio's saved settings, its device identity, and every Bluetooth pairing, then reboots it to a blank factory state. This cannot be undone—you will need to set the radio up again from scratch.")
         }
         .alert(
-            "Factory reset failed",
+            "Factory Reset Failed",
             isPresented: Binding(
                 get: { radioActionProblem != nil },
                 set: { if !$0 { radioActionProblem = nil } }
@@ -977,8 +982,6 @@ struct RadioDetailView: View {
                     radioSnapshot: $snapshot,
                     conversations: conversations,
                     actions: peerActions,
-                    updateDraft: updateDraft,
-                    sendMessage: sendMessage,
                     messageActions: messageActions
                 )
             )

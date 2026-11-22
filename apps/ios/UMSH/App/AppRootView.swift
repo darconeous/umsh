@@ -122,20 +122,7 @@ struct AppRootView: View {
                     isLoading: isBootstrapping,
                     inspectPeerIdentity: runtime.inspectPeerIdentity,
                     savePeer: runtime.savePeer,
-                    updateDraft: runtime.updateDraft,
-                    updateChannelDraft: runtime.updateChannelDraft,
-                    sendMessage: { await runtime.sendMessage($0, $1, forwardSecret: $2) },
-                    messageActions: ChatMessageActions(
-                        edit: runtime.editMessage,
-                        delete: runtime.deleteMessage,
-                        react: runtime.reactToMessage,
-                        reply: runtime.replyToMessage,
-                        resend: runtime.resendMessage,
-                        resendAsNew: runtime.resendMessageAsNew,
-                        requestMissing: runtime.requestMissingMessages,
-                        clearMessages: runtime.clearConversationMessages,
-                        countMessages: runtime.countConversationMessages
-                    ),
+                    messageActions: runtime.messageActions,
                     deleteConversation: runtime.deleteConversation,
                     peerActions: runtime.peerActions,
                     channelActions: ChannelConversationActions(
@@ -145,10 +132,9 @@ struct AppRootView: View {
                         requestMemberIdentity: runtime.requestMemberIdentity,
                         setNotifications: runtime.setChannelNotifications,
                         emergencyCertified: { runtime.emergencyCertified },
-                        certifyEmergency: { runtime.emergencyCertified = true }
+                        certifyEmergency: { try runtime.certifyEmergency() }
                     ),
                     channelManagementActions: channelManagementActions,
-                    markRead: runtime.markConversationRead,
                     openedConversation: $openedConversation,
                     openedChannelConversation: $openedChannelConversation
                 )
@@ -177,21 +163,7 @@ struct AppRootView: View {
                         openedConversation = conversation
                     },
                     peerActions: runtime.peerActions,
-                    updateDraft: runtime.updateDraft,
-                    sendMessage: { conversation, body, forwardSecret in
-                        await runtime.sendMessage(.direct(conversation), body, forwardSecret: forwardSecret)
-                    },
-                    messageActions: ChatMessageActions(
-                        edit: runtime.editMessage,
-                        delete: runtime.deleteMessage,
-                        react: runtime.reactToMessage,
-                        reply: runtime.replyToMessage,
-                        resend: runtime.resendMessage,
-                        resendAsNew: runtime.resendMessageAsNew,
-                        requestMissing: runtime.requestMissingMessages,
-                        clearMessages: runtime.clearConversationMessages,
-                        countMessages: runtime.countConversationMessages
-                    ),
+                    messageActions: runtime.messageActions,
                     discoverPeers: { openDiscovery(nil) },
                     contactExchange: runtime.contactExchange
                 )
@@ -212,21 +184,7 @@ struct AppRootView: View {
                     neighborReports: runtime.neighborReports,
                     isLoading: isBootstrapping,
                     peerActions: runtime.peerActions,
-                    updateDraft: runtime.updateDraft,
-                    sendMessage: { conversation, body, forwardSecret in
-                        await runtime.sendMessage(.direct(conversation), body, forwardSecret: forwardSecret)
-                    },
-                    messageActions: ChatMessageActions(
-                        edit: runtime.editMessage,
-                        delete: runtime.deleteMessage,
-                        react: runtime.reactToMessage,
-                        reply: runtime.replyToMessage,
-                        resend: runtime.resendMessage,
-                        resendAsNew: runtime.resendMessageAsNew,
-                        requestMissing: runtime.requestMissingMessages,
-                        clearMessages: runtime.clearConversationMessages,
-                        countMessages: runtime.countConversationMessages
-                    ),
+                    messageActions: runtime.messageActions,
                     openPeersList: { selectedTab = .peers },
                     openConversation: { conversation in
                         selectedTab = .conversations
@@ -280,21 +238,7 @@ struct AppRootView: View {
                     },
                     peerActions: runtime.peerActions,
                     conversations: $runtime.conversations,
-                    updateDraft: runtime.updateDraft,
-                    sendMessage: { conversation, body, forwardSecret in
-                        await runtime.sendMessage(.direct(conversation), body, forwardSecret: forwardSecret)
-                    },
-                    messageActions: ChatMessageActions(
-                        edit: runtime.editMessage,
-                        delete: runtime.deleteMessage,
-                        react: runtime.reactToMessage,
-                        reply: runtime.replyToMessage,
-                        resend: runtime.resendMessage,
-                        resendAsNew: runtime.resendMessageAsNew,
-                        requestMissing: runtime.requestMissingMessages,
-                        clearMessages: runtime.clearConversationMessages,
-                        countMessages: runtime.countConversationMessages
-                    ),
+                    messageActions: runtime.messageActions,
                     channels: runtime.channels,
                     channelActions: channelManagementActions,
                     strandedRadios: runtime.strandedRadios,
@@ -345,21 +289,7 @@ struct AppRootView: View {
                     radioSnapshot: $runtime.radioSnapshot,
                     conversations: $runtime.conversations,
                     actions: runtime.peerActions,
-                    updateDraft: runtime.updateDraft,
-                    sendMessage: { conversation, body, forwardSecret in
-                        await runtime.sendMessage(.direct(conversation), body, forwardSecret: forwardSecret)
-                    },
-                    messageActions: ChatMessageActions(
-                        edit: runtime.editMessage,
-                        delete: runtime.deleteMessage,
-                        react: runtime.reactToMessage,
-                        reply: runtime.replyToMessage,
-                        resend: runtime.resendMessage,
-                        resendAsNew: runtime.resendMessageAsNew,
-                        requestMissing: runtime.requestMissingMessages,
-                        clearMessages: runtime.clearConversationMessages,
-                        countMessages: runtime.countConversationMessages
-                    )
+                    messageActions: runtime.messageActions
                 )
                 .toolbar {
                     ToolbarItem(placement: .confirmationAction) {
@@ -411,21 +341,7 @@ struct AppRootView: View {
                     stopDiscovery: runtime.stopRadioDiscovery,
                     peerActions: runtime.peerActions,
                     conversations: $runtime.conversations,
-                    updateDraft: runtime.updateDraft,
-                    sendMessage: { conversation, body, forwardSecret in
-                        await runtime.sendMessage(.direct(conversation), body, forwardSecret: forwardSecret)
-                    },
-                    messageActions: ChatMessageActions(
-                        edit: runtime.editMessage,
-                        delete: runtime.deleteMessage,
-                        react: runtime.reactToMessage,
-                        reply: runtime.replyToMessage,
-                        resend: runtime.resendMessage,
-                        resendAsNew: runtime.resendMessageAsNew,
-                        requestMissing: runtime.requestMissingMessages,
-                        clearMessages: runtime.clearConversationMessages,
-                        countMessages: runtime.countConversationMessages
-                    ),
+                    messageActions: runtime.messageActions,
                     strandedRadios: runtime.strandedRadios,
                     isRevokingStrandedRadios: runtime.isRevokingClaimedRadios,
                     retryRevocation: runtime.retryClaimedRadioRevocation
@@ -441,20 +357,7 @@ struct AppRootView: View {
                 conversations: $runtime.conversations,
                 peers: runtime.peers,
                 peerActions: runtime.peerActions,
-                updateDraft: runtime.updateDraft,
-                sendMessage: { conversation, body, forwardSecret in
-                    await runtime.sendMessage(.direct(conversation), body, forwardSecret: forwardSecret)
-                },
-                messageActions: ChatMessageActions(
-                    edit: runtime.editMessage,
-                    delete: runtime.deleteMessage,
-                    react: runtime.reactToMessage,
-                    resend: runtime.resendMessage,
-                    resendAsNew: runtime.resendMessageAsNew,
-                    requestMissing: runtime.requestMissingMessages,
-                    clearMessages: runtime.clearConversationMessages,
-                    countMessages: runtime.countConversationMessages
-                ),
+                messageActions: runtime.messageActions,
                 advertiseIdentity: runtime.advertiseIdentity,
                 advertisedName: runtime.advertisedName,
                 clearDiscoveredNodes: runtime.clearDiscoveredNodes,
@@ -516,6 +419,7 @@ struct AppRootView: View {
             runtime.advertisedName.isEmpty ? String(localized: "You") : runtime.advertisedName
         )
         .environment(\.forwardSecretConversations, runtime.forwardSecretConversations)
+        .environment(\.draftAdditions, runtime.draftAdditions)
         .environment(
             \.visibleConversationReporter,
             VisibleConversationReporter(
@@ -567,7 +471,7 @@ struct AppRootView: View {
                 }
             } catch {
                 runtime.failureNotice = FailureNotice(
-                    String(localized: "Peer not saved", comment: "Alert title."),
+                    String(localized: "Peer Not Saved", comment: "Alert title."),
                     error
                 )
             }
@@ -609,7 +513,7 @@ struct AppRootView: View {
                 linkedPeer = peer
             case let .failure(error):
                 runtime.failureNotice = FailureNotice(
-                    String(localized: "Link not opened", comment: "Alert title: a link to a node could not be opened."),
+                    String(localized: "Link Not Opened", comment: "Alert title: a link to a node could not be opened."),
                     error
                 )
             }
@@ -713,7 +617,7 @@ struct AppRootView: View {
             openedConversation = try await runtime.peerActions.startConversation?(peer)
         } catch {
             runtime.failureNotice = FailureNotice(
-                String(localized: "Conversation unavailable", comment: "Alert title."),
+                String(localized: "Conversation Unavailable", comment: "Alert title."),
                 error
             )
         }

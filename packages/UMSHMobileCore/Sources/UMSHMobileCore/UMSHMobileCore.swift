@@ -720,13 +720,6 @@ public protocol MobileAppCoreProtocol: AnyObject, Sendable {
     func erase(alsoContent: Bool) async throws
 
     /**
-     * The running identity's session, for the commands native code has
-     * not moved here yet. Fetch it for each call; never keep it. Deleted
-     * once they have moved.
-     */
-    func meshSession() async throws  -> MobileMeshSession
-
-    /**
      * What changed since the last call. Answers in every state, so the
      * last lifecycle change is never lost.
      */
@@ -850,8 +843,88 @@ public protocol MobileAppCoreProtocol: AnyObject, Sendable {
     func setChannelRouting(id: String, regions: [UInt16], maxFloodHops: UInt8?) async throws
 
     /**
-     * Broadcast this phone's identity now. Succeeds once queued, whether
-     * or not a radio carries it yet.
+     * Keep `text` in a conversation's draft: as the draft when it is
+     * empty, otherwise on a line under it. For a reply that did not go
+     * out. Kept while idle or failed too.
+     */
+    func appendDraft(address: String, text: String) async throws
+
+    /**
+     * The user agreed to `EMERGENCY`'s warning: sends there are taken
+     * from now on, under this owner, until the owner changes or the core
+     * ends. In effect for every command made after it returns.
+     */
+    func certifyEmergency() throws
+
+    /**
+     * Erase a conversation's messages, keeping the conversation, its
+     * draft and its place in the wire stream. Local only.
+     */
+    func clearMessages(address: String) async throws
+
+    /**
+     * Fill a conversation with `count` generated messages, for looking at
+     * long transcripts.
+     */
+    func generateMessages(address: String, count: UInt32) async throws
+
+    /**
+     * This phone's link, carrying its identity signed under the name it
+     * advertises and the time now. Never its location. `NotRunning` while
+     * no identity runs: `node_uri_for_address` gives the bare link.
+     */
+    func identityShareUri() async throws  -> String
+
+    /**
+     * Mark a conversation read: as of now, or with `through_ms` as of
+     * then, which never moves its read time back. Kept while idle or
+     * failed too. A conversation not stored is not an error.
+     */
+    func markRead(address: String, throughMs: Int64?) async throws
+
+    /**
+     * Ask for the missing messages `messages` names in this conversation.
+     * A gap that can no longer be asked for is marked unavailable, even
+     * when a request fails; rows that are not idle gaps are passed over.
+     */
+    func requestMissing(address: String, messages: [MobileStoredChatMessageRefRecord]) async throws
+
+    /**
+     * Send a message of ours that was not delivered again: as itself,
+     * within its revise window and while its frames can still land, or
+     * otherwise as a new message that replaces it. `forward_secret` is
+     * what the user chose; a channel has none. `InvalidRequest` for a
+     * message that is not failed, or that another resend is sending.
+     */
+    func resend(address: String, message: MobileStoredChatMessageRefRecord, forwardSecret: Bool) async throws  -> MobileAppResent
+
+    /**
+     * Keep `text`, as it stands, as a conversation's draft. Kept while
+     * idle or failed too.
+     */
+    func saveDraft(address: String, text: String) async throws
+
+    /**
+     * Send into a stored conversation: typed text, a reply, an edit, a
+     * deletion or a reaction. The message is stored before anything goes
+     * on the air, and the send runs to its end whatever becomes of the
+     * caller.
+     *
+     * `clear_draft`, with `Typed` and `Reply` only, is the composer's text
+     * as submitted: it is stored as the draft first, in every state but
+     * erasing, stopping and stopped, so a refused send keeps it; once the
+     * message is kept, the draft is cleared if it still reads the same.
+     *
+     * `MessageNotQueued` is the only error that means the message was
+     * kept. Refused before anything is composed: `EmergencyNotCertified`
+     * on `EMERGENCY` before `certify_emergency`, then `NoRadio` or
+     * `NotThisPhone` with no radio attached as this phone's.
+     */
+    func sendChat(address: String, request: MobileAppChatRequest, clearDraft: String?) async throws
+
+    /**
+     * Broadcast this phone's identity now, over the radio attached as
+     * this phone's. Succeeds once queued.
      */
     func advertiseIdentity() async throws
 
@@ -1286,27 +1359,6 @@ open func erase(alsoContent: Bool)async throws   {
 }
 
     /**
-     * The running identity's session, for the commands native code has
-     * not moved here yet. Fetch it for each call; never keep it. Deleted
-     * once they have moved.
-     */
-open func meshSession()async throws  -> MobileMeshSession  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_umsh_mobile_core_fn_method_mobileappcore_mesh_session(
-                        self.uniffiCloneHandle()
-                )
-            },
-            pollFunc: ffi_umsh_mobile_core_rust_future_poll_u64,
-            completeFunc: ffi_umsh_mobile_core_rust_future_complete_u64,
-            freeFunc: ffi_umsh_mobile_core_rust_future_free_u64,
-            liftFunc: FfiConverterTypeMobileMeshSession_lift,
-            errorHandler: FfiConverterTypeMobileAppError_lift
-        )
-}
-
-    /**
      * What changed since the last call. Answers in every state, so the
      * last lifecycle change is never lost.
      */
@@ -1661,8 +1713,220 @@ open func setChannelRouting(id: String, regions: [UInt16], maxFloodHops: UInt8?)
 }
 
     /**
-     * Broadcast this phone's identity now. Succeeds once queued, whether
-     * or not a radio carries it yet.
+     * Keep `text` in a conversation's draft: as the draft when it is
+     * empty, otherwise on a line under it. For a reply that did not go
+     * out. Kept while idle or failed too.
+     */
+open func appendDraft(address: String, text: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileappcore_append_draft(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(address),FfiConverterString.lower(text)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileAppError_lift
+        )
+}
+
+    /**
+     * The user agreed to `EMERGENCY`'s warning: sends there are taken
+     * from now on, under this owner, until the owner changes or the core
+     * ends. In effect for every command made after it returns.
+     */
+open func certifyEmergency()throws   {try rustCallWithError(FfiConverterTypeMobileAppError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappcore_certify_emergency(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Erase a conversation's messages, keeping the conversation, its
+     * draft and its place in the wire stream. Local only.
+     */
+open func clearMessages(address: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileappcore_clear_messages(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(address)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileAppError_lift
+        )
+}
+
+    /**
+     * Fill a conversation with `count` generated messages, for looking at
+     * long transcripts.
+     */
+open func generateMessages(address: String, count: UInt32)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileappcore_generate_messages(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(address),FfiConverterUInt32.lower(count)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileAppError_lift
+        )
+}
+
+    /**
+     * This phone's link, carrying its identity signed under the name it
+     * advertises and the time now. Never its location. `NotRunning` while
+     * no identity runs: `node_uri_for_address` gives the bare link.
+     */
+open func identityShareUri()async throws  -> String  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileappcore_identity_share_uri(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
+            errorHandler: FfiConverterTypeMobileAppError_lift
+        )
+}
+
+    /**
+     * Mark a conversation read: as of now, or with `through_ms` as of
+     * then, which never moves its read time back. Kept while idle or
+     * failed too. A conversation not stored is not an error.
+     */
+open func markRead(address: String, throughMs: Int64?)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileappcore_mark_read(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(address),FfiConverterOptionInt64.lower(throughMs)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileAppError_lift
+        )
+}
+
+    /**
+     * Ask for the missing messages `messages` names in this conversation.
+     * A gap that can no longer be asked for is marked unavailable, even
+     * when a request fails; rows that are not idle gaps are passed over.
+     */
+open func requestMissing(address: String, messages: [MobileStoredChatMessageRefRecord])async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileappcore_request_missing(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(address),FfiConverterSequenceTypeMobileStoredChatMessageRefRecord.lower(messages)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileAppError_lift
+        )
+}
+
+    /**
+     * Send a message of ours that was not delivered again: as itself,
+     * within its revise window and while its frames can still land, or
+     * otherwise as a new message that replaces it. `forward_secret` is
+     * what the user chose; a channel has none. `InvalidRequest` for a
+     * message that is not failed, or that another resend is sending.
+     */
+open func resend(address: String, message: MobileStoredChatMessageRefRecord, forwardSecret: Bool)async throws  -> MobileAppResent  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileappcore_resend(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(address),FfiConverterTypeMobileStoredChatMessageRefRecord_lower(message),FfiConverterBool.lower(forwardSecret)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileAppResent_lift,
+            errorHandler: FfiConverterTypeMobileAppError_lift
+        )
+}
+
+    /**
+     * Keep `text`, as it stands, as a conversation's draft. Kept while
+     * idle or failed too.
+     */
+open func saveDraft(address: String, text: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileappcore_save_draft(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(address),FfiConverterString.lower(text)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileAppError_lift
+        )
+}
+
+    /**
+     * Send into a stored conversation: typed text, a reply, an edit, a
+     * deletion or a reaction. The message is stored before anything goes
+     * on the air, and the send runs to its end whatever becomes of the
+     * caller.
+     *
+     * `clear_draft`, with `Typed` and `Reply` only, is the composer's text
+     * as submitted: it is stored as the draft first, in every state but
+     * erasing, stopping and stopped, so a refused send keeps it; once the
+     * message is kept, the draft is cleared if it still reads the same.
+     *
+     * `MessageNotQueued` is the only error that means the message was
+     * kept. Refused before anything is composed: `EmergencyNotCertified`
+     * on `EMERGENCY` before `certify_emergency`, then `NoRadio` or
+     * `NotThisPhone` with no radio attached as this phone's.
+     */
+open func sendChat(address: String, request: MobileAppChatRequest, clearDraft: String?)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileappcore_send_chat(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(address),FfiConverterTypeMobileAppChatRequest_lower(request),FfiConverterOptionString.lower(clearDraft)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileAppError_lift
+        )
+}
+
+    /**
+     * Broadcast this phone's identity now, over the radio attached as
+     * this phone's. Succeeds once queued.
      */
 open func advertiseIdentity()async throws   {
     return
@@ -3261,6 +3525,9 @@ public protocol MobileAppStoreProtocol: AnyObject, Sendable {
      * Mark everything in a conversation read as of `read_at_ms`.
      * Addressed rather than keyed by row so one call serves both kinds of
      * conversation. An address with no conversation is not an error.
+     *
+     * For tests and tools that seed a store with no core running; the app
+     * edits through `MobileAppCore`'s commands.
      */
     func markConversationRead(ownerIdentityId: String, conversationAddress: String, readAtMs: Int64) throws
 
@@ -3276,12 +3543,18 @@ public protocol MobileAppStoreProtocol: AnyObject, Sendable {
     /**
      * Fails with [`MobileStoreError::RecordNotFound`] when the identity
      * has no such channel conversation.
+     *
+     * For tests and tools that seed a store with no core running; the app
+     * edits through `MobileAppCore`'s commands.
      */
     func updateChannelDraft(ownerIdentityId: String, conversationId: Int64, text: String) throws
 
     /**
      * Fails with [`MobileStoreError::RecordNotFound`] when the identity
      * has no such direct conversation.
+     *
+     * For tests and tools that seed a store with no core running; the app
+     * edits through `MobileAppCore`'s commands.
      */
     func updateDraft(ownerIdentityId: String, conversationId: Int64, text: String) throws
 
@@ -4155,6 +4428,9 @@ open func listDirectConversations(ownerIdentityId: String)throws  -> [MobileStor
      * Mark everything in a conversation read as of `read_at_ms`.
      * Addressed rather than keyed by row so one call serves both kinds of
      * conversation. An address with no conversation is not an error.
+     *
+     * For tests and tools that seed a store with no core running; the app
+     * edits through `MobileAppCore`'s commands.
      */
 open func markConversationRead(ownerIdentityId: String, conversationAddress: String, readAtMs: Int64)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
         uniffiCallStatus in
@@ -4188,6 +4464,9 @@ open func setDirectConversationNotifications(ownerIdentityId: String, conversati
     /**
      * Fails with [`MobileStoreError::RecordNotFound`] when the identity
      * has no such channel conversation.
+     *
+     * For tests and tools that seed a store with no core running; the app
+     * edits through `MobileAppCore`'s commands.
      */
 open func updateChannelDraft(ownerIdentityId: String, conversationId: Int64, text: String)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
         uniffiCallStatus in
@@ -4203,6 +4482,9 @@ open func updateChannelDraft(ownerIdentityId: String, conversationId: Int64, tex
     /**
      * Fails with [`MobileStoreError::RecordNotFound`] when the identity
      * has no such direct conversation.
+     *
+     * For tests and tools that seed a store with no core running; the app
+     * edits through `MobileAppCore`'s commands.
      */
 open func updateDraft(ownerIdentityId: String, conversationId: Int64, text: String)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
         uniffiCallStatus in
@@ -13311,6 +13593,11 @@ public struct MobileAppChangesRecord: Equatable, Hashable {
      * Whether claimed radios are being revoked, when that changed.
      */
     public var revokingClaimedRadios: Bool?
+    /**
+     * Whether the user agreed to `EMERGENCY`'s warning, when that
+     * changed.
+     */
+    public var emergencyCertified: Bool?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -13367,7 +13654,11 @@ public struct MobileAppChangesRecord: Equatable, Hashable {
          */claimedRadiosChanged: Bool,
         /**
          * Whether claimed radios are being revoked, when that changed.
-         */revokingClaimedRadios: Bool?) {
+         */revokingClaimedRadios: Bool?,
+        /**
+         * Whether the user agreed to `EMERGENCY`'s warning, when that
+         * changed.
+         */emergencyCertified: Bool?) {
         self.lifecycle = lifecycle
         self.radio = radio
         self.propertyPushes = propertyPushes
@@ -13386,6 +13677,7 @@ public struct MobileAppChangesRecord: Equatable, Hashable {
         self.operationProgress = operationProgress
         self.claimedRadiosChanged = claimedRadiosChanged
         self.revokingClaimedRadios = revokingClaimedRadios
+        self.emergencyCertified = emergencyCertified
     }
 
 
@@ -13421,7 +13713,8 @@ public struct FfiConverterTypeMobileAppChangesRecord: FfiConverterRustBuffer {
                 exchangedPeer: FfiConverterOptionString.read(from: &buf),
                 operationProgress: FfiConverterSequenceTypeMobileAppOperationProgressRecord.read(from: &buf),
                 claimedRadiosChanged: FfiConverterBool.read(from: &buf),
-                revokingClaimedRadios: FfiConverterOptionBool.read(from: &buf)
+                revokingClaimedRadios: FfiConverterOptionBool.read(from: &buf),
+                emergencyCertified: FfiConverterOptionBool.read(from: &buf)
         )
     }
 
@@ -13444,6 +13737,7 @@ public struct FfiConverterTypeMobileAppChangesRecord: FfiConverterRustBuffer {
         FfiConverterSequenceTypeMobileAppOperationProgressRecord.write(value.operationProgress, into: &buf)
         FfiConverterBool.write(value.claimedRadiosChanged, into: &buf)
         FfiConverterOptionBool.write(value.revokingClaimedRadios, into: &buf)
+        FfiConverterOptionBool.write(value.emergencyCertified, into: &buf)
     }
 }
 
@@ -13916,6 +14210,16 @@ public struct MobileAppMessageRecord: Equatable, Hashable {
      * `stored.repeats`' repeaters, in the same order.
      */
     public var repeaters: [MobileAppMessageRepeaterRecord]
+    /**
+     * What each of `stored.reactions` reads as, in the same order; `None`
+     * for a body with nothing in it.
+     */
+    public var reactions: [MobileReaction?]
+    /**
+     * Until when a message of ours, not deleted, may be edited or resent
+     * in place; `None` for any other.
+     */
+    public var reviseUntilMs: Int64?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -13928,11 +14232,21 @@ public struct MobileAppMessageRecord: Equatable, Hashable {
          */quotedSenderNodeHint: String?,
         /**
          * `stored.repeats`' repeaters, in the same order.
-         */repeaters: [MobileAppMessageRepeaterRecord]) {
+         */repeaters: [MobileAppMessageRepeaterRecord],
+        /**
+         * What each of `stored.reactions` reads as, in the same order; `None`
+         * for a body with nothing in it.
+         */reactions: [MobileReaction?],
+        /**
+         * Until when a message of ours, not deleted, may be edited or resent
+         * in place; `None` for any other.
+         */reviseUntilMs: Int64?) {
         self.stored = stored
         self.senderNodeHint = senderNodeHint
         self.quotedSenderNodeHint = quotedSenderNodeHint
         self.repeaters = repeaters
+        self.reactions = reactions
+        self.reviseUntilMs = reviseUntilMs
     }
 
 
@@ -13954,7 +14268,9 @@ public struct FfiConverterTypeMobileAppMessageRecord: FfiConverterRustBuffer {
                 stored: FfiConverterTypeMobileStoredChatMessageRecord.read(from: &buf),
                 senderNodeHint: FfiConverterOptionString.read(from: &buf),
                 quotedSenderNodeHint: FfiConverterOptionString.read(from: &buf),
-                repeaters: FfiConverterSequenceTypeMobileAppMessageRepeaterRecord.read(from: &buf)
+                repeaters: FfiConverterSequenceTypeMobileAppMessageRepeaterRecord.read(from: &buf),
+                reactions: FfiConverterSequenceOptionTypeMobileReaction.read(from: &buf),
+                reviseUntilMs: FfiConverterOptionInt64.read(from: &buf)
         )
     }
 
@@ -13963,6 +14279,8 @@ public struct FfiConverterTypeMobileAppMessageRecord: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.senderNodeHint, into: &buf)
         FfiConverterOptionString.write(value.quotedSenderNodeHint, into: &buf)
         FfiConverterSequenceTypeMobileAppMessageRepeaterRecord.write(value.repeaters, into: &buf)
+        FfiConverterSequenceOptionTypeMobileReaction.write(value.reactions, into: &buf)
+        FfiConverterOptionInt64.write(value.reviseUntilMs, into: &buf)
     }
 }
 
@@ -15003,6 +15321,10 @@ public struct MobileAppStatusRecord: Equatable, Hashable {
      * Whether claimed radios are being revoked now.
      */
     public var revokingClaimedRadios: Bool
+    /**
+     * Whether the user agreed to `EMERGENCY`'s warning under this owner.
+     */
+    public var emergencyCertified: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -15018,12 +15340,16 @@ public struct MobileAppStatusRecord: Equatable, Hashable {
          */meet: MobileMeetStateRecord?,
         /**
          * Whether claimed radios are being revoked now.
-         */revokingClaimedRadios: Bool) {
+         */revokingClaimedRadios: Bool,
+        /**
+         * Whether the user agreed to `EMERGENCY`'s warning under this owner.
+         */emergencyCertified: Bool) {
         self.lifecycle = lifecycle
         self.radio = radio
         self.forwardSecretConversations = forwardSecretConversations
         self.meet = meet
         self.revokingClaimedRadios = revokingClaimedRadios
+        self.emergencyCertified = emergencyCertified
     }
 
 
@@ -15046,7 +15372,8 @@ public struct FfiConverterTypeMobileAppStatusRecord: FfiConverterRustBuffer {
                 radio: FfiConverterOptionTypeMobileRadioStateRecord.read(from: &buf),
                 forwardSecretConversations: FfiConverterSequenceString.read(from: &buf),
                 meet: FfiConverterOptionTypeMobileMeetStateRecord.read(from: &buf),
-                revokingClaimedRadios: FfiConverterBool.read(from: &buf)
+                revokingClaimedRadios: FfiConverterBool.read(from: &buf),
+                emergencyCertified: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -15056,6 +15383,7 @@ public struct FfiConverterTypeMobileAppStatusRecord: FfiConverterRustBuffer {
         FfiConverterSequenceString.write(value.forwardSecretConversations, into: &buf)
         FfiConverterOptionTypeMobileMeetStateRecord.write(value.meet, into: &buf)
         FfiConverterBool.write(value.revokingClaimedRadios, into: &buf)
+        FfiConverterBool.write(value.emergencyCertified, into: &buf)
     }
 }
 
@@ -17499,6 +17827,10 @@ public struct MobileNotificationReactionRecord: Equatable, Hashable {
      * The wire token, such as `<3`.
      */
     public var token: String
+    /**
+     * What the token reads as; `None` for a body with nothing in it.
+     */
+    public var reaction: MobileReaction?
     public var targetBody: String
 
     // Default memberwise initializers are never public by default, so we
@@ -17506,8 +17838,12 @@ public struct MobileNotificationReactionRecord: Equatable, Hashable {
     public init(
         /**
          * The wire token, such as `<3`.
-         */token: String, targetBody: String) {
+         */token: String,
+        /**
+         * What the token reads as; `None` for a body with nothing in it.
+         */reaction: MobileReaction?, targetBody: String) {
         self.token = token
+        self.reaction = reaction
         self.targetBody = targetBody
     }
 
@@ -17528,12 +17864,14 @@ public struct FfiConverterTypeMobileNotificationReactionRecord: FfiConverterRust
         return
             try MobileNotificationReactionRecord(
                 token: FfiConverterString.read(from: &buf),
+                reaction: FfiConverterOptionTypeMobileReaction.read(from: &buf),
                 targetBody: FfiConverterString.read(from: &buf)
         )
     }
 
     public static func write(_ value: MobileNotificationReactionRecord, into buf: inout [UInt8]) {
         FfiConverterString.write(value.token, into: &buf)
+        FfiConverterOptionTypeMobileReaction.write(value.reaction, into: &buf)
         FfiConverterString.write(value.targetBody, into: &buf)
     }
 }
@@ -27180,6 +27518,138 @@ public func FfiConverterTypeMobileAnnouncementKind_lower(_ value: MobileAnnounce
 
 
 /**
+ * What native code asks to send into a conversation. Text is trimmed;
+ * empty text is `InvalidRequest` (a deletion is [`Self::Delete`]).
+ */
+
+public enum MobileAppChatRequest: Equatable, Hashable {
+
+    /**
+     * Text as the user typed it: a `/me ` prefix makes it status text. To
+     * a peer it goes under a session with forward secrecy, or never under
+     * one, as `forward_secret` says the composer showed it; without, under
+     * one only when one is held.
+     */
+    case typed(text: String, forwardSecret: Bool?
+    )
+    /**
+     * A reply to either party's message, under forward secrecy as
+     * [`Self::Typed`] goes. Where the target can no longer be named, the
+     * text goes as a plain message.
+     */
+    case reply(target: MobileStoredChatMessageRefRecord, text: String, forwardSecret: Bool?
+    )
+    /**
+     * New text for a message of ours, within its revise window.
+     */
+    case edit(message: MobileStoredChatMessageRefRecord, text: String
+    )
+    /**
+     * A message of ours taken back.
+     */
+    case delete(message: MobileStoredChatMessageRefRecord
+    )
+    /**
+     * A reaction to either party's message; `None` withdraws this
+     * phone's.
+     */
+    case react(message: MobileStoredChatMessageRefRecord, reaction: MobileReaction?
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileAppChatRequest: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileAppChatRequest: FfiConverterRustBuffer {
+    typealias SwiftType = MobileAppChatRequest
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileAppChatRequest {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .typed(text: try FfiConverterString.read(from: &buf), forwardSecret: try FfiConverterOptionBool.read(from: &buf)
+        )
+
+        case 2: return .reply(target: try FfiConverterTypeMobileStoredChatMessageRefRecord.read(from: &buf), text: try FfiConverterString.read(from: &buf), forwardSecret: try FfiConverterOptionBool.read(from: &buf)
+        )
+
+        case 3: return .edit(message: try FfiConverterTypeMobileStoredChatMessageRefRecord.read(from: &buf), text: try FfiConverterString.read(from: &buf)
+        )
+
+        case 4: return .delete(message: try FfiConverterTypeMobileStoredChatMessageRefRecord.read(from: &buf)
+        )
+
+        case 5: return .react(message: try FfiConverterTypeMobileStoredChatMessageRefRecord.read(from: &buf), reaction: try FfiConverterOptionTypeMobileReaction.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileAppChatRequest, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .typed(text,forwardSecret):
+            writeInt(&buf, Int32(1))
+            FfiConverterString.write(text, into: &buf)
+            FfiConverterOptionBool.write(forwardSecret, into: &buf)
+
+
+        case let .reply(target,text,forwardSecret):
+            writeInt(&buf, Int32(2))
+            FfiConverterTypeMobileStoredChatMessageRefRecord.write(target, into: &buf)
+            FfiConverterString.write(text, into: &buf)
+            FfiConverterOptionBool.write(forwardSecret, into: &buf)
+
+
+        case let .edit(message,text):
+            writeInt(&buf, Int32(3))
+            FfiConverterTypeMobileStoredChatMessageRefRecord.write(message, into: &buf)
+            FfiConverterString.write(text, into: &buf)
+
+
+        case let .delete(message):
+            writeInt(&buf, Int32(4))
+            FfiConverterTypeMobileStoredChatMessageRefRecord.write(message, into: &buf)
+
+
+        case let .react(message,reaction):
+            writeInt(&buf, Int32(5))
+            FfiConverterTypeMobileStoredChatMessageRefRecord.write(message, into: &buf)
+            FfiConverterOptionTypeMobileReaction.write(reaction, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppChatRequest_lift(_ buf: RustBuffer) throws -> MobileAppChatRequest {
+    return try FfiConverterTypeMobileAppChatRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppChatRequest_lower(_ value: MobileAppChatRequest) -> RustBuffer {
+    return FfiConverterTypeMobileAppChatRequest.lower(value)
+}
+
+
+
+/**
  * Why the core could not answer.
  */
 public
@@ -27291,6 +27761,19 @@ enum MobileAppError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError
      * The device did not confirm entering firmware update.
      */
     case DfuUnconfirmed
+    /**
+     * The conversation is `EMERGENCY`'s, and its warning has not been
+     * agreed to under this owner (`certify_emergency`).
+     */
+    case EmergencyNotCertified
+    /**
+     * The message was kept, but could not go out. `recorded`, it is
+     * stored as not delivered; otherwise that could not be stored either,
+     * and it may read as sending until the next start. The only error a
+     * chat command answers after keeping a message.
+     */
+    case MessageNotQueued(recorded: Bool
+    )
 
 
 
@@ -27356,6 +27839,10 @@ public struct FfiConverterTypeMobileAppError: FfiConverterRustBuffer {
             status: try FfiConverterUInt32.read(from: &buf)
             )
         case 24: return .DfuUnconfirmed
+        case 25: return .EmergencyNotCertified
+        case 26: return .MessageNotQueued(
+            recorded: try FfiConverterBool.read(from: &buf)
+            )
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -27468,6 +27955,15 @@ public struct FfiConverterTypeMobileAppError: FfiConverterRustBuffer {
 
         case .DfuUnconfirmed:
             writeInt(&buf, Int32(24))
+
+
+        case .EmergencyNotCertified:
+            writeInt(&buf, Int32(25))
+
+
+        case let .MessageNotQueued(recorded):
+            writeInt(&buf, Int32(26))
+            FfiConverterBool.write(recorded, into: &buf)
 
         }
     }
@@ -27852,6 +28348,81 @@ public func FfiConverterTypeMobileAppPositionReading_lift(_ buf: RustBuffer) thr
 #endif
 public func FfiConverterTypeMobileAppPositionReading_lower(_ value: MobileAppPositionReading) -> RustBuffer {
     return FfiConverterTypeMobileAppPositionReading.lower(value)
+}
+
+
+
+/**
+ * How a resend went out.
+ */
+
+public enum MobileAppResent: Equatable, Hashable {
+
+    /**
+     * As itself, under its own wire ID: the message is where it was.
+     */
+    case inPlace
+    /**
+     * As a new message, which replaced the failed one.
+     */
+    case asNew
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileAppResent: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileAppResent: FfiConverterRustBuffer {
+    typealias SwiftType = MobileAppResent
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileAppResent {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .inPlace
+
+        case 2: return .asNew
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileAppResent, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .inPlace:
+            writeInt(&buf, Int32(1))
+
+
+        case .asNew:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppResent_lift(_ buf: RustBuffer) throws -> MobileAppResent {
+    return try FfiConverterTypeMobileAppResent.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppResent_lower(_ value: MobileAppResent) -> RustBuffer {
+    return FfiConverterTypeMobileAppResent.lower(value)
 }
 
 
@@ -30675,6 +31246,113 @@ public func FfiConverterTypeMobileRadioTransportPhase_lift(_ buf: RustBuffer) th
 #endif
 public func FfiConverterTypeMobileRadioTransportPhase_lower(_ value: MobileRadioTransportPhase) -> RustBuffer {
     return FfiConverterTypeMobileRadioTransportPhase.lower(value)
+}
+
+
+
+/**
+ * A reaction: one of UMSH's emotes, or any other grapheme cluster.
+ */
+
+public enum MobileReaction: Equatable, Hashable {
+
+    case heart
+    case thumbsUp
+    case thumbsDown
+    case laugh
+    case exclaim
+    case question
+    case other(cluster: String
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileReaction: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileReaction: FfiConverterRustBuffer {
+    typealias SwiftType = MobileReaction
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileReaction {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .heart
+
+        case 2: return .thumbsUp
+
+        case 3: return .thumbsDown
+
+        case 4: return .laugh
+
+        case 5: return .exclaim
+
+        case 6: return .question
+
+        case 7: return .other(cluster: try FfiConverterString.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileReaction, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .heart:
+            writeInt(&buf, Int32(1))
+
+
+        case .thumbsUp:
+            writeInt(&buf, Int32(2))
+
+
+        case .thumbsDown:
+            writeInt(&buf, Int32(3))
+
+
+        case .laugh:
+            writeInt(&buf, Int32(4))
+
+
+        case .exclaim:
+            writeInt(&buf, Int32(5))
+
+
+        case .question:
+            writeInt(&buf, Int32(6))
+
+
+        case let .other(cluster):
+            writeInt(&buf, Int32(7))
+            FfiConverterString.write(cluster, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileReaction_lift(_ buf: RustBuffer) throws -> MobileReaction {
+    return try FfiConverterTypeMobileReaction.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileReaction_lower(_ value: MobileReaction) -> RustBuffer {
+    return FfiConverterTypeMobileReaction.lower(value)
 }
 
 
@@ -35081,6 +35759,30 @@ fileprivate struct FfiConverterOptionTypeMobileRadioProblem: FfiConverterRustBuf
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeMobileReaction: FfiConverterRustBuffer {
+    typealias SwiftType = MobileReaction?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileReaction.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileReaction.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeMobileStagedChatRegarding: FfiConverterRustBuffer {
     typealias SwiftType = MobileStagedChatRegarding?
 
@@ -36939,6 +37641,31 @@ fileprivate struct FfiConverterSequenceOptionUInt16: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceOptionTypeMobileReaction: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileReaction?]
+
+    public static func write(_ value: [MobileReaction?], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterOptionTypeMobileReaction.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileReaction?] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileReaction?]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterOptionTypeMobileReaction.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterDictionaryUInt32Data: FfiConverterRustBuffer {
     public static func write(_ value: [UInt32: Data], into buf: inout [UInt8]) {
         let len = Int32(value.count)
@@ -37381,6 +38108,19 @@ public func wellKnownChannel(canonicalName: String?) -> MobileWellKnownChannelRe
         uniffiCallStatus in
     uniffi_umsh_mobile_core_fn_func_well_known_channel(
         FfiConverterOptionString.lower(canonicalName),uniffiCallStatus
+    )
+})
+}
+/**
+ * Whether the radio is attached as this phone's: what every command that
+ * transmits needs, so a composer blocks exactly when the core would
+ * refuse.
+ */
+public func radioCarriesThisPhone(radio: MobileRadioStateRecord?) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_radio_carries_this_phone(
+        FfiConverterOptionTypeMobileRadioStateRecord.lower(radio),uniffiCallStatus
     )
 })
 }
@@ -38223,6 +38963,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_well_known_channel() != 3584) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_func_radio_carries_this_phone() != 9248) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_func_set_logger() != 36786) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -38388,9 +39131,6 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_erase() != 28008) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_mesh_session() != 20581) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_poll_changes() != 40298) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -38448,7 +39188,37 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_set_channel_routing() != 6712) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_advertise_identity() != 19706) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_append_draft() != 35667) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_certify_emergency() != 13861) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_clear_messages() != 57994) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_generate_messages() != 32146) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_identity_share_uri() != 33060) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_mark_read() != 38909) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_request_missing() != 23838) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_resend() != 893) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_save_draft() != 64765) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_send_chat() != 60843) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_advertise_identity() != 29406) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_answer_exchange() != 35644) {
@@ -39129,16 +39899,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_list_direct_conversations() != 53973) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_mark_conversation_read() != 6558) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_mark_conversation_read() != 60145) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_set_direct_conversation_notifications() != 25736) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_update_channel_draft() != 8451) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_update_channel_draft() != 58263) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_update_draft() != 34575) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_update_draft() != 2228) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_cached_properties() != 28519) {

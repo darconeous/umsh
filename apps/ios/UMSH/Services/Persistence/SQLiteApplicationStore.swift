@@ -435,12 +435,12 @@ struct StoredMessageReception: Hashable, Sendable {
 /// key bytes are never accepted by this API and remain in Keychain.
 ///
 /// This actor only adapts: Swift types and `Date`s on this side, the core's
-/// records and millisecond instants on the other. Writes that need the time
-/// are stamped here, from the clock, as the Swift store stamped them.
+/// records and millisecond instants on the other. Chat and conversation
+/// writes go through `MobileAppCore`, not here.
 actor SQLiteApplicationStore {
     private let store: MobileAppStore
 
-    /// The core's store itself, for a mesh session to keep its chat in.
+    /// The core's store itself, for `MobileAppCore` to run on.
     nonisolated var coreStore: MobileAppStore { store }
 
     init(path: String) throws {
@@ -541,105 +541,6 @@ actor SQLiteApplicationStore {
     ) throws -> [StoredChannelConversation] {
         try run { try $0.listChannelConversations(ownerIdentityId: ownerIdentityID) }
             .compactMap(StoredChannelConversation.init)
-    }
-
-    /// Erase a conversation's messages while keeping the conversation itself.
-    /// Addressed rather than keyed by row so one call serves both kinds.
-    ///
-    /// Outbound stream checkpoints are kept, for the same reason deleting a
-    /// conversation keeps them: sequence continuity with the far end has to
-    /// outlive the transcript, or the next message would announce a Sequence
-    /// Reset. Archived outbound payloads do go, so a later resend request for
-    /// a cleared message is answered Unavailable—the protocol handles that,
-    /// and keeping erased content on disk would not be acceptable.
-    func clearConversationMessages(
-        ownerIdentityID: String,
-        conversationAddress: String
-    ) throws {
-        try run {
-            try $0.clearConversationMessages(ownerIdentityId: ownerIdentityID, conversationAddress: conversationAddress)
-        }
-    }
-
-    func updateChannelDraft(
-        ownerIdentityID: String,
-        conversationID: Int64,
-        text: String
-    ) throws {
-        try run { try $0.updateChannelDraft(ownerIdentityId: ownerIdentityID, conversationId: conversationID, text: text) }
-    }
-
-    /// Mark everything in a conversation read as of now. Addressed rather than
-    /// keyed by row so one call serves both kinds of conversation.
-    func markConversationRead(ownerIdentityID: String, conversationAddress: String) throws {
-        try run {
-            try $0.markConversationRead(
-                ownerIdentityId: ownerIdentityID,
-                conversationAddress: conversationAddress,
-                readAtMs: Date.now.storeMilliseconds
-            )
-        }
-    }
-
-    func updateDraft(ownerIdentityID: String, conversationID: Int64, text: String) throws {
-        try run { try $0.updateDraft(ownerIdentityId: ownerIdentityID, conversationId: conversationID, text: text) }
-    }
-
-    // MARK: Chat
-
-    /// Remove a failed outbound message outright, because its text just went
-    /// back on the air as a genuinely new message: keeping the dead row would
-    /// show the same words twice, once red and once delivered.
-    ///
-    /// Local only, and deliberately narrow—the guards make this a no-op on
-    /// anything but a failed outbound row, so a stale caller can never take
-    /// down a message the mesh knows about. Reactions pointing at the row go
-    /// with it (nobody ever received the message they decorate), as does the
-    /// delivery evidence recorded under the row's pointer.
-    func removeFailedMessage(
-        ownerIdentityID: String,
-        sessionID: String,
-        handle: UInt32
-    ) throws {
-        try run {
-            try $0.removeFailedMessage(
-                ownerIdentityId: ownerIdentityID,
-                message: MobileStoredChatMessageRefRecord(sessionId: sessionID, handle: handle)
-            )
-        }
-    }
-
-    /// Resolve gap placeholders as unavailable: the named rows, or every gap
-    /// when `rows` is nil. A gap belongs to the mesh session that saw it, so
-    /// once that session is gone no repair will ever fill it.
-    func resolveGapsUnavailable(
-        ownerIdentityID: String,
-        rows: [(sessionID: String, handle: UInt32)]? = nil
-    ) throws {
-        let references = rows?.map { MobileStoredChatMessageRefRecord(sessionId: $0.sessionID, handle: $0.handle) }
-        try run { try $0.resolveGapsUnavailable(ownerIdentityId: ownerIdentityID, rows: references) }
-    }
-
-    /// What a resend of one of our messages puts back on the air: its
-    /// archived fragments, less those already acknowledged under its current
-    /// delivery pointer. Empty when nothing is archived under the wire ID the
-    /// row carries—an edit's content lives under the edit's own ID, which the
-    /// row does not keep—so the caller sends it as a new message instead.
-    func chatResendFrames(
-        ownerIdentityID: String,
-        conversationAddress: String,
-        sessionID: String,
-        handle: UInt32,
-        wireID: UInt8
-    ) throws -> [MobileChatArchiveRecord] {
-        try run {
-            try $0.chatResendFrames(
-                ownerIdentityId: ownerIdentityID,
-                conversationAddress: conversationAddress,
-                message: MobileStoredChatMessageRefRecord(sessionId: sessionID, handle: handle),
-                wireId: wireID
-            )
-        }
     }
 
     // MARK: Transcripts
@@ -745,27 +646,6 @@ actor SQLiteApplicationStore {
     ) throws -> Int {
         Int(try run { try $0.chatMessageCount(ownerIdentityId: ownerIdentityID, conversationAddress: conversationAddress) })
     }
-
-    #if DEBUG
-    /// Fill a conversation with generated messages, for exercising a transcript
-    /// at a size no test account reaches by hand. Instants run back from now,
-    /// with lulls of several hours, so the transcript spans days and carries
-    /// the date separators a real one does.
-    func seedGeneratedMessages(
-        ownerIdentityID: String,
-        conversationAddress: String,
-        count: Int
-    ) throws {
-        try run {
-            try $0.seedGeneratedMessages(
-                ownerIdentityId: ownerIdentityID,
-                conversationAddress: conversationAddress,
-                count: UInt32(clamping: count),
-                nowMs: Date.now.storeMilliseconds
-            )
-        }
-    }
-    #endif
 
     // MARK: Calling the core
 

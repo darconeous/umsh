@@ -20,8 +20,6 @@ struct NodeMapView: View {
     /// "not read yet" rather than "nothing is out there".
     var isLoading = false
     var peerActions: PeerActions = .unavailable
-    let updateDraft: ((Int64, String) async -> AppOperationResult)?
-    let sendMessage: ((DirectConversationSummary, String, Bool) async -> MessageSendResult)?
     var messageActions: ChatMessageActions = .unavailable
     /// Send the reader to the Peers tab, for the empty state's way out.
     var openPeersList: () -> Void = {}
@@ -273,8 +271,6 @@ struct NodeMapView: View {
                 radioSnapshot: $radioSnapshot,
                 conversations: $conversations,
                 peerActions: peerActions,
-                updateDraft: updateDraft,
-                sendMessage: sendMessage,
                 messageActions: messageActions
             )
         }

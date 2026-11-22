@@ -15,6 +15,8 @@
 //!   allocation, deduplication, fragmentation, reassembly, and bounded
 //!   repair. It receives commands and emits effects and events; platform
 //!   code owns presentation, storage, and transports.
+//! - [`reaction`]: the emote vocabulary reactions carry, and how a body
+//!   reads as one.
 //! - [`chat`] (feature `alloc`): the allocated chat facade around the
 //!   engine—typed conversations, the channel registry, sender resolution,
 //!   and compose batches whose frames wait on storage.
@@ -32,6 +34,7 @@ pub mod codec;
 pub mod emergency;
 mod error;
 pub mod model;
+pub mod reaction;
 pub mod validate;
 mod well_known;
 

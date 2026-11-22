@@ -63,30 +63,22 @@ private actor DraftWriter {
     func allowWrites() { fails = false }
 }
 
+/// A draft store writing for "alice", the owner the tests' keys name.
+@MainActor
+private func aliceDrafts(
+    _ write: @escaping @Sendable (ConversationDraftKey, String) async throws -> Void
+) -> ConversationDraftStore {
+    let drafts = ConversationDraftStore(write: write)
+    drafts.owner = "alice"
+    return drafts
+}
+
 @Suite @MainActor
 struct DraftTests {
-    @Test func sendCleanupDoesNotEraseNewerInput() async throws {
-        let writer = DraftWriter()
-        await writer.allowWrites()
-        let drafts = ConversationDraftStore { _, text in try await writer.write(text) }
-        let key = ConversationDraftKey(owner: "alice", kind: .direct, id: 1)
-        try await drafts.save("Old draft", for: key).get()
-        try await drafts.save("New words", for: key).get()
-        try await drafts.clear(for: key, preserving: "Old draft")
-        #expect(await writer.saved == ["Old draft", "New words"])
-    }
-    @Test func failedClearRetainsSubmittedDraftForRecovery() async {
-        let drafts = ConversationDraftStore { _, _ in throw TestFailure.unavailable }
-        let key = ConversationDraftKey(owner: "alice", kind: .direct, id: 2)
-        await #expect(throws: AppOperationError.self) {
-            try await drafts.clear(for: key, preserving: "Original draft")
-        }
-        #expect(drafts.pendingText(for: key) == "Original draft")
-    }
     @Test func failedWriteRetainsTextAndRetryPersistsIt() async throws {
         let writer = DraftWriter()
-        let drafts = ConversationDraftStore { _, text in try await writer.write(text) }
-        let key = ConversationDraftKey(owner: "alice", kind: .direct, id: 1)
+        let drafts = aliceDrafts { _, text in try await writer.write(text) }
+        let key = ConversationDraftKey(owner: "alice", address: "umsh:a")
         let failed = await drafts.save("Do not lose this", for: key)
         if case .success = failed { Issue.record("Failed storage reported success") }
         #expect(drafts.pendingText(for: key) == "Do not lose this")
@@ -99,29 +91,173 @@ struct DraftTests {
     @Test func cancelledCallerDoesNotStartWrite() async {
         let writer = DraftWriter()
         await writer.allowWrites()
-        let drafts = ConversationDraftStore { _, text in try await writer.write(text) }
+        let drafts = aliceDrafts { _, text in try await writer.write(text) }
         let task = Task {
             withUnsafeCurrentTask { $0?.cancel() }
-            return await drafts.save("canceled", for: .init(owner: "alice", kind: .channel, id: 1))
+            return await drafts.save("canceled", for: .init(owner: "alice", address: "umsh:c"))
         }
         if case .failure(.cancelled) = await task.value {} else { Issue.record("Expected cancellation") }
         #expect(await writer.saved.isEmpty)
     }
 
-    @Test func cancelledCallerStillClearsSubmittedDraft() async throws {
+    @Test func writesReachTheConversationTheyNamed() async throws {
+        let written = Written()
+        let drafts = aliceDrafts { key, text in await written.append(key.address, text) }
+        try await drafts.save("to a", for: .init(owner: "alice", address: "umsh:a")).get()
+        try await drafts.save("to b", for: .init(owner: "alice", address: "umsh:b")).get()
+        #expect(await written.items == ["umsh:a: to a", "umsh:b: to b"])
+    }
+
+    @Test func settleWaitsForTheWriteUnderWay() async {
         let writer = DraftWriter()
         await writer.allowWrites()
-        let drafts = ConversationDraftStore { _, text in try await writer.write(text) }
-        let key = ConversationDraftKey(owner: "alice", kind: .direct, id: 3)
-        try await drafts.save("Sent text", for: key).get()
-        let task = Task {
-            withUnsafeCurrentTask { $0?.cancel() }
-            try await drafts.clear(for: key, preserving: "Sent text")
+        let (gate, open) = AsyncStream<Void>.makeStream()
+        let drafts = aliceDrafts { _, text in
+            for await _ in gate { break }
+            try await writer.write(text)
         }
-        try await task.value
-        #expect(drafts.pendingText(for: key) == nil)
-        #expect(await writer.saved == ["Sent text", ""])
+        let key = ConversationDraftKey(owner: "alice", address: "umsh:d")
+        let saving = Task { await drafts.save("hello", for: key) }
+        while drafts.pendingText(for: key) == nil { await Task.yield() }
+        let settled = Task {
+            await drafts.settle(key)
+            return await writer.saved
+        }
+        open.yield()
+        #expect(await settled.value == ["hello"])
+        _ = await saving.value
     }
+
+    @Test func aFlushAfterTheTapLeavesNoDraft() async throws {
+        let writer = DraftWriter()
+        await writer.allowWrites()
+        let drafts = aliceDrafts { _, text in try await writer.write(text) }
+        let key = ConversationDraftKey(owner: "alice", address: "umsh:e")
+        await drafts.submit("hello", for: key)
+        // The core writes the draft and clears it here; the debounce and the
+        // flush on leaving come after.
+        try await drafts.save("hello", for: key).get()
+        #expect(await writer.saved.isEmpty)
+        // Other text ends the rule, so the same words typed again are kept.
+        try await drafts.save("hello again", for: key).get()
+        try await drafts.save("hello", for: key).get()
+        #expect(await writer.saved == ["hello again", "hello"])
+    }
+
+    @Test func aRefusedSendsWordsAreSavedAgain() async throws {
+        let writer = DraftWriter()
+        await writer.allowWrites()
+        let drafts = aliceDrafts { _, text in try await writer.write(text) }
+        let key = ConversationDraftKey(owner: "alice", address: "umsh:f")
+        let submission = await drafts.submit("hello", for: key)
+        drafts.withdraw(submission)
+        try await drafts.save("hello", for: key).get()
+        #expect(await writer.saved == ["hello"])
+    }
+
+    @Test func sentWordsHeldAsUnsavedAreForgotten() async {
+        let drafts = aliceDrafts { _, _ in throw TestFailure.unavailable }
+        let key = ConversationDraftKey(owner: "alice", address: "umsh:g")
+        _ = await drafts.save("hello", for: key)
+        #expect(drafts.pendingText(for: key) == "hello")
+        let submission = await drafts.submit("hello", for: key)
+        drafts.forget(submission)
+        #expect(drafts.pendingText(for: key) == nil)
+    }
+
+    /// A failed write of a prefix of the sent words, the newer words'
+    /// debounce dropped by the tap: the core's write of the sent text
+    /// replaced it, so it does not come back.
+    @Test func olderWordsHeldAsUnsavedAreForgotten() async {
+        let (gate, open) = AsyncStream<Void>.makeStream()
+        let drafts = aliceDrafts { _, _ in
+            for await _ in gate { break }
+            throw TestFailure.unavailable
+        }
+        let key = ConversationDraftKey(owner: "alice", address: "umsh:i")
+        let saving = Task { await drafts.save("hel", for: key) }
+        while drafts.pendingText(for: key) == nil { await Task.yield() }
+        let submitting = Task { await drafts.submit("hello", for: key) }
+        open.yield()
+        let submission = await submitting.value
+        _ = await saving.value
+        #expect(drafts.pendingText(for: key) == "hel")
+        drafts.forget(submission)
+        #expect(drafts.pendingText(for: key) == nil)
+    }
+
+    /// Words typed while the send is under way are the composer's, whether
+    /// their write is still going or failed.
+    @Test func aFailedWriteSinceTheTapIsNotForgotten() async {
+        let drafts = aliceDrafts { _, _ in throw TestFailure.unavailable }
+        let key = ConversationDraftKey(owner: "alice", address: "umsh:j")
+        _ = await drafts.save("hel", for: key)
+        let submission = await drafts.submit("hello", for: key)
+        _ = await drafts.save("hello!", for: key)
+        drafts.forget(submission)
+        #expect(drafts.pendingText(for: key) == "hello!")
+    }
+
+    /// A write made since the tap is under way: it stays, and the next one
+    /// stays behind it.
+    @Test func aWriteUnderWayIsNotForgotten() async {
+        let writer = DraftWriter()
+        await writer.allowWrites()
+        let (gate, open) = AsyncStream<Void>.makeStream()
+        let drafts = aliceDrafts { _, text in
+            if text == "hello!" { for await _ in gate { break } }
+            try await writer.write(text)
+        }
+        let key = ConversationDraftKey(owner: "alice", address: "umsh:h")
+        let submission = await drafts.submit("hello", for: key)
+        let first = Task { await drafts.save("hello!", for: key) }
+        while drafts.pendingText(for: key) == nil { await Task.yield() }
+        drafts.forget(submission)
+        #expect(drafts.pendingText(for: key) == "hello!")
+        let second = Task { await drafts.save("hellox", for: key) }
+        while drafts.pendingText(for: key) != "hellox" { await Task.yield() }
+        open.yield()
+        _ = await (first.value, second.value)
+        #expect(await writer.saved == ["hello!", "hellox"])
+    }
+
+    /// A write queued under one identity is not handed to the core once
+    /// another is current.
+    @Test func aWriteQueuedForAnotherOwnerIsDropped() async {
+        let written = Written()
+        let (gate, open) = AsyncStream<Void>.makeStream()
+        let drafts = aliceDrafts { key, text in
+            if text == "first" { for await _ in gate { break } }
+            await written.append(key.address, text)
+        }
+        let key = ConversationDraftKey(owner: "alice", address: "umsh:i")
+        let first = Task { await drafts.save("first", for: key) }
+        while drafts.pendingText(for: key) == nil { await Task.yield() }
+        let queued = Task { await drafts.save("queued", for: key) }
+        while drafts.pendingText(for: key) != "queued" { await Task.yield() }
+        drafts.owner = "bob"
+        #expect(drafts.pendingText(for: key) == nil)
+        open.yield()
+        _ = await first.value
+        if case .failure(.cancelled) = await queued.value {} else { Issue.record("Expected the write dropped") }
+        #expect(await written.items == ["umsh:i: first"])
+        if case .failure(.cancelled) = await drafts.save("late", for: key) {} else {
+            Issue.record("Expected a save under the old owner refused")
+        }
+    }
+
+    /// An open composer adds a kept reply as the core added it to the
+    /// stored draft, so the composer's next save writes the same text.
+    @Test func anOpenComposerAddsAKeptReplyAsTheCoreDoes() {
+        let addition = DraftAddition(sequence: 1, address: "umsh:g", text: "ok")
+        #expect(addition.added(to: "") == "ok")
+        #expect(addition.added(to: "abc") == "abc\nok")
+    }
+}
+
+private actor Written {
+    private(set) var items: [String] = []
+    func append(_ address: String, _ text: String) { items.append("\(address): \(text)") }
 }
 
 @Suite
@@ -232,13 +368,27 @@ struct BoundaryTests {
         }
     }
 
-    @Test func composeValidationAndAvailabilityRemainDistinct() {
-        if case .validation = ChatSubmissionCoordinator.composeError(.UnknownConversation) {}
-        else { Issue.record("Expected validation failure") }
-        if case .unavailable = ChatSubmissionCoordinator.composeError(.SessionUnavailable) {}
-        else { Issue.record("Expected unavailable service") }
-        if case .persistence = ChatSubmissionCoordinator.composeError(.CounterPersistenceFailed) {}
-        else { Issue.record("Expected persistence failure") }
+    @Test func chatFailuresHaveTheirOwnWords() {
+        let generic = MobileAppError.message(for: TestFailure.unavailable)
+        let kept = MobileAppError.MessageNotQueued(recorded: true).message
+        let unrecorded = MobileAppError.MessageNotQueued(recorded: false).message
+        let uncertified = MobileAppError.EmergencyNotCertified.message
+        for words in [kept, unrecorded, uncertified] {
+            #expect(!words.isEmpty)
+            #expect(words != generic)
+        }
+        #expect(kept != unrecorded)
+        #expect(uncertified.contains("EMERGENCY"))
+    }
+
+    @Test func reactionKindsAndGlyphsRoundTrip() {
+        for entry in ReactionEmoji.palette {
+            #expect(ReactionEmoji.glyph(for: entry.kind) == entry.glyph)
+            #expect(ReactionEmoji.kind(for: entry.glyph) == entry.kind)
+        }
+        #expect(ReactionEmoji.glyph(for: .other(cluster: "👋🏽")) == "👋🏽")
+        #expect(ReactionEmoji.kind(for: "👋🏽") == .other(cluster: "👋🏽"))
+        #expect(ReactionEmoji.glyph(for: nil) == "")
     }
     @Test func coreErrorsAreNotAllInvalidAddresses() {
         #expect(RustMeshEngine.inputError(.InvalidSecretKeyLength) == .coreFailure)
@@ -260,49 +410,7 @@ struct BoundaryTests {
 }
 
 @Suite @MainActor
-struct ChatSubmissionTests {
-    @Test func unsavedMessageKeepsDraft() async {
-        var calls: [String] = []
-        let result = await ChatSubmissionCoordinator().submit(
-            send: { calls.append("send"); throw MobileChatSendError.NotSaved(error: .RecordNotFound) },
-            didChange: {}, clearDraft: { calls.append("clear") })
-        #expect(calls == ["send"])
-        if case .failed(.persistence) = result {} else { Issue.record("Expected persistence failure") }
-    }
-
-    @Test func unqueuedMessageKeepsDraftAndRedraws() async {
-        var calls: [String] = []
-        let result = await ChatSubmissionCoordinator().submit(
-            send: { calls.append("send"); throw MobileChatSendError.NotQueued(error: .SendFailed) },
-            didChange: { calls.append("redraw") }, clearDraft: { calls.append("clear") })
-        #expect(calls == ["send", "redraw"])
-        if case .failed(.operation) = result {} else { Issue.record("Expected release failure") }
-    }
-
-    @Test func sentMessageRedrawsThenClearsDraft() async {
-        var calls: [String] = []
-        let result = await ChatSubmissionCoordinator().submit(
-            send: { calls.append("send") },
-            didChange: { calls.append("redraw") }, clearDraft: { calls.append("clear") })
-        #expect(calls == ["send", "redraw", "clear"])
-        #expect(result == .submitted())
-    }
-
-    @Test func cleanupFailureDoesNotReportSubmittedMessageAsFailed() async {
-        let result = await ChatSubmissionCoordinator().submit(
-            send: {}, didChange: {}, clearDraft: { throw TestFailure.unavailable })
-        if case .submitted(warning: .persistence) = result {} else { Issue.record("Expected submitted with warning") }
-    }
-}
-
-@Suite @MainActor
 struct RuntimePersistenceTests {
-    @Test func writingMissingDraftIsNotSuccess() async throws {
-        let store = try SQLiteApplicationStore(path: ":memory:")
-        await #expect(throws: ApplicationStoreError.recordNotFound) {
-            try await store.updateDraft(ownerIdentityID: "absent", conversationID: 1, text: "unsaved")
-        }
-    }
     @Test func failedReloadRetainsLastSnapshotAndRetryRecovers() async throws {
         let fixture = try await StoreFixture()
         defer { fixture.remove() }

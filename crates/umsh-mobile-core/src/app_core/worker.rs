@@ -7,6 +7,7 @@
 //! task takes them in order.
 
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
@@ -27,7 +28,7 @@ use crate::MobileCounterStore;
 use crate::mobile_mesh::{MobileMeshSession, MobileMeshWakeListener};
 use crate::radio_driver::MobileRadioDriver;
 use crate::secret_vault::SecretVault;
-use crate::store::MobileAppStore;
+use crate::store::{MobileAppStore, MobileStoredChatMessageRefRecord};
 
 /// Work the object hands its worker. It runs as its own task.
 pub(super) type Job = Box<dyn FnOnce(Rc<Worker>) -> Pin<Box<dyn Future<Output = ()>>> + Send>;
@@ -92,6 +93,9 @@ pub(super) struct Worker {
     pub(super) policy: RefCell<PolicyState>,
     pub(super) pipeline: RefCell<PipelineState>,
     pub(super) waiters: RefCell<Waiters>,
+    /// The failed messages a `resend` is sending again, by owner, so a
+    /// second resend of one does not send it twice.
+    pub(super) resending: RefCell<HashSet<(String, MobileStoredChatMessageRefRecord)>>,
     /// Wakes the policy pass task.
     pub(super) policy_wake: Notify,
     /// Wakes the schedules to check whether one is due.
@@ -114,6 +118,9 @@ pub(crate) struct TestHooks {
     pub(crate) start_gate: Option<tokio::sync::Semaphore>,
     /// Each name pushed to a session for its group messages, oldest first.
     pub(crate) pushed_names: std::sync::Mutex<Vec<String>>,
+    /// When set, a sent message's draft is not cleared, as when the store
+    /// refuses the write.
+    pub(crate) fail_draft_clear: std::sync::atomic::AtomicBool,
 }
 
 /// A command counted as running until it drops.
@@ -144,6 +151,18 @@ impl Worker {
             MobileAppLifecycle::Idle
             | MobileAppLifecycle::Starting
             | MobileAppLifecycle::Failed { .. } => Err(MobileAppError::NotRunning),
+        }
+    }
+
+    /// For a command that writes the store whatever the lifecycle: waits
+    /// out a start, answers `Busy` while erasing or stopping and `Stopped`
+    /// once stopped; then counted as running while running, and `None`
+    /// while idle or failed.
+    pub(super) async fn begin_store_command(&self) -> Result<Option<InFlight>, MobileAppError> {
+        self.start_settled().await;
+        match self.lifecycle() {
+            MobileAppLifecycle::Idle | MobileAppLifecycle::Failed { .. } => Ok(None),
+            _ => self.begin_command().await.map(Some),
         }
     }
 
@@ -254,6 +273,7 @@ pub(super) fn run(
                 policy: RefCell::new(PolicyState::default()),
                 pipeline: RefCell::new(PipelineState::default()),
                 waiters: RefCell::new(Waiters::default()),
+                resending: RefCell::new(HashSet::new()),
                 policy_wake: Notify::new(),
                 schedule_check: Notify::new(),
                 revocation_done: Notify::new(),

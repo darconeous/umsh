@@ -59,7 +59,7 @@ struct ChannelCreateView: View {
     }
 
     private static var notCreatedTitle: String {
-        String(localized: "Channel not created", comment: "Alert title: creating a private channel failed.")
+        String(localized: "Channel Not Created", comment: "Alert title: creating a private channel failed.")
     }
 }
 

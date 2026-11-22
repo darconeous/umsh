@@ -9,7 +9,8 @@ struct ChannelConversationDetailView: View {
     /// this conversation.
     var channelActions: ChannelActions = .unavailable
     var setNotifications: (ChannelSummary, Bool) async throws -> Void = { _, _ in }
-    var clearMessages: (() async -> Void)? = nil
+    /// Erase the transcript; throws why it was not.
+    var clearMessages: (() async throws -> Void)? = nil
     /// Counted when the sheet appears rather than carried on the summary, which
     /// holds only the tail of the transcript.
     var countMessages: () async -> Int = { 0 }
@@ -50,7 +51,7 @@ struct ChannelConversationDetailView: View {
                         Task {
                             await $failure.attempt(
                                 String(
-                                    localized: "Channel not changed",
+                                    localized: "Channel Not Changed",
                                     comment: "Alert title: a channel's alias, region, hops or notifications were not saved."
                                 )
                             ) { try await setNotifications(conversation.channel, enabled) }
@@ -82,7 +83,11 @@ struct ChannelConversationDetailView: View {
                 ClearMessagesSection(
                     messageCount: messageCount,
                     warning: "The message history on this phone is erased. Nothing is sent, and everyone else in the channel keeps their copy.",
-                    clear: clearMessages
+                    clear: {
+                        await $failure.attempt(ChatMessageActions.messagesNotClearedTitle) {
+                            try await clearMessages()
+                        }
+                    }
                 )
             }
             let behavior = conversation.channel.protocolBehavior
@@ -142,7 +147,7 @@ struct ClearMessagesSection: View {
             Button("Clear All Messages", role: .destructive) { confirms = true }
                 .disabled(messageCount == 0)
                 .confirmationDialog(
-                    "Clear all messages?",
+                    "Clear All Messages?",
                     isPresented: $confirms,
                     titleVisibility: .visible
                 ) {
