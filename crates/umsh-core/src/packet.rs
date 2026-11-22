@@ -1156,6 +1156,19 @@ impl BlindAddr {
     }
 }
 
+/// Whether `value` is the ARNCE encoding of a non-empty callsign: 2, 4, 6,
+/// or 8 bytes, a first chunk that encodes a callsign, and each later chunk
+/// a callsign chunk or zero.
+pub fn is_callsign(value: &[u8]) -> bool {
+    let chunk = |i: usize| u16::from_be_bytes([value[i], value[i + 1]]);
+    let encodes = |c: u16| (0x0640..0xFA00).contains(&c);
+    matches!(value.len(), 2 | 4 | 6 | 8)
+        && encodes(chunk(0))
+        && (2..value.len())
+            .step_by(2)
+            .all(|i| chunk(i) == 0 || encodes(chunk(i)))
+}
+
 /// Default Minimum RSSI threshold (dBm) when the option is present with a
 /// zero-length value. Per the spec this value is subject to change.
 pub const DEFAULT_MIN_RSSI_DBM: i16 = -100;
@@ -1174,6 +1187,10 @@ pub struct ParsedOptions {
     pub min_rssi: Option<i16>,
     pub min_snr: Option<i8>,
     pub route_retry: bool,
+    /// The first Operator Callsign option's value, when it is a callsign
+    /// ([`is_callsign`]). A packet whose first one is not carries no
+    /// Operator Callsign.
+    pub operator_callsign: Option<Range<usize>>,
     /// Some option, known or not, enters the AAD.
     pub has_static: bool,
     /// An unrecognized forwarding-critical option.
@@ -1279,6 +1296,19 @@ impl ParsedOptions {
                     });
                 }
                 OptionNumber::MinRssi | OptionNumber::MinSnr => parsed.mark_malformed(option),
+                // Read from the first occurrence. The rest are carried on
+                // unchanged, as every static option is.
+                OptionNumber::OperatorCallsign if seen & (1 << 4) == 0 => {
+                    seen |= 1 << 4;
+                    if is_callsign(value) {
+                        parsed.operator_callsign = Some(value_range);
+                    }
+                }
+                // Every occurrence must be interpretable for the packet to
+                // be forwarded; a forwarder carries only one on.
+                OptionNumber::StationCallsign if !is_callsign(value) => {
+                    parsed.mark_malformed(option)
+                }
                 OptionNumber::Unknown(_) => {
                     parsed.has_unknown_forwarding_critical |= option.is_forwarding_critical();
                     parsed.has_unknown_delivery_critical |= option.is_delivery_critical();
@@ -1335,6 +1365,52 @@ mod parsed_options_tests {
         let buf = [0xB2u8, 0x78, 0x53, 0x02, 0x52, 0x42];
         let parsed = ParsedOptions::extract(&buf, 0..buf.len()).unwrap();
         assert!(!parsed.has_malformed_forwarding_critical);
+    }
+
+    #[test]
+    fn callsign_values_are_arnce_callsigns() {
+        // `N0CALL`, `KZ2X`, and an eight-byte callsign.
+        assert!(is_callsign(&[0x5B, 0xBB, 0x08, 0x2C]));
+        assert!(is_callsign(&[0x48, 0xED, 0x96, 0x00]));
+        assert!(is_callsign(&[
+            0x06, 0xAC, 0x13, 0x65, 0x26, 0xA0, 0x39, 0xDB
+        ]));
+        // Empty, odd, or too long.
+        assert!(!is_callsign(&[]));
+        assert!(!is_callsign(&[0x5B, 0xBB, 0x08]));
+        assert!(!is_callsign(&[0x5B; 10]));
+        // Empty callsign, a short address, a broadcast, a reserved chunk.
+        assert!(!is_callsign(&[0x00, 0x00]));
+        assert!(!is_callsign(&[0x00, 0x30]));
+        assert!(!is_callsign(&[0xFF, 0xFF]));
+        assert!(!is_callsign(&[0x5B, 0xBB, 0x00, 0x30]));
+    }
+
+    #[test]
+    fn the_first_operator_callsign_is_the_one_read() {
+        // Option 4 `KZ2X`, then option 4 `N0CALL`.
+        let buf = [0x44u8, 0x48, 0xED, 0x96, 0x00, 0x04, 0x5B, 0xBB, 0x08, 0x2C];
+        let parsed = ParsedOptions::extract(&buf, 0..buf.len()).unwrap();
+        assert_eq!(parsed.operator_callsign, Some(1..5));
+        // A malformed first one hides a well-formed second.
+        let buf = [0x43u8, 0x48, 0xED, 0x96, 0x04, 0x5B, 0xBB, 0x08, 0x2C];
+        let parsed = ParsedOptions::extract(&buf, 0..buf.len()).unwrap();
+        assert_eq!(parsed.operator_callsign, None);
+        assert!(!parsed.refuses_forwarding());
+        assert!(!parsed.refuses_delivery());
+    }
+
+    #[test]
+    fn a_malformed_station_callsign_refuses_forwarding_only() {
+        // Option 15, `N0CALL`, then a second whose length is odd.
+        let buf = [0xD4u8, 0x02, 0x5B, 0xBB, 0x08, 0x2C, 0x03, 0x5B, 0xBB, 0x08];
+        let parsed = ParsedOptions::extract(&buf, 0..buf.len()).unwrap();
+        assert!(parsed.has_malformed_forwarding_critical);
+        assert!(!parsed.refuses_delivery());
+        // Two well-formed ones are read from the first.
+        let buf = [0xD4u8, 0x02, 0x5B, 0xBB, 0x08, 0x2C, 0x02, 0x48, 0xED];
+        let parsed = ParsedOptions::extract(&buf, 0..buf.len()).unwrap();
+        assert!(!parsed.refuses_forwarding());
     }
 
     #[test]

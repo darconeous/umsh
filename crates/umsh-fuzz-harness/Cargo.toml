@@ -8,6 +8,7 @@ description = "Harness behind the UMSH and ULCP fuzz targets; replayed by cargo 
 publish = false
 
 [dependencies]
+hamaddr.workspace = true
 umsh-bridge-client = { path = "../umsh-bridge-client" }
 umsh-chat-room = { path = "../umsh-chat-room" }
 umsh-core = { path = "../umsh-core" }

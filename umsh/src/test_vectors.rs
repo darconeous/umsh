@@ -203,7 +203,7 @@ pub fn render_phase1_test_vectors_markdown() -> String {
     render_example(
         &mut out,
         "Example 4: Encrypted Unicast with Ack Requested (S=1)",
-        "A first-contact encrypted unicast from Node A to Node B requesting a MAC acknowledgement. The full 32-byte source key is included.",
+        "A first-contact encrypted unicast from Node A to Node B requesting a MAC acknowledgment. The full 32-byte source key is included.",
         &[
             (
                 "FCF",
@@ -440,7 +440,7 @@ pub fn render_phase1_test_vectors_markdown() -> String {
     render_example(
         &mut out,
         "Example 10: MAC Ack",
-        "Node B's acknowledgement of Example 4. `ACK MIC` is the first four bytes of Example 4's MIC. `ACK TAG` is `truncate_to_4(S2V(K_mic, S1 = C8 FF FF, S2 = V, S3 = ACK MIC))`, where `C8 FF FF` is the ack's AAD (its FCF and the terminator, with no static options) and `V` is Example 4's full S2V output, which its 16-byte MIC carries whole.",
+        "Node B's acknowledgment of Example 4. `ACK MIC` is the first four bytes of Example 4's MIC. `ACK TAG` is `truncate_to_4(S2V(K_mic, S1 = C8 FF FF, S2 = V, S3 = ACK MIC))`, where `C8 FF FF` is the ack's AAD (its FCF and the terminator, with no static options) and `V` is Example 4's full S2V output, which its 16-byte MIC carries whole.",
         &[
             ("FCF", "VER=3, TYPE=1 (MAC ack), S=0, R=0, H=0", "C8".into()),
             (
@@ -458,7 +458,7 @@ pub fn render_phase1_test_vectors_markdown() -> String {
     render_example(
         &mut out,
         "Example 11: MAC Ack with Operator Callsign",
-        "The acknowledgement of Example 10 as a Licensed-Only node sends it, carrying the operator callsign `N0CALL`. The callsign is a static option, so the ack's AAD is `C8`, the option's type-length-value encoding, then `FF FF`, and the tag differs from Example 10's.",
+        "Node B's acknowledgment of Example 4, carrying the operator callsign `N0CALL`. The callsign is a static option, so the ack's AAD is `C8`, the option's type-length-value encoding, then `FF FF`, and the tag differs from Example 10's.",
         &[
             ("FCF", "VER=3, TYPE=1 (MAC ack), S=0, R=0, H=0", "C8".into()),
             (
@@ -984,7 +984,7 @@ fn build_unicast_ackreq_fullsrc(
     packet.as_bytes().to_vec()
 }
 
-/// Node B's acknowledgement of the packet whose full S2V output is `v`.
+/// Node B's acknowledgment of the packet whose full S2V output is `v`.
 fn build_mac_ack(
     engine: &SoftwareCryptoEngine,
     pairwise: &PairwiseKeys,

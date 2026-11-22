@@ -4774,6 +4774,7 @@ dependencies = [
 name = "umsh-fuzz-harness"
 version = "0.1.0"
 dependencies = [
+ "hamaddr",
  "umsh-bridge-client",
  "umsh-chat-room",
  "umsh-core",

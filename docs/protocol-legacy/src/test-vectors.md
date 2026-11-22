@@ -91,7 +91,7 @@ Total: 34 bytes.
 
 ## Example 4: Encrypted Unicast with Ack Requested (S=1)
 
-A first-contact encrypted unicast from Node A to Node B requesting a MAC acknowledgement. The full 32-byte source key is included.
+A first-contact encrypted unicast from Node A to Node B requesting a MAC acknowledgment. The full 32-byte source key is included.
 
 | Field | Value | Hex |
 |---|---|---|
@@ -240,7 +240,7 @@ DC 81 D6 3D DE 8B DD 70 E0 1A 0F 8B 50 BF 5F FA
 
 ## Example 10: MAC Ack
 
-Node B's acknowledgement of Example 4. `ACK MIC` is the first four bytes of Example 4's MIC. `ACK TAG` is `truncate_to_4(S2V(K_mic, S1 = C8 FF FF, S2 = V, S3 = ACK MIC))`, where `C8 FF FF` is the ack's AAD (its FCF and the terminator, with no static options) and `V` is Example 4's full S2V output, which its 16-byte MIC carries whole.
+Node B's acknowledgment of Example 4. `ACK MIC` is the first four bytes of Example 4's MIC. `ACK TAG` is `truncate_to_4(S2V(K_mic, S1 = C8 FF FF, S2 = V, S3 = ACK MIC))`, where `C8 FF FF` is the ack's AAD (its FCF and the terminator, with no static options) and `V` is Example 4's full S2V output, which its 16-byte MIC carries whole.
 
 | Field | Value | Hex |
 |---|---|---|
@@ -256,7 +256,7 @@ Total: 9 bytes.
 
 ## Example 11: MAC Ack with Operator Callsign
 
-The acknowledgement of Example 10 as a Licensed-Only node sends it, carrying the operator callsign `N0CALL`. The callsign is a static option, so the ack's AAD is `C8`, the option's type-length-value encoding, then `FF FF`, and the tag differs from Example 10's.
+Node B's acknowledgment of Example 4, carrying the operator callsign `N0CALL`. The callsign is a static option, so the ack's AAD is `C8`, the option's type-length-value encoding, then `FF FF`, and the tag differs from Example 10's.
 
 | Field | Value | Hex |
 |---|---|---|

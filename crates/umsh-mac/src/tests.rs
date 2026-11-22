@@ -1,6 +1,7 @@
 mod ack_authentication;
 mod ack_path;
 mod adaptive;
+mod amateur_radio;
 mod bearer;
 #[cfg(feature = "software-crypto")]
 mod colliding_channels;

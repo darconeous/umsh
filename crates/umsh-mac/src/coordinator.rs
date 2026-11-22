@@ -699,44 +699,40 @@ pub struct ChannelPolicy {
     pub max_flood_hops: Option<u8>,
 }
 
-/// Controls how the coordinator and optional repeater handle amateur-radio legal requirements.
+/// A node's amateur-radio operating mode (UEP-0017 § Operating Modes).
 ///
-/// Amateur (ham) radio law in most jurisdictions prohibits encrypted transmissions and requires
-/// station identification on all transmitted frames. UMSH supports three operating modes to
-/// accommodate networks that mix licensed and unlicensed nodes, or that operate exclusively
-/// under one regulatory regime.
+/// Amateur radio rules in most jurisdictions prohibit encrypted
+/// transmissions and require station identification. A node has one
+/// operating mode, set on [`OperatingPolicy`], and it governs what the node
+/// originates, receives, and forwards alike.
 ///
-/// | Mode | Encryption | Operator callsign | Repeater station callsign |
-/// |------|------------|------------------|--------------------------|
-/// | `Unlicensed` | Allowed | Optional | Not added |
-/// | `LicensedOnly` | Prohibited | Required | Required |
-/// | `Hybrid` | Allowed (local) | Optional | Added to forwarded frames |
-///
-/// The mode appears on both [`OperatingPolicy`] (for locally-originated traffic) and
-/// [`RepeaterConfig`] (for forwarding decisions) and they may differ independently—a node
-/// might transmit its own encrypted application traffic (`Unlicensed`) while acting as a
-/// licensed-identified repeater (`LicensedOnly`) for third-party frames it forwards.
+/// | Mode | Originates | Receives | Forwards |
+/// |------|------------|----------|----------|
+/// | `Unlicensed` | Anything | Anything | Anything, removing any Station Callsign |
+/// | `LicensedOnly` | Unencrypted, with its Operator Callsign | Discards encrypted packets unopened | Unencrypted packets carrying an Operator Callsign, setting its Station Callsign |
+/// | `Hybrid` | Anything | Anything | As `LicensedOnly` for an unencrypted packet carrying an Operator Callsign, as `Unlicensed` otherwise |
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AmateurRadioMode {
-    /// Treat traffic as unlicensed operation only.
+    /// Unlicensed operation only.
     ///
-    /// Local transmit policy does not require operator callsigns or amateur-only
-    /// restrictions. Repeaters operating in this mode must not add a station
-    /// callsign when forwarding and should only retransmit packets that can be
-    /// handled under unlicensed rules.
+    /// Nothing is restricted. Forwards are made under unlicensed authority
+    /// and carry no Station Callsign.
     Unlicensed,
-    /// Treat forwarded and locally originated traffic as amateur-only.
+    /// Amateur operation only.
     ///
-    /// Encryption and blind unicast are disallowed, operator callsigns are
-    /// required on originated packets, and repeaters must identify themselves
-    /// with a station callsign on forwarded traffic.
+    /// Every packet the node sends is unencrypted and carries its operator
+    /// callsign, MAC acks included. It discards every encrypted packet it
+    /// receives without opening it, whatever its type, and forwards only
+    /// unencrypted packets that carry an Operator Callsign, setting its
+    /// station callsign on each. Unencrypted group unicast is allowed.
     LicensedOnly,
-    /// Permit both unlicensed and amateur-qualified forwarding behavior.
+    /// Amateur and unlicensed operation side by side.
     ///
-    /// Local transmit policy remains permissive, but repeaters identify
-    /// forwarded packets with their station callsign and may still forward
-    /// packets lacking an operator callsign when they can do so under
-    /// unlicensed rules.
+    /// Nothing the node originates or receives is restricted. A forward of
+    /// an unencrypted packet carrying an Operator Callsign is made under
+    /// amateur authority and sets the station callsign; any other forward
+    /// is made under unlicensed authority and removes it. Without a station
+    /// callsign, every forward is made under unlicensed authority.
     Hybrid,
 }
 
@@ -749,7 +745,7 @@ enum TransmitAuthority {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ForwardStationAction {
     Remove,
-    Replace,
+    Set,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -829,21 +825,22 @@ fn lora_snr_floor_cb(sf: Option<u8>) -> i32 {
     -75 - 25 * (sf - 7)
 }
 
-/// Local transmission policy enforced by the [`Mac`] coordinator on all outgoing frames.
+/// Local operating policy enforced by the [`Mac`] coordinator.
 ///
 /// `OperatingPolicy` governs what the coordinator is *allowed to send*, independent of what
 /// the application requests. It is consulted at the start of every `queue_*` call via an
 /// internal policy check, which returns [`SendError::PolicyViolation`] if the requested send
-/// would violate it. This policy applies only to locally-originated frames; forwarding
-/// decisions are governed separately by [`RepeaterConfig`].
+/// would violate it. Its amateur-radio mode is the node's one operating mode, and also
+/// governs what it receives and forwards; the rest of forwarding is configured by
+/// [`RepeaterConfig`].
 ///
-/// - **`amateur_radio_mode`**—determines whether encryption and blind-unicast are permitted
-///   and whether an operator callsign must be appended to originated frames.
-///   See [`AmateurRadioMode`].
-/// - **`operator_callsign`**—the ARNCE/HAM-64 callsign automatically appended to every
-///   locally-originated frame when set. Required in `LicensedOnly` mode; optional otherwise.
+/// - **`amateur_radio_mode`**—whether this node may send encrypted packets, whether it must
+///   identify them with its operator callsign, whether it discards encrypted packets it
+///   receives, and what it forwards under which authority. See [`AmateurRadioMode`].
+/// - **`operator_callsign`**—the ARNCE/HAM-64 callsign included in every packet this node
+///   sends when set, MAC acks included. Required in `LicensedOnly` mode; optional otherwise.
 /// - **`channel_policies`**—a small list of per-channel overrides for multicast and
-///   blind-unicast traffic. Channels absent from the list use permissive defaults.
+///   group-unicast traffic. Channels absent from the list use permissive defaults.
 ///
 /// The default configuration (via [`Default`]) sets `Unlicensed` mode with no callsign and
 /// no per-channel overrides.
@@ -892,12 +889,11 @@ impl Default for OperatingPolicy {
 ///   eligible repeaters contend to flood-forward the same frame. The window is deterministic
 ///   in the reception's SNR and RSSI, with a small random tie-breaker on top. These values
 ///   should usually remain aligned across the mesh.
-/// - **`amateur_radio_mode`**—determines whether the repeater may forward encrypted or
-///   blind-unicast frames, and whether it must inject a station callsign. See
-///   [`AmateurRadioMode`].
-/// - **`station_callsign`**—the ARNCE/HAM-64 callsign injected into the options block of
-///   every forwarded frame when operating in `LicensedOnly` or `Hybrid` mode, satisfying the
-///   third-party identification requirements of FCC §97.119 and equivalent regulations.
+/// - **`station_callsign`**—the ARNCE/HAM-64 callsign set as the Station Callsign of every
+///   forward made under amateur authority: in `LicensedOnly` mode, or in `Hybrid` mode for an
+///   unencrypted packet carrying an Operator Callsign (see [`AmateurRadioMode`], set on
+///   [`OperatingPolicy`]). Required in those modes. Without one, a `LicensedOnly` node
+///   forwards nothing and a `Hybrid` node forwards everything under unlicensed authority.
 ///
 /// The default configuration has `mode: RepeaterMode::Off`; repeating must be explicitly
 /// opted in.
@@ -961,9 +957,7 @@ pub struct RepeaterConfig {
     /// `adaptive_battery_low_percent`, so a pack at the line does not
     /// switch back and forth.
     pub adaptive_battery_resume_percent: u8,
-    /// Amateur-radio operating mode for forwarding.
-    pub amateur_radio_mode: AmateurRadioMode,
-    /// Optional station callsign injected on forwarded traffic.
+    /// Station callsign set on forwards made under amateur authority.
     pub station_callsign: Option<HamAddr>,
 }
 
@@ -989,7 +983,6 @@ impl Default for RepeaterConfig {
             adaptive_beside_forwarders: 3,
             adaptive_battery_low_percent: 10,
             adaptive_battery_resume_percent: 15,
-            amateur_radio_mode: AmateurRadioMode::Unlicensed,
             station_callsign: None,
         }
     }
@@ -1362,6 +1355,9 @@ pub struct MacCounters {
     /// [`MAX_ACKED_IN_FLIGHT_PER_PEER`](crate::MAX_ACKED_IN_FLIGHT_PER_PEER)
     /// sends to the same peer already awaited their acknowledgments.
     pub tx_peer_in_flight_full: u32,
+    /// Encrypted frames discarded unopened because this node operates in
+    /// [`AmateurRadioMode::LicensedOnly`] mode.
+    pub rx_encrypted_discarded: u32,
 }
 
 impl MacCounters {
@@ -2664,7 +2660,8 @@ impl<
 
     /// Enqueue an ACK carrying `ack_trailer` as given, using the cached
     /// route plus whatever flood slack the route's far end earns (see
-    /// [`established_route_slack`]).
+    /// [`established_route_slack`]). Its tag must cover the operator
+    /// callsign the ack carries when one is configured.
     pub fn queue_mac_ack_for_peer(
         &mut self,
         from: LocalIdentityId,
@@ -2799,9 +2796,11 @@ impl<
 
     /// A MAC ack frame. Zero `flood_hops` is no `FHOPS` field at all.
     ///
-    /// A sealed ack is this node's own, so it carries the operator
-    /// callsign when one is configured. That is its only static option, and
-    /// the [ack tag] covers it.
+    /// Every ack is this node's own, so it carries the operator callsign
+    /// when one is configured ([`Self::ack_callsign`]). That is its only
+    /// static option, and the [ack tag] covers it: a sealed ack's tag is
+    /// computed over it here, and a verbatim trailer's must already cover
+    /// it.
     ///
     /// [ack tag]: https://darconeous.github.io/umsh/docs/protocol/security.html#ack-tag-construction
     #[allow(clippy::too_many_arguments)]
@@ -2823,10 +2822,7 @@ impl<
             }
             AckTrailer::Verbatim(trailer) => (trailer, None),
         };
-        let callsign = self
-            .operating_policy
-            .operator_callsign
-            .filter(|_| seal.is_some());
+        let callsign = self.ack_callsign()?;
         let mut builder = PacketBuilder::new(buf).mac_ack(placeholder);
         if flood_hops > 0 {
             builder = builder.flood_hops(flood_hops);
@@ -2925,10 +2921,19 @@ impl<
     }
 
     /// Enqueues an immediate direct MAC ACK frame carrying `ack_trailer` as
-    /// given.
+    /// given. Its tag must cover the operator callsign the ack carries
+    /// when one is configured.
     pub fn queue_mac_ack(&mut self, ack_trailer: [u8; 8]) -> Result<(), SendError> {
         let mut buf = [0u8; FRAME];
-        let frame = PacketBuilder::new(&mut buf).mac_ack(ack_trailer).build()?;
+        let frame = self.build_mac_ack(
+            &mut buf,
+            AckTrailer::Verbatim(ack_trailer),
+            0,
+            false,
+            false,
+            None,
+            &[],
+        )?;
         if frame.len() > self.radio.max_frame_size() {
             return Err(SendError::Build(BuildError::BufferTooSmall));
         }
@@ -3278,7 +3283,8 @@ impl<
     /// Send a response over the carriage its request arrived on.
     ///
     /// The one place the MAC decides how an answer travels, so that answering
-    /// never widens the audience the question had.
+    /// never widens the audience the question had. Its options come from
+    /// [`Self::response_options`].
     async fn send_response(
         &mut self,
         from: LocalIdentityId,
@@ -4022,9 +4028,22 @@ impl<
         // Whatever the frame turns out to be, it held the channel. One
         // replayed from a queue held it at some other time, and one from a
         // bearer or a wire never did.
-        if rx.origin == RxOrigin::Air && rx.buffered.is_none() {
+        let live_air = rx.origin == RxOrigin::Air && rx.buffered.is_none();
+        if live_air {
             let airtime_ms = self.radio.airtime_ms(frame_len);
             self.rx_occupancy.record(self.clock.now_ms(), airtime_ms);
+        }
+        // A node in Licensed-Only mode does no work on an encrypted packet,
+        // whatever its type: it learns nothing from it, and so neither
+        // opens, delivers, acknowledges, answers, nor forwards it.
+        if self.operating_policy.amateur_radio_mode == AmateurRadioMode::LicensedOnly
+            && PacketHeader::parse(&buf[..frame_len])
+                .is_ok_and(|header| header.sec_info.is_some_and(|sec| sec.scf.encrypted()))
+        {
+            MacCounters::bump(&mut self.counters.rx_encrypted_discarded);
+            return false;
+        }
+        if live_air {
             self.note_neighbor_beside(&buf[..frame_len], rx.rssi);
         }
         self.note_transmitter_observation(&buf[..frame_len], rx);
@@ -4622,7 +4641,7 @@ impl<
                 if let Some(data) = Self::echo_request_data(payload) {
                     let response =
                         Self::build_mac_command_payload(MAC_COMMAND_ECHO_RESPONSE_ID, data);
-                    let options = Self::echo_response_options(&original[..frame_len], header);
+                    let options = self.echo_response_options(&original[..frame_len], header);
                     let _ = self
                         .send_response(
                             local_id,
@@ -5150,7 +5169,7 @@ impl<
                             let response =
                                 Self::build_mac_command_payload(MAC_COMMAND_ECHO_RESPONSE_ID, data);
                             let options =
-                                Self::echo_response_options(&original[..frame_len], header);
+                                self.echo_response_options(&original[..frame_len], header);
                             let _ = self
                                 .send_response(
                                     local_id,
@@ -5846,6 +5865,19 @@ impl<
                 }
             }
         }
+    }
+
+    /// The Operator Callsign every MAC ack this node sends carries: its
+    /// operator callsign, when one is configured. A node in Licensed-Only
+    /// mode without one sends no ack, as it sends nothing else.
+    fn ack_callsign(&self) -> Result<Option<HamAddr>, SendError> {
+        let policy = &self.operating_policy;
+        if policy.operator_callsign.is_none()
+            && policy.amateur_radio_mode == AmateurRadioMode::LicensedOnly
+        {
+            return Err(SendError::PolicyViolation);
+        }
+        Ok(policy.operator_callsign)
     }
 
     /// Stop retrying a standalone ack whose acknowledgment a new send now
@@ -6816,7 +6848,7 @@ impl<
             return;
         };
         let response = Self::build_mac_command_payload(MAC_COMMAND_ECHO_RESPONSE_ID, data);
-        let options = Self::echo_response_options(original, header);
+        let options = self.echo_response_options(original, header);
         let _ = self
             .send_response(local_id, &peer_key, carriage, response.as_slice(), &options)
             .await;
@@ -6898,7 +6930,7 @@ impl<
         let payload = Self::resync_command_payload(MAC_COMMAND_VERIFY_FRAME_ID, nonce);
         let mut ack_mic = [0u8; 4];
         ack_mic.copy_from_slice(&ack_v[..4]);
-        let options = SendOptions::default().with_ack_mic(ack_mic);
+        let options = self.response_options().with_ack_mic(ack_mic);
         if self
             .send_response(local_id, &peer_key, carriage, &payload, &options)
             .await
@@ -7062,7 +7094,9 @@ impl<
             return true;
         };
         let payload = Self::resync_command_payload(MAC_COMMAND_FRAME_VERIFIED_ID, nonce);
-        let options = Self::echo_response_options(original, header).with_ack_requested(true);
+        let options = self
+            .echo_response_options(original, header)
+            .with_ack_requested(true);
         if let Ok(Some(answer)) = self
             .send_response(local_id, &peer_key, carriage, &payload, &options)
             .await
@@ -7144,7 +7178,7 @@ impl<
         let nonce = self.rng.next_u32();
         let payload =
             Self::build_mac_command_payload(MAC_COMMAND_ECHO_REQUEST_ID, &nonce.to_be_bytes());
-        let options = SendOptions::default();
+        let options = self.response_options();
         if self
             .send_response(local_id, &peer_key, carriage, payload.as_slice(), &options)
             .await
@@ -7394,6 +7428,18 @@ impl<
         Some(data)
     }
 
+    /// The options every answer and probe the MAC sends on its own starts
+    /// from. A node in Licensed-Only mode sends nothing encrypted, so its
+    /// answers and probes go out in the clear.
+    fn response_options(&self) -> SendOptions {
+        let options = SendOptions::default();
+        if self.operating_policy.amateur_radio_mode == AmateurRadioMode::LicensedOnly {
+            options.unencrypted()
+        } else {
+            options
+        }
+    }
+
     /// Mirror the requester's trace options and MIC size onto the echo
     /// response.
     ///
@@ -7409,8 +7455,8 @@ impl<
     /// The trace options are requests, not guarantees. A response that ends
     /// up with no flood budget and no source route drops them again on the
     /// way out; see [`Mac::frame_is_repeatable`].
-    fn echo_response_options(frame: &[u8], header: &PacketHeader) -> SendOptions {
-        let mut options = SendOptions::default();
+    fn echo_response_options(&self, frame: &[u8], header: &PacketHeader) -> SendOptions {
+        let mut options = self.response_options();
         if let Some(mic_size) = header.sec_info.and_then(|info| info.scf.mic_size().ok()) {
             options = options.with_mic_size(mic_size);
         }
@@ -8553,7 +8599,7 @@ impl<
         }
 
         let router_hint = self.repeater_router_hint()?;
-        let station_action = self.classify_forward_station_action(frame, header)?;
+        let station_action = self.classify_forward_station_action(header, options)?;
 
         let source_route_bytes = options
             .source_route
@@ -8703,42 +8749,24 @@ impl<
         })
     }
 
+    /// The Station Callsign edit a forward of this packet makes under this
+    /// node's operating mode, or `None` when the mode declines it
+    /// (UEP-0017 § Eligibility).
     fn classify_forward_station_action(
         &self,
-        frame: &[u8],
         header: &PacketHeader,
+        options: &ParsedOptions,
     ) -> Option<ForwardStationAction> {
-        let has_operator_callsign = if header.options_range.is_empty() {
-            false
-        } else {
-            umsh_core::iter_options(frame, header.options_range.clone())
-                .filter_map(Result::ok)
-                .any(|(number, _)| OptionNumber::from(number) == OptionNumber::OperatorCallsign)
-        };
-        let encrypted = header
-            .sec_info
-            .map(|sec| sec.scf.encrypted())
-            .unwrap_or(false);
-
-        match self.repeater.amateur_radio_mode {
+        let encrypted = header.sec_info.is_some_and(|sec| sec.scf.encrypted());
+        let amateur = !encrypted && options.operator_callsign.is_some();
+        let station = self.repeater.station_callsign.is_some();
+        match self.operating_policy.amateur_radio_mode {
             AmateurRadioMode::Unlicensed => Some(ForwardStationAction::Remove),
             AmateurRadioMode::LicensedOnly => {
-                if encrypted || !has_operator_callsign || self.repeater.station_callsign.is_none() {
-                    None
-                } else {
-                    Some(ForwardStationAction::Replace)
-                }
+                (amateur && station).then_some(ForwardStationAction::Set)
             }
-            AmateurRadioMode::Hybrid => {
-                if !encrypted && has_operator_callsign {
-                    self.repeater
-                        .station_callsign
-                        .as_ref()
-                        .map(|_| ForwardStationAction::Replace)
-                } else {
-                    Some(ForwardStationAction::Remove)
-                }
-            }
+            AmateurRadioMode::Hybrid if amateur && station => Some(ForwardStationAction::Set),
+            AmateurRadioMode::Hybrid => Some(ForwardStationAction::Remove),
         }
     }
 
@@ -8868,8 +8896,19 @@ impl<
     ) -> Result<usize, CapacityError> {
         let mut encoder = OptionEncoder::new(dst);
         let mut inserted_region = false;
-        let mut inserted_station = false;
-        let mut saw_station = false;
+        // The Station Callsign still to write: Set leaves exactly one, in
+        // the place of the first the packet carried or inserted in order,
+        // and Remove leaves none.
+        let mut station = match plan.station_action {
+            ForwardStationAction::Set => Some(
+                self.repeater
+                    .station_callsign
+                    .as_ref()
+                    .ok_or(CapacityError)?
+                    .as_trimmed_slice(),
+            ),
+            ForwardStationAction::Remove => None,
+        };
         let mut seen_singletons = 0u16;
 
         if !header.options_range.is_empty() {
@@ -8894,21 +8933,12 @@ impl<
                         .map_err(|_| CapacityError)?;
                     inserted_region = true;
                 }
-                if !inserted_station
-                    && matches!(plan.station_action, ForwardStationAction::Replace)
-                    && number > OptionNumber::StationCallsign.as_u16()
+                if number > OptionNumber::StationCallsign.as_u16()
+                    && let Some(value) = station.take()
                 {
                     encoder
-                        .put(
-                            OptionNumber::StationCallsign.as_u16(),
-                            self.repeater
-                                .station_callsign
-                                .as_ref()
-                                .ok_or(CapacityError)?
-                                .as_trimmed_slice(),
-                        )
+                        .put(OptionNumber::StationCallsign.as_u16(), value)
                         .map_err(|_| CapacityError)?;
-                    inserted_station = true;
                 }
 
                 match OptionNumber::from(number) {
@@ -8945,22 +8975,8 @@ impl<
                         encoder.put(number, remaining).map_err(|_| CapacityError)?;
                     }
                     OptionNumber::StationCallsign => {
-                        saw_station = true;
-                        match plan.station_action {
-                            ForwardStationAction::Remove => {}
-                            ForwardStationAction::Replace => {
-                                encoder
-                                    .put(
-                                        number,
-                                        self.repeater
-                                            .station_callsign
-                                            .as_ref()
-                                            .ok_or(CapacityError)?
-                                            .as_trimmed_slice(),
-                                    )
-                                    .map_err(|_| CapacityError)?;
-                                inserted_station = true;
-                            }
+                        if let Some(value) = station.take() {
+                            encoder.put(number, value).map_err(|_| CapacityError)?;
                         }
                     }
                     _ => {
@@ -8970,26 +8986,17 @@ impl<
             }
         }
 
-        if matches!(plan.station_action, ForwardStationAction::Replace)
-            && !inserted_station
-            && !saw_station
-        {
-            encoder
-                .put(
-                    OptionNumber::StationCallsign.as_u16(),
-                    self.repeater
-                        .station_callsign
-                        .as_ref()
-                        .ok_or(CapacityError)?
-                        .as_trimmed_slice(),
-                )
-                .map_err(|_| CapacityError)?;
-        }
+        // Whatever is still to insert goes last, in increasing order.
         if let Some(region_code) = plan.insert_region_code
             && !inserted_region
         {
             encoder
                 .put(OptionNumber::RegionCode.as_u16(), &region_code)
+                .map_err(|_| CapacityError)?;
+        }
+        if let Some(value) = station {
+            encoder
+                .put(OptionNumber::StationCallsign.as_u16(), value)
                 .map_err(|_| CapacityError)?;
         }
         Ok(encoder.finish())

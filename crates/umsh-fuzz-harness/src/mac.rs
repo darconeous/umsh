@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::rc::Rc;
 use std::task::{Context, Poll};
 
+use hamaddr::HamAddr;
 use umsh_core::{
     BlindAddr, MicSize, OptionNumber, PacketBuilder, PacketHeader, PacketType, PayloadType,
 };
@@ -322,11 +323,17 @@ impl<const PEERS: usize, const HOLDS: usize> Station<PEERS, HOLDS> {
         let default_region = (flags & 0x01 != 0).then(|| [fields.u8(), fields.u8()]);
         let min_rssi = (flags & 0x02 != 0).then(|| -i16::from(fields.u8()));
         let min_snr = (flags & 0x04 != 0).then(|| fields.u8() as i8);
-        let amateur_radio_mode = if flags & 0x08 != 0 {
-            AmateurRadioMode::LicensedOnly
-        } else {
-            AmateurRadioMode::Unlicensed
+        // An amateur station is mostly Hybrid, so most stations still open
+        // what they receive: a Licensed-Only one discards everything
+        // encrypted. Either is configured as its mode requires.
+        let amateur_radio_mode = match flags & 0x18 {
+            0x08 => AmateurRadioMode::LicensedOnly,
+            0x18 => AmateurRadioMode::Hybrid,
+            _ => AmateurRadioMode::Unlicensed,
         };
+        let amateur = amateur_radio_mode != AmateurRadioMode::Unlicensed;
+        let callsign =
+            |text| amateur.then(|| HamAddr::try_from_callsign(text).expect("a callsign"));
 
         let clock = DummyClock::new(1);
         let store = FaultyCounterStore::default();
@@ -335,11 +342,12 @@ impl<const PEERS: usize, const HOLDS: usize> Station<PEERS, HOLDS> {
             default_region,
             min_rssi,
             min_snr,
-            amateur_radio_mode,
+            station_callsign: callsign("N0CALL"),
             ..RepeaterConfig::default()
         };
         let policy = OperatingPolicy {
             amateur_radio_mode,
+            operator_callsign: callsign("KZ2X"),
             ..OperatingPolicy::default()
         };
         let mut mac = Box::new(Mac::new(

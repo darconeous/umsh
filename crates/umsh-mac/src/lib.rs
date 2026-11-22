@@ -65,11 +65,11 @@
 //! - [`LocalIdentity`]—either a long-term platform identity or an ephemeral software
 //!   identity for PFS sessions.
 //! - [`IdentitySlot`]—per-identity runtime state: keys, frame counter, pending ACKs.
-//! - [`OperatingPolicy`]—transmission-time rules for the local node (amateur-radio mode,
+//! - [`OperatingPolicy`]—operating rules for the local node (amateur-radio mode,
 //!   operator callsign, per-channel overrides).
 //! - [`RepeaterConfig`]—controls whether and how inbound frames are forwarded.
-//! - [`AmateurRadioMode`]—shared enum governing encryption and identification requirements
-//!   under ham-radio law.
+//! - [`AmateurRadioMode`]—the node's one operating mode, governing encryption and
+//!   identification under amateur radio rules for what it sends, receives, and forwards.
 //! - [`ChannelPolicy`]—per-channel overrides within an [`OperatingPolicy`].
 //! - [`SendError`], [`MacError`], [`CounterPersistenceError`]—error types for queuing,
 //!   runtime event processing, and frame-counter store operations respectively.

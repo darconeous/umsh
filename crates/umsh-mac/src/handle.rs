@@ -299,7 +299,7 @@ impl<
     /// by whoever administers the repeater; passing an empty `regions` slice
     /// or `None` clears that gate rather than leaving the previous value in
     /// place. The master `enabled` switch, the flood-contention tuning, and
-    /// the amateur-radio fields are deliberately untouched—those are
+    /// the station callsign are deliberately untouched—those are
     /// separate concerns with their own accessors.
     ///
     /// Region codes beyond the configured capacity are ignored; callers that

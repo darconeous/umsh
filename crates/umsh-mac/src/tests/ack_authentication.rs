@@ -201,6 +201,33 @@ fn an_ack_carrying_the_operator_callsign_is_sealed_with_the_mic() {
     assert!(alice.completes(&ack));
 }
 
+/// A Licensed-Only node acknowledges an unencrypted request with its
+/// operator callsign, and the tag covers it.
+#[test]
+fn a_licensed_only_ack_carries_the_operator_callsign() {
+    let mut alice = Sender::new(SendOptions::default().no_flood().unencrypted());
+    let ack = bob_acks(&alice.request, |bob| {
+        bob.operating_policy_mut().amateur_radio_mode = AmateurRadioMode::LicensedOnly;
+        bob.operating_policy_mut().operator_callsign = Some(callsign("KZ2X"));
+    });
+
+    assert!(options(&ack).operator_callsign.is_some());
+    assert!(alice.completes(&ack));
+}
+
+/// A Licensed-Only node with no operator callsign sends nothing, acks
+/// included.
+#[test]
+fn a_licensed_only_node_without_a_callsign_does_not_ack() {
+    let alice = Sender::new(SendOptions::default().no_flood().unencrypted());
+    let other = DummyIdentity::new([0x10; 32]);
+    let (mut bob, _) = endpoint(0x20, &other);
+    bob.operating_policy_mut().amateur_radio_mode = AmateurRadioMode::LicensedOnly;
+    bob.radio_mut().queue_received_frame(&alice.request);
+    assert!(block_on(bob.receive_one(|_, _| {})).unwrap(), "delivered");
+    assert!(bob.tx_queue_mut().pop_next().is_none());
+}
+
 /// An ack answering the outstanding send, carrying `options`, sealed under
 /// [`keys`].
 fn sealed_ack(alice: &Sender, options: &[(OptionNumber, &[u8])]) -> Vec<u8> {
@@ -323,7 +350,7 @@ fn a_licensed_only_repeater_carries_a_callsign_ack_that_still_verifies() {
         |alice| alice.operating_policy_mut().operator_callsign = Some(callsign("KZ2X")),
     );
     let mut relay = repeater(0x30);
-    relay.repeater_config_mut().amateur_radio_mode = AmateurRadioMode::LicensedOnly;
+    relay.operating_policy_mut().amateur_radio_mode = AmateurRadioMode::LicensedOnly;
     relay.repeater_config_mut().station_callsign = Some(callsign("N0CALL"));
 
     let request = forward(&mut relay, &alice.request).expect("the request is repeated");

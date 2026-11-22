@@ -6168,7 +6168,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             builder = builder.region_code(*region);
         }
         // The device has no operator callsign, so its ack carries no static
-        // option and its tag's AAD is the ack's FCF and the terminator.
+        // option and its tag's AAD is the ack's FCF and the terminator. A
+        // host in Licensed-Only mode, whose every ack carries one, cannot
+        // delegate its acks here.
         let frame_len = builder.build().ok()?.len();
         self.engine
             .seal_mac_ack(&plan.keys, &plan.v, &mut buf[..frame_len])
