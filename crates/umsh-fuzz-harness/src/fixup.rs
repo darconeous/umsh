@@ -237,7 +237,7 @@ pub fn apply(frame: &[u8], selector: u8) -> Vec<u8> {
 /// frame: an oracle that trusted the node's verdict could never catch the
 /// node accepting a frame it should not have. A frame this accepts is
 /// authentic traffic however it reached the node; a fuzzer can mutate a
-/// spoiled seed back into one. Acknowledgements are not covered: their tag
+/// spoiled seed back into one. Acknowledgments are not covered: their tag
 /// depends on the send they answer.
 pub fn authenticates(frame: &[u8]) -> bool {
     let Ok(header) = PacketHeader::parse(frame) else {
