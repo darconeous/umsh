@@ -82,7 +82,10 @@ pub enum MeetCommand {
         to: Option<PublicKey>,
         frame: Vec<u8>,
     },
-    /// Give back the session key.
+    /// Give back the session key. A frame already sent under it keeps its
+    /// power and its acknowledgment;
+    /// [`LocalNode::close_meet`](crate::LocalNode::close_meet) erases the key
+    /// once none awaits one.
     Close,
 }
 

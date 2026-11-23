@@ -423,6 +423,7 @@ pub struct IdentitySlot<
     pfs_parent: Option<LocalIdentityId>,
     pending_counter_resync: LinearMap<PeerId, PendingCounterResync, PEERS>,
     tx_power_dbm: Option<i8>,
+    meet_only: bool,
 }
 
 impl<I: NodeIdentity, const PEERS: usize, const ACKS: usize, const FRAME: usize>
@@ -448,6 +449,7 @@ impl<I: NodeIdentity, const PEERS: usize, const ACKS: usize, const FRAME: usize>
             pfs_parent,
             pending_counter_resync: LinearMap::new(),
             tx_power_dbm: None,
+            meet_only: false,
         }
     }
 
@@ -652,6 +654,13 @@ impl<I: NodeIdentity, const PEERS: usize, const ACKS: usize, const FRAME: usize>
     /// the acks it returns.
     pub fn set_tx_power_dbm(&mut self, power_dbm: Option<i8>) {
         self.tx_power_dbm = power_dbm;
+    }
+
+    /// Whether this identity is a contact-exchange session key, which
+    /// answers for nothing but Meet (UEP-0022): every other payload
+    /// addressed to it is dropped once the MAC ack it requests is sent.
+    pub fn answers_meet_only(&self) -> bool {
+        self.meet_only
     }
 
     /// Borrow the pending counter-resynchronization table.
@@ -1358,6 +1367,10 @@ pub struct MacCounters {
     /// Encrypted frames discarded unopened because this node operates in
     /// [`AmateurRadioMode::LicensedOnly`] mode.
     pub rx_encrypted_discarded: u32,
+    /// Frames to a contact-exchange session key dropped after any ack
+    /// they requested: a payload other than Meet, or a Meet that named
+    /// its source by hint or rode a group unicast (UEP-0022).
+    pub rx_session_refused: u32,
 }
 
 impl MacCounters {
@@ -2099,6 +2112,36 @@ impl<
         identity: umsh_crypto::software::SoftwareIdentity,
     ) -> Result<LocalIdentityId, CapacityError> {
         self.insert_identity(LocalIdentity::Ephemeral(identity), Some(parent))
+    }
+
+    #[cfg(feature = "software-crypto")]
+    /// Register a contact-exchange session key linked to `parent`: an
+    /// ephemeral identity that answers for nothing but Meet (UEP-0022).
+    /// Any other payload addressed to it, MAC commands included, is dropped
+    /// with accounting once the MAC ack it requests is sent, and a frame
+    /// its counter window refuses is dropped unanswered.
+    pub fn register_meet_identity(
+        &mut self,
+        parent: LocalIdentityId,
+        identity: umsh_crypto::software::SoftwareIdentity,
+    ) -> Result<LocalIdentityId, CapacityError> {
+        let id = self.insert_identity(LocalIdentity::Ephemeral(identity), Some(parent))?;
+        if let Some(slot) = self.identity_mut(id) {
+            slot.meet_only = true;
+        }
+        Ok(id)
+    }
+
+    /// Whether a frame sent under `id` is still in flight: queued, or
+    /// awaiting the acknowledgment it requested with retries left. An
+    /// owner retiring an ephemeral identity waits for this to clear before
+    /// removing it, so its last frames keep their retries and their power.
+    pub fn has_frames_in_flight(&self, id: LocalIdentityId) -> bool {
+        self.identity(id)
+            .is_some_and(|slot| !slot.pending_acks.is_empty())
+            || self
+                .tx_queue
+                .contains_matching(|entry| entry.identity_id == Some(id))
     }
 
     #[cfg(feature = "software-crypto")]
@@ -4415,6 +4458,7 @@ impl<
         let mut opened = false;
         let handled = if let Some(local_id) = self.find_local_identity_for_dst(header.dst) {
             let mut handled = false;
+            let meet_only = self.answers_meet_only(local_id);
             self.admit_full_key_source(local_id, &buf[..frame_len], header, header.source, None)
                 .await;
             for (peer_id, peer_key) in
@@ -4490,7 +4534,9 @@ impl<
                     // already spent.
                     acceptance = self.accept_unicast_replay(peer_id, header, &buf[..frame_len]);
                 } else {
-                    match Self::resync_command(payload) {
+                    // A session key takes part in no resync: to it, a
+                    // resync command is a MAC command like any other.
+                    match Self::resync_command(payload).filter(|_| !meet_only) {
                         Some((MAC_COMMAND_VERIFY_FRAME_ID, nonce)) => {
                             if self
                                 .answer_verify_frame(
@@ -4548,6 +4594,11 @@ impl<
                             acceptance =
                                 self.accept_unicast_replay(peer_id, header, &buf[..frame_len]);
                             self.settle_counter_resync_response(local_id, peer_id, payload);
+                        }
+                        // A session key answers nothing, so a frame its
+                        // window refuses is just dropped.
+                        Some(ReplayVerdict::OutOfWindow | ReplayVerdict::Stale) if meet_only => {
+                            continue;
                         }
                         Some(ReplayVerdict::OutOfWindow | ReplayVerdict::Stale) => {
                             let answer = self.adopt_counter_resync_response(
@@ -4657,6 +4708,12 @@ impl<
                         header,
                         AckOccasion::First,
                     );
+                }
+
+                if meet_only && !Self::is_meet_carriage(header, payload) {
+                    MacCounters::bump(&mut self.counters.rx_session_refused);
+                    handled = true;
+                    break;
                 }
 
                 if let Some(data) = Self::echo_request_data(payload) {
@@ -4914,6 +4971,7 @@ impl<
                         }
                         continue;
                     };
+                    let meet_only = self.answers_meet_only(local_id);
                     self.admit_full_key_source(
                         local_id,
                         &buf[..frame_len],
@@ -5006,7 +5064,8 @@ impl<
                             acceptance =
                                 self.accept_unicast_replay(peer_id, header, &buf[..frame_len]);
                         } else {
-                            match Self::resync_command(payload) {
+                            // As on the unicast path.
+                            match Self::resync_command(payload).filter(|_| !meet_only) {
                                 Some((MAC_COMMAND_VERIFY_FRAME_ID, nonce)) => {
                                     if self
                                         .answer_verify_frame(
@@ -5080,6 +5139,12 @@ impl<
                                         &buf[..frame_len],
                                     );
                                     self.settle_counter_resync_response(local_id, peer_id, payload);
+                                }
+                                // As on the unicast path.
+                                Some(ReplayVerdict::OutOfWindow | ReplayVerdict::Stale)
+                                    if meet_only =>
+                                {
+                                    continue;
                                 }
                                 Some(ReplayVerdict::OutOfWindow | ReplayVerdict::Stale) => {
                                     let answer = self.adopt_counter_resync_response(
@@ -5184,6 +5249,14 @@ impl<
                                 header,
                                 AckOccasion::First,
                             );
+                        }
+
+                        // A Meet never rides a group unicast, so a session
+                        // key takes nothing from one.
+                        if meet_only {
+                            MacCounters::bump(&mut self.counters.rx_session_refused);
+                            handled = true;
+                            break;
                         }
 
                         if let Some(data) = Self::echo_request_data(payload) {
@@ -7507,6 +7580,19 @@ impl<
     fn resync_command_payload(command_id: u8, nonce: u32) -> [u8; 2 + COUNTER_RESYNC_NONCE_LEN] {
         let [a, b, c, d] = nonce.to_be_bytes();
         [PayloadType::MacCommand as u8, command_id, a, b, c, d]
+    }
+
+    /// Whether `local_id` is a contact-exchange session key; see
+    /// [`IdentitySlot::answers_meet_only`].
+    fn answers_meet_only(&self, local_id: LocalIdentityId) -> bool {
+        self.identity(local_id)
+            .is_some_and(IdentitySlot::answers_meet_only)
+    }
+
+    /// Whether a unicast payload is a Meet carried as UEP-0022 requires,
+    /// from a full source key: what a session key takes.
+    fn is_meet_carriage(header: &PacketHeader, payload: &[u8]) -> bool {
+        header.fcf.full_source() && payload.first() == Some(&(PayloadType::Meet as u8))
     }
 
     /// The command and nonce of a Verify Frame or Frame Verified payload.

@@ -148,8 +148,22 @@ pub trait MacBackend: Clone {
         identity: umsh_crypto::software::SoftwareIdentity,
     ) -> Result<LocalIdentityId, MacBackendError<Self::SendError, Self::CapacityError>>;
 
+    /// Register a contact-exchange session key, which answers for nothing
+    /// but Meet; see [`umsh_mac::Mac::register_meet_identity`].
+    #[cfg(feature = "software-crypto")]
+    async fn register_meet_identity(
+        &self,
+        parent: LocalIdentityId,
+        identity: umsh_crypto::software::SoftwareIdentity,
+    ) -> Result<LocalIdentityId, MacBackendError<Self::SendError, Self::CapacityError>>;
+
     #[cfg(feature = "software-crypto")]
     async fn remove_ephemeral(&self, id: LocalIdentityId) -> bool;
+
+    /// Whether a frame sent under `id` is still queued or awaiting its
+    /// acknowledgment; see [`umsh_mac::Mac::has_frames_in_flight`].
+    #[cfg(feature = "software-crypto")]
+    async fn has_frames_in_flight(&self, id: LocalIdentityId) -> bool;
 
     /// Recognize `address`, one of `parent`'s retired addresses, in traffic
     /// from `peer`, returning whether it is watched; see
@@ -502,8 +516,26 @@ impl<
     }
 
     #[cfg(feature = "software-crypto")]
+    async fn register_meet_identity(
+        &self,
+        parent: LocalIdentityId,
+        identity: umsh_crypto::software::SoftwareIdentity,
+    ) -> Result<LocalIdentityId, MacBackendError<Self::SendError, Self::CapacityError>> {
+        self.register_meet_identity(parent, identity)
+            .await
+            .map_err(MacBackendError::Capacity)
+    }
+
+    #[cfg(feature = "software-crypto")]
     fn remove_ephemeral(&self, id: LocalIdentityId) -> impl Future<Output = bool> {
         self.remove_ephemeral(id)
+    }
+
+    // Returns the handle's future rather than awaiting it: an `async fn`
+    // here would build a state machine just to poll that one.
+    #[cfg(feature = "software-crypto")]
+    fn has_frames_in_flight(&self, id: LocalIdentityId) -> impl Future<Output = bool> {
+        self.has_frames_in_flight(id)
     }
 
     async fn watch_retired_address(

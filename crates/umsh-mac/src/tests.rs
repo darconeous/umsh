@@ -5193,6 +5193,185 @@ fn resync_commands_never_prompt_a_probe() {
     assert!(queued.is_empty());
 }
 
+/// A contact-exchange session key with a peer whose window stands at
+/// 10,000, as [`desynchronized_peer`] sets one up for a long-term identity.
+#[cfg(feature = "software-crypto")]
+fn meet_session_peer() -> (
+    TestMac,
+    LocalIdentityId,
+    DummyIdentity,
+    PairwiseKeys,
+    umsh_core::NodeHint,
+) {
+    let mut mac = make_mac();
+    let parent = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let session = mac
+        .register_meet_identity(
+            parent,
+            umsh_crypto::software::SoftwareIdentity::from_secret_bytes(&[0x55; 32]),
+        )
+        .unwrap();
+    mac.identity_mut(session)
+        .unwrap()
+        .set_tx_power_dbm(Some(-12));
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let peer_id = mac.add_peer(*remote.public_key()).unwrap();
+    let keys = PairwiseKeys {
+        k_enc: [1; 32],
+        k_mic: [2; 32],
+    };
+    mac.install_pairwise_keys(session, peer_id, keys.clone())
+        .unwrap();
+    let dst_hint = mac
+        .identity(session)
+        .unwrap()
+        .identity()
+        .public_key()
+        .hint();
+    mac.rx_windows_mut()
+        .get_mut(remote.public_key())
+        .unwrap()
+        .replay_window
+        .reset(10_000, 1);
+    (mac, session, remote, keys, dst_hint)
+}
+
+/// A session key answers for nothing but Meet: an Echo Request or a
+/// Verify Frame addressed to it earns the MAC ack it asks for, and no
+/// answer, and is never delivered. A Meet from a full source is.
+#[cfg(feature = "software-crypto")]
+#[test]
+fn a_session_key_acks_a_mac_command_and_answers_nothing_else() {
+    let (mut mac, _, remote, keys, dst_hint) = meet_session_peer();
+    let verify_frame = [PayloadType::MacCommand as u8, 12, 1, 2, 3, 4];
+    let echo_request = encode_echo_command_payload(4, &[9, 8, 7, 6]);
+    for (counter, payload) in [(10_001, &echo_request[..]), (10_002, &verify_frame[..])] {
+        mac.radio_mut()
+            .queue_received_unicast_with_counter(&remote, &keys, &dst_hint, payload, true, counter);
+        let (delivered, queued) = receive_and_collect(&mut mac);
+        assert!(delivered.is_empty());
+        assert_eq!(queued.len(), 1, "the MAC ack alone");
+        let header = PacketHeader::parse(&queued[0]).unwrap();
+        assert_eq!(header.fcf.packet_type(), PacketType::MacAck);
+    }
+    assert_eq!(mac.counters().rx_session_refused, 2);
+
+    let meet = [PayloadType::Meet as u8, 3, 0x11];
+    mac.radio_mut()
+        .queue_received_unicast_with_counter(&remote, &keys, &dst_hint, &meet, true, 10_003);
+    let (delivered, queued) = receive_and_collect(&mut mac);
+    assert_eq!(delivered, [meet.to_vec()]);
+    assert_eq!(queued.len(), 1);
+    assert_eq!(mac.counters().rx_session_refused, 2);
+
+    // A Meet naming its source by hint is refused like any other payload.
+    mac.rx_windows_mut()
+        .get_mut(remote.public_key())
+        .unwrap()
+        .replay_window
+        .reset(1, 1);
+    mac.radio_mut().queue_received_unicast_with_source_hint(
+        remote.public_key().hint(),
+        &keys,
+        &dst_hint,
+        &meet,
+        true,
+    );
+    let (delivered, queued) = receive_and_collect(&mut mac);
+    assert!(delivered.is_empty());
+    assert_eq!(queued.len(), 1, "the MAC ack alone");
+    assert_eq!(mac.counters().rx_session_refused, 3);
+}
+
+/// A frame a session key's window refuses is dropped: no probe, no hold
+/// and Verify Frame, and no counter resync, whether or not it asks for an
+/// ack.
+#[cfg(feature = "software-crypto")]
+#[test]
+fn a_session_key_answers_no_refused_counter_frame() {
+    let (mut mac, session, remote, keys, dst_hint) = meet_session_peer();
+    let echo_request = encode_echo_command_payload(4, &[9, 8, 7, 6]);
+    let meet = [PayloadType::Meet as u8, 3, 0x11];
+    for (counter, payload, ack) in [
+        (7, &meet[..], true),
+        (8, &meet[..], false),
+        (9, &echo_request[..], false),
+        (10_000 - 50, &echo_request[..], true),
+    ] {
+        mac.radio_mut()
+            .queue_received_unicast_with_counter(&remote, &keys, &dst_hint, payload, ack, counter);
+        let (delivered, queued) = receive_and_collect(&mut mac);
+        assert!(delivered.is_empty());
+        assert!(queued.is_empty());
+    }
+    assert!(!mac.has_frames_in_flight(session));
+}
+
+/// A session key's frame goes out at the session's power and stays in
+/// flight until its acknowledgment arrives or its window closes. Its owner
+/// removes the key only then.
+#[cfg(feature = "software-crypto")]
+#[test]
+fn a_session_frame_is_in_flight_until_acked_or_given_up() {
+    let (mut mac, session, remote, _, _) = meet_session_peer();
+    let peer_key = *remote.public_key();
+    let options = SendOptions::default()
+        .with_ack_requested(true)
+        .with_full_source()
+        .no_flood();
+
+    // Acknowledged.
+    let receipt = mac
+        .queue_unicast(session, &peer_key, b"end", &options)
+        .unwrap()
+        .unwrap();
+    assert!(mac.has_frames_in_flight(session));
+    block_on(mac.transmit_next(&mut |_, _| {})).unwrap();
+    assert!(mac.has_frames_in_flight(session));
+    let ack_v = mac
+        .identity(session)
+        .unwrap()
+        .pending_ack(&receipt)
+        .unwrap()
+        .ack_v;
+    assert_eq!(
+        mac.complete_ack(&peer_key, &ack_v),
+        Some((session, receipt))
+    );
+    assert!(!mac.has_frames_in_flight(session));
+
+    // Never acknowledged: sent once, at the session's power, and in flight
+    // until its acknowledgment window closes.
+    let receipt = mac
+        .queue_unicast(session, &peer_key, b"identity", &options)
+        .unwrap()
+        .unwrap();
+    block_on(mac.transmit_next(&mut |_, _| {})).unwrap();
+    assert!(mac.has_frames_in_flight(session));
+    let deadline = mac
+        .identity(session)
+        .unwrap()
+        .pending_ack(&receipt)
+        .unwrap()
+        .ack_deadline_ms;
+    let mut timed_out = false;
+    mac.service_pending_ack_timeouts(|_, event| {
+        timed_out |= matches!(event, MacEventRef::AckTimeout { .. });
+    });
+    assert!(!timed_out);
+    assert!(mac.has_frames_in_flight(session));
+    mac.clock()
+        .advance_ms(deadline.saturating_sub(mac.clock().now_ms()) + 1);
+    mac.service_pending_ack_timeouts(|_, event| {
+        timed_out |= matches!(event, MacEventRef::AckTimeout { .. });
+    });
+    assert!(timed_out);
+    assert!(!mac.has_frames_in_flight(session));
+    let powers = &mac.radio().transmitted_power;
+    assert_eq!(powers.len(), 2);
+    assert!(powers.iter().all(|power| *power == Some(-12)));
+}
+
 /// Whether `frame`, sealed under `keys`, is an Echo Request.
 fn is_echo_request(frame: &[u8], keys: &PairwiseKeys) -> bool {
     matches!(

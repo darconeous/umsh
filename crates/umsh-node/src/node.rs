@@ -308,6 +308,10 @@ pub(crate) struct LocalNodeState {
     /// The session identity of a contact exchange in progress.
     #[cfg(feature = "software-crypto")]
     meet: Option<MeetSlot>,
+    /// Closed contact-exchange sessions whose last frames still await
+    /// their acknowledgments. Each is erased once none does.
+    #[cfg(feature = "software-crypto")]
+    retiring_meets: Vec<MeetSlot>,
     /// The tickets of this node's sends, for failing those of a session
     /// identity when it is removed.
     #[cfg(feature = "software-crypto")]
@@ -351,6 +355,8 @@ impl LocalNodeState {
             #[cfg(feature = "software-crypto")]
             meet: None,
             #[cfg(feature = "software-crypto")]
+            retiring_meets: Vec::new(),
+            #[cfg(feature = "software-crypto")]
             tickets: Weak::new(),
         }
     }
@@ -369,6 +375,32 @@ impl LocalNodeState {
         if let Some(tickets) = tickets {
             tickets.borrow_mut().fail_identity(id);
         }
+    }
+
+    /// Erase a contact-exchange session's key, and release the peers it
+    /// reached.
+    #[cfg(feature = "software-crypto")]
+    async fn erase_meet_slot<M: MacBackend>(state: &RefCell<Self>, mac: &M, slot: MeetSlot) {
+        Self::remove_session_identity(state, mac, slot.id).await;
+        for peer in slot.peers {
+            let _ = mac.release_peer(&peer, PeerHolder::Session).await;
+        }
+    }
+
+    /// Erase every closed contact-exchange session still awaiting the
+    /// acknowledgment of its last frames, so that its identity slot is free
+    /// for a session that needs one now. Returns whether any was erased.
+    #[cfg(feature = "software-crypto")]
+    pub(crate) async fn give_way_from_retiring_meets<M: MacBackend>(
+        state: &RefCell<Self>,
+        mac: &M,
+    ) -> bool {
+        let retiring = core::mem::take(&mut state.borrow_mut().retiring_meets);
+        let any = !retiring.is_empty();
+        for slot in retiring {
+            Self::erase_meet_slot(state, mac, slot).await;
+        }
+        any
     }
 
     pub(crate) fn peer_subscriptions_mut(&mut self, peer: PublicKey) -> &mut PeerSubscriptions {
@@ -2188,12 +2220,26 @@ impl<M: MacBackend> LocalNode<M> {
         let mut secret = [0u8; 32];
         self.mac.fill_random(&mut secret).await;
         let identity = umsh_crypto::software::SoftwareIdentity::from_secret_bytes(&secret);
-        secret.zeroize();
         let key = *identity.public_key();
-        let id = self
+        let registered = self
             .mac
-            .register_ephemeral(self.identity_id, identity)
-            .await?;
+            .register_meet_identity(self.identity_id, identity)
+            .await;
+        // A closed session still finishing its last frames never keeps a
+        // new one from opening: with no room, it is erased at once.
+        let registered = match registered {
+            Err(crate::mac::MacBackendError::Capacity(_))
+                if LocalNodeState::give_way_from_retiring_meets(&self.state, &self.mac).await =>
+            {
+                let identity = umsh_crypto::software::SoftwareIdentity::from_secret_bytes(&secret);
+                self.mac
+                    .register_meet_identity(self.identity_id, identity)
+                    .await
+            }
+            registered => registered,
+        };
+        secret.zeroize();
+        let id = registered?;
         self.mac
             .set_tx_power_dbm(id, Some(crate::meet::TX_POWER_DBM))
             .await;
@@ -2206,16 +2252,52 @@ impl<M: MacBackend> LocalNode<M> {
         Ok((key, seed))
     }
 
-    /// Close the contact-exchange session: its key and the peers it reached
-    /// go away, and nothing more is heard or sent under it.
+    /// Close the contact-exchange session: nothing more is heard or sent
+    /// under it. Its key and the peers it reached go away once no frame
+    /// sent under it awaits an acknowledgment (UEP-0022). Until then a
+    /// frame still queued goes out at the session's power, an
+    /// acknowledgment of it is still matched, and what reaches the key is
+    /// acked and nothing else.
     #[cfg(feature = "software-crypto")]
     pub async fn close_meet(&self) {
         let Some(slot) = self.state.borrow_mut().meet.take() else {
             return;
         };
-        LocalNodeState::remove_session_identity(&self.state, &self.mac, slot.id).await;
-        for peer in slot.peers {
-            let _ = self.mac.release_peer(&peer, PeerHolder::Session).await;
+        if self.mac.has_frames_in_flight(slot.id).await {
+            self.state.borrow_mut().retiring_meets.push(slot);
+        } else {
+            LocalNodeState::erase_meet_slot(&self.state, &self.mac, slot).await;
+        }
+    }
+
+    /// Erase each closed contact-exchange session whose frames have all
+    /// been acknowledged or given up on.
+    #[cfg(feature = "software-crypto")]
+    pub(crate) async fn settle_retiring_meets(&self) {
+        let mut index = 0;
+        loop {
+            let Some(id) = self
+                .state
+                .borrow()
+                .retiring_meets
+                .get(index)
+                .map(|slot| slot.id)
+            else {
+                return;
+            };
+            if self.mac.has_frames_in_flight(id).await {
+                index += 1;
+                continue;
+            }
+            // The list may have changed during the wait.
+            let slot = {
+                let mut state = self.state.borrow_mut();
+                let position = state.retiring_meets.iter().position(|slot| slot.id == id);
+                position.map(|position| state.retiring_meets.remove(position))
+            };
+            if let Some(slot) = slot {
+                LocalNodeState::erase_meet_slot(&self.state, &self.mac, slot).await;
+            }
         }
     }
 
