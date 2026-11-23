@@ -10,9 +10,9 @@ use super::chat::{REVISE_WINDOW_MS, reaction_body, reaction_from_body};
 use super::test_support::{Core, NOW_MS, identity};
 use super::worker::TestHooks;
 use super::{
-    MobileAppChangesRecord, MobileAppChatRequest, MobileAppError, MobileAppResent,
-    MobileAppStartFailure, MobileMessageActionsRecord, MobilePositionRecord, MobileReaction,
-    Options,
+    EMERGENCY_CERTIFICATION_LIFETIME_MS, MobileAppChangesRecord, MobileAppChatRequest,
+    MobileAppError, MobileAppResent, MobileAppStartFailure, MobileMessageActionsRecord,
+    MobilePositionRecord, MobileReaction, Options,
 };
 use crate::mobile_chat::MobileChatPresence;
 use crate::radio_driver::{MobileRadioPhase, MobileRadioStateRecord};
@@ -720,6 +720,221 @@ async fn a_start_under_another_identity_after_a_failed_one_is_uncertified() {
     std::fs::remove_file(core.counter_directory()).unwrap();
     core.start(PHONE + 1).await;
     assert!(!core.core.status().unwrap().emergency_certified);
+}
+
+/// Whether `EMERGENCY`'s conversation asks for the warning, as the lists read it.
+fn agreement_needed(core: &Core, address: &str) -> bool {
+    core.core
+        .state(true)
+        .unwrap()
+        .channel_conversations
+        .into_iter()
+        .find(|conversation| conversation.conversation_address == address)
+        .unwrap()
+        .needs_emergency_agreement
+}
+
+const HOUR_MS: i64 = 60 * 60 * 1000;
+
+#[tokio::test]
+async fn a_certification_lapses_a_day_after_it_was_given() {
+    let (core, owner, _) = running().await;
+    attached(&core).await;
+    let emergency = emergency(&core, &owner).await;
+    core.core.certify_emergency().unwrap();
+    core.core.poll_changes();
+    core.clock.advance(EMERGENCY_CERTIFICATION_LIFETIME_MS - 1);
+    assert!(core.core.status().unwrap().emergency_certified);
+    assert!(!agreement_needed(&core, &emergency));
+    assert_eq!(core.core.poll_changes(), MobileAppChangesRecord::default());
+
+    // The worker's timer announces it with nothing asking.
+    core.clock.advance(1);
+    let mut changes = MobileAppChangesRecord::default();
+    until("the lapse is announced", || {
+        changes.merge(core.core.poll_changes());
+        changes.emergency_certified.is_some()
+    })
+    .await;
+    assert_eq!(changes.emergency_certified, Some(false));
+    assert!(changes.conversations_changed);
+    assert!(agreement_needed(&core, &emergency));
+    assert!(!core.core.status().unwrap().emergency_certified);
+    assert_eq!(
+        core.core
+            .send_chat(emergency.clone(), typed("help"), None)
+            .await,
+        Err(MobileAppError::EmergencyNotCertified)
+    );
+    assert!(messages(&core, &owner, &emergency).is_empty());
+
+    // Given again, it is reported as given.
+    core.core.certify_emergency().unwrap();
+    assert_eq!(core.core.poll_changes().emergency_certified, Some(true));
+}
+
+#[tokio::test]
+async fn each_send_there_keeps_it_another_day() {
+    let (core, owner, _) = running().await;
+    attached(&core).await;
+    let emergency = emergency(&core, &owner).await;
+    core.core.certify_emergency().unwrap();
+    core.clock.advance(23 * HOUR_MS);
+    core.core
+        .send_chat(emergency.clone(), typed("TEST: radio check"), None)
+        .await
+        .unwrap();
+    // A day after the certification, but not after the send.
+    core.clock.advance(2 * HOUR_MS);
+    assert!(core.core.status().unwrap().emergency_certified);
+    core.core.poll_changes();
+    // A send elsewhere does not count.
+    core.core
+        .send_chat(named_address("public"), typed("hello"), None)
+        .await
+        .unwrap();
+    core.clock
+        .advance(EMERGENCY_CERTIFICATION_LIFETIME_MS - 2 * HOUR_MS - 1);
+    assert!(core.core.status().unwrap().emergency_certified);
+    core.clock.advance(1);
+    assert!(!core.core.status().unwrap().emergency_certified);
+    assert_eq!(core.core.poll_changes().emergency_certified, Some(false));
+}
+
+/// A resend there keeps it too, as a send does; here one that goes as new.
+#[tokio::test]
+async fn a_resend_there_keeps_it_another_day() {
+    let (core, owner, _) = running().await;
+    attached(&core).await;
+    let emergency = emergency(&core, &owner).await;
+    core.core.certify_emergency().unwrap();
+    core.clock.advance(23 * HOUR_MS);
+    let failed = Row {
+        wire_id: None,
+        created_at_ms: NOW_MS + 23 * HOUR_MS - 60_000,
+        ..Row::default()
+    }
+    .insert(&core, &owner, &emergency);
+    assert_eq!(
+        core.core.resend(emergency.clone(), failed, false).await,
+        Ok(MobileAppResent::AsNew)
+    );
+    // A day after the certification, but not after the resend.
+    core.clock.advance(2 * HOUR_MS);
+    assert!(core.core.status().unwrap().emergency_certified);
+}
+
+/// Asking who sent there keeps it too: the request goes out over the channel.
+#[tokio::test]
+async fn an_identity_request_there_keeps_it_another_day() {
+    let (core, owner, _) = running().await;
+    attached(&core).await;
+    let emergency = emergency(&core, &owner).await;
+    core.core.certify_emergency().unwrap();
+    core.clock.advance(23 * HOUR_MS);
+    core.core
+        .request_member_identity(emergency, vec![1, 2, 3])
+        .await
+        .unwrap();
+    core.clock.advance(2 * HOUR_MS);
+    assert!(core.core.status().unwrap().emergency_certified);
+}
+
+/// Resends, repairs and identity requests the radio refuses keep nothing.
+#[tokio::test]
+async fn refused_commands_there_do_not_keep_it() {
+    let (core, owner, _) = running().await;
+    let emergency = emergency(&core, &owner).await;
+    core.core.certify_emergency().unwrap();
+    core.clock.advance(23 * HOUR_MS);
+    let failed = Row::default().insert(&core, &owner, &emergency);
+    let gap = Row {
+        handle: 2,
+        outbound: false,
+        delivery_state: None,
+        presence: 3,
+        ..Row::default()
+    }
+    .insert(&core, &owner, &emergency);
+    assert_eq!(
+        core.core.resend(emergency.clone(), failed, false).await,
+        Err(MobileAppError::NoRadio)
+    );
+    assert_eq!(
+        core.core
+            .request_missing(emergency.clone(), vec![gap])
+            .await,
+        Err(MobileAppError::NoRadio)
+    );
+    assert_eq!(
+        core.core
+            .request_member_identity(emergency, vec![1, 2, 3])
+            .await,
+        Err(MobileAppError::NoRadio)
+    );
+    core.clock.advance(HOUR_MS);
+    assert!(!core.core.status().unwrap().emergency_certified);
+}
+
+#[tokio::test]
+async fn a_send_past_the_deadline_is_refused_before_the_timer_fires() {
+    let (options, hooks) = hooked();
+    hooks.emergency_timer_off.store(true, Ordering::SeqCst);
+    let (core, owner, _) = running_with(options).await;
+    attached(&core).await;
+    let emergency = emergency(&core, &owner).await;
+    core.core.certify_emergency().unwrap();
+    core.core.poll_changes();
+    core.clock.advance(EMERGENCY_CERTIFICATION_LIFETIME_MS);
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    // Nothing announced it.
+    assert_eq!(core.core.poll_changes(), MobileAppChangesRecord::default());
+    assert_eq!(
+        core.core
+            .send_chat(emergency.clone(), typed("help"), None)
+            .await,
+        Err(MobileAppError::EmergencyNotCertified)
+    );
+    let changes = core.core.poll_changes();
+    assert_eq!(changes.emergency_certified, Some(false));
+    assert!(changes.conversations_changed);
+    assert!(messages(&core, &owner, &emergency).is_empty());
+}
+
+#[tokio::test]
+async fn a_refused_send_does_not_keep_it() {
+    let (core, owner, _) = running().await;
+    let emergency = emergency(&core, &owner).await;
+    core.core.certify_emergency().unwrap();
+    core.clock.advance(23 * HOUR_MS);
+    // Past the interlock, refused for want of a radio.
+    assert_eq!(
+        core.core
+            .send_chat(emergency.clone(), typed("help"), None)
+            .await,
+        Err(MobileAppError::NoRadio)
+    );
+    core.clock.advance(HOUR_MS);
+    assert!(!core.core.status().unwrap().emergency_certified);
+}
+
+#[tokio::test]
+async fn an_owner_change_clears_its_deadline_too() {
+    let (core, _, _) = running().await;
+    core.core.certify_emergency().unwrap();
+    core.clock.advance(23 * HOUR_MS);
+    core.core.erase(false).await.unwrap();
+    core.start(PHONE + 1).await;
+    // Certification overwrites any deadline, so the snapshot is read before it.
+    {
+        let snapshot = core.core.shared.snapshot();
+        assert!(!snapshot.emergency_certified);
+        assert_eq!(snapshot.emergency_lapses_at_ms, None);
+    }
+    core.core.certify_emergency().unwrap();
+    // A full day from the new certification, not the old one's deadline.
+    core.clock.advance(2 * HOUR_MS);
+    assert!(core.core.status().unwrap().emergency_certified);
 }
 
 // --- The rules from the row. ---

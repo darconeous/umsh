@@ -12,6 +12,8 @@
 //! own job on the worker, so a caller that stops waiting still sees the
 //! outcome through the changes.
 
+use std::rc::Rc;
+
 use umsh_text::reaction::Reaction;
 
 use super::bootstrap::CHANNEL_ADDRESS_PREFIX;
@@ -19,7 +21,7 @@ use super::pipeline::carries_this_phone;
 use super::records::{MobileAppChangesRecord, MobileAppLifecycle, MobileMessageActionsRecord};
 use super::routes::checked_conversation_address;
 use super::worker::{InFlight, Worker};
-use super::{MobileAppCore, MobileAppError, mesh_error};
+use super::{EMERGENCY_CERTIFICATION_LIFETIME_MS, MobileAppCore, MobileAppError, mesh_error};
 use crate::mobile_chat::{
     MobileChatDirection, MobileChatOriginalRef, MobileChatPresence, MobileChatRegardingRef,
 };
@@ -300,6 +302,11 @@ pub(super) fn message_actions(
     }
 }
 
+/// A transmission the `EMERGENCY` interlock let through: true when it is
+/// on `EMERGENCY`, whose certification each send there renews.
+#[must_use]
+pub(super) struct EmergencySend(bool);
+
 /// Whether a stored channel is `EMERGENCY`, by its canonical name, the
 /// rule every app reads.
 pub(super) fn is_emergency_channel(channel: &MobileStoredChannelRecord) -> bool {
@@ -401,16 +408,63 @@ impl Worker {
     }
 
     /// `EmergencyNotCertified` for a transmission the user starts on
-    /// `EMERGENCY` before agreeing to its warning under this owner.
+    /// `EMERGENCY` before agreeing to its warning under this owner, or
+    /// once that agreement has lapsed. Otherwise what the transmission is,
+    /// for [`Self::emergency_sent`] once the session takes it.
     pub(super) fn emergency_refusal(
         &self,
         owner: &str,
         address: &str,
-    ) -> Result<(), MobileAppError> {
-        if self.shared.snapshot().emergency_certified || !self.is_emergency(owner, address)? {
-            return Ok(());
+    ) -> Result<EmergencySend, MobileAppError> {
+        if !self.is_emergency(owner, address)? {
+            return Ok(EmergencySend(false));
+        }
+        if self
+            .shared
+            .emergency_certified_at(self.clock.monotonic_ms())
+        {
+            return Ok(EmergencySend(true));
         }
         Err(MobileAppError::EmergencyNotCertified)
+    }
+
+    /// The session took a transmission [`Self::emergency_refusal`] let
+    /// through: one on `EMERGENCY` keeps the certification for another
+    /// 24 hours.
+    pub(super) fn emergency_sent(&self, send: EmergencySend) {
+        if send.0 {
+            self.shared.emergency_sent(self.clock.monotonic_ms());
+        }
+    }
+
+    /// Let the `EMERGENCY` certification lapse on time: an open thread
+    /// asks again without a send being refused first. The check each
+    /// transmission makes stands whether or not this has run.
+    pub(super) async fn run_emergency_lapse(self: Rc<Self>) {
+        #[cfg(test)]
+        if self
+            .hooks
+            .emergency_timer_off
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return;
+        }
+        loop {
+            let deadline = self.shared.snapshot().emergency_lapses_at_ms;
+            let moved = self.shared.emergency_deadline_moved.notified();
+            match deadline {
+                None => moved.await,
+                Some(deadline) => {
+                    tokio::select! {
+                        () = self.clock.sleep_until(deadline) => {
+                            self.shared
+                                .emergency_certified_at(self.clock.monotonic_ms());
+                        }
+                        () = moved => {}
+                    }
+                }
+            }
+        }
     }
 
     /// What `UnknownConversation` means for a conversation known to be
@@ -600,7 +654,7 @@ impl Worker {
         clear_draft: Option<String>,
         changes: &mut MobileAppChangesRecord,
     ) -> Result<(), MobileAppError> {
-        self.emergency_refusal(owner, address)?;
+        let emergency = self.emergency_refusal(owner, address)?;
         let session = self.radio_session()?;
         // A toggle reads the reaction the one before it stored: held from
         // the read through the store's write.
@@ -622,6 +676,7 @@ impl Worker {
                     | MobileChatSendError::NotQueuedOrRecorded { .. })
         );
         if kept {
+            self.emergency_sent(emergency);
             changes.merge(transcript_changed(address));
             if let Some(submitted) = clear_draft {
                 // Words typed since the send changed the draft, and stay.
@@ -680,7 +735,7 @@ impl Worker {
         let Some(_claim) = ResendClaim::take(self, &owner, &row.reference) else {
             return Err(MobileAppError::InvalidRequest);
         };
-        self.emergency_refusal(&owner, &address)?;
+        let emergency = self.emergency_refusal(&owner, &address)?;
         let session = self.radio_session()?;
         let in_place = match row.wire_id {
             Some(wire_id) if self.within_revise_window(row.created_at_ms) => {
@@ -724,6 +779,7 @@ impl Worker {
             _ => false,
         };
         if in_place {
+            self.emergency_sent(emergency);
             // The row's delivery is repointed by what the session stores
             // next; a read made after the answer sees it.
             session.flush_chat().await;
@@ -742,6 +798,14 @@ impl Worker {
             .await;
         // The new message replaces the old one once it is recorded; one
         // that may read as sending leaves the failed one to say otherwise.
+        if matches!(
+            sent,
+            Ok(())
+                | Err(MobileChatSendError::NotQueued { .. }
+                    | MobileChatSendError::NotQueuedOrRecorded { .. })
+        ) {
+            self.emergency_sent(emergency);
+        }
         if matches!(sent, Ok(()) | Err(MobileChatSendError::NotQueued { .. }))
             && let Err(error) = self.store.remove_failed_message(owner, row.reference)
         {
@@ -765,10 +829,11 @@ impl Worker {
         let Some(_command) = command else {
             return Err(MobileAppError::NotRunning);
         };
-        self.emergency_refusal(&owner, &address)?;
+        let emergency = self.emergency_refusal(&owner, &address)?;
         let session = self.radio_session()?;
         let mut lost = Vec::new();
         let mut failure = None;
+        let mut asked = false;
         for message in messages {
             // Read in this conversation only: a stale screen's row, or
             // another conversation's, is passed over.
@@ -788,7 +853,7 @@ impl Worker {
                 .request_chat_repair(session_id, row.reference.handle)
                 .await
             {
-                Ok(true) => {}
+                Ok(true) => asked = true,
                 // A gap from an earlier session can never be asked for.
                 Ok(false) => lost.push(row.reference),
                 Err(error) => {
@@ -796,6 +861,9 @@ impl Worker {
                     break;
                 }
             }
+        }
+        if asked {
+            self.emergency_sent(emergency);
         }
         if !lost.is_empty()
             && let Err(error) = self.store.resolve_gaps_unavailable(owner, Some(lost))
@@ -1000,26 +1068,38 @@ impl MobileAppCore {
     }
 
     /// The user agreed to `EMERGENCY`'s warning: sends there are taken
-    /// from now on, under this owner, until the owner changes or the core
-    /// ends. In effect for every command made after it returns.
+    /// from now on, under this owner, until 24 hours pass with no send
+    /// there, the owner changes, or the core ends. In effect for every
+    /// command made after it returns.
     pub fn certify_emergency(&self) -> Result<(), MobileAppError> {
+        let now_ms = self.clock.monotonic_ms();
         let mut refused = None;
         self.shared.publish(|snapshot| {
             if snapshot.lifecycle == MobileAppLifecycle::Stopped {
                 refused = Some(MobileAppError::Stopped);
-            } else if snapshot.owner.is_none() {
-                refused = Some(MobileAppError::NoOwner);
-            } else if !snapshot.emergency_certified {
-                snapshot.emergency_certified = true;
-                // Each channel conversation says whether it needs it.
-                return MobileAppChangesRecord {
-                    emergency_certified: Some(true),
-                    conversations_changed: true,
-                    ..MobileAppChangesRecord::default()
-                };
+                return MobileAppChangesRecord::default();
             }
-            MobileAppChangesRecord::default()
+            if snapshot.owner.is_none() {
+                refused = Some(MobileAppError::NoOwner);
+                return MobileAppChangesRecord::default();
+            }
+            // A lapsed certification given again is reported as given.
+            let lapsed = snapshot.lapse_emergency(now_ms);
+            snapshot.emergency_lapses_at_ms = Some(now_ms + EMERGENCY_CERTIFICATION_LIFETIME_MS);
+            if snapshot.emergency_certified {
+                return lapsed;
+            }
+            snapshot.emergency_certified = true;
+            // Each channel conversation says whether it needs it.
+            MobileAppChangesRecord {
+                emergency_certified: Some(true),
+                conversations_changed: true,
+                ..MobileAppChangesRecord::default()
+            }
         });
+        if refused.is_none() {
+            self.shared.emergency_deadline_moved.notify_one();
+        }
         refused.map_or(Ok(()), Err)
     }
 

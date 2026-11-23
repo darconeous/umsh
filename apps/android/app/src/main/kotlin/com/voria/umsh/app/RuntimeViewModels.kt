@@ -13,12 +13,28 @@ import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import kotlinx.coroutines.flow.MutableStateFlow
 
 /** The runtime the shell is drawn over; provided inside the shell's keyed block. */
 val LocalAppRuntime = staticCompositionLocalOf<AppRuntime> { error("no runtime: outside the shell") }
 
 /** The process's host, for the few screens that act on it (the debug Developer section). */
 val LocalAppCoreHost = staticCompositionLocalOf<AppCoreHost> { error("no host: outside the app") }
+
+/** A page a notification or a shortcut asked to open. */
+sealed interface OpenRequest {
+    /** A conversation, by address. */
+    data class Conversation(val address: String) : OpenRequest
+
+    /** Radio Detail: the radio notification's tap. */
+    data object RadioDetail : OpenRequest
+}
+
+/**
+ * What a notification or a shortcut asked to open; the shell opens it and
+ * clears it. None outside the activity.
+ */
+val LocalOpenRequests = staticCompositionLocalOf { MutableStateFlow<OpenRequest?>(null) }
 
 /**
  * The shell's own ViewModel store: for a page drawn in two places, such as

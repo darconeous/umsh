@@ -18,6 +18,21 @@
     <string name="developer_peer_reacts" translatable="false">Staged reaction in 5 seconds</string>
     <string name="developer_peer_replies" translatable="false">Staged reply in 5 seconds</string>
     <string name="developer_connect_radio_preview" translatable="false">Connect a radio preview</string>
+    <string name="developer_connect_radio_live" translatable="false">Connect a radio over Bluetooth</string>
+    <string name="developer_bonded_radios" translatable="false">Bonded radios (paired in Settings › Bluetooth)</string>
+    <string name="developer_bonded_connect" translatable="false">Connect %1$s (%2$s)</string>
+    <string name="developer_bridged_radio" translatable="false">Bridged radio</string>
+    <string name="developer_bridged_radio_detail" translatable="false">A umsh-bridge host interface (make android-bridge)</string>
+    <string name="developer_bridged_radio_invalid" translatable="false">host:port</string>
+    <string name="developer_bridged_connect" translatable="false">Connect</string>
+    <string name="developer_bridged_disconnect" translatable="false">Disconnect</string>
+    <string name="developer_bridged_forget" translatable="false">Forget</string>
+    <string name="developer_waiting_strategy" translatable="false">Keep waiting after the reconnect window</string>
+    <string name="developer_add_peer" translatable="false">Add peer by key</string>
+    <string name="developer_add_peer_detail" translatable="false">An address or umsh: link; opens its conversation</string>
+    <string name="developer_add_peer_added" translatable="false">Added</string>
+    <string name="developer_add_peer_failed" translatable="false">Not added</string>
+    <string name="developer_add_peer_action" translatable="false">Add peer</string>
     <string name="developer_reset_staged" translatable="false">Reset staged data</string>
     <string name="developer_reset_failed" translatable="false">The staged data could not be erased.</string>
 

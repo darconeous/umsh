@@ -8,6 +8,8 @@ import com.voria.umsh.app.CoreKind
 import com.voria.umsh.app.EraseMode
 import com.voria.umsh.core.MobileAppPolicyRecord
 import com.voria.umsh.models.LocalIdentity
+import com.voria.umsh.services.location.LocationGrant
+import com.voria.umsh.services.location.SharedPrecision
 import kotlin.coroutines.cancellation.CancellationException
 import com.voria.umsh.services.mobilecore.AppLog
 import kotlinx.coroutines.Job
@@ -30,6 +32,8 @@ sealed interface IdentityDialog {
     data object Qr : IdentityDialog
 
     data class Schedule(val kind: ScheduleKind) : IdentityDialog
+
+    data object Precision : IdentityDialog
 
     data object ConfirmErase : IdentityDialog
 }
@@ -61,6 +65,12 @@ class YourIdentityViewModel(private val runtime: AppRuntime, private val host: A
     val canAdvertise: StateFlow<Boolean> = combine(runtime.radio, advertising) { radio, busy ->
         radio?.carriesThisPhone == true && !busy
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), runtime.radio.value?.carriesThisPhone == true)
+
+    /** What Android allows of this phone's location: Share location's states. */
+    val locationGrant: StateFlow<LocationGrant> = runtime.locationGrant
+
+    /** The precisions on offer, and the approximate clamp. */
+    val precisions: SharedPrecision = runtime.sharedPrecision
 
     /** Staging never erases: its identity is the live one (D16). */
     val canErase: Boolean = runtime.kind == CoreKind.Live
@@ -149,6 +159,21 @@ class YourIdentityViewModel(private val runtime: AppRuntime, private val host: A
                 ScheduleKind.Identity -> advertIntervalSeconds = seconds
             }
         }
+    }
+
+    /** The switch: the choice is written whatever the grant; asking follows it (§3.8). */
+    fun setShareLocation(share: Boolean) {
+        runtime.setPolicy { shareLocation = share }
+    }
+
+    fun setPrecision(precision: UByte) {
+        _dialog.value = null
+        runtime.setPolicy { locationPrecision = precision.toInt() }
+    }
+
+    /** A location dialog was answered: no ON_START follows one, so the grant is read now. */
+    fun locationAnswered() {
+        runtime.refreshLocationGrant()
     }
 
     /**

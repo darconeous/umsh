@@ -24,9 +24,15 @@ sealed interface WelcomeFailure {
 
 /**
  * Welcome: the identity already minted, the name to save. Continue saves
- * the name, then moves onboarding on; the shell takes over from there.
+ * the name, then moves onboarding on to Connect a radio, or, with a radio
+ * already set up (an identity erased and made again keeps it), straight
+ * to the shell.
  */
-class OnboardingViewModel(private val runtime: AppRuntime) : ViewModel() {
+class OnboardingViewModel(
+    private val runtime: AppRuntime,
+    /** A radio is set up already; read as Continue moves on. */
+    private val radioSetUp: suspend () -> Boolean = { false },
+) : ViewModel() {
     val identity: StateFlow<LocalIdentity> = runtime.identity
 
     private val _saving = MutableStateFlow(false)
@@ -37,10 +43,7 @@ class OnboardingViewModel(private val runtime: AppRuntime) : ViewModel() {
     /** Why Continue stopped; the name stays typed. */
     val failure: StateFlow<WelcomeFailure?> = _failure.asStateFlow()
 
-    /**
-     * Save [name] (trimmed; empty clears it), then finish Welcome. Phase 1
-     * has no radio search, so Welcome goes straight to the shell (D6).
-     */
+    /** Save [name] (trimmed; empty clears it), then finish Welcome. */
     fun continueWith(name: String) {
         if (_saving.value) return
         _saving.value = true
@@ -57,7 +60,8 @@ class OnboardingViewModel(private val runtime: AppRuntime) : ViewModel() {
                 }
                 if (saved) {
                     try {
-                        runtime.setOnboarding(OnboardingStep.Done).await()
+                        val next = if (radioSetUp()) OnboardingStep.Done else OnboardingStep.ConnectRadio
+                        runtime.setOnboarding(next).await()
                     } catch (error: CancellationException) {
                         throw error
                     } catch (error: Exception) {

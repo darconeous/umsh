@@ -42,6 +42,7 @@ class FakeRadioScanSource(
     val connects = mutableListOf<FoundRadio>()
 
     override fun start() {
+        if (scope != null) return
         val running = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).also { scope = it }
         revealing = running.launch {
             for (radio in reveal) {
@@ -82,8 +83,8 @@ class FakeRadioScanSource(
     companion object {
         /** `onboarding.svg` board 5: what radios in pairing mode advertise. Data, as a radio sends it. */
         val SAMPLE_RADIOS = listOf(
-            FoundRadio("t1000e", "T1000-E 4F2A", "SenseCAP T1000-E"),
-            FoundRadio("tdeck", "Ridge T-Deck", "T-Deck"),
+            FoundRadio("t1000e", "T1000-E 4F2A", 2),
+            FoundRadio("tdeck", "Ridge T-Deck", 11),
             FoundRadio("unknown", "UMSH radio", null),
         )
 

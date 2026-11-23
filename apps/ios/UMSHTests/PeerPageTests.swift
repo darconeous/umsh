@@ -317,6 +317,9 @@ struct PresentationTests {
     @Test func cellSizesUseTheLocalesNumbers() {
         #expect(LocationPresentation.cellSizeText(meters: 611, locale: english) == "611 m")
         #expect(LocationPresentation.cellSizeText(meters: 4.5, locale: german) == "4,5 m")
+        #expect(LocationPresentation.cellSizeText(meters: 9_800, locale: english) == "9.8 km")
+        #expect(LocationPresentation.cellSizeText(meters: 2_505_000, locale: english) == "2,505 km")
+        #expect(LocationPresentation.cellSizeText(meters: 0.15, locale: english) == "15 cm")
     }
 
     @Test func agesSayJustNowThenWholeUnits() {

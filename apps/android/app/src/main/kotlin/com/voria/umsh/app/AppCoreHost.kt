@@ -3,24 +3,36 @@ package com.voria.umsh.app
 import com.voria.umsh.core.MobileAppConfigRecord
 import com.voria.umsh.core.MobileAppCore
 import com.voria.umsh.core.MobileAppStore
+import com.voria.umsh.core.MobileRadioException
 import com.voria.umsh.core.MobileStoreException
 import com.voria.umsh.core.SecretVault
 import com.voria.umsh.core.seedStaging
 import com.voria.umsh.services.identity.IdentityOperations
 import com.voria.umsh.services.identity.IdentityVault
 import com.voria.umsh.services.identity.IdentityVaultException
+import com.voria.umsh.services.location.PhoneLocationSource
 import com.voria.umsh.models.NodeHint
 import com.voria.umsh.services.mobilecore.AppLog
 import com.voria.umsh.services.mobilecore.RecordMapping
 import com.voria.umsh.services.mobilecore.StoreDetail
 import com.voria.umsh.services.preferences.AppPreferences
 import com.voria.umsh.services.preferences.OnboardingStep
+import com.voria.umsh.services.radio.BluetoothStatus
+import com.voria.umsh.services.radio.BoundRadio
+import com.voria.umsh.services.radio.PendingBinding
+import com.voria.umsh.services.radio.RadioBindings
+import com.voria.umsh.services.radio.RadioConnection
+import com.voria.umsh.services.radio.RadioConnectionEvents
+import com.voria.umsh.services.radio.RadioLinkFactory
 import com.voria.umsh.services.radio.StagingRadioConnection
 import java.io.File
 import java.io.IOException
 import java.time.Clock
+import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -37,6 +49,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** The vaults a host keeps its secrets in, one per kind of secret. */
 interface VaultFactory {
@@ -70,6 +83,13 @@ sealed interface HostState {
     data object NeedsFirstLaunch : HostState
 }
 
+/**
+ * One [AppCoreHost.connectRadio]: the radio chosen, and the bind, which
+ * [bound] completes. A later choice supersedes it, and from then on
+ * forgetting it ([AppCoreHost.forgetRadio]) leaves the later one alone.
+ */
+class RadioChoice internal constructor(val radio: BoundRadio, val bound: Job)
+
 enum class EraseMode {
     /** The secret and the keys under it; messages and peers stay, unreachable. */
     IdentityOnly,
@@ -94,6 +114,37 @@ data class StorageSummary(
 
 data class StoredIdentity(val hint: NodeHint, val name: String)
 
+/**
+ * What tells the person about a runtime's events while no screen does: the
+ * notifier. One per process, handed every runtime the host makes.
+ */
+interface RuntimeNotifications {
+    /** [runtime] is made and about to start; [scope] ends with it. */
+    fun attach(runtime: AppRuntime, scope: CoroutineScope)
+
+    /** The identity is being erased: what was posted about it goes. */
+    fun withdrawAll()
+
+    object None : RuntimeNotifications {
+        override fun attach(runtime: AppRuntime, scope: CoroutineScope) = Unit
+
+        override fun withdrawAll() = Unit
+    }
+}
+
+/** Who asks for a runtime, which decides what a start may do. */
+enum class StartOrigin {
+    /** An activity the person sees: it may mint a first identity, which begins at Welcome. */
+    Activity,
+
+    /**
+     * No UI: the radio's foreground service, presence, a notification
+     * action. Never mints, never shows anything, never switches kinds: it
+     * starts the live core over the stored identity, or nothing.
+     */
+    Headless,
+}
+
 sealed interface EraseOutcome {
     data object Done : EraseOutcome
 
@@ -114,10 +165,16 @@ sealed interface EraseOutcome {
  * Opens the stores and makes one core at a time over them.
  *
  * One per process, made by `UmshApplication` and reached by anything that
- * needs the core (Phase 2's foreground service too). Constructing it opens
- * nothing: `MainActivity` calls [ensureRuntime]. Bringing up, switching and
- * erasing run in the host's own scope behind one mutex, so a caller's
- * cancellation never stops one between steps and two never overlap.
+ * needs the core (the radio's foreground service too). Constructing it
+ * opens nothing: `MainActivity` calls [ensureRuntime]. Bringing up,
+ * switching and erasing run in the host's own scope behind one mutex, so a
+ * caller's cancellation never stops one between steps and two never
+ * overlap.
+ *
+ * The host also owns the live radio's connection, one at a time, made with
+ * the live core from what [AppPreferences.radioRegistry] names and torn
+ * down with it. Its state is never read here: it reaches the screens only
+ * through the core, as every radio state does.
  */
 class AppCoreHost(
     private val paths: AppPaths,
@@ -131,6 +188,16 @@ class AppCoreHost(
     private val stagingAvailable: Boolean,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    /** Makes the connection a bound radio names; none in tests that need no radio. */
+    private val radioLinks: RadioLinkFactory = RadioLinkFactory { _, _, _ -> null },
+    /** Posts what each runtime asks to be told; nothing in tests that read the events themselves. */
+    private val notifications: RuntimeNotifications = RuntimeNotifications.None,
+    /** The phone's Bluetooth and Nearby devices grant, for the banners; always usable in tests. */
+    val bluetooth: StateFlow<BluetoothStatus> = MutableStateFlow(BluetoothStatus.Ready),
+    /** Releases a radio's association (and API 36+ bond) when no connection holds it to do so. */
+    private val bindings: RadioBindings = RadioBindings { },
+    /** This phone's location readings and grant, for Share location; none in tests that never share one. */
+    private val location: PhoneLocationSource = PhoneLocationSource.None,
 ) {
     private class Opened(
         val kind: CoreKind,
@@ -138,7 +205,11 @@ class AppCoreHost(
         val runtime: AppRuntime,
         val runtimeScope: CoroutineScope,
         val air: StagingRadioConnection?,
-    )
+    ) {
+        /** The live radio's connection; written under [mutex]. */
+        @Volatile
+        var connection: RadioConnection? = null
+    }
 
     private val _state = MutableStateFlow<HostState>(HostState.Starting)
     val state: StateFlow<HostState> = _state.asStateFlow()
@@ -161,6 +232,25 @@ class AppCoreHost(
     /** Debug builds: the staged radio while the staging core holds it. */
     val stagingRadio: StateFlow<StagingRadioConnection?> = _stagingRadio.asStateFlow()
 
+    private val _radio = MutableStateFlow<RadioConnection?>(null)
+
+    /**
+     * The live radio's connection, for its commands (connect, disconnect,
+     * forget, restart, factory reset); null with no radio set up, or while
+     * the staging core runs. Its state is the core's to report: read
+     * [AppRuntime.radio], never this.
+     */
+    val radio: StateFlow<RadioConnection?> = _radio.asStateFlow()
+
+    private val radioEvents = RadioConnectionEvents { connection ->
+        scope.launch {
+            mutex.withLock {
+                val opened = current ?: return@withLock
+                if (opened.connection === connection) detachRadio(opened)
+            }
+        }
+    }
+
     private val mutex = Mutex()
     private val stores = HashMap<CoreKind, MobileAppStore>()
     private val identity = IdentityOperations(vaults.identity)
@@ -172,6 +262,9 @@ class AppCoreHost(
 
     /** The kind [bringUp] last tried, so a store unavailable for another kind can be left. */
     private var lastKind: CoreKind? = null
+
+    /** An attempt to add a radio that the last process ended in has been undone; once, at the first start. */
+    private var cutOffAttemptUndone = false
 
     /**
      * Debug builds: the launch extra's choice, for this process only. The
@@ -198,17 +291,233 @@ class AppCoreHost(
      * erase that minted nothing, and to retry an identity the Keystore was
      * not ready to give. [staging], from a debug launch extra, overrides
      * the wanted kind until the process ends or the switch is used.
+     *
+     * A [StartOrigin.Headless] start never mints and never switches: with
+     * no stored identity it leaves [HostState.NeedsFirstLaunch], and with
+     * staging wanted it does nothing.
+     *
+     * Completes with whether the live core is running afterward, so a
+     * headless caller that finds none stops itself.
      */
-    fun ensureRuntime(staging: Boolean? = null): Job = scope.launch {
-        if (staging != null && stagingAvailable) stagingOverride = staging
+    fun ensureRuntime(staging: Boolean? = null, origin: StartOrigin = StartOrigin.Activity): Deferred<Boolean> {
+        val live = CompletableDeferred<Boolean>()
+        // Launched, not async: a failure still reaches the scope's handler.
+        scope.launch { live.complete(startRuntime(staging, origin)) }
+            .invokeOnCompletion { live.complete(false) }
+        return live
+    }
+
+    /**
+     * The runtime a notification action works in, bringing the live one up
+     * headless if none runs (never minting). Whatever runs is used, the
+     * staging core too. Null when none is up within [timeoutMs].
+     */
+    suspend fun runtimeForAction(timeoutMs: Long): AppRuntime? {
+        withTimeoutOrNull(timeoutMs) { ensureRuntime(origin = StartOrigin.Headless).await() }
+        return (_state.value as? HostState.Ready)?.runtime
+    }
+
+    private suspend fun startRuntime(staging: Boolean?, origin: StartOrigin): Boolean {
+        val headless = origin == StartOrigin.Headless
+        if (!headless && staging != null && stagingAvailable) stagingOverride = staging
         mutex.withLock {
             val shown = _state.value
             if (current == null && shown !is HostState.StoreUnavailable && shown !is HostState.IdentityLost) {
-                bringUp()
+                if (headless && desiredKind() != CoreKind.Live) {
+                    AppLog.i(TAG, "headless start skipped: staging is on")
+                    return@withLock
+                }
+                bringUp(mint = !headless)
             }
         }
-        followDesiredKind()
+        if (!headless) followDesiredKind()
+        return current?.kind == CoreKind.Live
     }
+
+    /** The last [connectRadio]; any earlier choice has been superseded. */
+    private val latestChoice = AtomicReference<RadioChoice?>(null)
+
+    /**
+     * Bind the live core to [radio] and connect, as the user chose it
+     * (Connect a radio, Choose a radio, and the debug bridge). A radio
+     * already bound to another is released first (its host key cleared on
+     * the radio), then let go, then the new one connects: the host holds
+     * one connection. With the staging core running the choice is only
+     * remembered, for the live core's next start.
+     */
+    fun connectRadio(radio: BoundRadio): RadioChoice {
+        // Lazy, so the choice is the latest before its bind can run.
+        val bind = scope.launch(start = CoroutineStart.LAZY) { bind(radio) }
+        return RadioChoice(radio, bind).also {
+            latestChoice.set(it)
+            bind.start()
+        }
+    }
+
+    private suspend fun bind(radio: BoundRadio) {
+        mutex.withLock {
+            val opened = current?.takeIf { it.kind == CoreKind.Live }
+            val existing = opened?.connection
+            if (existing != null && existing.kind == radio.kind && existing.linkId == radio.linkId) {
+                // Held, but perhaps no longer remembered (a factory reset
+                // let it go while its link stays up): remembered again.
+                val stored = boundRadio()
+                if (stored?.kind != radio.kind || stored.linkId != radio.linkId) {
+                    try {
+                        // Held already: not an attempt under way.
+                        preferences.radioRegistry.bind(radio.copy(pending = null))
+                    } catch (error: IOException) {
+                        AppLog.e(TAG, "radio not bound: ${error.javaClass.simpleName}")
+                        return@withLock
+                    }
+                }
+                existing.connect()
+                return@withLock
+            }
+            if (opened != null && existing != null) {
+                existing.releaseHost()
+                detachRadio(opened)
+            }
+            try {
+                preferences.radioRegistry.bind(radio)
+            } catch (error: IOException) {
+                AppLog.e(TAG, "radio not bound: ${error.javaClass.simpleName}")
+                return@withLock
+            }
+            if (opened != null) attachRadio(opened, radio)?.connect()
+        }
+    }
+
+    /** Disconnect: the radio is released, the link goes down, and nothing reconnects until asked. */
+    fun disconnectRadio(): Job = scope.launch {
+        mutex.withLock {
+            val connection = current?.connection
+            if (connection != null) {
+                connection.disconnect()
+                return@withLock
+            }
+            // Bound, but not held now (the staging core runs): only the intent changes.
+            try {
+                preferences.radioRegistry.bound()?.let { preferences.radioRegistry.setAutoConnect(it.linkId, false) }
+            } catch (error: IOException) {
+                AppLog.e(TAG, "radio not disconnected: ${error.javaClass.simpleName}")
+            }
+        }
+    }
+
+    /**
+     * Reconnect, as the user asked (Radio Detail): the held radio's recovery
+     * budget starts over and the standing intent is set again. Nothing when
+     * no live radio is held.
+     */
+    fun reconnectRadio(): Job = scope.launch {
+        mutex.withLock { current?.connection?.connect() }
+    }
+
+    /**
+     * Seek the wanted radio now, as its standing intent asks (§7.2, §7.3):
+     * companion presence saw it, or a notification action needs it. A
+     * radio left to presence after the reconnect window is sought again
+     * with a new window; one already sought goes on as it was; one the
+     * user disconnected, or the driver gave up on, is left alone. Never a
+     * new recovery budget.
+     */
+    fun wakeRadio(): Job = scope.launch {
+        mutex.withLock {
+            val connection = current?.takeIf { it.kind == CoreKind.Live }?.connection ?: return@withLock
+            val bound = boundRadio()
+            if (bound == null || !bound.autoConnect || bound.kind != connection.kind || bound.linkId != connection.linkId) {
+                AppLog.i(TAG, "wake: the radio is not wanted; nothing sought")
+                return@withLock
+            }
+            AppLog.i(TAG, "wake: seeking the radio")
+            connection.autoConnect()
+        }
+    }
+
+    /**
+     * Restart the held radio. Completes when the radio took the request;
+     * fails with the driver's `MobileRadioException` when it did not, or
+     * with `RadioUnavailable` when no live radio is held.
+     */
+    fun restartRadio(): Deferred<Unit> = scope.async { heldRadio().restart() }
+
+    /** Factory reset the held radio; fails as [restartRadio] does. */
+    fun factoryResetRadio(): Deferred<Unit> = scope.async { heldRadio().factoryReset() }
+
+    /**
+     * The live radio's connection, read without the lock: a request to the
+     * radio can take seconds, and nothing else should wait behind it.
+     */
+    private fun heldRadio(): RadioConnection =
+        current?.connection ?: throw MobileRadioException.RadioUnavailable()
+
+    /**
+     * Forget the bound radio: released, its link down, and no longer
+     * remembered; its association and (API 36+) its bond go too, unless
+     * [keepBinding] (a radio that was this phone's before an attempt to
+     * choose it again failed).
+     *
+     * With [choice], only what that choice bound is forgotten, and only
+     * while no later choice has superseded it: an attempt called off late
+     * never takes down the radio a later attempt chose.
+     */
+    fun forgetRadio(keepBinding: Boolean = false, choice: RadioChoice? = null): Job = scope.launch {
+        mutex.withLock {
+            if (choice != null) {
+                forgetChoice(choice, keepBinding)
+                return@withLock
+            }
+            val opened = current
+            val connection = opened?.connection
+            if (opened != null && connection != null) {
+                connection.forget(keepBinding)
+                detachRadio(opened)
+            } else {
+                // Bound, but not held now (the staging core runs): what is remembered goes.
+                val bound = try {
+                    preferences.radioRegistry.bound()?.also { preferences.radioRegistry.clear(it.linkId) }
+                } catch (error: IOException) {
+                    AppLog.e(TAG, "radio not forgotten: ${error.javaClass.simpleName}")
+                    null
+                }
+                if (!keepBinding) bound?.associationId?.let { release(it) }
+            }
+        }
+    }
+
+    /** Under [mutex]: forget what [choice] bound, if it is still the latest. */
+    private suspend fun forgetChoice(choice: RadioChoice, keepBinding: Boolean) {
+        val radio = choice.radio
+        val latest = latestChoice.get()
+        if (latest !== choice) {
+            // Superseded: the later choice holds what it holds. An
+            // association made for this one goes, unless the later choice
+            // took the same radio and with it the association.
+            AppLog.i(TAG, "radio choice superseded; leaving the later one")
+            if (!keepBinding && (latest?.radio?.kind != radio.kind || latest.radio.linkId != radio.linkId)) {
+                radio.associationId?.let { release(it) }
+            }
+            return
+        }
+        val opened = current
+        val connection = opened?.connection
+        if (opened != null && connection != null && connection.kind == radio.kind && connection.linkId == radio.linkId) {
+            connection.forget(keepBinding)
+            detachRadio(opened)
+            return
+        }
+        // Never held (the bind did not take, or the staging core runs):
+        // its registry entry, if it got one, and its association go.
+        try {
+            preferences.radioRegistry.clear(radio.linkId)
+        } catch (error: IOException) {
+            AppLog.e(TAG, "radio not forgotten: ${error.javaClass.simpleName}")
+        }
+        if (!keepBinding) radio.associationId?.let { release(it) }
+    }
+
+    private suspend fun release(associationId: String) = withContext(io) { bindings.release(associationId) }
 
     /** Debug builds: switch to or from the staging core; the last switch wins. */
     fun setStaging(enabled: Boolean): Job = scope.launch {
@@ -406,9 +715,13 @@ class AppCoreHost(
         }
     }
 
-    /** Under [mutex], with no core open. */
-    private suspend fun bringUp() {
+    /** Under [mutex], with no core open. [mint]: a missing identity may be made (a visible start only). */
+    private suspend fun bringUp(mint: Boolean = true) {
         check(current == null)
+        if (!cutOffAttemptUndone) {
+            cutOffAttemptUndone = true
+            undoCutOffAttempt()
+        }
         val kind = desiredKind()
         lastKind = kind
         _state.value = HostState.Starting
@@ -422,7 +735,7 @@ class AppCoreHost(
         }
         val loaded = try {
             withContext(io) {
-                identity.load(beforeMint = { preferences.setOnboarding(OnboardingStep.Welcome) })
+                identity.load(mintIfAbsent = mint, beforeMint = { preferences.setOnboarding(OnboardingStep.Welcome) })
             }
         } catch (error: IOException) {
             // The first-run step could not be recorded, so nothing was
@@ -440,6 +753,11 @@ class AppCoreHost(
             is IdentityOperations.Loaded.Lost -> {
                 AppLog.e(TAG, "identity lost: ${loaded.detail}")
                 _state.value = HostState.IdentityLost(loaded.detail, erasable = kind == CoreKind.Live)
+                return
+            }
+            is IdentityOperations.Loaded.Absent -> {
+                AppLog.i(TAG, "no identity, and this start may not make one")
+                _state.value = HostState.NeedsFirstLaunch
                 return
             }
             is IdentityOperations.Loaded.Ready -> loaded.identity
@@ -481,18 +799,88 @@ class AppCoreHost(
             clock = clock,
             scope = runtimeScope,
             onIdentityLost = { detail -> identityLost(runtimeGeneration, detail) },
+            location = location,
         )
-        current = Opened(kind, core, runtime, runtimeScope, air)
+        val opened = Opened(kind, core, runtime, runtimeScope, air)
+        current = opened
+        // Before the start: nothing the core reports is drained unheard.
+        notifications.attach(runtime, runtimeScope)
         runtime.start()
         _stagingRadio.value = air
+        // The core takes its radio while still starting: the driver exists
+        // before the identity unlocks, and its states reach the runtime
+        // through the listener the start has just set.
+        val bound = if (kind == CoreKind.Live) boundRadio() else null
+        val connection = bound?.let { attachRadio(opened, it) }
         _state.value = HostState.Ready(runtime)
         AppLog.i(TAG, "runtime ${runtime.generation} up ($kind)")
+        if (connection != null && bound.autoConnect) connection.autoConnect()
+    }
+
+    /**
+     * Under [mutex], before the process's first core: a radio still being
+     * added when the last process ended (Connect a radio or Choose a radio,
+     * before it attached) is undone, as the attempt would have undone it,
+     * rather than connected as this phone's. Its registry entry goes, and an
+     * association made for the attempt with it (and on API 36+ its bond).
+     */
+    private suspend fun undoCutOffAttempt() {
+        val bound = boundRadio() ?: return
+        val pending = bound.pending ?: return
+        AppLog.i(TAG, "a radio still being added when the app last ended; letting it go")
+        try {
+            preferences.radioRegistry.clear(bound.linkId)
+        } catch (error: IOException) {
+            AppLog.e(TAG, "radio not forgotten: ${error.javaClass.simpleName}")
+            return
+        }
+        if (pending == PendingBinding.NewAssociation) bound.associationId?.let { release(it) }
+    }
+
+    private suspend fun boundRadio(): BoundRadio? = try {
+        preferences.radioRegistry.bound()
+    } catch (error: IOException) {
+        AppLog.e(TAG, "radio registry unread: ${error.javaClass.simpleName}")
+        null
+    }
+
+    /**
+     * Under [mutex]: make [bound]'s connection and give the core its
+     * driver. Null when this build cannot reach that kind of radio, or the
+     * core would not take it.
+     */
+    private suspend fun attachRadio(opened: Opened, bound: BoundRadio): RadioConnection? {
+        val connection = radioLinks.make(bound, preferences.radioRegistry, radioEvents) ?: run {
+            AppLog.w(TAG, "no link for a ${bound.kind} radio in this build")
+            return null
+        }
+        try {
+            opened.core.useRadio(connection.driver)
+        } catch (error: Exception) {
+            AppLog.e(TAG, "the core did not take the radio: ${error.javaClass.simpleName}")
+            withContext(io) { connection.close() }
+            return null
+        }
+        opened.connection = connection
+        _radio.value = connection
+        return connection
+    }
+
+    /** Under [mutex]: the core lets the radio go, then the connection closes for good. */
+    private suspend fun detachRadio(opened: Opened) {
+        val connection = opened.connection ?: return
+        opened.connection = null
+        _radio.value = null
+        runCatching { opened.core.useRadio(null) }
+            .onFailure { AppLog.w(TAG, "radio not withdrawn: ${it.javaClass.simpleName}") }
+        withContext(io) { connection.close() }
     }
 
     /**
      * Under [mutex]: stop the running core. Drafts saved, observation
-     * ended, the radio withdrawn, the core stopped, then (staging) the air
-     * ended, so two cores never hold a radio.
+     * ended, the radio withdrawn and (live) its connection closed, the core
+     * stopped, then (staging) the air ended, so two cores never hold a
+     * radio.
      */
     private suspend fun tearDown() {
         val opened = current ?: return
@@ -504,8 +892,12 @@ class AppCoreHost(
         // Everything the runtime runs (reloads, commands, draft timers)
         // ends before the core does: a call into a closed core throws.
         opened.runtimeScope.coroutineContext.job.cancelAndJoin()
-        runCatching { opened.core.useRadio(null) }
-            .onFailure { AppLog.w(TAG, "radio not withdrawn: ${it.javaClass.simpleName}") }
+        if (opened.connection != null) {
+            detachRadio(opened)
+        } else {
+            runCatching { opened.core.useRadio(null) }
+                .onFailure { AppLog.w(TAG, "radio not withdrawn: ${it.javaClass.simpleName}") }
+        }
         opened.core.stop()
         withContext(io) { opened.air?.stop() }
         opened.core.close()
@@ -538,6 +930,9 @@ class AppCoreHost(
         AppLog.i(TAG, "erasing: $mode")
         _state.value = HostState.Starting
         tearDown()
+        // The shade is outside the app's files: a message from a
+        // conversation about to go would otherwise stay there, quoting it.
+        notifications.withdrawAll()
         // The secret before anything else: if it cannot be destroyed,
         // nothing is, and the phone stays the node it was.
         try {

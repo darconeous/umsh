@@ -12,7 +12,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.hasNoClickAction
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.assertIsNotDisplayed
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.StateRestorationTester
@@ -262,8 +262,8 @@ class ShellTest {
             description,
             description.contains(context.resources.getQuantityString(R.plurals.radio_tb_battery, percent, percent)),
         )
-        // Radio Detail is not built: the control states, and offers no action.
-        compose.onNodeWithTag(Tags.RADIO_CONTROL).assert(hasNoClickAction())
+        // With a radio, the control opens Radio Detail.
+        compose.onNodeWithTag(Tags.RADIO_CONTROL).assert(hasClickAction())
 
         val unread = runtime.appState.value!!.conversations.count { it.unreadCount > 0 }
         assertTrue("the seed has unread conversations", unread > 0)

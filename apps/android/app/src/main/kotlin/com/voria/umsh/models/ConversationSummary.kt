@@ -54,4 +54,9 @@ data class ChannelConversationSummary(
     override val lastMessage: ConversationPreview?,
     override val unreadCount: Long,
     override val revision: Long,
+    /**
+     * `EMERGENCY`, with its warning not agreed to (or lapsed): the core
+     * refuses every transmission here until it is.
+     */
+    val needsEmergencyAgreement: Boolean = false,
 ) : ConversationSummary

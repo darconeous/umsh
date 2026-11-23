@@ -44,6 +44,12 @@ enum class Destination(
 class ShellState(
     selected: MutableState<Destination>,
     val stacks: Map<Destination, NavBackStack<NavKey>>,
+    /**
+     * The app-level stack: the shell at its root, and above it the pages
+     * that belong to no destination (Radio Detail from the radio control).
+     * Opening one never changes the selected destination.
+     */
+    val appStack: NavBackStack<NavKey>,
 ) {
     var selected by selected
         private set
@@ -89,12 +95,81 @@ class ShellState(
         return stack.lastOrNull() == key || (twoPane && stack.firstOrNull() == key)
     }
 
+    /**
+     * Radio Detail above the shell, as the radio control opens it; once,
+     * however often it is asked, and not over Settings' Companion radio,
+     * which is already the page.
+     */
+    fun openRadioDetail() {
+        if (appStack.lastOrNull() == UmshKey.RadioDetail) return
+        if (selected == Destination.Settings && stacks.getValue(Destination.Settings).lastOrNull() == UmshKey.RadioDetail) return
+        appStack.add(UmshKey.RadioDetail)
+    }
+
+    /**
+     * Choose a radio above the shell (and above Radio Detail, when that
+     * opened it); once, however often it is asked.
+     */
+    fun openRadioPicker() {
+        if (appStack.lastOrNull() == UmshKey.RadioPicker) return
+        appStack.add(UmshKey.RadioPicker)
+    }
+
+    /** Choose a radio is done: closed, back to whatever opened it. */
+    fun closeRadioPicker() {
+        appStack.removeAll { it == UmshKey.RadioPicker }
+    }
+
+    /**
+     * A notification's or shortcut's tap (product-structure, "Notification
+     * taps"): Conversations selected, with that conversation open above its
+     * list, and no app-level page over it.
+     */
+    fun openConversation(address: String) {
+        while (appStack.size > 1) appStack.removeAt(appStack.lastIndex)
+        selected = Destination.Conversations
+        openDetail(Destination.Conversations, UmshKey.Thread(address))
+    }
+
+    /** Close an app-level page: back to the shell as it was left. False with none open. */
+    fun popAppPage(): Boolean {
+        if (appStack.size <= 1) return false
+        appStack.removeAt(appStack.lastIndex)
+        return true
+    }
+
+    /**
+     * Radio Detail is gone (its radio forgotten or erased): closed wherever
+     * it is open, above the shell and in the Settings stack.
+     */
+    fun closeRadioDetail() {
+        appStack.removeAll { it == UmshKey.RadioDetail }
+        stacks.getValue(Destination.Settings).let { stack ->
+            val index = stack.indexOf(UmshKey.RadioDetail)
+            if (index >= 1) while (stack.size > index) stack.removeAt(stack.lastIndex)
+        }
+    }
+
     /** Back on a page or a root: pops the stack, or at the root of Peers, Map or Settings selects Conversations. */
     fun back(): Boolean = pop() || backAtRoot()
 
     /** Push [key] on the shown destination's stack. */
     fun push(key: UmshKey) {
         currentStack.add(key)
+    }
+
+    /** Push [key] on [destination]'s stack, once: a second ask while it is on top does nothing. */
+    fun push(destination: Destination, key: UmshKey) {
+        val stack = stacks.getValue(destination)
+        if (stack.lastOrNull() != key) stack.add(key)
+    }
+
+    /** Close [thread] and whatever is above it, wherever it is in its stack. */
+    fun closeThread(thread: UmshKey.Thread) {
+        val stack = stacks.getValue(Destination.Conversations)
+        val index = stack.indexOf(thread)
+        if (index < 1) return
+        while (stack.size > index) stack.removeAt(stack.lastIndex)
     }
 
     /**
@@ -121,6 +196,9 @@ class ShellState(
         while (stack.size > index) stack.removeAt(stack.lastIndex)
     }
 
+    /** [destination] at its root: what its list shows, with its detail placeholder beside it. */
+    fun showRoot(destination: Destination) = popToRoot(destination)
+
     /** Back on a pushed page. False at a root. */
     fun pop(): Boolean {
         val stack = currentStack
@@ -146,8 +224,9 @@ class ShellState(
 fun rememberShellState(): ShellState {
     val selected = rememberSaveable { mutableStateOf(Destination.Conversations) }
     val stacks = Destination.entries.associateWith { rememberNavBackStack(it.root) }
+    val appStack = rememberNavBackStack(UmshKey.Shell)
     // The stacks are the same instances on every pass.
-    return remember { ShellState(selected, stacks) }
+    return remember { ShellState(selected, stacks, appStack) }
 }
 
 /**

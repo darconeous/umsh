@@ -132,6 +132,9 @@ pub(crate) struct TestHooks {
     pub(crate) fail_draft_clear: std::sync::atomic::AtomicBool,
     /// Starts that ended by arming the policy pass and settling the meet.
     pub(crate) starts_announced: std::sync::atomic::AtomicUsize,
+    /// When set before the core is made, the `EMERGENCY` certification
+    /// lapses only when something checks it, never on its timer.
+    pub(crate) emergency_timer_off: std::sync::atomic::AtomicBool,
 }
 
 /// A command counted as running until it drops.
@@ -298,6 +301,7 @@ pub(super) fn run(
             });
             tokio::task::spawn_local(worker.clone().pump());
             tokio::task::spawn_local(worker.clone().run_policy());
+            tokio::task::spawn_local(worker.clone().run_emergency_lapse());
             loop {
                 tokio::select! {
                     biased;

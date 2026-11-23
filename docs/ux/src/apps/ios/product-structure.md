@@ -518,7 +518,7 @@ current learned route; an empty one starts with only the endpoints. Hops are
 removed with the delete control and reordered by dragging. **Add Hop…**
 disappears at 15 repeaters, the most a source route carries. Each hop row uses
 the Peer Repeaters row form: the node's name and avatar when this phone knows
-it, otherwise **Router hint** and a gray hexagon. **Ping Along Path** sends a
+it, otherwise **Repeater hint** and a gray hexagon. **Ping Along Path** sends a
 traced ping down the unsaved draft and reports the reply. **Then
 flood** sets how many hops the frame may flood past the last repeater, from
 Off to 15; with no repeaters the row reads **Flood** and the path is direct.

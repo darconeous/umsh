@@ -468,6 +468,24 @@ impl MobileStagingAir {
     async fn reset(&self) -> Result<(), MobileStagingAirError> {
         self.control(Order::Reset).await
     }
+
+    /// As [`Self::peer_says_losing_one`], on the channel conversation at
+    /// `address`: one of the well-known channels every staged node holds
+    /// in tests.
+    #[cfg(test)]
+    pub(crate) async fn peer_says_losing_one_on(
+        &self,
+        address: String,
+        first: String,
+        lost: String,
+        last: String,
+    ) -> Result<(), MobileStagingAirError> {
+        self.control(Order::SayLosingOneOn {
+            address,
+            bodies: [first, lost, last],
+        })
+        .await
+    }
 }
 
 // --- The staged radio ---
@@ -1117,6 +1135,11 @@ enum Order {
     },
     #[cfg(test)]
     Reset,
+    #[cfg(test)]
+    SayLosingOneOn {
+        address: String,
+        bodies: [String; 3],
+    },
 }
 
 /// The staged nodes, and what the air knows of the phone.
@@ -1154,6 +1177,8 @@ struct Air {
     /// The next frame the speaking peer originates never reaches the
     /// radio. Its immediate acknowledgments still do.
     losing: bool,
+    /// Frames the speaking peer originated since a send cleared the count.
+    spoken: usize,
 }
 
 impl Air {
@@ -1187,6 +1212,7 @@ impl Air {
             asks_when_listed: false,
             pressed_same: false,
             losing: false,
+            spoken: 0,
         }
     }
 
@@ -1380,19 +1406,36 @@ impl Air {
     /// Introduce the phone to every station standing, and list it as the
     /// managed repeater's administrator.
     async fn learn_phone(&mut self, key: [u8; 32]) {
-        for station in self.stations.iter().flatten() {
-            if let Err(error) = station
-                .session
-                .register_peers(vec![phone_record(&key)])
-                .await
-            {
-                log::warn!(
-                    "staged node {} did not learn the phone: {error}",
-                    station.node.name
-                );
+        let stations: Vec<_> = self
+            .stations
+            .iter()
+            .flatten()
+            .map(|station| (station.node.name, station.session.clone()))
+            .collect();
+        self.pumping(async move {
+            for (name, session) in stations {
+                if let Err(error) = session.register_peers(vec![phone_record(&key)]).await {
+                    log::warn!("staged node {name} did not learn the phone: {error}");
+                }
+            }
+        })
+        .await;
+        self.administer(key);
+    }
+
+    /// Await `work` while the air pumps every node: a node's session may
+    /// take a command only once the transmission it waits on completes,
+    /// which only the air does.
+    async fn pumping<T>(&mut self, work: impl Future<Output = T>) -> T {
+        tokio::pin!(work);
+        loop {
+            tokio::select! {
+                done = &mut work => return done,
+                Some(index) = self.wake_queue.recv() => {
+                    self.pump(index);
+                }
             }
         }
-        self.administer(key);
     }
 
     /// Whether the station with `seed` is on the air at all.
@@ -1475,6 +1518,9 @@ impl Air {
             }
             self.transmit(seed, &frame.data);
         }
+        if index == SPEAKER {
+            self.spoken += originated;
+        }
         originated
     }
 
@@ -1528,7 +1574,13 @@ impl Air {
     /// once it has as many awaiting one as it may.
     async fn flush(&mut self) -> Result<(), MobileStagingAirError> {
         let deadline = Instant::now() + FLUSH_WAIT;
-        while self.pump(SPEAKER) == 0 {
+        loop {
+            // Counted wherever it was pumped: the air may have pumped it
+            // while it waited on something else.
+            self.pump(SPEAKER);
+            if self.spoken > 0 {
+                break;
+            }
             tokio::select! {
                 wake = self.wake_queue.recv() => match wake {
                     Some(SPEAKER) => {}
@@ -1598,6 +1650,17 @@ impl Air {
                 self.reset().await;
                 Ok(())
             }
+            #[cfg(test)]
+            Order::SayLosingOneOn {
+                address,
+                bodies: [first, lost, last],
+            } => {
+                for (body, lose) in [(first, false), (lost, true), (last, false)] {
+                    self.speak(address.clone(), MobileChatSendRequest::Text { body }, lose)
+                        .await?;
+                }
+                Ok(())
+            }
         }
     }
 
@@ -1627,6 +1690,7 @@ impl Air {
         // Anything the peer already has queued goes out first, and is not
         // taken for this send.
         self.pump(SPEAKER);
+        self.spoken = 0;
         session.send_chat(address, request).await.map_err(refused)?;
         self.losing = lose;
         let flushed = self.flush().await;
@@ -1754,11 +1818,22 @@ fn phone_record(key: &[u8; 32]) -> MobilePeerRegistrationRecord {
     }
 }
 
-/// Both staged channels' keys, so every peer can read and speak on both.
+/// Both staged channels' keys, so every peer can read and speak on both;
+/// in tests, `EMERGENCY`'s too.
 fn channel_keys() -> Vec<Vec<u8>> {
     let named =
         umsh_node::Channel::named(CHANNEL_NAME).expect("the staged channel name derives a key");
-    vec![PRIVATE_CHANNEL_KEY.to_vec(), named.key().0.to_vec()]
+    #[allow(unused_mut)]
+    let mut keys = vec![PRIVATE_CHANNEL_KEY.to_vec(), named.key().0.to_vec()];
+    #[cfg(test)]
+    keys.push(
+        umsh_node::Channel::named("emergency")
+            .expect("a well-known name derives a key")
+            .key()
+            .0
+            .to_vec(),
+    );
+    keys
 }
 
 /// The named staged channel's conversation address.

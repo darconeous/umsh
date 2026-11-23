@@ -8,6 +8,7 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
@@ -210,13 +211,14 @@ class ThreadScreenTest {
     private fun within(key: String) = hasAnyAncestor(hasTestTag(Tags.message(key)))
 
     /**
-     * `composer.svg` boards 1–2: Send arrives with text and stays inert
-     * (D2(b)); the draft reaches the store and comes back with the thread.
+     * `composer.svg` boards 1–2: Send arrives with text, ready while the
+     * radio carries this phone; the draft reaches the store and comes back
+     * with the thread.
      * That leaving saves it, ahead of the typing pause, is
      * `ThreadViewModelTest.leavingTheThreadSavesItsDraft`.
      */
     @Test
-    fun theComposerKeepsADraftAndSendStaysInert() {
+    fun theComposerKeepsADraft() {
         val runtime = runtime(staging = true)
         show(runtime)
         val conversation = direct(runtime)
@@ -227,7 +229,7 @@ class ThreadScreenTest {
             .getOrNull(SemanticsProperties.ContentDescription).orEmpty()
         assertTrue(fieldName().isNotEmpty())
         compose.onNodeWithTag(Tags.COMPOSER_FIELD).performTextInput("Copy that")
-        compose.onNodeWithTag(Tags.COMPOSER_SEND).assertIsDisplayed().assertIsNotEnabled()
+        compose.onNodeWithTag(Tags.COMPOSER_SEND).assertIsDisplayed().assertIsEnabled()
         assertTrue("${fieldName()}", fieldName().isEmpty())
         compose.onNodeWithTag(Tags.TOP_BAR_BACK).performClick()
         compose.onNodeWithTag(Tags.CONVERSATIONS_ROOT).assertIsDisplayed()
@@ -256,13 +258,13 @@ class ThreadScreenTest {
         // The banner shows in the thread too (`radio-control.svg` board 5). Checked
         // before typing: the test's activity pans for the keyboard, which moves the top bar off screen.
         waitFor { runCatching { compose.onNodeWithTag(Tags.RADIO_BANNER).assertIsDisplayed() }.isSuccess }
-        // The field stays usable, and Send arrives dimmed.
+        // The field stays usable, and Send arrives blocked.
         compose.onNodeWithTag(Tags.COMPOSER_FIELD).performTextInput("Copy that")
         compose.onNodeWithTag(Tags.COMPOSER_SEND).assertIsNotEnabled()
         air.setLinkUp(true)
         waitFor { compose.onAllNodesWithTag(Tags.COMPOSER_BLOCKED).fetchSemanticsNodes().isEmpty() }
         waitFor { runtime.radio.value?.carriesThisPhone == true }
-        compose.onNodeWithTag(Tags.COMPOSER_SEND).assertIsNotEnabled()
+        compose.onNodeWithTag(Tags.COMPOSER_SEND).assertIsEnabled()
         assertEquals("Copy that", compose.onNodeWithTag(Tags.COMPOSER_FIELD).fetchSemanticsNode().config[SemanticsProperties.EditableText].text)
     }
 
@@ -306,7 +308,15 @@ class ThreadScreenTest {
                     LocalAppCoreHost provides fresh.host,
                     LocalWindowOverride provides TestWindows.Phone,
                 ) {
-                    ThreadScreen(UmshKey.Thread(unread.address), current = current.value, onBack = null)
+                    ThreadScreen(
+                        UmshKey.Thread(unread.address),
+                        current = current.value,
+                        onBack = null,
+                        onLeave = {},
+                        onOpenDetails = {},
+                        onOpenRadio = {},
+                        onChooseRadio = {},
+                    )
                 }
             }
         }

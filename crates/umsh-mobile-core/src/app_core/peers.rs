@@ -323,10 +323,13 @@ impl Worker {
         }
         // It goes out over the channel, so `EMERGENCY`'s warning comes
         // first, whatever the radio's state.
-        self.emergency_refusal(&owner, &address)?;
+        let emergency = self.emergency_refusal(&owner, &address)?;
         let session = self.radio_session()?;
         match session.request_identity_by_hint(address, hint).await {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                self.emergency_sent(emergency);
+                Ok(())
+            }
             // Joined, but the session does not hold it.
             Err(MobileMeshError::UnknownConversation) => Err(if self.channels.borrow().locked {
                 MobileAppError::Vault {

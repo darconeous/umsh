@@ -20,6 +20,7 @@ import com.voria.umsh.app.AppRuntime
 import com.voria.umsh.app.CoreKind
 import com.voria.umsh.app.FreshHostRule
 import com.voria.umsh.app.HostState
+import com.voria.umsh.app.LocalAppCoreHost
 import com.voria.umsh.app.LocalAppRuntime
 import com.voria.umsh.app.Tags
 import com.voria.umsh.app.TestUmshApplication
@@ -46,6 +47,8 @@ import com.voria.umsh.services.identity.KeystoreSecretVault
 import com.voria.umsh.services.preferences.OnboardingStep
 import com.voria.umsh.services.preferences.PolicyPreferences
 import com.voria.umsh.services.preferences.RuntimePreferences
+import com.voria.umsh.services.radio.BoundRadio
+import com.voria.umsh.services.radio.RadioKind
 import java.io.File
 import java.io.IOException
 import java.time.Clock
@@ -77,8 +80,12 @@ class OnboardingTest {
     private fun waitFor(tag: String) =
         compose.waitUntil(TIMEOUT) { compose.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty() }
 
+    /**
+     * Boards 1–4 and Set up later: a name, then Connect a radio over
+     * Welcome (Back returns to it), then Conversations without a radio.
+     */
     @Test
-    fun aFirstLaunchAsksForANameThenShowsConversations() {
+    fun aFirstLaunchAsksForANameThenARadioThenShowsConversations() {
         fresh.host.ensureRuntime(staging = false)
         val runtime = runBlocking {
             (withTimeout(TIMEOUT) { fresh.host.state.first { it is HostState.Ready } } as HostState.Ready).runtime
@@ -90,10 +97,39 @@ class OnboardingTest {
         compose.onNodeWithTag(Tags.WELCOME_NAME).performTextInput("Juniper")
         compose.onNodeWithTag(Tags.WELCOME_CONTINUE).performClick()
 
+        waitFor(Tags.CONNECT_RADIO)
+        assertEquals(OnboardingStep.ConnectRadio, runtime.onboarding.value)
+        compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        waitFor(Tags.WELCOME_CONTINUE)
+        compose.waitUntil(TIMEOUT) { runtime.onboarding.value == OnboardingStep.Welcome }
+        compose.onNodeWithTag(Tags.WELCOME_CONTINUE).performClick()
+        waitFor(Tags.CONNECT_RADIO)
+        compose.onNodeWithTag(Tags.SET_UP_LATER).performClick()
+
         waitFor(Tags.CONVERSATIONS_ROOT)
         assertEquals(OnboardingStep.Done, runtime.onboarding.value)
         assertEquals("Juniper", runtime.identity.value.advertisedName)
         assertEquals("Juniper", runBlocking { runtime.core.state(true).advertisedName })
+    }
+
+    /** A radio already set up (bound before Welcome finished): Continue goes straight to Conversations. */
+    @Test
+    fun continueWithARadioSetUpSkipsConnectARadio() {
+        fresh.host.ensureRuntime(staging = false)
+        val runtime = runBlocking {
+            (withTimeout(TIMEOUT) { fresh.host.state.first { it is HostState.Ready } } as HostState.Ready).runtime
+        }
+        // Bound without connecting: only the registry says a radio is set up.
+        runBlocking {
+            fresh.host.preferences.radioRegistry.bind(BoundRadio(RadioKind.Tcp, "10.0.2.2:21838", autoConnect = false))
+        }
+        compose.setContent { AppRoot(fresh.host) }
+        waitFor(Tags.WELCOME_CONTINUE)
+        compose.onNodeWithTag(Tags.WELCOME_CONTINUE).performClick()
+
+        waitFor(Tags.CONVERSATIONS_ROOT)
+        compose.onNodeWithTag(Tags.CONNECT_RADIO).assertDoesNotExist()
+        assertEquals(OnboardingStep.Done, runtime.onboarding.value)
     }
 
     /**
@@ -199,7 +235,8 @@ class OnboardingTest {
 
     private fun showWelcome(runtime: AppRuntime) {
         compose.setContent {
-            CompositionLocalProvider(LocalAppRuntime provides runtime) {
+            // The test's host stands in for the app's: Continue reads its (empty) radio registry.
+            CompositionLocalProvider(LocalAppRuntime provides runtime, LocalAppCoreHost provides fresh.host) {
                 UmshTheme(fallbackScheme = true) { NoticeHost { WelcomeScreen() } }
             }
         }

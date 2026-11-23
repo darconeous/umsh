@@ -2,6 +2,7 @@ package com.voria.umsh.features.conversations
 
 import com.voria.umsh.models.ChatMessage
 import com.voria.umsh.models.DeliveryState
+import com.voria.umsh.models.MessageActions
 import com.voria.umsh.models.MessageRef
 import com.voria.umsh.models.NodeHint
 import com.voria.umsh.models.Octets
@@ -38,6 +39,8 @@ object ThreadFixtures {
         repeats: Repeats? = null,
         reactions: List<Reaction> = emptyList(),
         quote: Quote? = null,
+        originalBody: String? = null,
+        actions: MessageActions = MessageActions(),
     ) = ChatMessage(
         ref = MessageRef("s", handle),
         cursor = TranscriptCursor(at, handle),
@@ -55,7 +58,7 @@ object ThreadFixtures {
         isEditOfUnknown = editOfUnknown,
         isStatus = status,
         isForwardSecret = forwardSecret,
-        originalBody = null,
+        originalBody = originalBody,
         senderAddress = senderAddress,
         senderHint = senderHint?.let(::Octets),
         senderHandle = senderHandle,
@@ -65,6 +68,7 @@ object ThreadFixtures {
         quote = quote,
         repeats = repeats,
         reviseUntilMs = null,
+        actions = actions,
     )
 
     fun reaction(

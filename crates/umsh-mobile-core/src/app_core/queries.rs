@@ -26,7 +26,9 @@ impl MobileAppCore {
             .store
             .application_records(owner.clone(), conversations_only)?;
         let advertised_name = self.store.local_advertised_name(owner)?;
-        let certified = self.shared.snapshot().emergency_certified;
+        let certified = self
+            .shared
+            .emergency_certified_at(self.clock.monotonic_ms());
         let lists = mapping::lists(records, conversations_only, certified);
         Ok(MobileAppStateRecord {
             peers: lists.peers,

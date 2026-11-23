@@ -98,7 +98,7 @@ struct RouterHintRow: View {
         // A named node's title is its name, so the hint moves to the detail;
         // an unnamed one is titled by the hint.
         let hintLabel = String(
-            localized: "Router hint \(hint.text)",
+            localized: "Repeater hint \(hint.text)",
             comment: "A repeater known only by the short hint a route carries. The placeholder is the hint, such as 7N*."
         )
         let lines = (named == nil ? [] : [hintLabel]) + detail

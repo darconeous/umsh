@@ -47,8 +47,8 @@
     <string name="reason_send_failed">The radio could not send it.</string>
     <!-- Firmware update: the device has no such update mode. -->
     <string name="reason_dfu_unsupported">This firmware does not support the requested update mode.</string>
-    <!-- Firmware update: the device refused. The placeholder is a protocol status name, not translated. -->
-    <string name="reason_dfu_refused">The device refused the update: <xliff:g id="status" example="BUSY">%1$s</xliff:g>.</string>
+    <!-- Firmware update: the device refused. The placeholder says why (ulcp_status_*). -->
+    <string name="reason_dfu_refused">The device refused the update: <xliff:g id="status" example="Radio busy">%1$s</xliff:g>.</string>
     <!-- Firmware update: the device never confirmed entering its update mode. -->
     <string name="reason_dfu_unconfirmed">The device did not confirm the update.</string>
     <!-- A send was refused because the EMERGENCY channel's warning has not been accepted. EMERGENCY is the channel's name and is not translated. -->
@@ -84,6 +84,10 @@
     <string name="channel_private">Private channel</string>
     <!-- TalkBack action on a node's address: copies it. -->
     <string name="action_copy_address">Copy address</string>
+    <!-- TalkBack action on a message details row: copies the sender's hint. -->
+    <string name="action_copy_hint">Copy hint</string>
+    <!-- Brief notice after a hint was copied. Shown on Android 12 and earlier only. -->
+    <string name="copied_hint">Hint copied</string>
     <!-- Brief notice after an address was copied. Shown on Android 12 and earlier only. -->
     <string name="copied_address">Address copied</string>
     <!-- Button: puts a failure's full error on the clipboard. -->
@@ -244,8 +248,41 @@
     <string name="banner_reason_radio_busy">Radio busy</string>
     <!-- Why the radio refused a transmission: its queue had no room. -->
     <string name="banner_reason_queue_full">Radio queue full</string>
-    <!-- Why the radio refused a transmission, for a status this app has no words for. The placeholder is the radio's status name, such as INVALID_STATE. -->
-    <string name="banner_reason_status">Status <xliff:g id="status" example="INVALID_STATE">%1$s</xliff:g></string>
+    <!--
+        What a radio's status code means, where a radio or device refused a
+        request; each stands alone, and is also put into a sentence after a
+        colon. Codes these do not cover read as ulcp_status_code.
+    -->
+    <!-- The radio failed without saying how. -->
+    <string name="ulcp_status_failure">Radio error</string>
+    <!-- The radio does not support what was asked. -->
+    <string name="ulcp_status_unimplemented">Not supported</string>
+    <!-- The radio refused a value in the request. -->
+    <string name="ulcp_status_invalid_argument">Invalid value</string>
+    <!-- The radio is not in a state to do what was asked. -->
+    <string name="ulcp_status_invalid_state">Not ready</string>
+    <!-- The radio does not know the command. -->
+    <string name="ulcp_status_invalid_command">Unknown command</string>
+    <!-- The radio hit an internal fault. -->
+    <string name="ulcp_status_internal_error">Internal error</string>
+    <!-- The radio could not read the request. -->
+    <string name="ulcp_status_parse_error">Unreadable request</string>
+    <!-- The radio is already doing what was asked. -->
+    <string name="ulcp_status_in_progress">Already in progress</string>
+    <!-- The radio does not know the setting. -->
+    <string name="ulcp_status_prop_not_found">Unknown setting</string>
+    <!-- What was asked was already the case. -->
+    <string name="ulcp_status_already">Already done</string>
+    <!-- The radio has no such item. -->
+    <string name="ulcp_status_item_not_found">Not found</string>
+    <!-- The radio does not allow what was asked. -->
+    <string name="ulcp_status_not_permitted">Not permitted</string>
+    <!-- The radio does not know the channel. -->
+    <string name="ulcp_status_channel_not_found">Unknown channel</string>
+    <!-- No acknowledgment arrived before the radio stopped waiting. -->
+    <string name="ulcp_status_no_ack">No acknowledgment</string>
+    <!-- A status code this app has no words for; the placeholder is its number. -->
+    <string name="ulcp_status_code">Status <xliff:g id="code" example="42">%1$d</xliff:g></string>
     <!-- Common dialog buttons. -->
     <!-- Closes a dialog without doing what it asks. -->
     <string name="dialog_cancel">Cancel</string>
@@ -320,6 +357,12 @@
     <!-- Pairing failed: the radio did not answer. -->
     <string name="connect_failed">Could not connect to that radio. Check that it is powered on and nearby.</string>
 
+    <!-- Choose a radio (radio-picker.svg). -->
+    <!-- Page title: choosing another companion radio, or the first one after onboarding. -->
+    <string name="choose_radio_title">Choose a radio</string>
+    <!-- Under the companion radio set up now, pinned at the top of Choose a radio: it is connected. -->
+    <string name="radio_row_connected">Connected</string>
+
     <!-- Your identity. -->
     <!-- Action under the identity header: shows this phone's QR code. -->
     <string name="identity_qr_code">QR code</string>
@@ -357,6 +400,20 @@
         <item quantity="one">Every minute</item>
         <item quantity="other">Every <xliff:g id="count" example="20">%d</xliff:g> minutes</item>
     </plurals>
+    <!-- Switch: this phone's identity carries its location, as an area. -->
+    <string name="share_location">Share location</string>
+    <!-- Share location's value, an adjective: no location is shared. -->
+    <string name="share_location_off">Off</string>
+    <!-- Share location's value: the size of the area disclosed. The placeholder is a length, such as 38 m. -->
+    <string name="share_location_area">An area about <xliff:g id="size" example="38 m">%1$s</xliff:g> across</string>
+    <!-- Row and dialog title, a noun: how small an area the shared location names. -->
+    <string name="precision">Precision</string>
+    <!-- Precision's value and each dialog choice. The placeholder is a length, such as 611 m. -->
+    <string name="precision_about">About <xliff:g id="size" example="611 m">%1$s</xliff:g></string>
+    <!-- Under Share location: Android allows no location for this app, so none is shared. -->
+    <string name="location_off">Location is off for UMSH</string>
+    <!-- In the Precision dialog: Android allows only approximate location, so finer sizes are unavailable. -->
+    <string name="precise_location_off">Precise location is off for UMSH</string>
     <!-- Section header: this phone's private key. -->
     <string name="section_key">Key</string>
     <!-- Row: where Android keeps the key that protects this phone's identity. -->
@@ -557,9 +614,9 @@
         <item quantity="one">Heard a repeat</item>
         <item quantity="other">Heard <xliff:g id="count" example="3">%d</xliff:g> repeats</item>
     </plurals>
-    <!-- Under my message: one repeater was heard carrying it; its name or router hint. -->
+    <!-- Under my message: one repeater was heard carrying it; its name or repeater hint. -->
     <string name="caption_sent_via_one">Sent via <xliff:g id="repeater" example="Spencer Butte">%1$s</xliff:g></string>
-    <!-- Under my message: several repeaters were heard carrying it; the first one's name or router hint, then how many others. -->
+    <!-- Under my message: several repeaters were heard carrying it; the first one's name or repeater hint, then how many others. -->
     <plurals name="caption_sent_via_others">
         <item quantity="one">Sent via <xliff:g id="repeater" example="Spencer Butte">%1$s</xliff:g> and <xliff:g id="count" example="1">%2$d</xliff:g> other</item>
         <item quantity="other">Sent via <xliff:g id="repeater" example="Spencer Butte">%1$s</xliff:g> and <xliff:g id="count" example="2">%2$d</xliff:g> others</item>
@@ -618,6 +675,160 @@
     <string name="action_send">Send</string>
     <!-- TalkBack: the Send button while the companion radio's link is coming up. -->
     <string name="send_unavailable_connecting">Send unavailable while the radio connects.</string>
+    <!-- Button beside "Connect a radio to send": opens the companion radio's page. -->
+    <string name="composer_connect_radio">Connect radio</string>
+    <!-- TalkBack: the composer's check button while editing a message; saves the new words. -->
+    <string name="edit_confirm">Save edit</string>
+    <!-- Strip above the composer while editing one of my messages. -->
+    <string name="editing_message">Editing message</string>
+    <!-- Strip above the composer while replying; whom the quoted message is from. -->
+    <string name="replying_to">Replying to <xliff:g id="sender" example="Ridge Medic">%1$s</xliff:g></string>
+    <!-- TalkBack: the close button on the reply strip. -->
+    <string name="cancel_reply">Cancel reply</string>
+    <!-- TalkBack: the close button on the editing strip. -->
+    <string name="cancel_edit">Cancel edit</string>
+    <!-- Alert title: a message did not go out. -->
+    <string name="message_not_sent_title">Message not sent</string>
+    <!-- Alert body: Send was tapped while the radio was still connecting. -->
+    <string name="message_not_sent_connecting">The companion radio is still connecting. Your text is still in the composer.</string>
+    <!-- Alert line under why a message was refused. -->
+    <string name="message_text_kept">Your text is still in the composer.</string>
+    <!-- Alert title: a message was kept on this phone but did not go out. -->
+    <string name="message_submitted_title">Message submitted</string>
+    <!-- Alert body: a message kept as not delivered. "Not delivered" is the caption it now carries. -->
+    <string name="message_submitted_recorded">It was saved but could not go out. It\'s marked Not delivered.</string>
+    <!-- Alert body: a message that could not go out, and whose failure could not be saved either. -->
+    <string name="message_submitted_unrecorded">It could not go out, and that could not be saved. It may show as sending until UMSH restarts.</string>
+    <!-- Failure dialog title: new words for a message did not go out. -->
+    <string name="edit_not_sent_title">Edit not sent</string>
+    <!-- Failure dialog title: taking back a message did not go out. -->
+    <string name="deletion_not_sent_title">Deletion not sent</string>
+    <!-- Failure dialog title: a reaction did not go out. -->
+    <string name="reaction_not_sent_title">Reaction not sent</string>
+    <!-- Failure dialog title: an undelivered message was not sent again. -->
+    <string name="resend_not_sent_title">Not resent</string>
+    <!-- Failure dialog title: asking for missing messages did not go out. -->
+    <string name="missing_not_requested_title">Messages not requested</string>
+    <!-- Failure dialog title: a request (a reaction, a deletion, a resend) could not go out. -->
+    <string name="request_not_sent_title">Not sent</string>
+    <!-- The EMERGENCY warning's title, a red sheet before a transmission on the EMERGENCY channel. -->
+    <string name="emergency_title">Emergencies only</string>
+    <!-- The EMERGENCY warning. The placeholder is the channel's name, EMERGENCY, which is not translated. -->
+    <string name="emergency_body"><xliff:g id="channel" example="EMERGENCY">%1$s</xliff:g> is only for reporting or responding to genuine emergencies involving potential loss of life or significant imminent property damage.</string>
+    <!-- The EMERGENCY warning: what sending there gives away. -->
+    <string name="emergency_body_public">This channel is not encrypted and your identity will be made public.</string>
+    <!-- Button on the EMERGENCY warning: certify the message concerns a genuine emergency, and send it. -->
+    <string name="emergency_certify_send">Certify and send</string>
+    <!-- Button on the EMERGENCY warning: certify an action (a reaction, a deletion, a request) concerns a genuine emergency, and go on with it. -->
+    <string name="emergency_certify">Certify</string>
+    <!-- TalkBack: the retry button beside my message that was not delivered. -->
+    <string name="retry_message">Retry sending</string>
+    <!-- Dialog title: send a failed message again as itself, within its revise window. -->
+    <string name="retry_title">Retry sending message?</string>
+    <!-- Dialog button: send the failed message again as itself. -->
+    <string name="retry_confirm">Try again</string>
+    <!-- Dialog title: send a failed message again as a new message. -->
+    <string name="resend_title">Resend this message?</string>
+    <!-- Dialog button: send the failed message again as a new message. -->
+    <string name="resend_confirm">Resend</string>
+    <!-- Dialog button: send the failed message again without forward secrecy. -->
+    <string name="send_without_forward_secrecy">Send without forward secrecy</string>
+    <!-- Message menu: reply to the message. -->
+    <string name="menu_reply">Reply</string>
+    <!-- Message menu: copy the message's text. -->
+    <string name="menu_copy">Copy</string>
+    <!-- Message menu: show my edited message's original words. -->
+    <string name="menu_view_original">View original</string>
+    <!-- Message menu: send my failed message again as itself. -->
+    <string name="menu_try_again">Try again</string>
+    <!-- Message menu: send my failed message again as a new message. -->
+    <string name="menu_resend">Resend</string>
+    <!-- Message menu: give my message new words. -->
+    <string name="menu_edit">Edit</string>
+    <!-- Message menu: open the message's details page. -->
+    <string name="menu_details">Details</string>
+    <!-- Message menu: take back my message, for everyone. -->
+    <string name="menu_delete">Delete</string>
+    <!-- TalkBack action on a message: opens its menu with the reactions. -->
+    <string name="menu_react">React</string>
+    <!-- TalkBack: long press on a message opens its menu. -->
+    <string name="message_actions">Message actions</string>
+    <!-- TalkBack: a reaction in the message menu; the emoji. -->
+    <string name="react_with">React with <xliff:g id="emoji" example="👍">%1$s</xliff:g></string>
+    <!-- Shown after a message's text is copied, on Android versions that do not confirm a copy themselves. -->
+    <string name="message_copied">Message copied</string>
+    <!-- Dialog title over my edited message's original words. -->
+    <string name="original_message_title">Original message</string>
+    <!-- Dialog title: delete my message for everyone. -->
+    <string name="delete_message_title">Delete this message?</string>
+    <!-- Dialog body: deleting a direct message; the peer's name. -->
+    <string name="delete_message_direct">A deletion is broadcast to <xliff:g id="peer" example="Ridge Medic">%1$s</xliff:g> and cannot be undone.</string>
+    <!-- Dialog body: deleting a channel message. -->
+    <string name="delete_message_channel">A deletion is broadcast to everyone in this channel and cannot be undone.</string>
+    <!-- Dialog button: delete my message for everyone. -->
+    <string name="delete_message_confirm">Delete for everyone</string>
+    <!-- TalkBack click label on a gap: asks the sender for the missing messages. -->
+    <string name="gap_request">Ask for missing messages</string>
+
+    <!-- Message details page. -->
+    <!-- Top bar title of a message's details page. -->
+    <string name="message_details_title">Message details</string>
+    <!-- Message details section header: the message itself. -->
+    <string name="details_section_message">Message</string>
+    <!-- Message details row: whether it was sent or received. -->
+    <string name="details_direction">Direction</string>
+    <!-- Message details value: I sent it. -->
+    <string name="details_sent">Sent</string>
+    <!-- Message details value: I received it. -->
+    <string name="details_received">Received</string>
+    <!-- Message details row: when it was sent or received. -->
+    <string name="details_time">Time</string>
+    <!-- Message details row: the message's identifier on the air. -->
+    <string name="details_wire_id">Wire ID</string>
+    <!-- Message details section header: the repeaters heard carrying my message. -->
+    <string name="details_section_repeated_by">Repeated by</string>
+    <!-- Message details row: a repeater known only by its repeater hint. -->
+    <string name="repeater_hint_row">Repeater hint <xliff:g id="hint" example="9v*">%1$s</xliff:g></string>
+    <!-- Message details row: repeats heard from repeaters that named no hint. -->
+    <string name="repeater_unidentified">Unidentified</string>
+    <!-- Message details: no repeater was heard carrying my message. -->
+    <string name="details_none_heard">None heard</string>
+    <!-- Message details section header: who sent the received message. -->
+    <string name="details_section_sender">Sender</string>
+    <!-- Message details row: the sender's node hint. -->
+    <string name="details_hint">Hint</string>
+    <!-- Message details row: the sender's address. -->
+    <string name="details_address">Address</string>
+    <!-- Message details section header: how the message was received. -->
+    <string name="details_section_reception">Reception</string>
+    <!-- Message details row: how many hops the message took. -->
+    <string name="details_hop_count">Hop count</string>
+    <!-- Message details value: one hop, straight from the sender. -->
+    <string name="details_hops_direct"><xliff:g id="count" example="1">%1$s</xliff:g> (direct)</string>
+    <!-- Message details value: the hop count is not known. -->
+    <string name="details_hops_unknown">Unknown source route</string>
+    <!-- Message details row: received signal strength. -->
+    <string name="details_signal">Signal</string>
+    <!-- Message details value: signal strength in decibel-milliwatts. -->
+    <string name="details_dbm"><xliff:g id="value" example="−84">%1$s</xliff:g> dBm</string>
+    <!-- Message details row: signal-to-noise ratio. -->
+    <string name="details_snr">Signal-to-noise</string>
+    <!-- Message details value: a ratio in decibels. -->
+    <string name="details_db"><xliff:g id="value" example="8.0">%1$s</xliff:g> dB</string>
+    <!-- Message details row: the radio's link quality reading. -->
+    <string name="details_link_quality">Link quality</string>
+    <!-- Message details row: whether the sender was authenticated. -->
+    <string name="details_source">Source</string>
+    <!-- Message details value: the sender was authenticated. -->
+    <string name="details_authenticated">Authenticated</string>
+    <!-- Message details value: the sender was not authenticated. -->
+    <string name="details_unauthenticated">Unauthenticated</string>
+    <!-- Message details section header: the repeaters a received message came through, from the sender toward this phone. -->
+    <string name="details_section_route">Route</string>
+    <!-- Message details footer under repeaters named from their hints. -->
+    <string name="repeater_hint_footer">Repeater names are matched by a two-byte hint and may not be the node shown.</string>
+    <!-- Message details: a received message stored before reception details were kept. -->
+    <string name="details_no_reception">This message was recorded before reception details were kept.</string>
 
     <!-- Peers list. -->
     <!-- Peers list section: favorite nodes. -->
@@ -628,4 +839,397 @@
     <string name="peers_section_saved">Saved</string>
     <!-- Peers list section: this phone's own companion radio. -->
     <string name="peers_section_companion_radio">Companion radio</string>
+
+    <!--
+        Radio problems: the reason line under a radio's state, and in a
+        failure dialog about the radio. Each says what happened, never what
+        to do about it.
+    -->
+    <!-- The radio's link went down. -->
+    <string name="radio_problem_disconnected">The radio disconnected.</string>
+    <!-- The radio sent something that is not a valid protocol frame. -->
+    <string name="radio_problem_invalid_frame">The radio sent an invalid ULCP frame.</string>
+    <!-- The radio sent a value this phone's session could not use. -->
+    <string name="radio_problem_unusable_value">The radio sent a value the session could not use.</string>
+    <!-- The protocol session with the radio could not start. -->
+    <string name="radio_problem_session_start_failed">The ULCP session could not start.</string>
+    <!-- The radio stopped partway through reporting its state. -->
+    <string name="radio_problem_synchronization_stalled">The companion radio did not finish synchronizing.</string>
+    <!-- The radio would not take this phone as its host. -->
+    <string name="radio_problem_claim_failed">The radio could not replace its configured host.</string>
+    <!-- The radio refused an operation. The operation is the app's diagnostic label for it, not translated; the status says why (ulcp_status_*), then its code. -->
+    <string name="radio_problem_operation_rejected"><xliff:g id="operation" example="SET_PROP">%1$s</xliff:g> failed: <xliff:g id="status" example="Invalid value">%2$s</xliff:g> (<xliff:g id="code" example="3">%3$d</xliff:g>).</string>
+    <!-- The radio answered in a form this app cannot read. -->
+    <string name="radio_problem_unrecognized_answer">The radio answered in a form this app does not understand. Its firmware and this app may be out of step.</string>
+    <!-- The radio stayed busy, so a message was not transmitted. -->
+    <string name="radio_problem_radio_busy">The radio remained busy, so the message was not transmitted.</string>
+    <!-- The radio refused to transmit. The placeholder says why (ulcp_status_* or a banner_reason_*). -->
+    <string name="radio_problem_transmission_rejected">The radio rejected the transmission: <xliff:g id="status" example="Duty cycle limit">%1$s</xliff:g>.</string>
+    <!-- The radio never said what happened to a transmission. -->
+    <string name="radio_problem_transmission_unreported">The radio did not report what happened to a transmission.</string>
+    <!-- This phone's session refused to send a frame. -->
+    <string name="radio_problem_transmission_unsendable">The ULCP session rejected an outbound frame before transmission.</string>
+    <!-- The radio could not be switched on by itself. -->
+    <string name="radio_problem_auto_enable_failed">The companion radio could not be enabled automatically.</string>
+    <!-- A connection to the radio failed, for a reason with no words of its own. -->
+    <string name="radio_problem_connection_failed">The radio connection failed.</string>
+    <!-- This phone's session made a frame that could not be sent. -->
+    <string name="radio_problem_unsendable_frame">The ULCP session produced an unsendable frame.</string>
+    <!-- The radio's link is gone. -->
+    <string name="radio_problem_link_lost">The radio is no longer connected.</string>
+    <!-- The radio never confirmed a Bluetooth write. -->
+    <string name="radio_problem_write_unacknowledged">The radio did not acknowledge a Bluetooth write.</string>
+    <!-- Connecting over Bluetooth stopped before the radio was usable. -->
+    <string name="radio_problem_attachment_incomplete">The radio did not finish Bluetooth attachment.</string>
+    <!-- The radio offers no ULCP service over Bluetooth. -->
+    <string name="radio_problem_service_missing">The radio does not expose the ULCP service.</string>
+    <!-- The radio's ULCP service is not one this app can use. -->
+    <string name="radio_problem_service_incompatible">The radio has an incompatible ULCP service.</string>
+    <!-- The radio refused to attach, for example because it no longer holds this phone's pairing. -->
+    <string name="radio_problem_attachment_refused">The radio refused the ULCP attachment.</string>
+    <!-- The radio has nothing this phone can write frames to. -->
+    <string name="radio_problem_endpoint_unwritable">The radio has no writable ULCP endpoint.</string>
+    <!-- The radio asks for a way of writing that this app does not use. -->
+    <string name="radio_problem_write_mode_unsupported">The radio requires an unsupported write mode.</string>
+    <!-- No companion radio was found nearby. -->
+    <string name="radio_problem_no_radio_found">No companion radio was found.</string>
+    <!-- There is no remembered radio to connect to again. -->
+    <string name="radio_problem_no_saved_radio">No saved companion radio is available to reconnect.</string>
+    <!-- Android's Bluetooth does not know the remembered radio. -->
+    <string name="radio_problem_saved_radio_unknown">The saved companion radio is not known to Bluetooth.</string>
+    <!-- Removing the radio from this phone failed. -->
+    <string name="radio_problem_removal_failed">The radio could not be removed.</string>
+    <!-- UMSH is not allowed to use Bluetooth (Nearby devices). -->
+    <string name="radio_problem_bluetooth_unauthorized">Bluetooth permission is denied.</string>
+    <!-- This phone has no Bluetooth that the app can use. -->
+    <string name="radio_problem_bluetooth_unsupported">Bluetooth is unavailable on this device.</string>
+    <!-- Bluetooth is turned off. -->
+    <string name="radio_problem_bluetooth_off">Bluetooth is turned off.</string>
+    <!-- Bluetooth is restarting. -->
+    <string name="radio_problem_bluetooth_resetting">Bluetooth is restarting.</string>
+    <!-- Bluetooth is turning on. -->
+    <string name="radio_problem_bluetooth_starting">Bluetooth is starting.</string>
+    <!-- Bluetooth is unavailable for another reason. -->
+    <string name="radio_problem_bluetooth_unavailable">Bluetooth is unavailable.</string>
+    <!-- Developer builds: the bridge that stands in for a radio could not be reached. -->
+    <string name="radio_problem_bridge_unreachable">The radio bridge is unreachable.</string>
+    <!-- Developer builds: the bridge that stands in for a radio is not accepting connections yet. -->
+    <string name="radio_problem_bridge_waiting">Waiting for the radio bridge.</string>
+    <!-- Developer builds: the connection to the bridge failed. -->
+    <string name="radio_problem_bridge_failed">The connection to the radio failed.</string>
+    <!-- Developer builds: the bridge closed the connection. -->
+    <string name="radio_problem_bridge_closed">The radio bridge closed the connection.</string>
+    <!-- The radio on the local network stopped. -->
+    <string name="radio_problem_local_radio_stopped">The local network radio stopped.</string>
+    <!-- The radio on the local network is not running. -->
+    <string name="radio_problem_local_radio_not_running">The local network radio is not running.</string>
+    <!-- The radio on the local network closed the connection. -->
+    <string name="radio_problem_local_radio_closed">The local network radio closed the connection.</string>
+    <!-- The radio on the local network is held by something else. -->
+    <string name="radio_problem_local_radio_in_use">The local network radio is in use elsewhere.</string>
+    <!-- The radio on the local network could not start. -->
+    <string name="radio_problem_local_radio_unavailable">The local network radio could not start.</string>
+    <!-- Access to an administered radio was removed in Android's settings. -->
+    <string name="radio_problem_access_removed">Access to this radio was removed in Settings.</string>
+    <!-- Connecting to the radio stopped before it was usable. -->
+    <string name="radio_problem_connection_incomplete">The radio did not finish connecting.</string>
+
+    <!--
+        The radio notification: the foreground service's, in the Radio
+        connection channel. One notification, changed in place.
+    -->
+    <!-- Notification channel: the companion radio's ongoing connection. Shown in Android's notification settings. -->
+    <string name="notification_channel_radio">Radio connection</string>
+    <!-- Notification title: the companion radio is connected; its name. -->
+    <string name="radio_notif_connected">Connected to <xliff:g id="radio" example="T1000-E">%1$s</xliff:g></string>
+    <!-- Notification title: the companion radio is connected, before it has reported a name. -->
+    <string name="radio_notif_connected_unnamed">Connected to the radio</string>
+    <!-- Notification title: the companion radio is connecting; its name. -->
+    <string name="radio_notif_connecting">Connecting to <xliff:g id="radio" example="T1000-E">%1$s</xliff:g></string>
+    <!-- Notification title: the companion radio is connecting, before it has reported a name. -->
+    <string name="radio_notif_connecting_unnamed">Connecting to the radio</string>
+    <!-- Notification text: the radio's battery level, such as "Battery 78%". -->
+    <string name="radio_notif_battery">Battery <xliff:g id="percent" example="78%">%1$s</xliff:g></string>
+    <!-- Notification text: the radio is charging, at this level. -->
+    <string name="radio_notif_charging">Charging <xliff:g id="percent" example="78%">%1$s</xliff:g></string>
+    <!-- Notification text: the radio runs on external power. -->
+    <string name="radio_notif_external_power">External power</string>
+    <!-- Notification title: the link to the companion radio was lost, and the app is bringing it back; its name. -->
+    <string name="radio_notif_reconnecting">Reconnecting to <xliff:g id="radio" example="T1000-E">%1$s</xliff:g></string>
+    <!-- Notification title: as radio_notif_reconnecting, before the radio has reported a name. -->
+    <string name="radio_notif_reconnecting_unnamed">Reconnecting to the radio</string>
+    <!-- Notification title: the companion radio is out of reach, and the app waits for it to appear; its name. -->
+    <string name="radio_notif_waiting">Waiting for <xliff:g id="radio" example="T1000-E">%1$s</xliff:g></string>
+    <!-- Notification title: as radio_notif_waiting, before the radio has reported a name. -->
+    <string name="radio_notif_waiting_unnamed">Waiting for the radio</string>
+    <!-- Notification text: the radio's last battery reading before the link went, and how long ago it was taken. -->
+    <string name="radio_notif_last_battery">Last battery <xliff:g id="percent" example="78%">%1$s</xliff:g>, <xliff:g id="age" example="2 min. ago">%2$s</xliff:g></string>
+    <!-- Notification action, a verb: stops waiting for the companion radio. -->
+    <string name="radio_notif_stop">Stop</string>
+    <!-- Button, a verb: disconnects from the companion radio. -->
+    <string name="radio_disconnect">Disconnect</string>
+
+    <!-- TalkBack clause: a saved radio is out of reach, and the app waits for it. -->
+    <string name="radio_tb_waiting">waiting for the radio</string>
+    <!-- TalkBack click label of the radio control: opens Radio Detail. -->
+    <string name="radio_show_details">Show radio details</string>
+    <!-- TalkBack click label of the radio control with no radio set up: opens Choose a radio. -->
+    <string name="radio_choose">Choose a radio</string>
+
+    <!-- Banner action: opens Choose a radio, when no radio is set up. -->
+    <string name="banner_action_choose_radio">Choose radio</string>
+    <!-- Banner action: opens Radio Detail. -->
+    <string name="banner_action_details">Details</string>
+    <!-- Banner action: asks Android to turn Bluetooth on. -->
+    <string name="banner_action_turn_on">Turn on</string>
+    <!-- Banner action: asks for the Nearby devices permission, or opens the app's settings once Android stops asking. -->
+    <string name="banner_action_allow">Allow</string>
+
+    <!--
+        Radio Detail (radio-detail.svg): the companion radio's own page.
+    -->
+    <!-- Page title, and the Settings row that opens it. -->
+    <string name="radio_detail_title">Companion radio</string>
+    <!-- Radio Detail state line: the radio's link is up. -->
+    <string name="radio_state_connected">Connected</string>
+    <!-- Radio Detail state line: the link is coming up for the first time. -->
+    <string name="radio_state_connecting">Connecting</string>
+    <!-- Radio Detail state line: the link is coming back after it was lost. -->
+    <string name="radio_state_reconnecting">Reconnecting</string>
+    <!-- Radio Detail state line: a saved radio is out of reach, and the app waits for it. -->
+    <string name="radio_state_waiting">Waiting for the radio</string>
+    <!-- Radio Detail state line: the link is down. -->
+    <string name="radio_state_disconnected">Disconnected</string>
+    <!-- Radio Detail state line: connecting to the radio failed. -->
+    <string name="radio_state_failed">Connection failed</string>
+    <!-- Radio Detail battery line: the live level, discharging. -->
+    <string name="radio_battery_discharging"><xliff:g id="percent" example="78%">%1$s</xliff:g> · Discharging</string>
+    <!-- Radio Detail battery line: the live level, charging. -->
+    <string name="radio_battery_charging"><xliff:g id="percent" example="78%">%1$s</xliff:g> · Charging</string>
+    <!-- Radio Detail battery line: the live level, on external power and not charging. -->
+    <string name="radio_battery_external_power"><xliff:g id="percent" example="100%">%1$s</xliff:g> · External power</string>
+    <!-- Radio Detail battery line: on external power, with no level reported. -->
+    <string name="radio_external_power">External power</string>
+    <!-- Radio Detail battery line: the last level reported before the link went down, and its age. -->
+    <string name="radio_last_battery_short">Last <xliff:g id="percent" example="78%">%1$s</xliff:g>, <xliff:g id="age" example="12 min. ago">%2$s</xliff:g></string>
+    <!-- Button, a verb: stops waiting for a saved radio that is out of reach. -->
+    <string name="radio_stop_waiting">Stop waiting</string>
+    <!-- Button, a verb: connects to the companion radio again. -->
+    <string name="radio_reconnect">Reconnect</string>
+    <!-- Button, a verb: connects to the companion radio. -->
+    <string name="radio_connect">Connect</string>
+    <!-- Button, a verb: the app forgets the companion radio. -->
+    <string name="radio_forget">Forget</string>
+    <!-- Caption under the buttons while waiting for the radio. -->
+    <string name="radio_waiting_caption">Connects on its own when the radio is on and nearby.</string>
+    <!-- Radio Detail section header: the radio's LoRa settings. -->
+    <string name="radio_section_mesh">Mesh radio</string>
+    <!--
+        Radio Detail: the radio's LoRa settings on one line: frequency,
+        bandwidth, spreading factor, coding rate, transmit power. Numbers are
+        formatted for the reader.
+    -->
+    <string name="radio_phy_summary"><xliff:g id="frequency" example="910.525 MHz">%1$s</xliff:g> · <xliff:g id="bandwidth" example="62.5 kHz">%2$s</xliff:g> · SF<xliff:g id="sf" example="7">%3$s</xliff:g> · 4/<xliff:g id="cr" example="5">%4$s</xliff:g> · <xliff:g id="power" example="22">%5$s</xliff:g> dBm</string>
+    <!-- Radio Detail: the radio's frequency and transmit power, for a radio that reports nothing more. -->
+    <string name="radio_phy_summary_short"><xliff:g id="frequency" example="910.525 MHz">%1$s</xliff:g> · <xliff:g id="power" example="22">%2$s</xliff:g> dBm</string>
+    <!--
+        Radio Detail: the vetted LoRa profile the radio's settings match, as
+        the Mesh radio headline. "UMSH" and "MeshCore" are mesh protocol names
+        and stay as they are; one string per profile in the shared table.
+    -->
+    <string name="radio_preset_umsh_us_ca">UMSH USA/Canada</string>
+    <string name="radio_preset_meshcore_us_ca">MeshCore USA/Canada</string>
+    <string name="radio_preset_meshcore_au">MeshCore Australia</string>
+    <string name="radio_preset_meshcore_au_narrow">MeshCore Australia (narrow)</string>
+    <string name="radio_preset_meshcore_au_mid">MeshCore Australia (mid)</string>
+    <string name="radio_preset_meshcore_au_sa_wa">MeshCore Australia: SA, WA</string>
+    <string name="radio_preset_meshcore_au_qld">MeshCore Australia: QLD</string>
+    <string name="radio_preset_meshcore_br">MeshCore Brazil</string>
+    <string name="radio_preset_meshcore_cr">MeshCore Costa Rica</string>
+    <string name="radio_preset_meshcore_eu_narrow">MeshCore EU/UK (narrow)</string>
+    <string name="radio_preset_meshcore_cz_narrow">MeshCore Czech Republic (narrow)</string>
+    <string name="radio_preset_meshcore_eu_433_long_range">MeshCore EU 433 MHz (long range)</string>
+    <string name="radio_preset_meshcore_eu_433_narrow">MeshCore EU 433 MHz (narrow)</string>
+    <string name="radio_preset_meshcore_hu">MeshCore Hungary</string>
+    <string name="radio_preset_meshcore_nl">MeshCore Netherlands</string>
+    <string name="radio_preset_meshcore_nz_narrow">MeshCore New Zealand (narrow)</string>
+    <string name="radio_preset_meshcore_nz_gisborne">MeshCore New Zealand (Gisborne)</string>
+    <string name="radio_preset_meshcore_pt_433">MeshCore Portugal 433</string>
+    <string name="radio_preset_meshcore_pt_868">MeshCore Portugal 868</string>
+    <string name="radio_preset_meshcore_sk">MeshCore Slovakia</string>
+    <string name="radio_preset_meshcore_ch">MeshCore Switzerland</string>
+    <string name="radio_preset_meshcore_vn_narrow">MeshCore Vietnam (narrow)</string>
+    <!-- Radio Detail row: the radio's limit on how much of the hour it may transmit. -->
+    <string name="radio_transmit_limit">Transmit limit</string>
+    <!-- Radio Detail, under Transmit limit: how much of the past hour the radio spent transmitting. -->
+    <string name="radio_transmit_used"><xliff:g id="percent" example="2.1%">%1$s</xliff:g> used in the past hour</string>
+    <!-- Radio Detail value of Transmit limit: the radio has no limit. -->
+    <string name="radio_transmit_limit_none">None</string>
+    <!-- Radio Detail row: whether the radio has its settings saved for its next start. -->
+    <string name="radio_saved_for_restart">Saved for restart</string>
+    <!-- Value of Saved for restart: the newest save is in effect. -->
+    <string name="radio_saved_yes">Yes</string>
+    <!-- Value of Saved for restart: nothing is saved. -->
+    <string name="radio_saved_no">No</string>
+    <!-- Value of Saved for restart: an older save is in effect. -->
+    <string name="radio_saved_fallback">Yes, out of date</string>
+    <!-- Value of Saved for restart: the save could not be read, so the radio started with defaults. -->
+    <string name="radio_saved_unreadable">No—save failed to load</string>
+    <!-- Value of Saved for restart: some saved settings could not be used. -->
+    <string name="radio_saved_partial">Yes, in part</string>
+    <!-- Radio Detail section header: the link to the radio. -->
+    <string name="radio_section_connection">Connection</string>
+    <!-- Radio Detail row: the radio's own device key, shortened. -->
+    <string name="radio_id">Radio ID</string>
+    <!-- Radio Detail section header: what the radio does for this phone while it is away. -->
+    <string name="radio_section_offline">Offline assistance</string>
+    <!-- Radio Detail row: how many receive filters the radio holds for this phone. -->
+    <string name="radio_receive_filters">Receive filters</string>
+    <!-- Radio Detail row: how many of this phone's channels the radio filters for. -->
+    <string name="radio_channel_keys">Channel keys</string>
+    <!-- Radio Detail row: how many of this phone's peers the radio holds keys for. -->
+    <string name="radio_peer_keys">Peer keys</string>
+    <!-- Radio Detail row: frames the radio holds for this phone. -->
+    <string name="radio_queued_frames">Queued frames</string>
+    <!-- Radio Detail row: frames the radio could not hold for this phone. -->
+    <string name="radio_dropped_frames">Dropped frames</string>
+    <!-- Radio Detail row: whether the radio acknowledges messages for this phone. -->
+    <string name="radio_delegated_acks">Delegated acknowledgments</string>
+    <!-- Value of an on/off row. -->
+    <string name="radio_value_on">On</string>
+    <!-- Value of an on/off row. -->
+    <string name="radio_value_off">Off</string>
+    <!-- Radio Detail section header: the radio's own mesh identity. -->
+    <string name="radio_section_identity">Radio identity</string>
+    <!-- Radio Detail section header: restarting, resetting and replacing the radio. -->
+    <string name="radio_section_maintenance">Maintenance</string>
+    <!-- Radio Detail row: opens Choose a radio, to use another companion radio. -->
+    <string name="radio_choose_another">Choose another radio</string>
+    <!-- Radio Detail row: restart the radio; a confirmation follows. -->
+    <string name="radio_restart">Restart radio…</string>
+    <!-- Radio Detail row: erase the radio; a confirmation follows. -->
+    <string name="radio_factory_reset">Factory reset radio…</string>
+    <!-- Confirmation title before forgetting the companion radio. -->
+    <string name="forget_radio_title">Forget this companion radio?</string>
+    <!-- Confirmation body before forgetting the companion radio. -->
+    <string name="forget_radio_body">The app stops reconnecting to this radio and releases it. The radio keeps its own pairing until you pair it again.</string>
+    <!-- Confirmation button: forgets the companion radio. -->
+    <string name="forget_radio_confirm">Forget this radio</string>
+    <!-- Confirmation title before restarting the radio. -->
+    <string name="restart_radio_title">Restart this radio?</string>
+    <!-- Confirmation body before restarting the radio. -->
+    <string name="restart_radio_body">The radio power-cycles and keeps everything it has saved, including its pairing with this phone. It disconnects while it restarts and reconnects on its own.</string>
+    <!-- Confirmation button: restarts the radio. -->
+    <string name="restart_radio_confirm">Restart</string>
+    <!-- Confirmation title before a factory reset. -->
+    <string name="factory_reset_title">Factory reset this radio?</string>
+    <!-- Confirmation body before a factory reset. -->
+    <string name="factory_reset_body">Permanently erases the radio’s saved settings, its device identity, and every Bluetooth pairing, then reboots it to a blank factory state. This cannot be undone—you will need to set the radio up again from scratch.</string>
+    <!-- Confirmation button: erases the radio. -->
+    <string name="factory_reset_confirm">Erase everything and reboot</string>
+    <!-- Failure dialog title: the restart request did not go out. -->
+    <string name="restart_not_sent_title">Restart not sent</string>
+    <!-- Failure dialog title: the factory reset request did not go out. -->
+    <string name="factory_reset_not_sent_title">Factory reset not sent</string>
+    <!-- Failure dialog body for a restart or factory reset. -->
+    <string name="radio_request_not_delivered">The request did not reach the radio.</string>
+    <!-- Why a radio request failed: no radio is attached. -->
+    <string name="reason_radio_unavailable">The radio is not connected.</string>
+    <!-- Why a radio request failed: another request is still waiting. -->
+    <string name="reason_radio_in_progress">The radio is busy with another request.</string>
+    <!-- Why a radio request failed: the radio lacks what it needs. -->
+    <string name="reason_radio_unsupported">The radio does not support this.</string>
+    <!-- Why a radio request failed: no answer in time. -->
+    <string name="reason_radio_timed_out">The radio did not answer in time.</string>
+    <!-- Why a radio request failed: the radio refused. The placeholder says why (ulcp_status_*). -->
+    <string name="reason_radio_rejected">The radio refused: <xliff:g id="status" example="Not ready">%1$s</xliff:g>.</string>
+    <!-- Why a radio request failed: the link closed before it went out. -->
+    <string name="reason_radio_link_closed">The radio link closed.</string>
+    <!-- Why a radio request failed: the radio and this app disagree about the protocol. -->
+    <string name="reason_radio_incompatible">The radio and this app are out of step.</string>
+
+    <!-- Settings section header: companion radios. -->
+    <string name="settings_section_radios">Radios</string>
+    <!-- Settings row detail: the companion radio's name, state and battery. -->
+    <string name="companion_radio_row"><xliff:g id="radio" example="T1000-E 4F2A">%1$s</xliff:g> · <xliff:g id="state" example="Connected">%2$s</xliff:g> · <xliff:g id="battery" example="78%">%3$s</xliff:g></string>
+    <!-- Settings row detail: the companion radio's name and state, with no battery reading. -->
+    <string name="companion_radio_row_no_battery"><xliff:g id="radio" example="T1000-E 4F2A">%1$s</xliff:g> · <xliff:g id="state" example="Connected">%2$s</xliff:g></string>
+
+    <!--
+        Message notifications (notifications.svg), and the notification
+        channels they post in. Every channel name and description shows in
+        Android's notification settings.
+    -->
+    <!-- Notification channel: messages in direct conversations. -->
+    <string name="notification_channel_direct">Direct messages</string>
+    <!-- Notification channel description for Direct messages. -->
+    <string name="notification_channel_direct_description">Messages from one person to you</string>
+    <!-- Notification channel: messages in channels other than EMERGENCY. -->
+    <string name="notification_channel_channels">Channels</string>
+    <!-- Notification channel description for Channels. -->
+    <string name="notification_channel_channels_description">Messages in channels you joined</string>
+    <!-- Notification channel: messages on the EMERGENCY channel. The channel's name, kept in capitals. -->
+    <string name="notification_channel_emergency">EMERGENCY</string>
+    <!-- Notification channel description for EMERGENCY. -->
+    <string name="notification_channel_emergency_description">Messages on the EMERGENCY channel</string>
+    <!-- Notification channel description for Radio connection. -->
+    <string name="notification_channel_radio_description">The companion radio\'s connection</string>
+    <!-- Notification channel: messages that could not be delivered, and replies that could not be sent. -->
+    <string name="notification_channel_problems">Problems</string>
+    <!-- Notification channel description for Problems. -->
+    <string name="notification_channel_problems_description">Messages and replies that didn\'t get through</string>
+    <!-- Notification action, a verb: answers a message from the notification. -->
+    <string name="notification_reply">Reply</string>
+    <!-- Notification action: marks the conversation read. -->
+    <string name="notification_mark_read">Mark as read</string>
+    <!-- Placeholder in the reply field of a notification. A noun. -->
+    <string name="notification_reply_hint">Message</string>
+    <!-- Title of a message notification while its contents are hidden (lock screen). -->
+    <string name="notification_public_title">New message</string>
+    <!-- Text of a message notification while its contents are hidden (lock screen). -->
+    <string name="notification_public_text">Contents hidden</string>
+    <!-- The phone's own lines in a notification's conversation. -->
+    <string name="notification_you">You</string>
+    <!-- Notification line: a reaction to one of your messages; the reaction's emoji, then your message in quotation marks. -->
+    <string name="notif_reacted">Reacted <xliff:g id="reaction" example="👍">%1$s</xliff:g> to <xliff:g id="message" example="“Copy, heading up now.”">%2$s</xliff:g></string>
+    <!-- Notification line: several messages arrived in one conversation at once. -->
+    <plurals name="notif_new_messages">
+        <item quantity="one"><xliff:g id="count" example="1">%d</xliff:g> new message</item>
+        <item quantity="other"><xliff:g id="count" example="5">%d</xliff:g> new messages</item>
+    </plurals>
+    <!-- A message quoted in a notification. Use your language's quotation marks. -->
+    <string name="quoted_body">“<xliff:g id="message" example="Copy, heading up now.">%1$s</xliff:g>”</string>
+    <!-- A message quoted in a notification, cut short. Use your language's quotation marks and ellipsis. -->
+    <string name="quoted_body_clipped">“<xliff:g id="message" example="Copy, heading up">%1$s</xliff:g>…”</string>
+    <!-- Notification title: a message of yours went out, but no acknowledgment came back; the peer or channel. -->
+    <string name="notice_unconfirmed_title">Message to <xliff:g id="name" example="Ridge Medic">%1$s</xliff:g> unconfirmed</string>
+    <!-- Notification title: a message of yours did not reach this peer or channel. -->
+    <string name="notice_undelivered_title">Unable to deliver message to <xliff:g id="name" example="Kestrel">%1$s</xliff:g></string>
+    <!-- Notification text: a reply typed into a notification did not go out, and waits in the conversation's draft. -->
+    <string name="notice_reply_failed">Your reply couldn\'t be sent. It\'s saved as a draft.</string>
+    <!-- Notification text: a reply typed into a notification did not go out, and was not kept as a draft. -->
+    <string name="notice_reply_failed_unsaved">Your reply couldn\'t be sent.</string>
+    <!-- Notification title: a node the user asked to watch for was just heard; its name. -->
+    <string name="notice_heard_title"><xliff:g id="name" example="Kestrel">%1$s</xliff:g> is on the air</string>
+    <!-- Notification text under the title saying a watched node is on the air. -->
+    <string name="notice_heard_body">You asked to be told the next time it was heard.</string>
+
+    <!-- Settings section header: settings of this app on this phone. -->
+    <string name="settings_section_this_app">This app</string>
+    <!-- Settings row and page title: notification settings. -->
+    <string name="notifications_title">Notifications</string>
+    <!-- Switch: message notifications show only "New message" while the phone is locked. -->
+    <string name="hide_lock_screen_contents">Hide contents on the lock screen</string>
+    <!-- Section header on Notifications: the notification channels. -->
+    <string name="notification_categories">Categories</string>
+    <!-- Notifications row detail: this category makes no sound. -->
+    <string name="notification_category_silent">Silent</string>
+    <!-- Notifications row detail: this category is turned off. -->
+    <string name="notification_category_off">Off</string>
+    <!-- Row: opens Android's notification settings for this app. -->
+    <string name="all_notification_settings">All notification settings</string>
+    <!-- Card on Notifications: the app may not post notifications. -->
+    <string name="notifications_off">Notifications are off</string>
+    <!-- Button on the card: allows notifications. -->
+    <string name="notifications_turn_on">Turn on</string>
 </resources>

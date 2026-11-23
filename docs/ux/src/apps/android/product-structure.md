@@ -161,7 +161,7 @@ includes its power state per the guidelines.
 - **Target:** 48 by 48 dp at least.
 - **TalkBack label:** the full state, such as **Companion radio T1000-E,
   connected, battery 78 percent**, with the action **Show radio details**.
-- **Action:** opens Radio Detail.
+- **Action:** opens Radio Detail, or Choose a radio when none is set up.
 
 | State | Link glyph | Power glyph |
 |---|---|---|

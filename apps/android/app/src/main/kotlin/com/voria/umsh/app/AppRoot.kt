@@ -22,16 +22,20 @@ import com.voria.umsh.app.debug.StagingStoreActions
 import com.voria.umsh.designsystem.EraseFailureDialog
 import com.voria.umsh.designsystem.NoticeHost
 import com.voria.umsh.designsystem.UmshTheme
-import com.voria.umsh.features.onboarding.WelcomeScreen
+import com.voria.umsh.features.onboarding.OnboardingHost
 import com.voria.umsh.features.settings.IdentityLostScreen
 import com.voria.umsh.features.settings.IdentityUnavailableScreen
 import com.voria.umsh.services.preferences.OnboardingStep
 import java.util.UUID
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 
-/** What the activity draws: the shell over the running core, or why there is none. */
+/**
+ * What the activity draws: the shell over the running core, or why there is
+ * none. [openRequests]: pages notifications and shortcuts ask to open.
+ */
 @Composable
-fun AppRoot(host: AppCoreHost) {
+fun AppRoot(host: AppCoreHost, openRequests: MutableStateFlow<OpenRequest?> = remember { MutableStateFlow(null) }) {
     // Debug builds: the Developer switch draws with the fallback scheme,
     // for screenshot runs beside the drawings.
     val fallback by remember(host) {
@@ -48,7 +52,9 @@ fun AppRoot(host: AppCoreHost) {
                 SideEffect { stores.retainOnly("") }
             }
             when (val shown = state) {
-                is HostState.Ready -> RuntimeShell(host, shown.runtime)
+                is HostState.Ready -> CompositionLocalProvider(LocalOpenRequests provides openRequests) {
+                    RuntimeShell(host, shown.runtime)
+                }
                 // These replace the shell: nothing that looks like the app
                 // while its data or identity cannot be reached.
                 is HostState.StoreUnavailable -> NoticeHost {
@@ -126,15 +132,10 @@ private fun RuntimeShell(host: AppCoreHost, runtime: AppRuntime) {
             LocalAppCoreHost provides host,
             LocalViewModelStoreOwner provides owner,
         ) {
-            // First launch replaces the shell until Welcome is done. The
-            // Connect a radio step waits for Phase 2's radio search, so a
-            // stored ConnectRadio shows the shell too (D6).
+            // First launch replaces the shell until onboarding is done:
+            // Welcome, then Connect a radio.
             val onboarding by runtime.onboarding.collectAsStateWithLifecycle()
-            if (onboarding == OnboardingStep.Welcome) {
-                NoticeHost { WelcomeScreen() }
-            } else {
-                UmshShell()
-            }
+            if (onboarding == OnboardingStep.Done) UmshShell() else OnboardingHost(onboarding)
         }
     }
 }

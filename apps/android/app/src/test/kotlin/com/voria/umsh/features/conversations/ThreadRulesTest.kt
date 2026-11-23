@@ -37,8 +37,8 @@ class ThreadRulesTest {
     @Test
     fun composerStatesFollowTheRadio() {
         assertEquals(ComposerState.Ready, ComposerState.from(radio(MobileRadioPhase.ATTACHED), known = true))
-        // Up but not carrying this phone: not connecting, so not Transient; Send decides on its own.
-        assertEquals(ComposerState.Ready, ComposerState.from(radio(MobileRadioPhase.ATTACHED, carries = false), known = true))
+        // Up but not carrying this phone (another host, or not yet claimed): Send waits, as while connecting.
+        assertEquals(ComposerState.Transient, ComposerState.from(radio(MobileRadioPhase.ATTACHED, carries = false), known = true))
         assertEquals(ComposerState.Transient, ComposerState.from(radio(MobileRadioPhase.CONNECTING), known = true))
         assertEquals(ComposerState.Transient, ComposerState.from(radio(MobileRadioPhase.RECONNECTING), known = true))
         // Not read yet is not "no radio".

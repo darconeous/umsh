@@ -8,9 +8,11 @@ import com.voria.umsh.core.MobileAppPeerRecord
 import com.voria.umsh.core.MobileAppPreviewRecord
 import com.voria.umsh.core.MobileAppRepeaterListingRecord
 import com.voria.umsh.core.MobileAppRepeaterNeighborRecord
+import com.voria.umsh.core.MobileAppResent
 import com.voria.umsh.core.MobileAppStateRecord
 import com.voria.umsh.core.MobileAppTranscriptPageRecord
 import com.voria.umsh.core.MobileChatPresence
+import com.voria.umsh.core.MobileMessageActionsRecord
 import com.voria.umsh.core.MobileReaction
 import com.voria.umsh.core.MobileStoredChannelKind
 import com.voria.umsh.core.MobileStoredChannelRecord
@@ -31,6 +33,7 @@ import com.voria.umsh.models.ChatMessage
 import com.voria.umsh.models.ConversationPreview
 import com.voria.umsh.models.DeliveryState
 import com.voria.umsh.models.DirectConversationSummary
+import com.voria.umsh.models.MessageActions
 import com.voria.umsh.models.MessageRef
 import com.voria.umsh.models.NeighborReport
 import com.voria.umsh.models.NodeHint
@@ -45,6 +48,7 @@ import com.voria.umsh.models.Reception
 import com.voria.umsh.models.RepeaterListing
 import com.voria.umsh.models.RepeaterNeighbor
 import com.voria.umsh.models.Repeats
+import com.voria.umsh.models.ResendMode
 import com.voria.umsh.models.SignatureState
 import com.voria.umsh.models.TranscriptCursor
 import com.voria.umsh.models.TranscriptPage
@@ -173,6 +177,7 @@ object RecordMapping {
             lastMessage = record.lastMessage?.let(::preview),
             unreadCount = record.unreadCount,
             revision = revision,
+            needsEmergencyAgreement = record.needsEmergencyAgreement,
         )
 
     fun neighbor(record: MobileAppRepeaterNeighborRecord): RepeaterNeighbor {
@@ -296,7 +301,33 @@ object RecordMapping {
             quote = stored.quote?.let { quote(it, record.quotedSenderNodeHint) },
             repeats = stored.repeats?.let { Repeats(repeaters, it.anonymous, it.progressAtMs) },
             reviseUntilMs = record.reviseUntilMs,
+            actions = actions(record.actions),
         )
+    }
+
+    fun actions(record: MobileMessageActionsRecord) = MessageActions(
+        edit = record.edit,
+        delete = record.delete,
+        resend = record.resend?.let(::resendMode),
+        react = record.react,
+        reply = record.reply,
+        requestMissing = record.requestMissing,
+    )
+
+    fun resendMode(resent: MobileAppResent): ResendMode = when (resent) {
+        MobileAppResent.IN_PLACE -> ResendMode.InPlace
+        MobileAppResent.AS_NEW -> ResendMode.AsNew
+    }
+
+    /** A reaction as the core sends it. */
+    fun reaction(kind: ReactionKind): MobileReaction = when (kind) {
+        ReactionKind.Heart -> MobileReaction.Heart
+        ReactionKind.ThumbsUp -> MobileReaction.ThumbsUp
+        ReactionKind.ThumbsDown -> MobileReaction.ThumbsDown
+        ReactionKind.Laugh -> MobileReaction.Laugh
+        ReactionKind.Exclaim -> MobileReaction.Exclaim
+        ReactionKind.Question -> MobileReaction.Question
+        is ReactionKind.Other -> MobileReaction.Other(kind.cluster)
     }
 
     fun delivery(state: MobileStoredChatDeliveryState): DeliveryState = when (state) {
@@ -325,7 +356,7 @@ object RecordMapping {
         isForwardSecret = stored.forwardSecret,
     )
 
-    private fun reactionKind(kind: MobileReaction): ReactionKind = when (kind) {
+    fun reactionKind(kind: MobileReaction): ReactionKind = when (kind) {
         MobileReaction.Heart -> ReactionKind.Heart
         MobileReaction.ThumbsUp -> ReactionKind.ThumbsUp
         MobileReaction.ThumbsDown -> ReactionKind.ThumbsDown

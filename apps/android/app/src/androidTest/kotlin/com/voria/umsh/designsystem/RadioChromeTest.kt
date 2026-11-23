@@ -7,11 +7,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.assertWidthIsEqualTo
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
@@ -94,6 +97,63 @@ class RadioChromeTest {
         }
     }
 
+    /**
+     * With a radio the control opens Radio Detail, and says so; each banner
+     * offers its one action (`product-structure.md`, Problem banner).
+     */
+    @Test
+    fun theControlOpensDetails() {
+        var opened = 0
+        compose.setContent { UmshTheme { RadioControl(radio(), now, onShowDetails = { opened++ }) } }
+        compose.onNodeWithTag(Tags.RADIO_CONTROL)
+            .assert(hasClickAction())
+            .assert(
+                SemanticsMatcher("click label") {
+                    it.config.getOrNull(SemanticsActions.OnClick)?.label == context.getString(R.string.radio_show_details)
+                },
+            )
+            .performClick()
+        compose.runOnIdle { assertEquals(1, opened) }
+    }
+
+    /** With no radio set up the control opens Choose a radio (D20), and says that instead. */
+    @Test
+    fun withNoRadioTheControlOffersChooseARadio() {
+        var opened = 0
+        compose.setContent { UmshTheme { RadioControl(null, now, onShowDetails = { opened++ }) } }
+        compose.onNodeWithTag(Tags.RADIO_CONTROL)
+            .assert(hasClickAction())
+            .assert(
+                SemanticsMatcher("click label") {
+                    it.config.getOrNull(SemanticsActions.OnClick)?.label == context.getString(R.string.radio_choose)
+                },
+            )
+            .performClick()
+        compose.runOnIdle { assertEquals(1, opened) }
+    }
+
+    @Test
+    fun bannersOfferTheirActions() {
+        val last = Reading("T1000-E", 78, twelveMinutesAgo)
+        var shown by mutableStateOf<RadioBanner>(RadioBanner.NoRadio)
+        val taken = mutableListOf<RadioBannerAction>()
+        compose.setContent { UmshTheme { RadioProblemBanner(shown, now, onAction = { taken += it }) } }
+        val rows = listOf(
+            RadioBanner.NoRadio to (R.string.banner_action_choose_radio to RadioBannerAction.ChooseRadio),
+            RadioBanner.Disconnected(last) to (R.string.banner_action_details to RadioBannerAction.Details),
+            RadioBanner.BluetoothOff(last) to (R.string.banner_action_turn_on to RadioBannerAction.TurnOn),
+            RadioBanner.NearbyDenied to (R.string.banner_action_allow to RadioBannerAction.Allow),
+            RadioBanner.Failed(last) to (R.string.banner_action_details to RadioBannerAction.Details),
+            RadioBanner.TransmissionRejected(RejectReason.DutyCycle, last) to
+                (R.string.banner_action_details to RadioBannerAction.Details),
+        )
+        for ((banner, expected) in rows) {
+            compose.runOnIdle { shown = banner }
+            compose.onNodeWithTag(Tags.BANNER_ACTION).assertTextEquals(context.getString(expected.first)).performClick()
+            compose.runOnIdle { assertEquals(banner.toString(), expected.second, taken.last()) }
+        }
+    }
+
     /** The board's sentence: its clauses joined by commas alone, never "and", on every API level. */
     private fun sentence(vararg clauses: String): String = clauses.joinToString(", ")
 
@@ -113,7 +173,7 @@ class RadioChromeTest {
         assertEquals(sentence(name, "connected"), spoken[4])
         assertEquals(sentence(name, "connected", "battery 12 percent"), spoken[5])
         assertEquals(sentence(name, "reconnecting", "last battery 78 percent", "12 minutes ago"), spoken[6])
-        assertEquals(sentence(name, "disconnected", "last battery 78 percent", "12 minutes ago"), spoken[7])
+        assertEquals(sentence(name, "waiting for the radio", "last battery 78 percent", "12 minutes ago"), spoken[7])
         assertEquals(sentence(name, "connection failed", "last battery 78 percent", "12 minutes ago"), spoken[8])
         assertEquals(context.getString(R.string.radio_tb_not_set_up), spoken[9])
     }
@@ -136,7 +196,7 @@ class RadioChromeTest {
             RadioBanner.NearbyDenied,
             RadioBanner.Failed(last),
             RadioBanner.TransmissionRejected(RejectReason.DutyCycle, Reading("T1000-E", 52, twelveMinutesAgo)),
-            RadioBanner.TransmissionRejected(RejectReason.Status("INVALID_STATE"), Reading("T1000-E", null, null)),
+            RadioBanner.TransmissionRejected(RejectReason.Status(4u), Reading("T1000-E", null, null)),
         )
         val percent = { p: Int -> NumberFormat.getPercentInstance(Locale.getDefault()).format(p / 100.0) }
         var shown by mutableStateOf(rows[0])
@@ -152,7 +212,8 @@ class RadioChromeTest {
         }
         compose.waitForIdle()
         val lastBattery = context.getString(R.string.banner_detail_last_battery, "T1000-E", percent(78), age)
-        val status = context.getString(R.string.banner_reason_status, "\u2066INVALID_STATE\u2069")
+        // Worded by its code in the app: never the core's debug name ("Status::INVALID_STATE").
+        val status = context.getString(R.string.ulcp_status_invalid_state)
         val expected = listOf(
             R.string.banner_no_radio_title to context.getString(R.string.banner_detail_choose_radio),
             R.string.banner_disconnected_title to lastBattery,
@@ -190,9 +251,8 @@ class RadioChromeTest {
                 BannerSlot(dataLoadFailed = true, radioBanner = RadioBanner.NoRadio, now = now, onRetry = { retried++ })
             }
         }
-        compose.onNodeWithTag(Tags.BANNER_ACTION)
+        compose.onNode(hasTestTag(Tags.BANNER_ACTION) and hasAnyAncestor(hasTestTag(Tags.DATA_LOAD_BANNER)))
             .assert(hasClickAction())
-            .assert(hasAnyAncestor(hasTestTag(Tags.DATA_LOAD_BANNER)))
             .performClick()
         compose.runOnIdle { assertEquals(1, retried) }
         val top = compose.onNodeWithTag(Tags.DATA_LOAD_BANNER).fetchSemanticsNode().boundsInRoot.top

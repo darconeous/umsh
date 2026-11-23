@@ -71,7 +71,8 @@ pub struct MobileAppStatusRecord {
     pub meet: Option<MobileMeetStateRecord>,
     /// Whether claimed radios are being revoked now.
     pub revoking_claimed_radios: bool,
-    /// Whether the user agreed to `EMERGENCY`'s warning under this owner.
+    /// Whether the user agreed to `EMERGENCY`'s warning under this owner,
+    /// within 24 hours of the last send there.
     pub emergency_certified: bool,
 }
 
@@ -112,7 +113,8 @@ pub struct MobileAppChangesRecord {
     /// Whether claimed radios are being revoked, when that changed.
     pub revoking_claimed_radios: Option<bool>,
     /// Whether the user agreed to `EMERGENCY`'s warning, when that
-    /// changed.
+    /// changed: given, or gone with the owner or 24 hours after the last
+    /// send there.
     pub emergency_certified: Option<bool>,
     /// Managed devices whose snapshot changed, by `MobileManagedDevice`
     /// id. Read `snapshot()` again on the ones held.

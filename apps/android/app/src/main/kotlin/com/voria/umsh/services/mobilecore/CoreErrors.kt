@@ -3,13 +3,14 @@ package com.voria.umsh.services.mobilecore
 import androidx.annotation.StringRes
 import com.voria.umsh.R
 import com.voria.umsh.core.MobileAppException
+import com.voria.umsh.core.MobileRadioException
 import com.voria.umsh.core.MobileAppStartFailure
 import com.voria.umsh.core.MobileStoreException
 import com.voria.umsh.core.SecretVaultException
-import com.voria.umsh.core.ulcpStatusName
 import com.voria.umsh.services.identity.IdentityVaultException
+import com.voria.umsh.services.radio.UlcpStatusText
 
-/** A reason phrase: a string resource and its arguments. */
+/** A reason phrase: a string resource and its arguments (words among them resolved where it is shown). */
 data class ReasonText(@param:StringRes val id: Int, val args: List<Any> = emptyList())
 
 /**
@@ -27,7 +28,30 @@ object CoreErrors {
         is MobileStoreException -> reason(error)
         is SecretVaultException -> reason(error)
         is IdentityVaultException -> reason(error)
+        is MobileRadioException -> reason(error)
         else -> ReasonText(R.string.reason_unknown)
+    }
+
+    /** Why a request to the radio (a restart, a factory reset) did not go through. */
+    fun reason(error: MobileRadioException): ReasonText = when (error) {
+        is MobileRadioException.RadioUnavailable -> ReasonText(R.string.reason_radio_unavailable)
+        is MobileRadioException.OperationInProgress -> ReasonText(R.string.reason_radio_in_progress)
+        is MobileRadioException.Unsupported -> ReasonText(R.string.reason_radio_unsupported)
+        is MobileRadioException.TimedOut -> ReasonText(R.string.reason_radio_timed_out)
+        is MobileRadioException.OperationRejected ->
+            ReasonText(R.string.reason_radio_rejected, listOf(UlcpStatusText.of(error.statusCode)))
+        is MobileRadioException.Stopped,
+        is MobileRadioException.LinkFailed,
+        -> ReasonText(R.string.reason_radio_link_closed)
+        is MobileRadioException.IncompatibleProtocol,
+        is MobileRadioException.UnrecognizedAnswer,
+        -> ReasonText(R.string.reason_radio_incompatible)
+        is MobileRadioException.IdentityUnavailable,
+        is MobileRadioException.TakeoverNotAllowed,
+        is MobileRadioException.DeviceFull,
+        is MobileRadioException.Refused,
+        is MobileRadioException.InvalidArgument,
+        -> ReasonText(R.string.reason_unknown)
     }
 
     fun reason(error: MobileAppException): ReasonText = when (error) {
@@ -53,7 +77,7 @@ object CoreErrors {
         is MobileAppException.SendFailed -> ReasonText(R.string.reason_send_failed)
         is MobileAppException.DfuUnsupported -> ReasonText(R.string.reason_dfu_unsupported)
         is MobileAppException.DfuRefused ->
-            ReasonText(R.string.reason_dfu_refused, listOf(ulcpStatusName(error.status)))
+            ReasonText(R.string.reason_dfu_refused, listOf(UlcpStatusText.of(error.status)))
         is MobileAppException.DfuUnconfirmed -> ReasonText(R.string.reason_dfu_unconfirmed)
         is MobileAppException.EmergencyNotCertified -> ReasonText(R.string.reason_emergency_not_certified)
         is MobileAppException.MessageNotQueued -> ReasonText(

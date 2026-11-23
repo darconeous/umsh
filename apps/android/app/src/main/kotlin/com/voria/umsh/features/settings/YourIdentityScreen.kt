@@ -55,14 +55,16 @@ import com.voria.umsh.designsystem.SectionHeader
 import com.voria.umsh.designsystem.UmshScaffold
 import com.voria.umsh.designsystem.UmshTopAppBar
 import com.voria.umsh.models.KeyProtection
+import com.voria.umsh.services.location.LocationGrant
+import com.voria.umsh.services.location.rememberLocationAskers
 import com.voria.umsh.services.preferences.PolicyPreferences
 import kotlinx.coroutines.launch
 
 /**
  * Your identity (`identity.svg`): who this phone is (avatar, name and
- * address), four contact-card actions, Announcements, and Key. Share
- * location waits for Phase 2 (D7). [onBack] is null beside the Settings
- * list, where there is no Back. On a tablet, one centered column.
+ * address), four contact-card actions, Announcements (with Share
+ * location, §3.8), and Key. [onBack] is null beside the Settings list,
+ * where there is no Back. On a tablet, one centered column.
  */
 @Composable
 fun YourIdentityScreen(onBack: (() -> Unit)?) {
@@ -75,6 +77,8 @@ fun YourIdentityScreen(onBack: (() -> Unit)?) {
     val dialog by viewModel.dialog.collectAsStateWithLifecycle()
     val failure by viewModel.failure.collectAsStateWithLifecycle()
     val shareUri by viewModel.shareUri.collectAsStateWithLifecycle()
+    val grant by viewModel.locationGrant.collectAsStateWithLifecycle()
+    val askers = rememberLocationAskers(host.preferences, { viewModel.locationGrant.value }, viewModel::locationAnswered)
     val notice = LocalCopyNotice.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -153,6 +157,19 @@ fun YourIdentityScreen(onBack: (() -> Unit)?) {
                         viewModel.open(IdentityDialog.Schedule(ScheduleKind.Identity))
                     }
 
+                    ShareLocationRows(
+                        chosen = policy?.locationPrecision,
+                        grant = grant,
+                        sizes = viewModel.precisions,
+                        onShare = { share ->
+                            viewModel.setShareLocation(share)
+                            // The choice is written first; Android's dialog only if it will still show it.
+                            if (share && grant == LocationGrant.None) askers.location.askIfAskable()
+                        },
+                        onPrecision = { viewModel.open(IdentityDialog.Precision) },
+                        onAllow = askers.location::ask,
+                    )
+
                     SectionHeader(stringResource(R.string.section_key))
                     ValueRow(
                         stringResource(R.string.key_protection),
@@ -194,6 +211,16 @@ fun YourIdentityScreen(onBack: (() -> Unit)?) {
             onChoose = { viewModel.setSchedule(open.kind, it) },
             onDismiss = viewModel::dismissDialog,
         )
+        IdentityDialog.Precision -> policy?.locationPrecision?.let { chosen ->
+            PrecisionDialog(
+                chosen = chosen,
+                grant = grant,
+                sizes = viewModel.precisions,
+                onChoose = viewModel::setPrecision,
+                onAllowPrecise = askers.precise::ask,
+                onDismiss = viewModel::dismissDialog,
+            )
+        }
         IdentityDialog.ConfirmErase -> EraseIdentityDialog(onConfirm = viewModel::erase, onDismiss = viewModel::dismissDialog)
         null -> Unit
     }

@@ -28,6 +28,12 @@ class StagingRadioConnection private constructor(val air: MobileStagingAir) {
             .onFailure { AppLog.w(TAG, "staged link not changed: ${it.javaClass.simpleName}") }
     }
 
+    /** Restart the staged radio, as Radio Detail asks a live one. Throws `MobileRadioException`. */
+    suspend fun restart() = air.radio().use { it.reboot() }
+
+    /** Factory reset the staged radio. Throws `MobileRadioException`. */
+    suspend fun factoryReset() = air.radio().use { it.factoryReset() }
+
     /** Whether every transmission the staged radio makes fails; the air keeps no getter. */
     @Volatile
     var transmissionsFailing = false

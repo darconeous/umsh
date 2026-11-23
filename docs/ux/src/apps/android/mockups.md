@@ -209,7 +209,8 @@ notes say so and [open decisions](open-decisions.md#conversations) explain why.
   format; the day is bold only for Today and Yesterday. Channel runs are named
   above and carry the sender's avatar.
 - A gap of missing messages is a tappable placeholder.
-- EMERGENCY asks for certification before the first action after each launch.
+- EMERGENCY asks for certification before the first such action, and again
+  once 24 hours pass with no send there or the app's core restarts.
 - **Jump to latest** shows while newer messages exist beyond the loaded ones.
 - An unnamed channel sender is "Member" and the node hint, never an address
   prefix.
@@ -260,7 +261,8 @@ notes say so and [open decisions](open-decisions.md#conversations) explain why.
   connected but not yet carrying this phone, or not yet read, counts as
   transient.
 - With no radio, the draft stays editable and Send shows blocked. A line above
-  the field gives the reason and the way out. Nothing is queued.
+  the field gives the reason and the way out: Connect radio opens Choose a
+  radio, or Radio Detail once one is set up. Nothing is queued.
 - Editing happens in the composer under an "Editing message" strip.
 - **Phase 1:** nothing is sent. Send appears with text but keeps Material's
   disabled look in every state; the cursor takes the security color. The
@@ -329,11 +331,13 @@ key storage. Where Android departs from it, the board's notes say so and
 
 ## P. Adding a radio
 
-[![Radio pairing mockups: the Nearby devices permission, the Bluetooth request, the system confirmation for the chosen radio, and the pairing dialog for a PIN and for a compared code](mockups/radio-pairing.svg)](mockups/radio-pairing.svg)
+[![Radio pairing mockups: the Nearby devices permission, the Bluetooth request, the system confirmation for the chosen radio, and the pairing dialog for a radio with a PIN](mockups/radio-pairing.svg)](mockups/radio-pairing.svg)
 
 - Opening Connect a radio asks, only as needed, for Nearby devices and to turn
   on Bluetooth. Tapping a radio raises Android's confirmation for it, then the
   pairing dialog.
+- A radio pairs with Just Works or, when a PIN is set, a fixed passkey. No radio
+  shows a code to compare.
 - The system dialogs are drawn for order and wording, not exact appearance.
 
 ## Q. Permissions
@@ -539,7 +543,8 @@ screen in this batch shows or edits the radio's own channel list.
 - The board photo, name, model, state, and battery lead, with **Disconnect**
   and **Forget** under them. **Manage device** opens Remote management.
 - Then Mesh radio, Connection, Offline assistance, Radio identity, and
-  Maintenance, with iOS's confirmations.
+  Maintenance, with iOS's confirmations. Restart and Factory reset show only
+  while connected to a radio that can restart.
 - The app sets up whichever radio it connects to for this phone, without
   asking. Radio Detail shows no host and offers nothing to take over; a failed
   connection says why, with **Reconnect**.
@@ -550,6 +555,8 @@ screen in this batch shows or edits the radio's own channel list.
 
 - **Choose another radio** opens the scan list from onboarding. A radio not
   yet associated raises Android's confirmation, then pairing.
+- The previous radio is released before the new one connects, as on iOS. It
+  stays associated, so choosing it again needs no confirmation.
 
 ## AI. Setting up a device
 

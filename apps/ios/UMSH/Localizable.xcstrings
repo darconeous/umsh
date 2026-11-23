@@ -2606,6 +2606,9 @@
     "Repeater" : {
       "comment" : "Node capability: forwards other nodes' traffic.\nNode role: forwards other nodes' traffic."
     },
+    "Repeater hint %@" : {
+      "comment" : "A repeater known only by the short hint a route carries. The placeholder is the hint, such as 7N*."
+    },
     "Repeater names are matched by a two-byte hint and may not be the node shown." : {
       "comment" : "Footer under a path whose repeaters were named by guessing from their short hints."
     },
@@ -2759,9 +2762,6 @@
     },
     "Router Hint" : {
 
-    },
-    "Router hint %@" : {
-      "comment" : "A repeater known only by the short hint a route carries. The placeholder is the hint, such as 7N*."
     },
     "Routing regions" : {
 

@@ -4891,6 +4891,7 @@ dependencies = [
  "umsh-text",
  "umsh-ulcp",
  "umsh-ulcp-device",
+ "umsh-ulcp-runtime",
  "umsh-ulcp-simdev",
  "umsh-uri",
  "uniffi",

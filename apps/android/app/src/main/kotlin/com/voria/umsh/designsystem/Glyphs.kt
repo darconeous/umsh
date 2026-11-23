@@ -39,6 +39,10 @@ object Glyphs {
         is ReactionKind.Other -> kind.cluster
     }
 
+    /** The reaction [glyph] stands for: a palette one, or the one cluster it is. */
+    fun reactionKind(glyph: String): ReactionKind =
+        reactionPalette.firstOrNull { it.first == glyph }?.second ?: ReactionKind.Other(glyph)
+
     /**
      * [glyph] as this phone's emoji font can draw it. The pink heart is
      * Emoji 15, in Android's font from Android 14; before that a font

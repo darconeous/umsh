@@ -52,5 +52,7 @@ umsh-regiondb = { path = "../umsh-regiondb", features = ["bundled-sqlite"] }
 
 [dev-dependencies]
 tempfile = "3"
+# The firmware's advertising, for the BLE test peripheral's golden vectors.
+umsh-ulcp-runtime = { path = "../umsh-ulcp-runtime", default-features = false }
 # test-util enables tokio's paused/virtual time for deterministic timer tests.
 tokio = { version = "1", features = ["macros", "rt", "sync", "time", "test-util"] }

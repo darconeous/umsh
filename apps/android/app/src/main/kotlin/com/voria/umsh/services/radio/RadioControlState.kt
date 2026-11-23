@@ -31,6 +31,9 @@ data class RadioControlState(
 
         /** Coming back after it was lost. */
         Reconnecting,
+
+        /** A saved radio is out of reach, and the transport waits for it to appear. */
+        Waiting,
         Disconnected,
         Failed,
     }
@@ -99,9 +102,9 @@ data class RadioControlState(
             MobileRadioPhase.IDLE,
             MobileRadioPhase.UNAVAILABLE,
             MobileRadioPhase.DISCOVERED,
-            MobileRadioPhase.WAITING_FOR_RADIO,
             MobileRadioPhase.DISCONNECTING,
             -> Link.Disconnected
+            MobileRadioPhase.WAITING_FOR_RADIO -> Link.Waiting
             MobileRadioPhase.FAILED -> Link.Failed
         }
 

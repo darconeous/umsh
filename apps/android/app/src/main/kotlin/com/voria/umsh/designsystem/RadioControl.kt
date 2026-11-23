@@ -25,7 +25,10 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.voria.umsh.R
@@ -55,23 +58,37 @@ object RadioControlMetrics {
  * a full-radius tonal pill of fixed width. Never the radio's name or the
  * word Connected; TalkBack says those.
  *
- * Radio Detail is not built yet, so the control has no click action and no
- * click label: it states, and does nothing a reader would expect.
+ * [onShowDetails] opens the radio's page: Radio Detail with a [radio], Choose
+ * a radio with none set up (D20), and the click label says which. Null
+ * leaves the control with no click action and no click label: the radio
+ * has not been read yet.
  */
 @Composable
-fun RadioControl(radio: RadioSnapshot?, now: Instant, modifier: Modifier = Modifier, known: Boolean = true) {
+fun RadioControl(
+    radio: RadioSnapshot?,
+    now: Instant,
+    modifier: Modifier = Modifier,
+    known: Boolean = true,
+    onShowDetails: (() -> Unit)? = null,
+) {
     val state = RadioControlState.from(radio, known)
     val description = radioControlDescription(state, now)
-    Surface(
-        shape = FullShape,
-        color = MaterialTheme.colorScheme.surfaceContainerHighest,
-        contentColor = MaterialTheme.colorScheme.onSurface,
-        modifier = modifier
-            .minimumInteractiveComponentSize()
-            .size(RadioControlMetrics.Width, RadioControlMetrics.Height)
-            .testTag(Tags.RADIO_CONTROL)
-            .clearAndSetSemantics { contentDescription = description },
-    ) {
+    val clickLabel = stringResource(if (radio != null) R.string.radio_show_details else R.string.radio_choose)
+    val sized = modifier
+        .minimumInteractiveComponentSize()
+        .size(RadioControlMetrics.Width, RadioControlMetrics.Height)
+        .testTag(Tags.RADIO_CONTROL)
+        .clearAndSetSemantics {
+            contentDescription = description
+            if (onShowDetails != null) {
+                role = Role.Button
+                onClick(label = clickLabel) {
+                    onShowDetails()
+                    true
+                }
+            }
+        }
+    val content: @Composable () -> Unit = {
         Row(
             horizontalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterHorizontally),
             verticalAlignment = Alignment.CenterVertically,
@@ -79,6 +96,13 @@ fun RadioControl(radio: RadioSnapshot?, now: Instant, modifier: Modifier = Modif
             LinkGlyph(state.link)
             state.power?.let { PowerGlyphs(it, Modifier.alpha(if (state.cached) RadioControlMetrics.CACHED_ALPHA else 1f)) }
         }
+    }
+    val color = MaterialTheme.colorScheme.surfaceContainerHighest
+    val contentColor = MaterialTheme.colorScheme.onSurface
+    if (onShowDetails != null) {
+        Surface(onClick = onShowDetails, shape = FullShape, color = color, contentColor = contentColor, modifier = sized, content = content)
+    } else {
+        Surface(shape = FullShape, color = color, contentColor = contentColor, modifier = sized, content = content)
     }
 }
 
@@ -95,7 +119,7 @@ private fun LinkGlyph(link: Link) {
                     trackColor = MaterialTheme.colorScheme.outlineVariant,
                 )
             }
-            Link.Disconnected, Link.None -> Glyph(R.drawable.ic_sensors_off)
+            Link.Waiting, Link.Disconnected, Link.None -> Glyph(R.drawable.ic_sensors_off)
             // Not read yet: the empty pill, for the moment before the first status.
             Link.Unknown -> Unit
             Link.Failed -> Icon(
@@ -132,7 +156,7 @@ private fun Glyph(@DrawableRes icon: Int, modifier: Modifier = Modifier, size: D
 }
 
 @DrawableRes
-private fun batteryGlyph(bars: Int): Int = when (bars) {
+internal fun batteryGlyph(bars: Int): Int = when (bars) {
     0 -> R.drawable.ic_battery_0_bar
     1 -> R.drawable.ic_battery_1_bar
     2 -> R.drawable.ic_battery_2_bar
@@ -163,6 +187,7 @@ fun radioControlDescription(state: RadioControlState, now: Instant): String {
                     Link.Connected -> R.string.radio_tb_connected
                     Link.Connecting -> R.string.radio_tb_connecting
                     Link.Reconnecting -> R.string.radio_tb_reconnecting
+                    Link.Waiting -> R.string.radio_tb_waiting
                     Link.Disconnected, Link.None, Link.Unknown -> R.string.radio_tb_disconnected
                     Link.Failed -> R.string.radio_tb_failed
                 },

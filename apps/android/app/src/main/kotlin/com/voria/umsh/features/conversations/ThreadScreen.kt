@@ -29,9 +29,11 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -50,12 +52,17 @@ import com.voria.umsh.app.Tags
 import com.voria.umsh.app.UmshKey
 import com.voria.umsh.app.runtimeViewModel
 import com.voria.umsh.designsystem.AvatarSize
+import com.voria.umsh.designsystem.ConfirmDialog
 import com.voria.umsh.designsystem.DetailPane
 import com.voria.umsh.designsystem.UmshScaffold
 import com.voria.umsh.designsystem.UmshTopAppBar
+import com.voria.umsh.designsystem.rememberCopier
 import com.voria.umsh.designsystem.rememberDisplayNames
 import com.voria.umsh.models.ChannelConversationSummary
+import com.voria.umsh.models.ChatMessage
 import com.voria.umsh.models.DirectConversationSummary
+import com.voria.umsh.models.MessageRef
+import com.voria.umsh.models.PreviewText.Sender
 import com.voria.umsh.models.TranscriptRow
 import com.voria.umsh.services.mobilecore.AppLog
 import java.time.Instant
@@ -77,7 +84,18 @@ import com.voria.umsh.designsystem.userIsolated
  * notifications, marks messages read, and lets the composer take focus.
  */
 @Composable
-fun ThreadScreen(key: UmshKey.Thread, current: Boolean, onBack: (() -> Unit)?) {
+fun ThreadScreen(
+    key: UmshKey.Thread,
+    current: Boolean,
+    onBack: (() -> Unit)?,
+    /** Close the thread: `EMERGENCY`'s warning turned down before a send. */
+    onLeave: () -> Unit,
+    onOpenDetails: (MessageRef) -> Unit,
+    /** The composer's Connect radio with a radio held: its page. */
+    onOpenRadio: () -> Unit,
+    /** The composer's Connect radio with none set up: Choose a radio (D20). */
+    onChooseRadio: () -> Unit,
+) {
     val runtime = LocalAppRuntime.current
     val viewModel = runtimeViewModel { ThreadViewModel(it, key.address) }
     val conversation by viewModel.conversation.collectAsStateWithLifecycle()
@@ -102,6 +120,50 @@ fun ThreadScreen(key: UmshKey.Thread, current: Boolean, onBack: (() -> Unit)?) {
         }
     }
     val list = rememberLazyListState()
+    val composerState by viewModel.composerState.collectAsStateWithLifecycle()
+    val mode by viewModel.composeMode.collectAsStateWithLifecycle()
+    val sending by viewModel.sending.collectAsStateWithLifecycle()
+    val alert by viewModel.alert.collectAsStateWithLifecycle()
+    val emergencyPrompt by viewModel.emergencyPrompt.collectAsStateWithLifecycle()
+    val menuFor by viewModel.menuFor.collectAsStateWithLifecycle()
+    val resendPrompt by viewModel.resendPrompt.collectAsStateWithLifecycle()
+    val deleting by viewModel.deleting.collectAsStateWithLifecycle()
+    val original by viewModel.original.collectAsStateWithLifecycle()
+    val asking by viewModel.asking.collectAsStateWithLifecycle()
+    val focusRequester = remember { FocusRequester() }
+    val copier = rememberCopier()
+    val currentLeave by rememberUpdatedState(onLeave)
+    LaunchedEffect(viewModel) { viewModel.leave.collect { currentLeave() } }
+    LaunchedEffect(viewModel, current) {
+        if (current) viewModel.focus.collect { runCatching { focusRequester.requestFocus() } }
+    }
+    // The caller's lambda may be new on every pass; read it, don't key on it.
+    val currentOpenDetails by rememberUpdatedState(onOpenDetails)
+    val onItem: (ChatMessage, MenuItem) -> Unit = remember(viewModel, copier) {
+        { message, item ->
+            viewModel.closeMenu()
+            when (item) {
+                MenuItem.Reply -> viewModel.startReply(message)
+                MenuItem.Copy -> copier.copy(message.body, R.string.message_copied)
+                MenuItem.ViewOriginal -> viewModel.showOriginal(message)
+                MenuItem.TryAgain, MenuItem.Resend -> viewModel.askResend(message)
+                MenuItem.Edit -> viewModel.startEdit(message)
+                MenuItem.Details -> currentOpenDetails(message.ref)
+                MenuItem.Delete -> viewModel.askDelete(message)
+            }
+        }
+    }
+    val handlers = remember(viewModel, onItem) {
+        MessageHandlers(
+            onOpenQuote = viewModel::openQuote,
+            onMenu = viewModel::openMenu,
+            onRetry = viewModel::askResend,
+            onReply = viewModel::startReply,
+            onChip = viewModel::tapChip,
+            onGap = viewModel::requestMissing,
+            onMenuItem = onItem,
+        )
+    }
 
     // On screen: Phase 2's notifications leave it alone.
     DisposableEffect(key.address, current) {
@@ -137,21 +199,70 @@ fun ThreadScreen(key: UmshKey.Thread, current: Boolean, onBack: (() -> Unit)?) {
                         context == null -> if (appState == null) Spinner() else EmptyThread(null)
                         context.conversation.lastMessage == null && transcript.window.messages.isEmpty() -> EmptyThread(context)
                         !transcript.window.hasLoadedOnce -> Spinner()
-                        else -> Transcript(viewModel, transcript, context, list, now)
+                        else -> Transcript(viewModel, transcript, context, list, now, handlers, asking)
                     }
                 }
                 context?.let {
+                    val replying = mode as? ComposeMode.Replying
                     Composer(
                         draft = viewModel.draft,
+                        editText = viewModel.editText,
                         title = it.title,
-                        state = ComposerState.from(radio, radioKnown),
+                        state = composerState,
                         security = it.composerSecurity,
+                        mode = mode,
+                        replyName = replying?.let { reply ->
+                            when (val sender = it.replyName(reply.message)) {
+                                is Sender.Me -> stringResource(R.string.quote_you)
+                                else -> senderText(sender).text
+                            }
+                        },
+                        sending = sending,
+                        onSend = viewModel::send,
+                        onCancelMode = viewModel::cancelComposeMode,
+                        // A radio held: its page. None set up: Choose a radio (D20). Not yet known: nothing.
+                        onConnectRadio = when {
+                            radio != null -> onOpenRadio
+                            radioKnown -> onChooseRadio
+                            else -> null
+                        },
+                        focusRequester = focusRequester,
                         focusable = current,
                     )
                 }
             }
         }
     }
+
+    menuFor?.let { message ->
+        MessageMenuSheet(
+            message = message,
+            onReact = { kind -> viewModel.toggleReaction(message, kind) },
+            onItem = { item -> onItem(message, item) },
+            onDismiss = viewModel::closeMenu,
+        )
+    }
+    emergencyPrompt?.let { prompt ->
+        EmergencySheet(sends = prompt.sends, onCertify = viewModel::certify, onCancel = viewModel::declineCertification)
+    }
+    resendPrompt?.let { prompt ->
+        ResendDialog(prompt, onSend = viewModel::confirmResend, onDismiss = viewModel::cancelResend)
+    }
+    deleting?.let {
+        ConfirmDialog(
+            title = stringResource(R.string.delete_message_title),
+            body = if (context?.isChannel != false) {
+                stringResource(R.string.delete_message_channel)
+            } else {
+                stringResource(R.string.delete_message_direct, userIsolated(context.title))
+            },
+            confirm = stringResource(R.string.delete_message_confirm),
+            onConfirm = viewModel::confirmDelete,
+            onDismiss = viewModel::cancelDelete,
+        )
+    }
+    original?.let { OriginalDialog(it, onDismiss = viewModel::dismissOriginal) }
+    alert?.let { ThreadAlertDialog(it, onDismiss = viewModel::dismissAlert) }
 }
 
 /**
@@ -217,6 +328,8 @@ private fun Transcript(
     context: ThreadContext,
     list: LazyListState,
     now: Instant,
+    handlers: MessageHandlers,
+    asking: Set<MessageRef>,
 ) {
     val window = transcript.window
     val items = remember(window) {
@@ -291,7 +404,8 @@ private fun Transcript(
                         lastOutboundKey = window.lastOutboundKey,
                         now = now,
                         highlighted = transcript.highlighted == item.key,
-                        onOpenQuote = viewModel::openQuote,
+                        handlers = handlers,
+                        asking = asking,
                     )
                 }
             }

@@ -4,10 +4,12 @@ import com.voria.umsh.R
 import com.voria.umsh.core.MobileAppException
 import com.voria.umsh.core.MobileAppStartFailure
 import com.voria.umsh.core.MobileException
+import com.voria.umsh.core.MobileRadioException
 import com.voria.umsh.core.MobileStoreException
 import com.voria.umsh.core.SecretVaultException
-import com.voria.umsh.core.ulcpStatusName
 import com.voria.umsh.services.identity.IdentityVaultException
+import com.voria.umsh.services.radio.StatusWords
+import com.voria.umsh.services.radio.UlcpStatusText
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Test
@@ -64,11 +66,15 @@ class CoreErrorsTest {
         )
     }
 
+    /** A refusal says its status in the app's words, by code; never the core's debug name ("Status::BUSY"). */
     @Test
-    fun aRefusalNamesItsStatusVerbatim() {
-        val reason = CoreErrors.reason(MobileAppException.DfuRefused(2u))
+    fun aRefusalWordsItsStatusByCode() {
+        val reason = CoreErrors.reason(MobileAppException.DfuRefused(12u))
         assertEquals(R.string.reason_dfu_refused, reason.id)
-        assertEquals(listOf(ulcpStatusName(2u)), reason.args)
+        assertEquals(listOf(StatusWords(R.string.banner_reason_radio_busy, 12)), reason.args)
+        val rejected = CoreErrors.reason(MobileRadioException.OperationRejected("release host identity", 1u, "Status::FAILURE"))
+        assertEquals(listOf(StatusWords(R.string.ulcp_status_failure, 1)), rejected.args)
+        assertEquals(StatusWords(R.string.ulcp_status_code, 42), UlcpStatusText.of(42u))
     }
 
     @Test

@@ -1,0 +1,27 @@
+[project]
+name = "ble-test-peripheral"
+version = "0.1.0"
+description = "A UMSH radio's BLE GATT peripheral on the Android emulator's virtual Bluetooth, for app tests"
+requires-python = ">=3.11"
+license = { text = "MIT OR Apache-2.0" }
+dependencies = [
+    "bumble[android]==0.0.236",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.0", "ruff>=0.6"]
+
+[tool.uv]
+# Nothing newer than two weeks before this project's dependencies were last chosen.
+exclude-newer = "2026-11-08T00:00:00Z"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The peripheral is one script beside the tests, not a package.
+pythonpath = ["."]

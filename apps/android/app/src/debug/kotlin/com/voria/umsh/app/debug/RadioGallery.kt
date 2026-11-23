@@ -93,7 +93,7 @@ internal fun BannersBoard() {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text(stringResource(R.string.gallery_board_banners), style = MaterialTheme.typography.titleMedium)
         Text(stringResource(R.string.gallery_banners_subtitle), style = MaterialTheme.typography.bodySmall)
-        rows.forEach { RadioProblemBanner(it, now) }
+        rows.forEach { RadioProblemBanner(it, now, onAction = {}) }
         DataLoadBanner(onRetry = {})
     }
 }

@@ -3,12 +3,18 @@ package com.voria.umsh.app
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.voria.umsh.models.AppStateSnapshot
+import com.voria.umsh.services.radio.BluetoothStatus
+import com.voria.umsh.services.radio.BoundRadio
 import com.voria.umsh.services.radio.RadioBanner
+import com.voria.umsh.services.radio.RadioKind
 import com.voria.umsh.services.radio.RadioSnapshot
 import java.time.Instant
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 
@@ -16,7 +22,11 @@ import kotlinx.coroutines.flow.stateIn
 data class ShownRadio(val radio: RadioSnapshot?, val known: Boolean)
 
 /** The shell's own state: the radio control, the banners, the unread badge, and which threads still have a conversation. */
-class ShellViewModel(private val runtime: AppRuntime) : ViewModel() {
+class ShellViewModel(
+    private val runtime: AppRuntime,
+    bluetooth: StateFlow<BluetoothStatus> = MutableStateFlow(BluetoothStatus.Ready),
+    bound: Flow<BoundRadio?> = flowOf(null),
+) : ViewModel() {
     /**
      * One value, so the control and banner never see "known" beside a radio
      * not yet published: the runtime publishes the radio before it marks it
@@ -27,9 +37,20 @@ class ShellViewModel(private val runtime: AppRuntime) : ViewModel() {
 
     val now: StateFlow<Instant> = runtime.now
 
-    val radioBanner: StateFlow<RadioBanner?> = radio
-        .map { RadioBanner.from(it.radio, known = it.known) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), RadioBanner.from(radio.value.radio, known = radio.value.known))
+    /**
+     * The phone's own Bluetooth matters only to a Bluetooth radio: off, or
+     * Nearby devices not granted, it is what the banner says, live.
+     */
+    val radioBanner: StateFlow<RadioBanner?> = combine(radio, bluetooth, bound) { shown, status, boundRadio ->
+        val ble = boundRadio?.kind == RadioKind.Ble
+        RadioBanner.from(
+            shown.radio,
+            bluetoothOff = ble && status.adapter != BluetoothStatus.Adapter.On &&
+                status.adapter != BluetoothStatus.Adapter.Missing,
+            nearbyDenied = ble && !status.nearbyGranted,
+            known = shown.known,
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), RadioBanner.from(radio.value.radio, known = radio.value.known))
 
     /** Stored data failed to read: what is shown may be out of date. */
     val dataLoadFailed: StateFlow<Boolean> = runtime.stateLoadError

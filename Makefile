@@ -28,7 +28,8 @@
 	release-artifacts release-stage release-publish release-mirror \
 	ios-mobile-core ios-archive ios-upload \
 	android-mobile-core android-debug android-release android-test \
-	android-install android-connected-test \
+	android-install android-connected-test android-notification-ask-test android-bridge android-bridge-config \
+	android-ble-peripheral ble-test-peripheral-check ble-test-vectors \
 	build-simulator-communicator run-simulator-communicator \
 	run-simulator-communicator-demo simulator-communicator-tours \
 	install-umshctl install-umsh-bridge install-dissector install-extcap \
@@ -739,9 +740,94 @@ android-install:
 	$(GRADLE) installDebug
 
 # The instrumented tests, on every connected device or emulator; set
-# ANDROID_SERIAL to pick one.
+# ANDROID_SERIAL to pick one. NotificationAskTest skips itself while
+# POST_NOTIFICATIONS is granted, which the other classes leave it, so it runs
+# again afterward with the permission revoked.
 android-connected-test:
 	$(GRADLE) connectedDebugAndroidTest
+	$(MAKE) android-notification-ask-test
+
+# NotificationAskTest alone, with POST_NOTIFICATIONS revoked and its user flags
+# cleared first on each device (ANDROID_SERIAL, else every one attached).
+# Revoking ends the app's process, so the test cannot do it itself.
+ADB := $(if $(ANDROID_HOME),$(ANDROID_HOME)/platform-tools/adb,adb)
+UMSH_PACKAGE := com.voria.umsh
+
+android-notification-ask-test:
+	$(GRADLE) :app:installDebug
+	@for serial in $${ANDROID_SERIAL:-$$($(ADB) devices | awk 'NR > 1 && $$2 == "device" { print $$1 }')}; do \
+		$(ADB) -s $$serial shell pm revoke $(UMSH_PACKAGE) android.permission.POST_NOTIFICATIONS 2>/dev/null || true; \
+		$(ADB) -s $$serial shell pm clear-permission-flags $(UMSH_PACKAGE) \
+			android.permission.POST_NOTIFICATIONS user-set user-fixed 2>/dev/null || true; \
+	done
+	$(GRADLE) :app:connectedDebugAndroidTest \
+		-Pandroid.testInstrumentationRunnerArguments.class=com.voria.umsh.features.NotificationAskTest
+
+# A two-node mesh on this machine for the emulator, with no radio: a
+# `umsh-bridge` serving two host interfaces on the loopback. The debug app's
+# Settings › Developer › Bridged radio reaches "phone" at 10.0.2.2:21838 (the
+# emulator's name for this machine's loopback); `umshctl --tcp
+# 127.0.0.1:21839` is the other node. The config and the bridge's identity
+# live in build/android-bridge; the identity is made once and kept.
+ANDROID_BRIDGE_DIR := build/android-bridge
+
+android-bridge: android-bridge-config
+	cd $(ANDROID_BRIDGE_DIR) && cargo run -q -p umsh-bridge -- run -c config.toml
+
+android-bridge-config:
+	cargo build -p umsh-bridge
+	@mkdir -p $(ANDROID_BRIDGE_DIR)
+	@test -f $(ANDROID_BRIDGE_DIR)/identity.key || \
+		cargo run -q -p umsh-bridge -- keygen identity $(ANDROID_BRIDGE_DIR)/identity.key
+	@printf '%s\n' \
+		'[identity]' \
+		'key_file = "identity.key"' \
+		'[server]' \
+		'listen = ["127.0.0.1:21837"]' \
+		'[[server.hosts]]' \
+		'name = "phone"' \
+		'listen = "127.0.0.1:21838"' \
+		'max_frames_per_minute = 600' \
+		'[[server.hosts]]' \
+		'name = "peer"' \
+		'listen = "127.0.0.1:21839"' \
+		'max_frames_per_minute = 600' \
+		> $(ANDROID_BRIDGE_DIR)/config.toml
+
+# A companion radio's Bluetooth side for the emulator (tools/ble-test-peripheral,
+# a packaged Python project run through `uv`, like tools/regiondb-build): a
+# Bumble GATT peripheral on the emulator's shared virtual Bluetooth, carrying
+# its frames to the "phone" host interface of the two-host bridge above, which
+# runs alongside and stops with it. Run one AVD at a time against it. Commands
+# on stdin inject faults (`help`). Pass the peripheral's options in
+# BLE_PERIPHERAL_ARGS, for example:
+#   make android-ble-peripheral BLE_PERIPHERAL_ARGS="--pairing-window"
+#   make android-ble-peripheral BLE_PERIPHERAL_ARGS="--pairing-window --pairing passkey 123456"
+# Its IRK and bonds persist in build/ble-test-peripheral.
+BLE_PERIPHERAL := uv run --quiet --project tools/ble-test-peripheral \
+	python tools/ble-test-peripheral/ble_test_peripheral.py
+BLE_PERIPHERAL_ARGS ?=
+
+android-ble-peripheral: android-bridge-config
+	@command -v uv >/dev/null 2>&1 || \
+		{ echo "uv not found. Install it from https://docs.astral.sh/uv/"; exit 1; }
+	@cd $(ANDROID_BRIDGE_DIR) && { cargo run -q -p umsh-bridge -- run -c config.toml & \
+		bridge=$$!; trap 'kill $$bridge 2>/dev/null' EXIT INT TERM; \
+		cd $(CURDIR) && $(BLE_PERIPHERAL) --state build/ble-test-peripheral $(BLE_PERIPHERAL_ARGS); }
+
+# The peripheral's codecs against the committed vectors, and its lint.
+ble-test-peripheral-check:
+	cd tools/ble-test-peripheral && uv run --quiet ruff format --check .
+	cd tools/ble-test-peripheral && uv run --quiet ruff check .
+	cd tools/ble-test-peripheral && uv run --quiet pytest -q
+
+# Regenerates the golden vectors from this workspace's Rust codecs. Commit the
+# result; `cargo test -p umsh-mobile-core --test ble_test_vectors` fails while
+# the committed file differs.
+ble-test-vectors:
+	cargo run -q -p umsh-mobile-core --example ble_test_vectors \
+		> tools/ble-test-peripheral/tests/vectors.json.tmp
+	mv tools/ble-test-peripheral/tests/vectors.json.tmp tools/ble-test-peripheral/tests/vectors.json
 
 # Where `cargo install` puts a binary, by cargo's own precedence.
 CARGO_BIN_DIR := $(or $(CARGO_INSTALL_ROOT),$(CARGO_HOME),$(HOME)/.cargo)/bin

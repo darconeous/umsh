@@ -55,16 +55,18 @@ enum LocationPresentation {
         )
     }
 
-    /// The bare measurement, in whichever unit keeps it readable.
+    /// The bare measurement, in whichever unit keeps it readable, with one
+    /// decimal below 10: "2,505 km", "9.8 km", "611 m", "2.4 m", "15 cm".
     static func cellSizeText(meters: Double, locale: Locale = .current) -> String {
-        let (value, unit, digits): (Double, UnitLength, Int) =
+        let (value, unit): (Double, UnitLength) =
             if meters >= 1_000 {
-                (meters / 1_000, .kilometers, 0)
+                (meters / 1_000, .kilometers)
             } else if meters >= 1 {
-                (meters, .meters, meters < 10 ? 1 : 0)
+                (meters, .meters)
             } else {
-                (meters * 100, .centimeters, 0)
+                (meters * 100, .centimeters)
             }
+        let digits = value < 10 ? 1 : 0
         return Measurement(value: value, unit: unit).formatted(
             .measurement(
                 width: .abbreviated,

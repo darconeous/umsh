@@ -135,7 +135,7 @@ pub use ulcp::{
     describe_ulcp_frame, inspect_ulcp_alert, inspect_ulcp_battery, inspect_ulcp_battery_diagnostic,
     inspect_ulcp_device_card, inspect_ulcp_properties, inspect_ulcp_property_frame,
     inspect_ulcp_status, inspect_ulcp_sync, inspect_ulcp_wifi_scan_result, region_code_description,
-    region_code_from_string, ulcp_gatt_segments, ulcp_inspection_properties,
+    region_code_from_string, ulcp_gatt_segments, ulcp_hdlc_encode, ulcp_inspection_properties,
     ulcp_location_cell_meters, ulcp_max_dev_channels, ulcp_max_dev_peers, ulcp_prop_get,
     ulcp_prop_set, ulcp_property_record, ulcp_save,
 };

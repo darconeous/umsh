@@ -2,6 +2,7 @@ package com.voria.umsh.features.conversations
 
 import android.icu.text.NumberFormat
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -15,13 +16,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -32,6 +37,7 @@ import com.voria.umsh.designsystem.LocalFixedColors
 import com.voria.umsh.designsystem.MessageSecurity
 import com.voria.umsh.designsystem.pageColor
 import com.voria.umsh.models.Reaction
+import com.voria.umsh.models.ReactionKind
 
 /** One chip: every reaction with one glyph, or one failed reaction of mine on its own. */
 data class ReactionChip(
@@ -42,6 +48,9 @@ data class ReactionChip(
     val forwardSecret: Boolean,
 ) {
     enum class Style { Mine, Failed, Theirs }
+
+    /** The reaction the chip stands for, as a tap sends it. */
+    val kind: ReactionKind get() = Glyphs.reactionKind(glyph)
 
     /** A key unique within one message's chips. */
     val key: String get() = if (style == Style.Failed) "failed:$glyph" else glyph
@@ -85,14 +94,20 @@ data class ReactionChip(
  * the conversation's color, and a failed one of mine is faded.
  */
 @Composable
-internal fun ReactionChipRow(chips: List<ReactionChip>, security: MessageSecurity, modifier: Modifier = Modifier) {
+internal fun ReactionChipRow(
+    chips: List<ReactionChip>,
+    security: MessageSecurity,
+    modifier: Modifier = Modifier,
+    /** A chip tapped: mine withdraws, another's adds it as mine. Null: the chips do nothing. */
+    onChip: ((ReactionChip) -> Unit)? = null,
+) {
     Row(modifier.testTag(Tags.REACTION_CHIPS), horizontalArrangement = Arrangement.spacedBy((-2).dp)) {
-        chips.forEach { chip -> Chip(chip, security) }
+        chips.forEach { chip -> Chip(chip, security, onChip) }
     }
 }
 
 @Composable
-private fun Chip(chip: ReactionChip, security: MessageSecurity) {
+private fun Chip(chip: ReactionChip, security: MessageSecurity, onChip: ((ReactionChip) -> Unit)?) {
     val colors = MaterialTheme.colorScheme
     val fixed = LocalFixedColors.current
     val own = fixed.sent(if (chip.forwardSecret) MessageSecurity.ForwardSecret else security)
@@ -110,7 +125,15 @@ private fun Chip(chip: ReactionChip, security: MessageSecurity) {
     Box(
         Modifier
             .testTag(Tags.reactionChip(chip.key))
-            .clearAndSetSemantics { contentDescription = description }
+            .clip(RoundedCornerShape(16.dp))
+            .then(if (onChip != null) Modifier.clickable(role = Role.Button) { onChip(chip) } else Modifier)
+            .clearAndSetSemantics {
+                contentDescription = description
+                if (onChip != null) {
+                    role = Role.Button
+                    onClick { onChip(chip); true }
+                }
+            }
             // A ring in the page's own color, so the chip reads as cut out of the bubble's edge.
             .background(pageColor(), RoundedCornerShape(16.dp))
             .padding(2.dp),

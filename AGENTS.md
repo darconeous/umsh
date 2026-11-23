@@ -28,9 +28,14 @@ costs of migration before considering implementing it.
 - `tools/`—host binaries and dev tooling (`crates/` is reserved for library crates):
   - `umshctl`—the radio tool (clap + rustyline; capture is a subcommand)
   - `umsh-bridge`—the internet bridge daemon (`docs/protocol-legacy/src/internet-bridging.md`); lib+bin split so the integration tests can stand a whole bridge up in one process. TOML config + `tracing`, its own dependency table
-  - `regiondb-build`—the region-database compiler. **Python, not Rust**, and the repo's only
-    packaged Python (`pyproject.toml` + `uv.lock`, run through `uv`); `scripts/` stays
-    stdlib-only because building firmware must need nothing but a Rust toolchain
+  - `regiondb-build`—the region-database compiler. **Python, not Rust**
+  - `ble-test-peripheral`—a companion radio's BLE side for the Android emulator: a Bumble
+    GATT peripheral on the emulator's virtual Bluetooth, bridged to a `umsh-bridge` host
+    interface (`make android-ble-peripheral`); its codecs are checked against committed
+    vectors from the Rust ones (`make ble-test-vectors`)
+  - `regiondb-build` and `ble-test-peripheral` are the repo's two packaged Python projects
+    (`pyproject.toml` + `uv.lock`, run through `uv`); `scripts/` stays stdlib-only because
+    building firmware must need nothing but a Rust toolchain
   - `ulcp-web-debugger`, `uniffi-bindgen`
 - `regions/`—source data and manifests for the geographic region database, plus the
   committed test fixture. Three stages with distinct commit policies: `regions-fetch`

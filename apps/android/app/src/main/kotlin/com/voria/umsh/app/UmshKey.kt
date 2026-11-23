@@ -16,6 +16,10 @@ sealed interface UmshKey : NavKey {
     @Serializable
     data class Thread(val address: String) : UmshKey
 
+    /** One message's details (`bubbles.svg` 6–7), from its thread. */
+    @Serializable
+    data class MessageDetails(val address: String, val sessionId: String, val handle: Long) : UmshKey
+
     @Serializable
     data object PeersRoot : UmshKey
 
@@ -27,4 +31,23 @@ sealed interface UmshKey : NavKey {
 
     @Serializable
     data object YourIdentity : UmshKey
+
+    /**
+     * The companion radio's page: above the shell on the app-level stack,
+     * or in the Settings stack as Companion radio.
+     */
+    @Serializable
+    data object RadioDetail : UmshKey
+
+    /** Choose a radio (`radio-picker.svg`): above the shell on the app-level stack. */
+    @Serializable
+    data object RadioPicker : UmshKey
+
+    /** Settings › Notifications. */
+    @Serializable
+    data object Notifications : UmshKey
+
+    /** The app-level stack's root: the shell itself, with its destinations. */
+    @Serializable
+    data object Shell : UmshKey
 }

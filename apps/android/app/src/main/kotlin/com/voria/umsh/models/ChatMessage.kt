@@ -82,6 +82,31 @@ data class Repeats(
     )
 }
 
+/** How a resend of a failed message of mine would first go. */
+enum class ResendMode {
+    /** As itself, under its own wire ID: "Try again". */
+    InPlace,
+
+    /** As a new message that replaces it: "Resend". */
+    AsNew,
+}
+
+/**
+ * What may be done to one message, as the core would take it when it was
+ * read (read again once its revise window passes). Copy and Details are
+ * always offered; they are the app's own.
+ */
+data class MessageActions(
+    val edit: Boolean = false,
+    val delete: Boolean = false,
+    /** Null when it cannot be resent. [ResendMode.InPlace] may still end as new. */
+    val resend: ResendMode? = null,
+    val react: Boolean = false,
+    val reply: Boolean = false,
+    /** A gap that may be asked for. */
+    val requestMissing: Boolean = false,
+)
+
 /** One stored message, mapped. */
 data class ChatMessage(
     val ref: MessageRef,
@@ -110,6 +135,7 @@ data class ChatMessage(
     val quote: Quote?,
     val repeats: Repeats?,
     val reviseUntilMs: Long?,
+    val actions: MessageActions = MessageActions(),
 ) {
     val createdAtMs: Long get() = cursor.createdAtMs
 }

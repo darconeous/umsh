@@ -11,6 +11,7 @@ object Tags {
     // Shell
     const val SHELL = "shell"
     const val NAV_DISPLAY = "nav_display"
+    const val APP_NAV_DISPLAY = "app_nav_display"
     const val NAV_CONVERSATIONS = "nav_conversations"
     const val NAV_PEERS = "nav_peers"
     const val NAV_MAP = "nav_map"
@@ -34,6 +35,25 @@ object Tags {
     const val SETTINGS_ROOT = "settings_root"
     const val SETTINGS_LIST = "settings_list"
     const val SETTINGS_YOUR_IDENTITY = "settings_your_identity"
+    const val SETTINGS_COMPANION_RADIO = "settings_companion_radio"
+
+    // Radio Detail
+    const val RADIO_DETAIL = "radio_detail"
+    const val RADIO_DETAIL_NAME = "radio_detail_name"
+    const val RADIO_DETAIL_PHOTO = "radio_detail_photo"
+    const val RADIO_DETAIL_STATE = "radio_detail_state"
+    const val RADIO_DETAIL_BATTERY = "radio_detail_battery"
+    const val RADIO_DETAIL_REASON = "radio_detail_reason"
+    const val RADIO_DETAIL_PRIMARY = "radio_detail_primary"
+    const val RADIO_DETAIL_FORGET = "radio_detail_forget"
+    const val RADIO_DETAIL_CAPTION = "radio_detail_caption"
+    const val RADIO_DETAIL_MESH = "radio_detail_mesh"
+    const val RADIO_DETAIL_RADIO_ID = "radio_detail_radio_id"
+    const val RADIO_DETAIL_OFFLINE = "radio_detail_offline"
+    const val RADIO_DETAIL_IDENTITY = "radio_detail_identity"
+    const val RADIO_DETAIL_RESTART = "radio_detail_restart"
+    const val RADIO_DETAIL_CHOOSE_ANOTHER = "radio_detail_choose_another"
+    const val RADIO_DETAIL_FACTORY_RESET = "radio_detail_factory_reset"
     const val YOUR_IDENTITY = "your_identity"
 
     // Conversation list
@@ -80,6 +100,27 @@ object Tags {
     const val COMPOSER_FIELD = "composer_field"
     const val COMPOSER_SEND = "composer_send"
     const val COMPOSER_BLOCKED = "composer_blocked"
+    const val COMPOSER_CONNECT_RADIO = "composer_connect_radio"
+    const val COMPOSER_STRIP = "composer_strip"
+    const val COMPOSER_STRIP_CLOSE = "composer_strip_close"
+    const val COMPOSER_EDIT_FIELD = "composer_edit_field"
+    const val RETRY_MESSAGE = "retry_message"
+    const val MESSAGE_MENU = "message_menu"
+    const val MESSAGE_MENU_REACTIONS = "message_menu_reactions"
+    const val EMERGENCY_SHEET = "emergency_sheet"
+    const val EMERGENCY_CERTIFY = "emergency_certify"
+    const val EMERGENCY_CANCEL = "emergency_cancel"
+    const val THREAD_ALERT = "thread_alert"
+    const val RESEND_DIALOG = "resend_dialog"
+    const val RESEND_CONFIRM = "resend_confirm"
+    const val RESEND_WITHOUT_FORWARD_SECRECY = "resend_without_forward_secrecy"
+    const val RESEND_CANCEL = "resend_cancel"
+    const val ORIGINAL_DIALOG = "original_dialog"
+    const val MESSAGE_DETAILS = "message_details"
+    const val MESSAGE_DETAILS_GONE = "message_details_gone"
+
+    fun menuItem(name: String) = "menu_item/$name"
+    fun menuReaction(glyph: String) = "menu_reaction/$glyph"
 
     /** A transcript row by its message's key. */
     fun message(key: String) = "message/$key"
@@ -115,6 +156,9 @@ object Tags {
     const val CONNECT_RADIO_BLOCKED_ACTION = "connect_radio_blocked_action"
     const val CONNECT_RADIO_PROGRESS = "connect_radio_progress"
     const val SET_UP_LATER = "set_up_later"
+    const val ONBOARDING = "onboarding"
+    const val CHOOSE_RADIO = "choose_radio"
+    const val CHOOSE_RADIO_CURRENT = "choose_radio_current"
 
     // Your identity
     const val IDENTITY_QR = "identity_qr"
@@ -124,6 +168,14 @@ object Tags {
     const val IDENTITY_DISCOVERABLE = "identity_discoverable"
     const val IDENTITY_BEACON = "identity_beacon"
     const val IDENTITY_SCHEDULE = "identity_schedule"
+    const val IDENTITY_SHARE_LOCATION = "identity_share_location"
+    const val IDENTITY_PRECISION = "identity_precision"
+    const val IDENTITY_LOCATION_OFF = "identity_location_off"
+    const val IDENTITY_LOCATION_ALLOW = "identity_location_allow"
+    const val PRECISION_DIALOG = "precision_dialog"
+    const val PRECISION_OPTION = "precision_option"
+    const val PRECISION_PRECISE_OFF = "precision_precise_off"
+    const val PRECISION_ALLOW = "precision_allow"
     const val IDENTITY_KEY_PROTECTION = "identity_key_protection"
     const val IDENTITY_ERASE = "identity_erase"
     const val QR_SHEET = "qr_sheet"
@@ -138,6 +190,15 @@ object Tags {
     const val CONFIRM_ACTION = "confirm_action"
     const val CONFIRM_CANCEL = "confirm_cancel"
 
+    // Settings › Notifications
+    const val SETTINGS_NOTIFICATIONS = "settings_notifications"
+    const val NOTIFICATIONS_PAGE = "notifications_page"
+    const val NOTIFICATIONS_OFF_CARD = "notifications_off_card"
+    const val NOTIFICATIONS_TURN_ON = "notifications_turn_on"
+    const val NOTIFICATIONS_HIDE_LOCK_SCREEN = "notifications_hide_lock_screen"
+    const val NOTIFICATIONS_CATEGORY = "notifications_category"
+    const val NOTIFICATIONS_ALL = "notifications_all"
+
     // Manage space
     const val MANAGE_SPACE = "manage_space"
     const val MANAGE_SPACE_IDENTITY = "manage_space_identity"
@@ -148,10 +209,19 @@ object Tags {
 
     // Developer section (debug builds)
     const val DEV_CONNECT_RADIO_PREVIEW = "dev_connect_radio_preview"
+    const val DEV_CONNECT_RADIO_LIVE = "dev_connect_radio_live"
+    const val DEV_BONDED_CONNECT = "dev_bonded_connect"
 
     const val DEV_STAGING = "dev_staging"
     const val DEV_LINK_UP = "dev_link_up"
     const val DEV_TX_FAILING = "dev_tx_failing"
     const val DEV_FALLBACK_COLORS = "dev_fallback_colors"
+    const val DEV_WAITING_STRATEGY = "dev_waiting_strategy"
     const val DEV_RESET_STAGED = "dev_reset_staged"
+    const val DEV_BRIDGED_RADIO = "dev_bridged_radio"
+    const val DEV_BRIDGED_CONNECT = "dev_bridged_connect"
+    const val DEV_BRIDGED_DISCONNECT = "dev_bridged_disconnect"
+    const val DEV_BRIDGED_FORGET = "dev_bridged_forget"
+    const val DEV_ADD_PEER = "dev_add_peer"
+    const val DEV_ADD_PEER_ACTION = "dev_add_peer_action"
 }

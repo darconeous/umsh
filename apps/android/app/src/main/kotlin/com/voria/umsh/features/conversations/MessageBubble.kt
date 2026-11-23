@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -31,6 +32,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.HorizontalAlignmentLine
@@ -40,7 +42,9 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.buildAnnotatedString
@@ -60,6 +64,7 @@ import com.voria.umsh.designsystem.annotatedStringResource
 import com.voria.umsh.designsystem.dateLineText
 import com.voria.umsh.designsystem.isolated
 import com.voria.umsh.models.ChatMessage
+import com.voria.umsh.models.DeliveryState
 import com.voria.umsh.models.MessageRef
 import com.voria.umsh.models.Presence
 import com.voria.umsh.models.PreviewText.Sender
@@ -81,11 +86,12 @@ internal fun TranscriptRowItem(
     lastOutboundKey: String?,
     now: Instant,
     highlighted: Boolean,
-    onOpenQuote: (MessageRef) -> Unit,
+    handlers: MessageHandlers,
+    asking: Set<MessageRef>,
 ) {
     when (row) {
         is TranscriptRow.DateLine -> DateLineRow(row, now)
-        is TranscriptRow.Gap -> GapRow(row, context, layout)
+        is TranscriptRow.Gap -> GapRow(row, context, layout, asking, handlers.onGap)
         is TranscriptRow.Message -> {
             val wash by animateFloatAsState(
                 if (highlighted) HIGHLIGHT_ALPHA else 0f,
@@ -100,7 +106,7 @@ internal fun TranscriptRowItem(
                     .drawBehind { if (wash > 0f) drawRect(color.copy(alpha = wash)) }
                     .padding(horizontal = 16.dp),
             ) {
-                MessageRow(row, context, layout, row.message.ref.key == lastOutboundKey, onOpenQuote)
+                MessageRow(row, context, layout, row.message.ref.key == lastOutboundKey, handlers)
             }
         }
     }
@@ -124,7 +130,7 @@ private fun MessageRow(
     context: ThreadContext,
     layout: BubbleLayout,
     isMostRecentOutbound: Boolean,
-    onOpenQuote: (MessageRef) -> Unit,
+    handlers: MessageHandlers,
 ) {
     val message = row.message
     val tag = Modifier.testTag(Tags.message(message.ref.key))
@@ -136,8 +142,13 @@ private fun MessageRow(
             modifier = tag,
             inset = if (context.isChannel) layout.memberGutter else 0.dp,
         )
-        message.isStatus -> StatusLine(message, context, tag, inset = if (context.isChannel) layout.memberGutter else 0.dp)
-        else -> Bubble(row, context, layout, isMostRecentOutbound, onOpenQuote, tag)
+        message.isStatus -> StatusLine(
+            message,
+            context,
+            tag.messageGestures(message, handlers),
+            inset = if (context.isChannel) layout.memberGutter else 0.dp,
+        )
+        else -> SwipeToReply(message, handlers) { Bubble(row, context, layout, isMostRecentOutbound, handlers, tag) }
     }
 }
 
@@ -180,7 +191,7 @@ private fun Bubble(
     context: ThreadContext,
     layout: BubbleLayout,
     isMostRecentOutbound: Boolean,
-    onOpenQuote: (MessageRef) -> Unit,
+    handlers: MessageHandlers,
     modifier: Modifier,
 ) {
     val message = row.message
@@ -196,8 +207,11 @@ private fun Bubble(
     val avatar = context.memberAvatar(message)
     val gutter = if (context.isChannel && !outbound) layout.memberGutter else 0.dp
 
+    // The retry button beside a failed message of mine that can go again.
+    val retry = outbound && message.actions.resend != null &&
+        (message.delivery == DeliveryState.Failed || message.delivery == DeliveryState.Undelivered)
     Column(
-        modifier.fillMaxWidth().semantics(mergeDescendants = true) {},
+        modifier.fillMaxWidth().messageGestures(message, handlers),
         horizontalAlignment = if (outbound) Alignment.End else Alignment.Start,
     ) {
         label?.let {
@@ -220,6 +234,18 @@ private fun Bubble(
                     }
                 }
             }
+            if (retry) {
+                IconButton(
+                    onClick = { handlers.onRetry(message) },
+                    modifier = Modifier.alignBy(BubbleBottom).testTag(Tags.RETRY_MESSAGE),
+                ) {
+                    Icon(
+                        painterResource(R.drawable.ic_refresh),
+                        contentDescription = stringResource(R.string.retry_message),
+                        tint = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
             BubbleWithChips(
                 outbound,
                 Modifier.alignBy(BubbleBottom),
@@ -232,7 +258,7 @@ private fun Bubble(
                             .testTag(Tags.BUBBLE),
                     ) {
                         message.quote?.let { quote ->
-                            QuoteBlock(quote, context, outbound, onOpenQuote)
+                            QuoteBlock(quote, context, outbound, handlers.onOpenQuote)
                         }
                         Text(
                             remember(message.body) { linkified(message.body) },
@@ -245,7 +271,14 @@ private fun Bubble(
                 chips = if (chips.isEmpty()) {
                     null
                 } else {
-                    { ReactionChipRow(chips, context.security, Modifier.padding(horizontal = 8.dp)) }
+                    {
+                        ReactionChipRow(
+                            chips,
+                            context.security,
+                            Modifier.padding(horizontal = 8.dp),
+                            onChip = if (message.actions.react) ({ chip -> handlers.onChip(message, chip) }) else null,
+                        )
+                    }
                 },
             )
         }
@@ -399,11 +432,20 @@ private fun stateText(state: DeliveryCaption.State): String = when (state) {
 
 /**
  * Missing messages: an empty bubble with a down arrow while they wait to be
- * asked for, a spinner while they are. Asking is Phase 2's, so it has no action.
+ * asked for; tapping asks, and a spinner shows while they are asked for.
  */
 @Composable
-private fun GapRow(row: TranscriptRow.Gap, context: ThreadContext, layout: BubbleLayout) {
+private fun GapRow(
+    row: TranscriptRow.Gap,
+    context: ThreadContext,
+    layout: BubbleLayout,
+    asking: Set<MessageRef>,
+    onGap: (List<ChatMessage>) -> Unit,
+) {
     val description = pluralStringResource(R.plurals.gap_missing, row.messages.size, row.messages.size)
+    val idle = row.isIdle && row.messages.none { it.ref in asking }
+    val askable = idle && row.messages.any { it.actions.requestMissing }
+    val clickLabel = stringResource(R.string.gap_request)
     Box(
         Modifier
             .fillMaxWidth()
@@ -413,11 +455,22 @@ private fun GapRow(row: TranscriptRow.Gap, context: ThreadContext, layout: Bubbl
         Box(
             Modifier
                 .size(width = 64.dp, height = 40.dp)
-                .background(MaterialTheme.colorScheme.surfaceContainerHighest, RoundedCornerShape(BUBBLE_RADIUS))
-                .clearAndSetSemantics { contentDescription = description },
+                .clip(RoundedCornerShape(BUBBLE_RADIUS))
+                .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                .then(
+                    if (askable) {
+                        Modifier.clickable(onClickLabel = clickLabel, role = Role.Button) { onGap(row.messages) }
+                    } else {
+                        Modifier
+                    },
+                )
+                .clearAndSetSemantics {
+                    contentDescription = description
+                    if (askable) onClick(label = clickLabel) { onGap(row.messages); true }
+                },
             contentAlignment = Alignment.Center,
         ) {
-            if (row.isIdle) {
+            if (idle) {
                 Icon(
                     painterResource(R.drawable.ic_arrow_downward),
                     contentDescription = null,

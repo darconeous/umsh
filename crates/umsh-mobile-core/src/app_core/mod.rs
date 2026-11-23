@@ -156,7 +156,8 @@ pub enum MobileAppError {
     /// The device did not confirm entering firmware update.
     DfuUnconfirmed,
     /// The conversation is `EMERGENCY`'s, and its warning has not been
-    /// agreed to under this owner (`certify_emergency`).
+    /// agreed to under this owner (`certify_emergency`), or that agreement
+    /// lapsed 24 hours after the last send there.
     EmergencyNotCertified,
     /// The message was kept, but could not go out. `recorded`, it is
     /// stored as not delivered; otherwise that could not be stored either,
@@ -259,6 +260,10 @@ struct Snapshot {
     revoking_claimed_radios: bool,
     /// The user agreed to `EMERGENCY`'s warning under `owner`.
     emergency_certified: bool,
+    /// When, on the monotonic clock, the certification lapses: 24 hours
+    /// after it was given or after the last send there. `None` while
+    /// uncertified.
+    emergency_lapses_at_ms: Option<i64>,
     /// When, on the monotonic clock, an unnarrowed ask for identities may
     /// go again; `None` before the first.
     discovery_ready_at_ms: Option<i64>,
@@ -273,22 +278,76 @@ impl Snapshot {
         self.owner = owner;
         if cleared {
             self.emergency_certified = false;
+            self.emergency_lapses_at_ms = None;
             return Some(false);
         }
         None
     }
+
+    /// Let the certification lapse when `now_ms` has reached its deadline,
+    /// reporting it as an owner change does, and every channel conversation
+    /// with it, since each says whether it needs the warning.
+    fn lapse_emergency(&mut self, now_ms: i64) -> MobileAppChangesRecord {
+        let lapsed = self.emergency_certified
+            && self
+                .emergency_lapses_at_ms
+                .is_some_and(|deadline| now_ms >= deadline);
+        if !lapsed {
+            return MobileAppChangesRecord::default();
+        }
+        self.emergency_certified = false;
+        self.emergency_lapses_at_ms = None;
+        MobileAppChangesRecord {
+            emergency_certified: Some(false),
+            conversations_changed: true,
+            ..MobileAppChangesRecord::default()
+        }
+    }
 }
+
+/// How long the `EMERGENCY` certification lasts after it is given, and
+/// after each send there.
+pub(super) const EMERGENCY_CERTIFICATION_LIFETIME_MS: i64 = 24 * 60 * 60 * 1000;
 
 /// What the object and its worker share.
 struct Shared {
     snapshot: Mutex<Snapshot>,
     changes: Mutex<MobileAppChangesRecord>,
     wake: WakeSignal<dyn MobileAppCoreListener>,
+    /// Raised when the `EMERGENCY` deadline moves, so the worker's timer
+    /// is armed for the new one.
+    emergency_deadline_moved: tokio::sync::Notify,
 }
 
 impl Shared {
     fn snapshot(&self) -> MutexGuard<'_, Snapshot> {
         self.snapshot.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Whether `EMERGENCY`'s warning stands at `now_ms` on the monotonic
+    /// clock. One whose deadline has passed lapses here, and is reported,
+    /// whether or not the worker's timer has fired yet.
+    fn emergency_certified_at(&self, now_ms: i64) -> bool {
+        let mut certified = false;
+        self.publish(|snapshot| {
+            let changes = snapshot.lapse_emergency(now_ms);
+            certified = snapshot.emergency_certified;
+            changes
+        });
+        certified
+    }
+
+    /// A send on `EMERGENCY` at `now_ms`: a standing certification lasts
+    /// 24 hours from it. One that lapsed meanwhile stays lapsed.
+    fn emergency_sent(&self, now_ms: i64) {
+        {
+            let mut snapshot = self.snapshot();
+            if !snapshot.emergency_certified {
+                return;
+            }
+            snapshot.emergency_lapses_at_ms = Some(now_ms + EMERGENCY_CERTIFICATION_LIFETIME_MS);
+        }
+        self.emergency_deadline_moved.notify_one();
     }
 
     /// Apply `change` to the snapshot, then raise what it reports. The
@@ -411,6 +470,9 @@ impl MobileAppCore {
     }
 
     pub fn status(&self) -> Result<MobileAppStatusRecord, MobileAppError> {
+        // A certification whose deadline passed is not reported as standing.
+        self.shared
+            .emergency_certified_at(self.clock.monotonic_ms());
         let snapshot = self.shared.snapshot();
         match snapshot.lifecycle {
             MobileAppLifecycle::Stopped => Err(MobileAppError::Stopped),
@@ -536,10 +598,12 @@ impl MobileAppCore {
                 meet: None,
                 revoking_claimed_radios: false,
                 emergency_certified: false,
+                emergency_lapses_at_ms: None,
                 discovery_ready_at_ms: None,
             }),
             changes: Mutex::new(MobileAppChangesRecord::default()),
             wake: WakeSignal::new(),
+            emergency_deadline_moved: tokio::sync::Notify::new(),
         });
         let parts = WorkerParts {
             store: store.clone(),

@@ -6,6 +6,7 @@ import android.content.Context
 import android.os.Build
 import androidx.annotation.StringRes
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.platform.LocalContext
 
@@ -31,5 +32,10 @@ class Copier(private val context: Context, private val copyNotice: CopyNotice) {
     }
 }
 
+/** One [Copier] per context and notice, so a handler that captures it stays the same across recompositions. */
 @Composable
-fun rememberCopier(): Copier = Copier(LocalContext.current, LocalCopyNotice.current)
+fun rememberCopier(): Copier {
+    val context = LocalContext.current
+    val notice = LocalCopyNotice.current
+    return remember(context, notice) { Copier(context, notice) }
+}

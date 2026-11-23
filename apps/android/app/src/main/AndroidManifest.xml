@@ -3,13 +3,62 @@
 
     <!--
         Finding and connecting to the companion radio (Nearby devices). Never
-        used for location. Declared now; nothing asks for them until the
-        Bluetooth radio search arrives (Phase 2).
+        used for location. Asked for when Connect a radio or Choose a radio
+        opens.
     -->
     <uses-permission
         android:name="android.permission.BLUETOOTH_SCAN"
         android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <!--
+        The companion radio is associated through CompanionDeviceManager,
+        which Android 12 refuses unless this is declared. Not required: a
+        phone without it connects radios without an association.
+    -->
+    <uses-feature
+        android:name="android.software.companion_device_setup"
+        android:required="false" />
+
+    <!--
+        What the radio's association allows: Android tells the app when the
+        radio comes back into range, exempts the app from battery
+        optimizations, and lets it start the radio's service from
+        the background. Each takes effect only with an association.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_OBSERVE_COMPANION_DEVICE_PRESENCE" />
+    <uses-permission android:name="android.permission.REQUEST_COMPANION_RUN_IN_BACKGROUND" />
+    <uses-permission android:name="android.permission.REQUEST_COMPANION_START_FOREGROUND_SERVICES_FROM_BACKGROUND" />
+
+    <!--
+        Message notifications (Android 13 and later ask). Asked for once,
+        when the first radio connects; never at launch.
+    -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!--
+        Share location: the identity carries this phone's position, as a
+        cell no smaller than the user chose. Asked for when Share location is
+        turned on; read only while the app is in use (no background
+        location). Approximate alone limits the cell sizes on offer.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-feature
+        android:name="android.hardware.location"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.location.gps"
+        android:required="false" />
+
+    <!--
+        Keeps the process running while the companion radio is connected,
+        with its notification. A connected-device service also needs Nearby
+        devices granted (Android 14 and later); the app checks before
+        starting it.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
 
     <!--
         No backup and no device-to-device transfer: restoring frame-counter
@@ -50,6 +99,51 @@
             android:exported="false"
             android:label="@string/manage_space_title"
             android:theme="@style/Theme.Umsh" />
+
+        <!--
+            Holds the process while the companion radio comes up or stays
+            attached. It does not own the link; the app's host does.
+        -->
+        <service
+            android:name=".services.background.RadioForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
+
+        <!--
+            Companion presence (§7.3): Android binds it when the associated
+            radio appears, which wakes the app to reconnect. Exported so the
+            system can bind it; only the system holds the permission.
+        -->
+        <service
+            android:name=".services.background.RadioPresenceService"
+            android:exported="true"
+            android:permission="android.permission.BIND_COMPANION_DEVICE_SERVICE">
+            <intent-filter>
+                <action android:name="android.companion.CompanionDeviceService" />
+            </intent-filter>
+        </service>
+
+        <!--
+            After an update, on API 31–35: starts the radio's service for a
+            wanted radio, which nothing else would until it leaves and
+            returns. Exported because the system sends it; the broadcast
+            reaches only the updated app.
+        -->
+        <receiver
+            android:name=".services.background.AppUpdatedReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+            A message notification's Reply and Mark as read. Not exported:
+            only the app's own explicit PendingIntents reach it.
+        -->
+        <receiver
+            android:name=".services.notifications.NotificationActionReceiver"
+            android:exported="false" />
     </application>
 
 </manifest>

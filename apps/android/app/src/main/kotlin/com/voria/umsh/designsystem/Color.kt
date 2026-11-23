@@ -115,6 +115,8 @@ val WarningDark = WarningColors(container = Color(0xFF3A2A0E), onContainer = Col
 data class FixedColors(
     val publicChannel: Color,
     val emergencyChannel: Color,
+    /** The dot beside a companion radio's Connected (`radio-detail.svg`). */
+    val connected: Color,
 ) {
     /** A sent bubble, the send button and the composer's cursor, by who can read the message. */
     fun sent(security: MessageSecurity): Color = when (security) {
@@ -149,8 +151,8 @@ enum class MessageSecurity {
     ForwardSecret,
 }
 
-val FixedLight = FixedColors(publicChannel = Color(0xFF007AFF), emergencyChannel = Color(0xFFFF3B30))
-val FixedDark = FixedColors(publicChannel = Color(0xFF0A84FF), emergencyChannel = Color(0xFFFF453A))
+val FixedLight = FixedColors(publicChannel = Color(0xFF007AFF), emergencyChannel = Color(0xFFFF3B30), connected = Color(0xFF1E7B45))
+val FixedDark = FixedColors(publicChannel = Color(0xFF0A84FF), emergencyChannel = Color(0xFFFF453A), connected = Color(0xFF5BC57F))
 
 val LocalWarningColors = staticCompositionLocalOf { WarningLight }
 val LocalFixedColors = staticCompositionLocalOf { FixedLight }

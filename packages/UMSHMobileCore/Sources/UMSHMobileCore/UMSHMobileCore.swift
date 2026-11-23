@@ -852,8 +852,9 @@ public protocol MobileAppCoreProtocol: AnyObject, Sendable {
 
     /**
      * The user agreed to `EMERGENCY`'s warning: sends there are taken
-     * from now on, under this owner, until the owner changes or the core
-     * ends. In effect for every command made after it returns.
+     * from now on, under this owner, until 24 hours pass with no send
+     * there, the owner changes, or the core ends. In effect for every
+     * command made after it returns.
      */
     func certifyEmergency() throws
 
@@ -1730,8 +1731,9 @@ open func appendDraft(address: String, text: String)async throws   {
 
     /**
      * The user agreed to `EMERGENCY`'s warning: sends there are taken
-     * from now on, under this owner, until the owner changes or the core
-     * ends. In effect for every command made after it returns.
+     * from now on, under this owner, until 24 hours pass with no send
+     * there, the owner changes, or the core ends. In effect for every
+     * command made after it returns.
      */
 open func certifyEmergency()throws   {try rustCallWithError(FfiConverterTypeMobileAppError_lift) {
         uniffiCallStatus in
@@ -14374,7 +14376,8 @@ public struct MobileAppChangesRecord: Equatable, Hashable {
     public var revokingClaimedRadios: Bool?
     /**
      * Whether the user agreed to `EMERGENCY`'s warning, when that
-     * changed.
+     * changed: given, or gone with the owner or 24 hours after the last
+     * send there.
      */
     public var emergencyCertified: Bool?
     /**
@@ -14431,7 +14434,8 @@ public struct MobileAppChangesRecord: Equatable, Hashable {
          */revokingClaimedRadios: Bool?,
         /**
          * Whether the user agreed to `EMERGENCY`'s warning, when that
-         * changed.
+         * changed: given, or gone with the owner or 24 hours after the last
+         * send there.
          */emergencyCertified: Bool?,
         /**
          * Managed devices whose snapshot changed, by `MobileManagedDevice`
@@ -16197,7 +16201,8 @@ public struct MobileAppStatusRecord: Equatable, Hashable {
      */
     public var revokingClaimedRadios: Bool
     /**
-     * Whether the user agreed to `EMERGENCY`'s warning under this owner.
+     * Whether the user agreed to `EMERGENCY`'s warning under this owner,
+     * within 24 hours of the last send there.
      */
     public var emergencyCertified: Bool
 
@@ -16217,7 +16222,8 @@ public struct MobileAppStatusRecord: Equatable, Hashable {
          * Whether claimed radios are being revoked now.
          */revokingClaimedRadios: Bool,
         /**
-         * Whether the user agreed to `EMERGENCY`'s warning under this owner.
+         * Whether the user agreed to `EMERGENCY`'s warning under this owner,
+         * within 24 hours of the last send there.
          */emergencyCertified: Bool) {
         self.lifecycle = lifecycle
         self.radio = radio
@@ -32689,7 +32695,8 @@ enum MobileAppError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError
     case DfuUnconfirmed
     /**
      * The conversation is `EMERGENCY`'s, and its warning has not been
-     * agreed to under this owner (`certify_emergency`).
+     * agreed to under this owner (`certify_emergency`), or that agreement
+     * lapsed 24 hours after the last send there.
      */
     case EmergencyNotCertified
     /**
@@ -48295,7 +48302,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_append_draft() != 35667) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_certify_emergency() != 13861) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_certify_emergency() != 28315) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_clear_messages() != 57994) {
@@ -49315,7 +49322,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_set_alert() != 11892) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_set_host_auto_ack() != 54758) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_set_host_auto_ack() != 36561) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_set_time() != 47914) {

@@ -164,6 +164,102 @@ async fn a_direct_message_notifies_and_names_its_transcript() {
     assert!(staged.seen.borrow().conversations_changed);
 }
 
+/// A phone whose store holds none of the staged mesh: only its own
+/// identity, the radio it is given, and what arrives.
+async fn unseeded() -> (Core, Arc<MobileStagingAir>, tempfile::TempDir, String) {
+    let core = Core::new();
+    let owner = identity(PHONE_SEED).public_identity().canonical_address;
+    let air_dir = tempfile::tempdir().unwrap();
+    let air = MobileStagingAir::start(air_dir.path().display().to_string(), false).unwrap();
+    core.core.use_radio(Some(air.radio())).await.unwrap();
+    core.start(PHONE_SEED).await;
+    air.connect();
+    (core, air, air_dir, owner)
+}
+
+/// The first message from a peer the phone has never heard of (no
+/// advertisement, no exchange, never saved): it is stored under the
+/// sender's address, but no conversation lists it until the peer is
+/// stored. Saving the peer and opening the conversation shows it.
+#[tokio::test]
+async fn an_unsolicited_direct_message_waits_for_its_sender_to_be_stored() {
+    let (core, air, _air_dir, owner) = unseeded().await;
+    let speaker = staged_speaker_address();
+    let is_speaker = |node: &crate::store::MobileStoredNodeRecord| node.public_address == speaker;
+    assert!(
+        !core
+            .store
+            .list_nodes(owner.clone())
+            .unwrap()
+            .iter()
+            .any(is_speaker)
+    );
+    let started = tokio::time::Instant::now();
+    loop {
+        match air.peer_says("Who's on the ridge?".to_owned(), false).await {
+            Err(MobileStagingAirError::NoPhone) => {}
+            answer => {
+                answer.unwrap();
+                break;
+            }
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "the speaker never learned the phone"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let stored = |core: &Core| {
+        core.store
+            .chat_message_page_newest(owner.clone(), speaker.clone(), 10)
+            .unwrap()
+            .messages
+            .iter()
+            .any(|message| message.body == "Who's on the ridge?")
+    };
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    while !stored(&core) {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the message was never stored"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let state = core.core.state(false).unwrap();
+    assert!(
+        state.direct_conversations.is_empty(),
+        "no conversation without its peer"
+    );
+    assert!(
+        !state
+            .peers
+            .unwrap()
+            .iter()
+            .any(|peer| peer.identity.canonical_address == speaker)
+    );
+
+    // Stored by its key, the sender's conversation opens on the message.
+    core.core
+        .save_peer(speaker.clone(), None, true)
+        .await
+        .unwrap();
+    let address = core.core.start_conversation(speaker.clone()).await.unwrap();
+    assert_eq!(address, speaker);
+    let state = core.core.state(true).unwrap();
+    let conversation = state
+        .direct_conversations
+        .iter()
+        .find(|conversation| conversation.peer.identity.canonical_address == speaker)
+        .unwrap();
+    assert_eq!(
+        conversation
+            .last_message
+            .as_ref()
+            .map(|message| message.stored.body.as_str()),
+        Some("Who's on the ridge?")
+    );
+}
+
 #[tokio::test]
 async fn a_muted_conversation_stores_the_message_and_says_nothing() {
     let staged = Staged::new().await;
@@ -924,6 +1020,114 @@ async fn a_failed_message_resent_in_place_is_moved_before_the_answer() {
     until_stored(&staged, &speaker, "the resend acknowledged", |message| {
         message.reference == failed.reference
             && message.delivery_state == Some(crate::MobileStoredChatDeliveryState::Acknowledged)
+    })
+    .await;
+}
+
+const HOUR_MS: i64 = 60 * 60 * 1000;
+
+/// `EMERGENCY`'s conversation on the staged phone, opened, and agreed to.
+fn emergency(staged: &Staged) -> String {
+    let id = staged
+        .core
+        .store
+        .channels(staged.owner.clone())
+        .unwrap()
+        .into_iter()
+        .find(|channel| channel.canonical_name.as_deref() == Some("emergency"))
+        .unwrap()
+        .id;
+    let key = crate::inspect_channel_name("emergency".to_owned())
+        .unwrap()
+        .key;
+    let address = crate::channel_conversation_address(key).unwrap();
+    staged
+        .core
+        .store
+        .ensure_channel_conversation(staged.owner.clone(), id, address.clone(), NOW_MS)
+        .unwrap();
+    staged.core.core.certify_emergency().unwrap();
+    address
+}
+
+/// A message on `EMERGENCY` resent in place keeps it another day, as a send does.
+#[tokio::test]
+async fn a_resend_in_place_on_emergency_keeps_it_another_day() {
+    use super::{MobileAppChatRequest, MobileAppResent};
+    let staged = Staged::new().await;
+    let emergency = emergency(&staged);
+    staged.core.clock.advance(23 * HOUR_MS);
+    staged.air.set_transmissions_failing(true);
+    staged
+        .core
+        .core
+        .send_chat(
+            emergency.clone(),
+            MobileAppChatRequest::Typed {
+                text: "TEST: radio check".into(),
+                forward_secret: None,
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    let failed = until_stored(&staged, &emergency, "the message failing", |message| {
+        message.outbound
+            && matches!(
+                message.delivery_state,
+                Some(
+                    crate::MobileStoredChatDeliveryState::Failed
+                        | crate::MobileStoredChatDeliveryState::Undelivered
+                )
+            )
+    })
+    .await;
+    staged.air.set_transmissions_failing(false);
+    // Inside the revise window, so it goes in place.
+    staged.core.clock.advance(3 * HOUR_MS);
+    assert_eq!(
+        staged
+            .core
+            .core
+            .resend(emergency.clone(), failed.reference, false)
+            .await,
+        Ok(MobileAppResent::InPlace)
+    );
+    // A day after the send, but not after the resend.
+    staged.core.clock.advance(22 * HOUR_MS);
+    assert!(staged.core.core.status().unwrap().emergency_certified);
+}
+
+/// Asking for a message missed on `EMERGENCY` keeps it another day: the request goes out there.
+#[tokio::test]
+async fn a_repair_asked_on_emergency_keeps_it_another_day() {
+    let staged = Staged::new().await;
+    let emergency = emergency(&staged);
+    staged.core.clock.advance(23 * HOUR_MS);
+    staged
+        .air
+        .peer_says_losing_one_on(
+            emergency.clone(),
+            "First".to_owned(),
+            "Lost".to_owned(),
+            "Last".to_owned(),
+        )
+        .await
+        .unwrap();
+    let gap = until_stored(&staged, &emergency, "the gap", |message| {
+        message.presence == crate::mobile_chat::MobileChatPresence::GapIdle
+    })
+    .await;
+    staged
+        .core
+        .core
+        .request_missing(emergency.clone(), vec![gap.reference])
+        .await
+        .unwrap();
+    staged.core.clock.advance(2 * HOUR_MS);
+    assert!(staged.core.core.status().unwrap().emergency_certified);
+    until_stored(&staged, &emergency, "the lost message", |message| {
+        message.body == "Lost"
     })
     .await;
 }

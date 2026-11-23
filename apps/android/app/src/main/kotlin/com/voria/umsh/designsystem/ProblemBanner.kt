@@ -30,6 +30,7 @@ import com.voria.umsh.R
 import com.voria.umsh.app.Tags
 import com.voria.umsh.services.radio.RadioBanner
 import com.voria.umsh.services.radio.RadioBanner.RejectReason
+import com.voria.umsh.services.radio.UlcpStatusText
 import java.time.Instant
 
 /**
@@ -82,12 +83,37 @@ fun ProblemBanner(
     }
 }
 
-/**
- * The radio's banner. Its actions (Details, Choose radio, Turn on, Allow)
- * all lead to Phase 2's pages and requests, so none is shown yet.
- */
+/** What a radio banner's one action does. */
+enum class RadioBannerAction {
+    /** Opens Choose a radio. */
+    ChooseRadio,
+
+    /** Opens Radio Detail. */
+    Details,
+
+    /** Android's own Bluetooth request. */
+    TurnOn,
+
+    /** Asks for Nearby devices, or opens the app's settings once Android stops asking. */
+    Allow,
+}
+
+/** The action a radio banner offers; null for none. */
+fun RadioBanner.action(): RadioBannerAction? = when (this) {
+    RadioBanner.NoRadio -> RadioBannerAction.ChooseRadio
+    is RadioBanner.Disconnected, is RadioBanner.Failed, is RadioBanner.TransmissionRejected -> RadioBannerAction.Details
+    is RadioBanner.BluetoothOff -> RadioBannerAction.TurnOn
+    RadioBanner.NearbyDenied -> RadioBannerAction.Allow
+}
+
+/** The radio's banner, with its action when [onAction] is given. */
 @Composable
-fun RadioProblemBanner(banner: RadioBanner, now: Instant, modifier: Modifier = Modifier) {
+fun RadioProblemBanner(
+    banner: RadioBanner,
+    now: Instant,
+    modifier: Modifier = Modifier,
+    onAction: ((RadioBannerAction) -> Unit)? = null,
+) {
     val (icon, title) = when (banner) {
         RadioBanner.NoRadio -> R.drawable.ic_bluetooth to R.string.banner_no_radio_title
         is RadioBanner.Disconnected -> R.drawable.ic_sensors_off to R.string.banner_disconnected_title
@@ -120,6 +146,17 @@ fun RadioProblemBanner(banner: RadioBanner, now: Instant, modifier: Modifier = M
         detail = detail,
         tone = banner.tone,
         modifier = modifier.testTag(Tags.RADIO_BANNER),
+        action = onAction?.let { handle ->
+            banner.action()?.let { action ->
+                val label = when (action) {
+                    RadioBannerAction.ChooseRadio -> R.string.banner_action_choose_radio
+                    RadioBannerAction.Details -> R.string.banner_action_details
+                    RadioBannerAction.TurnOn -> R.string.banner_action_turn_on
+                    RadioBannerAction.Allow -> R.string.banner_action_allow
+                }
+                stringResource(label) to { handle(action) }
+            }
+        },
     )
 }
 
@@ -161,5 +198,5 @@ private fun rejectReason(reason: RejectReason): String = when (reason) {
     RejectReason.ChannelBusy -> stringResource(R.string.banner_reason_channel_busy)
     RejectReason.RadioBusy -> stringResource(R.string.banner_reason_radio_busy)
     RejectReason.QueueFull -> stringResource(R.string.banner_reason_queue_full)
-    is RejectReason.Status -> stringResource(R.string.banner_reason_status, isolated(reason.name))
+    is RejectReason.Status -> stringResource(UlcpStatusText.text(reason.code), reason.code.toLong())
 }

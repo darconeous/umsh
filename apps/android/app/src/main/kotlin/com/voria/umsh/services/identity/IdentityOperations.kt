@@ -20,17 +20,24 @@ class IdentityOperations(
         data class Unavailable(val error: IdentityVaultException.Unavailable) : Loaded
 
         data class Lost(val detail: String) : Loaded
+
+        /** There is none, and none was minted: a start with no one to show Welcome to. */
+        data object Absent : Loaded
     }
 
     /**
-     * Read the stored identity, or mint one when there is none.
-     * [beforeMint] runs before a new secret is stored, so a launch killed
-     * between the two still finds the first-run step recorded.
+     * Read the stored identity, or mint one when there is none and
+     * [mintIfAbsent] allows it: only a start the person can see may mint,
+     * since a new identity begins at Welcome. [beforeMint] runs before a
+     * new secret is stored, so a launch killed between the two still finds
+     * the first-run step recorded.
      */
-    suspend fun load(beforeMint: suspend () -> Unit): Loaded = try {
+    suspend fun load(mintIfAbsent: Boolean = true, beforeMint: suspend () -> Unit): Loaded = try {
         val stored = vault.load()
         if (stored != null) {
             Loaded.Ready(publicIdentity(stored), minted = false)
+        } else if (!mintIfAbsent) {
+            Loaded.Absent
         } else {
             beforeMint()
             val secret = generate()

@@ -36,17 +36,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.voria.umsh.R
+import com.voria.umsh.app.AppCoreHost
+import com.voria.umsh.app.LocalAppCoreHost
 import com.voria.umsh.app.Tags
 import com.voria.umsh.app.runtimeViewModel
 import com.voria.umsh.designsystem.AvatarSize
@@ -54,6 +58,7 @@ import com.voria.umsh.designsystem.FailureDialog
 import com.voria.umsh.designsystem.PeerAvatar
 import com.voria.umsh.designsystem.PeerAvatarShape
 import com.voria.umsh.models.NodeHint
+import java.io.IOException
 
 /** Where Learn more goes. A URL, not text. */
 private const val LEARN_MORE_URL = "https://umsh.dev"
@@ -64,7 +69,10 @@ private const val LEARN_MORE_URL = "https://umsh.dev"
  */
 @Composable
 fun WelcomeScreen() {
-    val viewModel = runtimeViewModel { OnboardingViewModel(it) }
+    val host = LocalAppCoreHost.current
+    val viewModel = runtimeViewModel {
+        OnboardingViewModel(it, radioSetUp = { radioSetUp(host) })
+    }
     val identity by viewModel.identity.collectAsStateWithLifecycle()
     val saving by viewModel.saving.collectAsStateWithLifecycle()
     val failure by viewModel.failure.collectAsStateWithLifecycle()
@@ -97,6 +105,15 @@ fun WelcomeContent(
     LaunchedEffect(initialName) { if (!edited) name = atEnd(initialName) }
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    // The keyboard goes before the page does: one left up as Connect a
+    // radio comes in keeps its Back callback, and the first Back there is lost.
+    val continueWith = {
+        keyboard?.hide()
+        focusManager.clearFocus()
+        onContinue(name.text)
+    }
 
     Box(
         Modifier
@@ -151,13 +168,13 @@ fun WelcomeContent(
                         autoCorrectEnabled = false,
                         imeAction = ImeAction.Done,
                     ),
-                    keyboardActions = KeyboardActions(onDone = { onContinue(name.text) }),
+                    keyboardActions = KeyboardActions(onDone = { continueWith() }),
                     modifier = Modifier.fillMaxWidth().focusRequester(focus).testTag(Tags.WELCOME_NAME),
                 )
             }
             // Rides above the keyboard: the page keeps its layout.
             Button(
-                onClick = { onContinue(name.text) },
+                onClick = continueWith,
                 enabled = !saving,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -204,4 +221,11 @@ private fun openLearnMore(context: Context) {
             // No browser: the page stays as it is.
         }
     }
+}
+
+/** A radio is set up already; a registry that will not read counts as none, so the step is offered. */
+private suspend fun radioSetUp(host: AppCoreHost): Boolean = try {
+    host.preferences.radioRegistry.bound() != null
+} catch (_: IOException) {
+    false
 }

@@ -63,7 +63,7 @@ class RadioControlStateTest {
             MobileRadioPhase.RECONNECTING to Link.Reconnecting,
             MobileRadioPhase.CONNECTING to Link.Connecting,
             MobileRadioPhase.SYNCHRONIZING to Link.Connecting,
-            MobileRadioPhase.WAITING_FOR_RADIO to Link.Disconnected,
+            MobileRadioPhase.WAITING_FOR_RADIO to Link.Waiting,
             MobileRadioPhase.IDLE to Link.Disconnected,
             MobileRadioPhase.FAILED to Link.Failed,
         )) {
@@ -163,7 +163,7 @@ class RadioControlStateTest {
         assertEquals(RadioBanner.TransmissionRejected(RejectReason.ChannelBusy, live), rejected(18u, "CCA_FAILURE"))
         assertEquals(RadioBanner.TransmissionRejected(RejectReason.QueueFull, live), rejected(11u, "NOMEM"))
         assertEquals(
-            RadioBanner.TransmissionRejected(RejectReason.Status("INVALID_STATE"), live),
+            RadioBanner.TransmissionRejected(RejectReason.Status(4u), live),
             rejected(4u, "INVALID_STATE"),
         )
         assertEquals(

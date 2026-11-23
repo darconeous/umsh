@@ -13,6 +13,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -23,6 +24,7 @@ import com.voria.umsh.app.Tags
 import com.voria.umsh.services.mobilecore.FailureReason
 import com.voria.umsh.services.mobilecore.FailureText
 import com.voria.umsh.services.mobilecore.ReasonText
+import com.voria.umsh.services.radio.resolvedArgs
 
 /**
  * The app-wide dialog for a failure that won't fix itself (`onboarding.svg`
@@ -92,7 +94,8 @@ fun FailureDialog(title: String, body: String, error: Throwable, onDismiss: () -
 
 /** A reason phrase or sentence, in the reader's language. */
 @Composable
-fun reasonText(reason: ReasonText): String = stringResource(reason.id, *reason.args.toTypedArray())
+fun reasonText(reason: ReasonText): String =
+    stringResource(reason.id, *resolvedArgs(LocalResources.current, reason.args))
 
 @Composable
 fun failureReasonText(reason: FailureReason): String = when (reason) {

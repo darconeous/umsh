@@ -90,6 +90,13 @@ data class ThreadContext(
         }
     }
 
+    /** Who the reply strip names: me as "You", the peer in a direct chat, the member in a channel. */
+    fun replyName(message: ChatMessage): Sender = when {
+        message.isOutbound -> Sender.Me(null)
+        !isChannel -> Sender.Named(title)
+        else -> member(message.senderAddress, message.senderHandle, message.senderNodeHint)
+    }
+
     /** The avatar beside a channel run's last bubble: the known peer's, else the hint's in a circle. */
     fun memberAvatar(message: ChatMessage): Pair<NodeHint, PeerAvatarShape>? {
         if (!isChannel || message.isOutbound) return null

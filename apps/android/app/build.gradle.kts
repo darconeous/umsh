@@ -1,3 +1,5 @@
+import groovy.json.JsonSlurper
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -85,6 +87,71 @@ tasks.withType<Test>().configureEach {
         .withPathSensitivity(PathSensitivity.NAME_ONLY)
 }
 
+/**
+ * Stages the board list and photos the app shows for a radio's model
+ * (`BoardCatalog`): `docs/hardware/boards.json` as an asset, and each
+ * board's iOS photo (the 3x PNG of its `board-*.imageset`) as a `nodpi`
+ * drawable named after it. Plain copies, generated and never committed,
+ * so the two apps and the spec read the same list.
+ */
+abstract class StageBoards : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val boardsJson: RegularFileProperty
+
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val imageSets: ConfigurableFileCollection
+
+    @get:OutputDirectory abstract val assets: DirectoryProperty
+
+    @get:OutputDirectory abstract val res: DirectoryProperty
+
+    @TaskAction
+    fun stage() {
+        val assetsDir = assets.get().asFile.apply { deleteRecursively(); mkdirs() }
+        val resDir = res.get().asFile.apply { deleteRecursively() }
+        val source = boardsJson.get().asFile
+        source.copyTo(assetsDir.resolve("boards.json"))
+        val drawables = resDir.resolve("drawable-nodpi").apply { mkdirs() }
+        val sets = imageSets.files.associateBy { it.name.removeSuffix(".imageset") }
+
+        @Suppress("UNCHECKED_CAST")
+        val boards = (JsonSlurper().parse(source) as Map<String, Any>)["boards"] as List<Map<String, Any>>
+        for (board in boards) {
+            val photo = board["photo"] as String
+            val set = sets[photo] ?: throw GradleException("boards.json names $photo, which has no imageset")
+            @Suppress("UNCHECKED_CAST")
+            val images = (JsonSlurper().parse(set.resolve("Contents.json")) as Map<String, Any>)["images"]
+                as List<Map<String, Any>>
+            val file = images.firstOrNull { it["scale"] == "3x" }?.get("filename") as String?
+                ?: throw GradleException("$photo has no 3x image")
+            set.resolve(file).copyTo(drawables.resolve(photo.replace('-', '_') + ".png"))
+        }
+        // Looked up by name, so the resource shrinker is told to keep them.
+        resDir.resolve("raw").apply { mkdirs() }.resolve("keep_boards.xml").writeText(
+            """<?xml version="1.0" encoding="utf-8"?>
+            |<resources xmlns:tools="http://schemas.android.com/tools" tools:keep="@drawable/board_*" />
+            |""".trimMargin(),
+        )
+    }
+}
+
+androidComponents {
+    onVariants { variant ->
+        val suffix = variant.name.replaceFirstChar { it.uppercase() }
+        val boards = tasks.register<StageBoards>("stage${suffix}Boards") {
+            boardsJson.set(repoDir.resolve("docs/hardware/boards.json"))
+            imageSets.from(
+                fileTree(repoDir.resolve("apps/ios/UMSH/Assets.xcassets")) { include("board-*.imageset/**") }
+                    .files.map { it.parentFile }.distinct(),
+            )
+        }
+        variant.sources.assets?.addGeneratedSourceDirectory(boards, StageBoards::assets)
+        variant.sources.res?.addGeneratedSourceDirectory(boards, StageBoards::res)
+    }
+}
+
 dependencies {
     implementation(project(":core"))
     lintChecks(project(":lint-rules"))
@@ -94,6 +161,7 @@ dependencies {
     implementation(libs.androidx.compose.material3.adaptive)
     implementation(libs.androidx.compose.material3.adaptive.navigation.suite)
     implementation(libs.androidx.compose.material3.adaptive.navigation3)
+    implementation(libs.androidx.core)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
@@ -102,6 +170,7 @@ dependencies {
     implementation(libs.androidx.navigation3.runtime)
     implementation(libs.androidx.navigation3.ui)
     implementation(libs.kotlinx.serialization.core)
+    implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.browser)
@@ -119,5 +188,6 @@ dependencies {
     androidTestImplementation(libs.junit)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.uiautomator)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 }
