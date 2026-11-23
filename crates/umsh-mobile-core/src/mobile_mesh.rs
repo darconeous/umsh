@@ -49,8 +49,8 @@ use umsh_text::engine::sequence::MessageHandle;
 use umsh_text::engine::{ArchiveResult, MAX_FRAME};
 use umsh_text::model::ConversationKey;
 use umsh_text::node_adapter::{
-    self, BudgetQuery, Inbound, InboundText, Refusal, RxSummary, TransmitPolicy, TransmitQueue,
-    WellKnownChannels, payload_budget,
+    self, BudgetQuery, Inbound, InboundText, RxSummary, TransmitPolicy, TransmitQueue,
+    WellKnownChannels, channel_send_options, payload_budget, with_flood_reach,
 };
 use umsh_ulcp::{frame, ids::prop, items};
 
@@ -107,16 +107,6 @@ impl Default for FloodHopSettings {
             default_hops: DEFAULT_FLOOD_HOPS,
             beacon_hops: DEFAULT_BEACON_FLOOD_HOPS,
         }
-    }
-}
-
-/// Spend `hops` on `options`: a budget for a flood, or no flood at all
-/// for zero.
-fn with_flood_reach(options: SendOptions, hops: u8) -> SendOptions {
-    if hops == 0 {
-        options.no_flood()
-    } else {
-        options.with_flood_hops(hops)
     }
 }
 
@@ -4364,6 +4354,7 @@ async fn run_worker(
     ));
     let mut chat = MobileChatState::new(local_key, chat_seeds());
     let well_known = WellKnownChannels::derive();
+    chat.set_well_known(well_known);
     // Registered before every other receive handler: dispatch stops at the
     // first handler that claims a packet, and presence is true of packets
     // that something else goes on to claim. It never claims one itself.
@@ -4397,19 +4388,7 @@ async fn run_worker(
                 true
             }
             Some(Inbound::Refused(refusal)) => {
-                let reason = match refusal {
-                    Refusal::EncryptedEmergency => "an emergency-channel text frame: encrypted",
-                    Refusal::AnonymousEmergency => {
-                        "an emergency-channel text frame: missing its full source key"
-                    }
-                    Refusal::UnsignedEmergency => {
-                        "an emergency-channel text frame: not signed by its sender"
-                    }
-                    Refusal::AnonymousPublic => {
-                        "a public-channel text frame: missing its full source key"
-                    }
-                };
-                log::info!("dropped {reason}");
+                log::info!("dropped {refusal}");
                 false
             }
             Some(Inbound::Text(text)) => {
@@ -4936,6 +4915,7 @@ async fn run_worker(
                                     request_identity_over_channel(
                                         &node,
                                         chat.channels(),
+                                        &well_known,
                                         channel,
                                         hint,
                                         route,
@@ -5638,19 +5618,28 @@ async fn run_worker(
 /// The request is a multicast every member receives but only the filtered hint
 /// answers. Routing follows the evidence that member's own frames left: their
 /// trace route if one was observed, otherwise a flood budget no larger than
-/// the distance they were last heard from.
+/// the distance they were last heard from. `reach` is the channel's own
+/// ceiling, which no observed distance raises.
 async fn request_identity_over_channel<M: MacBackend>(
     node: &LocalNode<M>,
     channels: &ChannelRegistry,
+    well_known: &WellKnownChannels,
     channel: ChannelTag,
     hint: NodeHint,
     route: Option<MemberRoute>,
-    flood_hops: u8,
+    reach: u8,
 ) -> Result<(), MobileMeshError> {
-    let Some(bound) = node_adapter::bound_channel(node, channels, &channel) else {
+    let (Some(key), Some(bound)) = (
+        channels.key(&channel),
+        node_adapter::bound_channel(node, channels, &channel),
+    ) else {
         return Err(MobileMeshError::UnknownConversation);
     };
-    let options = channel_identity_request_options(route.as_ref(), flood_hops);
+    let options = channel_identity_request_options(
+        channel_send_options(well_known, &key, reach),
+        route.as_ref(),
+        reach,
+    );
     bound
         .request_identity(&hint, &options)
         .await
@@ -5658,12 +5647,16 @@ async fn request_identity_over_channel<M: MacBackend>(
         .map_err(|_| MobileMeshError::SendFailed)
 }
 
-fn channel_identity_request_options(route: Option<&MemberRoute>, flood_hops: u8) -> SendOptions {
-    // Full source so the member can answer with a targeted unicast rather
-    // than another multicast. With nothing known about where the member
-    // is, the ask travels as far as the channel does.
-    let mut options = with_flood_reach(SendOptions::default(), flood_hops).with_full_source();
-    match route {
+/// Route an identity request on a channel by what the member's frames showed,
+/// starting from the channel's own `base` options and never flooding past
+/// `reach`. With nothing known about where the member is, the ask travels as
+/// far as the channel does.
+fn channel_identity_request_options(
+    base: SendOptions,
+    route: Option<&MemberRoute>,
+    reach: u8,
+) -> SendOptions {
+    let options = match route {
         Some(route) if !route.route_hints.is_empty() => {
             let hops = route
                 .route_hints
@@ -5673,24 +5666,20 @@ fn channel_identity_request_options(route: Option<&MemberRoute>, flood_hops: u8)
                 .collect::<Vec<_>>();
             // An over-long observed route is not a reason to fail the
             // request; fall back to flooding at the distance it implies.
-            options = match options.try_with_source_route(&hops) {
+            match base.clone().try_with_source_route(&hops) {
                 Ok(options) => options,
-                Err(_) => SendOptions::default()
-                    .with_full_source()
-                    .with_flood_hops(flood_budget(route.hop_count, flood_hops)),
-            };
+                Err(_) => base.with_flood_hops(flood_budget(route.hop_count, reach)),
+            }
         }
         Some(MemberRoute {
             hop_count: Some(hops),
             ..
-        }) => {
-            options = options.with_flood_hops(flood_budget(Some(*hops), flood_hops));
-        }
-        _ => {}
-    }
+        }) => base.with_flood_hops(flood_budget(Some(*hops), reach)),
+        _ => base,
+    };
     // Source-route construction and distance fallback can supply a budget.
-    // Apply the explicit zero-hop setting last so neither re-enables flooding.
-    if flood_hops == 0 {
+    // Apply a zero reach last so neither re-enables flooding.
+    if reach == 0 {
         options.no_flood()
     } else {
         options
@@ -6006,11 +5995,13 @@ fn remember_member_route(
 /// final link into this device, which no repeater has to pay for, so the
 /// budget is one less than the distance the frame was heard from—and at
 /// least one, since a budget of zero forwards nowhere. With no distance
-/// observed, it is `default`.
-fn flood_budget(hop_count: Option<u8>, default: u8) -> u8 {
+/// observed, it is `ceiling`, and no distance raises it past `ceiling`: a
+/// member heard from farther away than the channel reaches is asked only as
+/// far as it does.
+fn flood_budget(hop_count: Option<u8>, ceiling: u8) -> u8 {
     hop_count
-        .map(|hops| hops.saturating_sub(1).max(1))
-        .unwrap_or(default)
+        .map(|hops| hops.saturating_sub(1).max(1).min(ceiling))
+        .unwrap_or(ceiling)
 }
 
 /// What the last frame from a channel member showed about reaching them.
@@ -6777,6 +6768,79 @@ mod tests {
         // budget of zero would forward nowhere at all.
         assert_eq!(flood_budget(Some(1), 10), 1);
         assert_eq!(flood_budget(Some(4), 10), 3);
+        // Farther than the channel reaches: asked only as far as it does.
+        assert_eq!(flood_budget(Some(15), 10), 10);
+        assert_eq!(flood_budget(Some(11), 10), 10);
+    }
+
+    fn default_group_keys() -> (WellKnownChannels, ChannelKey, ChannelKey, ChannelKey) {
+        let well_known = WellKnownChannels::derive();
+        let public = well_known.public;
+        let emergency = well_known.emergency;
+        (well_known, public, emergency, ChannelKey([0x11; 32]))
+    }
+
+    /// A member heard from farther than a default group reaches is asked no
+    /// farther than it does, whether the request floods on the observed
+    /// distance or falls back to it from a route too long to carry.
+    #[test]
+    fn channel_identity_request_never_floods_past_the_channel_reach() {
+        let (well_known, public, emergency, private) = default_group_keys();
+        let reach = node_adapter::WELL_KNOWN_CHANNEL_MAX_FLOOD_HOPS;
+        for key in [public, emergency, private] {
+            for route in [
+                MemberRoute {
+                    hop_count: Some(15),
+                    route_hints: Vec::new(),
+                },
+                // Over-long: the source-route fallback.
+                MemberRoute {
+                    hop_count: Some(15),
+                    route_hints: vec![vec![1, 2]; 16],
+                },
+            ] {
+                let options = channel_identity_request_options(
+                    channel_send_options(&well_known, &key, reach),
+                    Some(&route),
+                    reach,
+                );
+                assert_eq!(options.flood_hops, Some(reach));
+                assert_eq!(options.source_route, None);
+            }
+        }
+    }
+
+    /// `EMERGENCY` carries the request in the clear, as every send there;
+    /// other channels keep it encrypted. Every channel names us in full, and
+    /// routing never changes either.
+    #[test]
+    fn channel_identity_request_is_unencrypted_only_on_emergency() {
+        let (well_known, public, emergency, private) = default_group_keys();
+        for (key, encrypted) in [(public, true), (emergency, false), (private, true)] {
+            for route in [
+                None,
+                Some(MemberRoute {
+                    hop_count: Some(4),
+                    route_hints: Vec::new(),
+                }),
+                Some(MemberRoute {
+                    hop_count: Some(2),
+                    route_hints: vec![vec![1, 2]],
+                }),
+                Some(MemberRoute {
+                    hop_count: Some(17),
+                    route_hints: vec![vec![1, 2]; 16],
+                }),
+            ] {
+                let options = channel_identity_request_options(
+                    channel_send_options(&well_known, &key, 10),
+                    route.as_ref(),
+                    10,
+                );
+                assert_eq!(options.encrypted, encrypted);
+                assert!(options.full_source);
+            }
+        }
     }
 
     #[test]
@@ -6797,7 +6861,12 @@ mod tests {
                 route_hints: vec![vec![1, 2]; 16],
             }),
         ] {
-            let options = channel_identity_request_options(route.as_ref(), 0);
+            let (well_known, public, _, _) = default_group_keys();
+            let options = channel_identity_request_options(
+                channel_send_options(&well_known, &public, 0),
+                route.as_ref(),
+                0,
+            );
             assert_eq!(options.flood_hops, None);
             if route
                 .as_ref()

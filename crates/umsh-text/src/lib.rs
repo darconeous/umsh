@@ -55,7 +55,7 @@ pub use model::{
     WireRef,
 };
 
-pub use well_known::WellKnownChannels;
+pub use well_known::{ChannelFrame, Refusal, WellKnownChannels};
 
 pub use codec::{ParseInfo, encode as encode_text_message, parse as parse_text_message};
 

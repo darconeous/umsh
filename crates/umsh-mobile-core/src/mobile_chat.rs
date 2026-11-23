@@ -13,6 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use umsh_core::{ChannelTag, NodeHint, PublicKey};
 use umsh_mac::SendOptions;
 use umsh_node::{LocalNode, MacBackend, PfsStatus};
+use umsh_text::WellKnownChannels;
 use umsh_text::chat::{
     ArchiveLookup, Change, ChannelRegistry, ChatComposeError, ChatFacade, ChatOutput, Delivery,
     Drain, Mutation, Outbound, PendingBatch, Repeats, Seeds, SenderResolution,
@@ -420,6 +421,12 @@ impl MobileChatState {
             forward_secret: BTreeMap::new(),
             secrecy_waits: BTreeMap::new(),
         }
+    }
+
+    /// Name the well-known channels to the facade (see
+    /// [`ChatFacade::set_well_known`]).
+    pub fn set_well_known(&mut self, well_known: WellKnownChannels) {
+        self.facade.set_well_known(well_known);
     }
 
     /// Takes `peers` as those a session with forward secrecy is held with.
@@ -953,9 +960,9 @@ impl MobileChatState {
             .compose_within(conversation, client_token, intent, None, budget, now_ms)
             .map_err(|error| match error {
                 ChatComposeError::BatchPending => ComposeFailure::Pending,
-                ChatComposeError::Engine(_) | ChatComposeError::Incomplete => {
-                    ComposeFailure::Refused
-                }
+                ChatComposeError::Engine(_)
+                | ChatComposeError::Incomplete
+                | ChatComposeError::WellKnownChannelDirect => ComposeFailure::Refused,
             })?;
         let session_id = batch.session_id();
         let fragment_count = u8::try_from(batch.archives.len()).unwrap_or(u8::MAX);

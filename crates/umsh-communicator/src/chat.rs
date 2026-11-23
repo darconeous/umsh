@@ -331,6 +331,7 @@ impl<S: ChatStore> Chats<S> {
             .store
             .recent_checkpoints(RESTORED_CHECKPOINTS)
             .collect();
+        facade.set_well_known(self.crypto.well_known);
         facade.restore(&checkpoints, now_ms);
         self.facade = Some(facade);
         self.seeds = seeds;
