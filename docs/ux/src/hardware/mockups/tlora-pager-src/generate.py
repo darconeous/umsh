@@ -2244,7 +2244,7 @@ def screen_add_channel():
     o = [R(0, 0, W, H, C["bg"])]
     body = [section_label(10, TOP + 20, "Channel name or invitation")]
     key = b58(44, 7)
-    typed = ("umsh:ck:" + key)[:49]
+    typed = ("umsh:gk:" + key)[:49]
     f, fh = mono_field(8, TOP + 28, W - 16, typed, 36)
     body += f
     y = TOP + 28 + fh + 8
@@ -3118,7 +3118,7 @@ def main(path, native_dir=None):
              "lent or copied."),
             ("Add channel", screen_add_channel(),
              "Device › Channels › Add channel. One field takes a channel name "
-             "or a umsh:ck: invitation, and the preview says which as you "
+             "or a umsh:gk: invitation, and the preview says which as you "
              "type. A name is short; a key is the painful case shown."),
             ("EMERGENCY", screen_emergency(),
              "Joined from the start. Traffic is signed and unencrypted, so "

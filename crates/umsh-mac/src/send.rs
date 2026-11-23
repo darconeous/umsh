@@ -647,18 +647,24 @@ pub enum PendingAckError {
 /// - **`ImmediateAck`** (rank 0)—MAC ACK frames generated in response to a received
 ///   unicast or blind-unicast with ACK-requested. Must be sent as quickly as possible so
 ///   the original sender's retransmit timer does not expire.
-/// - **`Forward`** (rank 1)—frames being forwarded by the repeater. Prompt forwarding
+/// - **`EmergencyForward`** (rank 1)—a forward of an `EMERGENCY` multicast: unencrypted,
+///   with its full source address, and verified under the group's key. It goes ahead of
+///   the other forwards (UEP-0021), and behind immediate ACKs, which are short and answer
+///   a timer already running.
+/// - **`Forward`** (rank 2)—frames being forwarded by the repeater. Prompt forwarding
 ///   feeds the sender's forwarding-confirmation window, so delays here can trigger
 ///   unnecessary retransmissions at the source.
-/// - **`Retry`** (rank 2)—retransmissions of unacknowledged ACK-requested sends. These
+/// - **`Retry`** (rank 3)—retransmissions of unacknowledged ACK-requested sends. These
 ///   have already been delayed by a full forwarding-confirmation window and need to get out
 ///   before the final ACK deadline expires.
-/// - **`Application`** (rank 3)—new application-originated frames (`queue_broadcast`,
+/// - **`Application`** (rank 4)—new application-originated frames (`queue_broadcast`,
 ///   `queue_unicast`, `queue_multicast`, etc.). Lowest priority; yields to all control traffic.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TxPriority {
     /// Immediate transport ACK.
     ImmediateAck,
+    /// Receive-triggered forwarding of an `EMERGENCY` multicast.
+    EmergencyForward,
     /// Receive-triggered forwarding.
     Forward,
     /// Retransmission after missed confirmation.
@@ -671,10 +677,16 @@ impl TxPriority {
     pub(crate) const fn rank(self) -> u8 {
         match self {
             Self::ImmediateAck => 0,
-            Self::Forward => 1,
-            Self::Retry => 2,
-            Self::Application => 3,
+            Self::EmergencyForward => 1,
+            Self::Forward => 2,
+            Self::Retry => 3,
+            Self::Application => 4,
         }
+    }
+
+    /// Whether this is a forward, of either class.
+    pub const fn is_forward(self) -> bool {
+        matches!(self, Self::EmergencyForward | Self::Forward)
     }
 }
 

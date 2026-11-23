@@ -216,8 +216,8 @@ umsh.prefs.privkeys     = Pref.string("Private keys", "",
   .. "The seed is 64 hex chars or 44 base58 chars\n"
   .. "For more than one, use Key File")
 umsh.prefs.channel_keys = Pref.string("Channel keys", "",
-  "One of:\n  <key>:<display-name>\n  umsh:ck:<base58>:<display-name>"
-  .. "\n  umsh:cs:<name>:<display-name>\n"
+  "One of:\n  <key>:<display-name>\n  umsh:gk:<base58>:<display-name>"
+  .. "\n  umsh:gs:<name>:<display-name>\n"
   .. "For more than one, use Key File")
 
 umsh.prefs.udp_port     = Pref.uint  ("UDP Port", 15056, "UDP port to dissect as UMSH (0 = disabled)")

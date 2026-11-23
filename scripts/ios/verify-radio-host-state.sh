@@ -32,6 +32,7 @@ swiftc \
     -swift-version 6 \
     -parse-as-library \
     "$repo_root/apps/ios/UMSH/Services/MobileCore/MeshEngine.swift" \
+    "$repo_root/apps/ios/UMSH/DesignSystem/AgeText.swift" \
     "$repo_root/apps/ios/UMSH/Models/RadioSnapshot.swift" \
     "$script_dir/radio-host-state-smoke.swift" \
     -I "$build_root" \

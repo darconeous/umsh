@@ -482,7 +482,9 @@ impl TransmitQueue {
     /// - A channel multicast carries the full source key, so a member who
     ///   misses a fragment can address a resend request to us.
     /// - A channel-direct frame is a blind unicast, registering the peer on
-    ///   the way out.
+    ///   the way out. On a well-known channel only a repair request for the
+    ///   group conversation goes that way; any other comes back
+    ///   undeliverable.
     /// - `EMERGENCY` goes out unencrypted, so any node in range can read it,
     ///   and whatever goes to the whole of it is signed, so a reader knows
     ///   who sent it. A frame to one member is a blind unicast, whose
@@ -520,6 +522,11 @@ impl TransmitQueue {
         let mut payload = Vec::with_capacity(transmission.payload.len() + 1);
         payload.push(PayloadType::TextMessage as u8);
         payload.extend_from_slice(transmission.payload.as_slice());
+        if let Route::ChannelPeer { key, .. } = &route
+            && !policy.well_known.blind_unicast_permitted(key, &payload)
+        {
+            return Some(Err(Undeliverable::of(&queued)));
+        }
         Some(Ok(Departure {
             queued,
             gate_peer,
@@ -849,7 +856,8 @@ impl Route {
                 let options = multicast_options(channels, policy, &channel, &key);
                 Self::Channel { key, options }
             }
-            // A repair request; the engine owns retrying it, so no
+            // A repair request, or a message in a one-to-one conversation
+            // on the channel; the engine owns retrying it, so no
             // acknowledgment is asked for. Repairs carry the same message
             // the multicast did, so they are held to the same rules.
             Destination::ChannelPeer { channel, peer } => {
@@ -887,7 +895,8 @@ pub enum Departed {
 }
 
 /// A frame that will not go out: an unregistrable peer, a channel no
-/// longer held, a session with forward secrecy that will not be held.
+/// longer held, a session with forward secrecy that will not be held, a
+/// blind unicast a well-known channel does not carry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Undeliverable {
     pub session_id: u64,
@@ -1080,8 +1089,18 @@ fn channel_options(
         channel,
         policy.default_flood_hops,
     );
+    channel_send_options(&policy.well_known, key, reach)
+}
+
+/// The options of a frame on the channel `key`, spending `reach` hops: the
+/// full source key always, and no encryption on `EMERGENCY`.
+pub fn channel_send_options(
+    well_known: &WellKnownChannels,
+    key: &ChannelKey,
+    reach: u8,
+) -> SendOptions {
     let options = with_flood_reach(SendOptions::default(), reach).with_full_source();
-    if policy.well_known.is_emergency(key) {
+    if well_known.is_emergency(key) {
         options.unencrypted()
     } else {
         options

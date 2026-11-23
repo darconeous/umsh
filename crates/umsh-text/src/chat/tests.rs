@@ -402,3 +402,49 @@ fn a_zero_session_id_is_taken_as_one() {
     let chat = facade(LOCAL, 0);
     assert_eq!(chat.session_id(), 1);
 }
+
+#[test]
+fn a_direct_conversation_on_a_well_known_channel_is_refused_at_compose() {
+    const PUBLIC: ChannelTag = ChannelTag([0x08; 16]);
+    const EMERGENCY: ChannelTag = ChannelTag([0x09; 16]);
+    let well_known = WellKnownChannels {
+        public: ChannelKey([0x51; 32]),
+        emergency: ChannelKey([0x52; 32]),
+    };
+    let mut facade = facade(LOCAL, 1);
+    facade
+        .channels_mut()
+        .register(PUBLIC, well_known.public, None);
+    facade
+        .channels_mut()
+        .register(EMERGENCY, well_known.emergency, None);
+    facade.set_well_known(well_known);
+    for channel in [PUBLIC, EMERGENCY] {
+        let conversation = ConversationKey::ChannelDirect {
+            channel,
+            peer: PEER,
+        };
+        assert_eq!(
+            facade.compose(conversation, 1, text("hi"), None, 0).err(),
+            Some(ChatComposeError::WellKnownChannelDirect),
+        );
+        assert!(!facade.has_pending_batch());
+        // The group conversation on the same channel is unaffected.
+        let batch = facade
+            .compose(
+                ConversationKey::ChannelGroup { channel },
+                1,
+                text("hi"),
+                None,
+                0,
+            )
+            .expect("a group message composes");
+        facade.commit(batch).expect("commits");
+    }
+    // A private channel still carries one-to-one conversations.
+    let conversation = ConversationKey::ChannelDirect {
+        channel: CHANNEL,
+        peer: PEER,
+    };
+    assert!(facade.compose(conversation, 1, text("hi"), None, 0).is_ok());
+}

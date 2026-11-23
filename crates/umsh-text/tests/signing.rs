@@ -162,6 +162,25 @@ fn text_payload(body: &str) -> Vec<u8> {
     payload
 }
 
+/// A Message Resend Request for message 5, with its payload-type byte;
+/// `group` gives it the Group Resend option.
+fn resend_payload(group: bool) -> Vec<u8> {
+    let request = TextMessage {
+        message_type: MessageType::ResendRequest,
+        sequence: Some(umsh_text::MessageSequence {
+            message_id: 5,
+            fragment: None,
+        }),
+        channel_group_resend: group,
+        ..TextMessage::basic("")
+    };
+    let mut buffer = [0u8; 64];
+    let len = encode_text_message(&request, &mut buffer).unwrap();
+    let mut payload = vec![PayloadType::TextMessage as u8];
+    payload.extend_from_slice(&buffer[..len]);
+    payload
+}
+
 /// Options for a frame on `EMERGENCY` as its rules ask, but unsigned.
 fn unsigned() -> SendOptions {
     SendOptions::default().with_full_source().unencrypted()
@@ -317,8 +336,14 @@ fn whether_a_signature_is_needed_follows_the_channel() {
         Some(Refusal::UnsignedEmergency)
     );
 
-    // A blind unicast names its sender by its pairwise MIC.
-    let direct = sender.blind_unicast(&well_known.emergency, &receiver.key, &payload, &unsigned());
+    // A blind unicast names its sender by its pairwise MIC. On a well-known
+    // channel it carries only a repair request for the group conversation.
+    let direct = sender.blind_unicast(
+        &well_known.emergency,
+        &receiver.key,
+        &resend_payload(true),
+        &unsigned(),
+    );
     assert!(matches!(
         header(&direct).packet_type(),
         PacketType::BlindUnicast | PacketType::BlindUnicastAckReq
@@ -337,6 +362,88 @@ fn whether_a_signature_is_needed_follows_the_channel() {
         );
     };
     assert_eq!(text.channel_key(), Some(colliding));
+}
+
+/// On either well-known channel a blind unicast carries only a resend
+/// request for the group conversation; a private channel carries anything.
+#[test]
+fn well_known_blind_unicast_carries_only_group_resend_requests() {
+    let private = ChannelKey([0x55; 32]);
+    let sender = station(1, &[private]);
+    let receiver = station(2, &[private]);
+    block_on(receiver.node.peer(sender.key)).unwrap();
+    let well_known = well_known();
+    let chat = text_payload("meet at the trailhead");
+
+    for key in [well_known.public, well_known.emergency] {
+        let send = |payload: &[u8]| {
+            let frame = sender.blind_unicast(&key, &receiver.key, payload, &unsigned());
+            receiver.receive(&frame)
+        };
+        assert_eq!(refused(send(&chat)), Some(Refusal::BlindUnicast));
+        assert_eq!(
+            refused(send(&resend_payload(false))),
+            Some(Refusal::BlindUnicast),
+            "a resend request for a one-to-one conversation"
+        );
+        assert!(accepted(&send(&resend_payload(true))));
+    }
+
+    // Even a group resend request on EMERGENCY goes unencrypted.
+    let encrypted = sender.blind_unicast(
+        &well_known.emergency,
+        &receiver.key,
+        &resend_payload(true),
+        &SendOptions::default().with_full_source(),
+    );
+    assert!(header(&encrypted).sec_info.unwrap().scf.encrypted());
+    assert_eq!(
+        refused(receiver.receive(&encrypted)),
+        Some(Refusal::EncryptedEmergency)
+    );
+
+    let frame = sender.blind_unicast(&private, &receiver.key, &chat, &unsigned());
+    assert!(accepted(&receiver.receive(&frame)));
+}
+
+/// A message in a one-to-one conversation by blind unicast on a well-known
+/// channel never goes out: it fails, undelivered. On a private channel it
+/// goes.
+#[test]
+fn well_known_channel_direct_messages_are_not_sent() {
+    let private = ChannelKey([0x55; 32]);
+    let mut sender = station(1, &[private]);
+    let peer = station(2, &[]).key;
+    let well_known = well_known();
+
+    for (key, sent) in [
+        (well_known.public, false),
+        (well_known.emergency, false),
+        (private, true),
+    ] {
+        let conversation = ConversationKey::ChannelDirect {
+            channel: engine().derive_channel_tag(&key),
+            peer,
+        };
+        let batch = sender
+            .chat
+            .compose(conversation, 1, text("hello"), None, 0)
+            .unwrap();
+        let handle = batch.mutations[0].handle;
+        let outbound = sender.chat.commit(batch).unwrap();
+        sender.queue.enqueue(outbound);
+        let frames = sender.pump(0);
+        assert_eq!(frames.len(), usize::from(sent), "{key:?}");
+        let undelivered = sender.chat.drain().outputs.iter().any(|output| {
+            matches!(
+                output,
+                ChatOutput::Delivery(delivery)
+                    if delivery.handle == handle
+                        && delivery.state == umsh_text::engine::DeliveryState::Undelivered
+            )
+        });
+        assert_eq!(undelivered, !sent, "{key:?}");
+    }
 }
 
 /// Earlier traffic from the same sender, on other channels and families,

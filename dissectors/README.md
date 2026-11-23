@@ -148,7 +148,7 @@ Three preferences hold keys. Each field takes one key, so use a
 |---|---|---|
 | **Public keys** | `<key>:<name>` | A 32-byte Ed25519 public key and a display name; annotates source and destination hints |
 | **Private keys** | `<key>:<name>` | A 32-byte Ed25519 seed, for unicast and blind unicast decryption |
-| **Channel keys** | `<key>:<name>` or `umsh:cs:<name>:<label>` | A 32-byte symmetric channel key, for multicast and blind unicast decryption |
+| **Channel keys** | `<key>:<name>` or `umsh:gs:<name>:<label>` | A 32-byte symmetric channel key, for multicast and blind unicast decryption |
 
 A unicast or blind unicast decrypts with either end's seed and the other
 end's public key. The source key is the frame's own full SRC when it carries
@@ -166,7 +166,7 @@ The name is optional. A channel may be given either of these ways, in
 
 ```text
 5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A:TestChannel
-umsh:cs:public:Public
+umsh:gs:public:Public
 ```
 
 #### Key formats
@@ -182,8 +182,8 @@ straight in.
 | 64 hex characters | `ED54A59FB1AC3A51…` | all three |
 | 44 base58 characters | `GySVDr1omr3GTodgWFH7qD1ZKav9C5NMPFjdpwb33LvU` | all three |
 | `umsh:n:<44-base58>` | `umsh:n:GySVDr1omr3GTodg…` | public keys |
-| `umsh:ck:<44-base58>` | `umsh:ck:75hbt6uvDqjPZ9Wg…` | channel keys |
-| `umsh:cs:<name>` | `umsh:cs:public` | channel keys (derives the key from the name) |
+| `umsh:gk:<44-base58>` | `umsh:gk:75hbt6uvDqjPZ9Wg…` | channel keys |
+| `umsh:gs:<name>` | `umsh:gs:public` | channel keys (derives the key from the name) |
 
 URI `?k=v` parameters are ignored, so a scanned QR code works unedited. A URI
 of the wrong kind is refused rather than read as the wrong sort of key.

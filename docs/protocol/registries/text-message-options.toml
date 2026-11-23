@@ -1,0 +1,71 @@
+title = "Text Message Options"
+created-by = 20
+anchor = "registry-considerations"
+min = 0
+max = 65535
+policy = "Values 0 to 65535, allocated by a standards UEP."
+
+[[range]]
+from = 60000
+to = 65535
+use = "experimental"
+
+[[value]]
+value = 0
+name = "Message Type"
+uep = 20
+anchor = "message-type"
+
+[[value]]
+value = 1
+name = "Sender Handle"
+uep = 20
+anchor = "sender-handle"
+
+[[value]]
+value = 2
+name = "Message Sequence"
+uep = 20
+anchor = "message-sequence"
+
+[[value]]
+value = 3
+name = "Sequence Reset"
+uep = 20
+anchor = "sequence-reset"
+
+[[value]]
+value = 4
+name = "Regarding"
+uep = 20
+anchor = "regarding"
+
+[[value]]
+value = 5
+name = "Editing"
+uep = 20
+anchor = "editing"
+
+[[value]]
+value = 6
+name = "Background Color"
+uep = 20
+anchor = "colors"
+
+[[value]]
+value = 7
+name = "Text Color"
+uep = 20
+anchor = "colors"
+
+[[value]]
+value = 8
+name = "Group Resend"
+uep = 20
+anchor = "group-resend"
+
+[[value]]
+value = 9
+name = "Padding"
+uep = 20
+anchor = "padding"

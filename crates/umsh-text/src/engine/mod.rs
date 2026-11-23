@@ -943,9 +943,15 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         // become reference targets. They do get remembered as aliases, so a
         // peer that references the edit still reaches the original.
         let stream = self.outbound.get_mut(&conversation).expect("present");
+        let mut superseded_edits: heapless::Vec<u8, 8> = heapless::Vec::new();
         match editing {
             None => stream.refs.record(message_id, handle),
-            Some(original_id) => stream.edit_refs.record(message_id, original_id),
+            Some(original_id) => {
+                // An earlier edit of the same message is superseded by this
+                // one; its own archived frame must not be served either.
+                superseded_edits = stream.edit_refs.edits_of(original_id);
+                stream.edit_refs.record(message_id, original_id);
+            }
         }
 
         // Superseded content must never re-air. Retire the original ID's
@@ -955,6 +961,12 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         // delete goes first so stale fragments of a differently fragmented
         // original can never be served alongside the replacement.
         if let Some(original_id) = editing {
+            for edit_id in superseded_edits {
+                self.push_output(Output::DeleteArchive {
+                    conversation,
+                    message_id: edit_id,
+                });
+            }
             self.push_output(Output::DeleteArchive {
                 conversation,
                 message_id: original_id,
@@ -1160,19 +1172,49 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             ArchiveResult::Found { payload } if payload.len() <= budget.min(MAX_FRAME) => {
                 let mut frame = heapless::Vec::new();
                 let _ = frame.extend_from_slice(payload);
-                let track = self.outbound_track(
-                    &lookup.conversation,
-                    lookup.sequence.message_id,
-                    lookup.sequence.fragment,
-                );
+                // A request for fragment zero that a 1-byte request fell back
+                // to learns the message's fragment count from the frame.
+                let fragment = if lookup.fallback_tried {
+                    codec::parse(payload)
+                        .ok()
+                        .and_then(|message| message.sequence)
+                        .and_then(|sequence| sequence.fragment)
+                } else {
+                    lookup.sequence.fragment
+                };
+                let track =
+                    self.outbound_track(&lookup.conversation, lookup.sequence.message_id, fragment);
                 self.queue_transmit(destination, None, frame, track);
+            }
+            ArchiveResult::Unknown if lookup.reply.fragment.is_none() && !lookup.fallback_tried => {
+                // No whole message is stored under that ID: it may have been
+                // fragmented, and a 1-byte request for one is answered with
+                // fragment zero (UEP-0020 §resend-request).
+                let request_id = self.next_request;
+                self.next_request = self.next_request.wrapping_add(1);
+                let sequence = MessageSequence {
+                    message_id: lookup.reply.message_id,
+                    fragment: Some(Fragment { index: 0, count: 2 }),
+                };
+                let _ = self.lookups.push(PendingLookup {
+                    request_id,
+                    sequence,
+                    fallback_tried: true,
+                    ..lookup
+                });
+                self.push_output(Output::LookupOutbound {
+                    request_id,
+                    conversation: lookup.conversation,
+                    sequence,
+                });
+                return;
             }
             _ => {
                 // Deleted, evicted, unknown, or oversized stored material:
                 // answer Message Unavailable for the requested frame.
                 let response = TextMessage {
                     message_type: MessageType::MessageUnavailable,
-                    sequence: Some(lookup.sequence),
+                    sequence: Some(lookup.reply),
                     ..TextMessage::basic("")
                 };
                 let mut buffer = [0u8; MAX_FRAME];
@@ -1184,7 +1226,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             }
         }
         self.coalesce
-            .record(lookup.conversation, &lookup.sequence, now_ms);
+            .record(lookup.conversation, &lookup.reply, now_ms);
     }
 
     /// Send one of our frames again, as the archive keeps it under `key`:
@@ -2267,7 +2309,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         if self
             .lookups
             .iter()
-            .any(|lookup| lookup.conversation == conversation && lookup.sequence == sequence)
+            .any(|lookup| lookup.conversation == conversation && lookup.reply == sequence)
         {
             self.push_output(Output::Diagnostic(Diagnostic::CoalescedResend {
                 message_id: sequence.message_id,
@@ -2285,6 +2327,8 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             conversation,
             requester,
             sequence,
+            reply: sequence,
+            fallback_tried: false,
         });
         self.push_output(Output::LookupOutbound {
             request_id,

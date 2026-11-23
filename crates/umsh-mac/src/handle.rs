@@ -583,6 +583,26 @@ impl<
     }
 
     #[cfg(feature = "software-crypto")]
+    /// Registers a contact-exchange session key; see
+    /// [`Mac::register_meet_identity`].
+    pub async fn register_meet_identity(
+        &self,
+        parent: LocalIdentityId,
+        identity: umsh_crypto::software::SoftwareIdentity,
+    ) -> Result<LocalIdentityId, CapacityError> {
+        self.mac
+            .borrow_mut()
+            .await
+            .register_meet_identity(parent, identity)
+    }
+
+    /// Whether a frame sent under `id` is still in flight; see
+    /// [`Mac::has_frames_in_flight`].
+    pub async fn has_frames_in_flight(&self, id: LocalIdentityId) -> bool {
+        self.mac.borrow().await.has_frames_in_flight(id)
+    }
+
+    #[cfg(feature = "software-crypto")]
     /// Removes a previously registered ephemeral identity.
     pub async fn remove_ephemeral(&self, id: LocalIdentityId) -> bool {
         self.mac.borrow_mut().await.remove_ephemeral(id)

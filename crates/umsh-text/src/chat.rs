@@ -36,6 +36,7 @@ use crate::engine::{
 };
 use crate::model::{ConversationKey, MessageType, SenderScope};
 use crate::validate::{DeliveryPath, DirectChannelProfile, Envelope, TextProfile};
+use crate::well_known::WellKnownChannels;
 
 /// The channels a session can hold a conversation in, and the keys to reach
 /// them.
@@ -527,6 +528,9 @@ pub enum ChatComposeError {
     /// The engine's output queue overflowed and the batch is incomplete;
     /// nothing was released.
     Incomplete,
+    /// A one-to-one conversation by blind unicast on a well-known channel,
+    /// which carries only group repair (UEP-0021).
+    WellKnownChannelDirect,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -570,6 +574,9 @@ pub struct ChatFacade<
     local_handle: String,
     session_id: u64,
     channels: ChannelRegistry,
+    /// The well-known channels, when the platform has given them; see
+    /// [`ChatFacade::set_well_known`].
+    well_known: Option<WellKnownChannels>,
     /// Full keys learned for claimed member hints, per channel; the first
     /// key seen for a hint stays.
     members: BTreeMap<(ChannelTag, [u8; 3]), PublicKey>,
@@ -605,6 +612,7 @@ impl<P: TextProfile + Clone, const SLOTS: usize, const PAGES: usize> ChatFacade<
             local_handle: String::new(),
             session_id: seeds.session_id.max(1),
             channels: ChannelRegistry::default(),
+            well_known: None,
             members: BTreeMap::new(),
             flooded: BTreeSet::new(),
             staged: Vec::new(),
@@ -629,6 +637,13 @@ impl<P: TextProfile + Clone, const SLOTS: usize, const PAGES: usize> ChatFacade<
 
     pub fn channels_mut(&mut self) -> &mut ChannelRegistry {
         &mut self.channels
+    }
+
+    /// Name the well-known channels, so that a message composed into a
+    /// one-to-one conversation by blind unicast on either is refused before
+    /// anything is stored. Their frames are refused again as they depart.
+    pub fn set_well_known(&mut self, well_known: WellKnownChannels) {
+        self.well_known = Some(well_known);
     }
 
     /// Whether a composed batch is waiting to be committed or rejected.
@@ -697,6 +712,15 @@ impl<P: TextProfile + Clone, const SLOTS: usize, const PAGES: usize> ChatFacade<
     ) -> Result<PendingBatch, ChatComposeError> {
         if self.pending_batch.is_some() {
             return Err(ChatComposeError::BatchPending);
+        }
+        if let (ConversationKey::ChannelDirect { channel, .. }, Some(well_known)) =
+            (conversation, &self.well_known)
+            && self
+                .channels
+                .key(&channel)
+                .is_some_and(|key| well_known.contains(&key))
+        {
+            return Err(ChatComposeError::WellKnownChannelDirect);
         }
         if let Some(stored) = stored.filter(|stored| stored.conversation == conversation) {
             self.engine.recall(stored);

@@ -456,26 +456,54 @@ fn the_phone_node_key_is_the_owner_address_decoded() {
 
 /// `seed`'s contact as an exchange brings it: a signed bundle naming it.
 async fn exchanged_contact(seed: u8, name: &str) -> crate::MobileMeetContactRecord {
-    let identity = umsh_crypto::software::SoftwareIdentity::from_secret_bytes(&[seed; 32]);
-    let identity_bundle = signed_node_identity_bundle(
-        &identity,
-        NodeIdentityProfileRecord {
-            role_code: 0,
-            capability_bits: 0,
+    exchanged_identity(seed, name, None, true).await
+}
+
+/// `seed`'s contact as an exchange brings it, naming it, dated or not and
+/// signed or not.
+async fn exchanged_identity(
+    seed: u8,
+    name: &str,
+    timestamp: Option<u32>,
+    signed: bool,
+) -> crate::MobileMeetContactRecord {
+    let identity_bundle = if signed {
+        let identity = umsh_crypto::software::SoftwareIdentity::from_secret_bytes(&[seed; 32]);
+        signed_node_identity_bundle(
+            &identity,
+            NodeIdentityProfileRecord {
+                role_code: 0,
+                capability_bits: 0,
+                name: Some(name.to_owned()),
+                latitude: None,
+                longitude: None,
+                location_precision: None,
+                altitude_m: None,
+                timestamp,
+            },
+        )
+        .await
+        .unwrap()
+    } else {
+        let payload = umsh_node::NodeIdentityPayload {
+            role: umsh_node::NodeRole::from_byte(0),
+            capabilities: umsh_node::NodeCapabilities::empty(),
             name: Some(name.to_owned()),
-            latitude: None,
-            longitude: None,
-            location_precision: None,
+            location: None,
             altitude_m: None,
-            timestamp: None,
-        },
-    )
-    .await
-    .unwrap();
+            timestamp,
+            supported_regions: None,
+            nonce: None,
+            signature: None,
+        };
+        let mut buf = [0u8; 192];
+        let len = payload.encode(&mut buf).unwrap();
+        buf[..len].to_vec()
+    };
     crate::MobileMeetContactRecord {
         peer_address: address(seed),
         identity_bundle,
-        signed: true,
+        signed,
     }
 }
 
@@ -497,6 +525,18 @@ impl Fixture {
             .await
             .unwrap();
         self.core.poll_changes()
+    }
+
+    /// The meet closes, as between two exchanges.
+    async fn exchange_ended(&self) {
+        self.core
+            .on_worker(move |worker| async move {
+                worker.meet_changed(None);
+                Ok(())
+            })
+            .await
+            .unwrap();
+        self.core.poll_changes();
     }
 
     fn peer_record(&self, address: &str) -> Option<MobileAppPeerRecord> {
@@ -545,6 +585,94 @@ async fn exchanging_with_a_saved_peer_keeps_it_saved() {
     let peer = fixture.peer_record(&theirs.peer_address).unwrap();
     assert!(peer.stored.is_saved);
     assert_eq!(peer.stored.alias.as_deref(), Some("Peer"));
+}
+
+#[tokio::test]
+async fn an_unsigned_identity_is_stored_for_a_new_key() {
+    let fixture = Fixture::new();
+    let theirs = exchanged_identity(9, "Maya", None, false).await;
+    let changes = fixture.exchange(theirs.clone()).await;
+    assert_eq!(changes.exchanged_peer.as_ref(), Some(&theirs.peer_address));
+    let peer = fixture.peer_record(&theirs.peer_address).unwrap();
+    assert_eq!(peer.stored.advertised_name.as_deref(), Some("Maya"));
+    assert_eq!(peer.stored.advertisement, Some(theirs.identity_bundle));
+}
+
+#[tokio::test]
+async fn an_unsigned_identity_does_not_replace_a_known_name() {
+    let fixture = Fixture::new();
+    let theirs = exchanged_identity(9, "Impostor", Some(900), false).await;
+    fixture
+        .store
+        .upsert_peer(
+            fixture.owner.clone(),
+            theirs.peer_address.clone(),
+            MobilePeerUpsertRecord {
+                advertised_name: Some("Maya".to_owned()),
+                ..MobilePeerUpsertRecord::default()
+            },
+        )
+        .unwrap();
+    let changes = fixture.exchange(theirs.clone()).await;
+    // The exchange still happened; only its claims are not believed.
+    assert_eq!(changes.exchanged_peer.as_ref(), Some(&theirs.peer_address));
+    let peer = fixture.peer_record(&theirs.peer_address).unwrap();
+    assert_eq!(peer.stored.advertised_name.as_deref(), Some("Maya"));
+    assert_eq!(peer.stored.advertisement, None);
+}
+
+#[tokio::test]
+async fn a_signed_identity_replaces_held_details_only_when_newer() {
+    let fixture = Fixture::new();
+    let held = exchanged_identity(9, "Maya", Some(500), true).await;
+    fixture.exchange(held.clone()).await;
+    let address = held.peer_address.clone();
+    let name = |fixture: &Fixture| {
+        fixture
+            .peer_record(&address)
+            .unwrap()
+            .stored
+            .advertised_name
+    };
+    // Each exchange below is a new one, as a later meet would be.
+    let exchange_again = async |fixture: &Fixture, contact| {
+        fixture.exchange_ended().await;
+        fixture.exchange(contact).await
+    };
+
+    exchange_again(&fixture, exchanged_identity(9, "Undated", None, true).await).await;
+    assert_eq!(name(&fixture).as_deref(), Some("Maya"), "undated");
+    exchange_again(
+        &fixture,
+        exchanged_identity(9, "Older", Some(100), true).await,
+    )
+    .await;
+    assert_eq!(name(&fixture).as_deref(), Some("Maya"), "older");
+    exchange_again(
+        &fixture,
+        exchanged_identity(9, "Same", Some(500), true).await,
+    )
+    .await;
+    assert_eq!(name(&fixture).as_deref(), Some("Maya"), "the same age");
+    let newer = exchanged_identity(9, "Maya R.", Some(900), true).await;
+    exchange_again(&fixture, newer.clone()).await;
+    let peer = fixture.peer_record(&address).unwrap();
+    assert_eq!(peer.stored.advertised_name.as_deref(), Some("Maya R."));
+    assert_eq!(peer.stored.advertisement, Some(newer.identity_bundle));
+    assert!(!peer.stored.advertisement_authenticated);
+}
+
+#[tokio::test]
+async fn an_unbelieved_timestamp_does_not_outrank_a_signed_identity() {
+    let fixture = Fixture::new();
+    let unsigned = exchanged_identity(9, "Claim", Some(u32::MAX), false).await;
+    fixture.exchange(unsigned.clone()).await;
+    fixture.exchange_ended().await;
+    let signed = exchanged_identity(9, "Maya", Some(100), true).await;
+    fixture.exchange(signed.clone()).await;
+    let peer = fixture.peer_record(&signed.peer_address).unwrap();
+    assert_eq!(peer.stored.advertised_name.as_deref(), Some("Maya"));
+    assert_eq!(peer.stored.advertisement, Some(signed.identity_bundle));
 }
 
 #[tokio::test]

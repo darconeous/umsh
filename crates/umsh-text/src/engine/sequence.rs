@@ -127,6 +127,16 @@ impl EditRing {
             .unwrap_or(id)
     }
 
+    /// The IDs of earlier edits recorded against `original`.
+    pub fn edits_of(&self, original: u8) -> heapless::Vec<u8, 8> {
+        let original = self.resolve(original);
+        self.entries
+            .iter()
+            .filter(|(_, entry_original)| *entry_original == original)
+            .map(|(edit_id, _)| *edit_id)
+            .collect()
+    }
+
     /// Retire any mapping involving `id`, in either position.
     pub fn retire(&mut self, id: u8) {
         self.entries

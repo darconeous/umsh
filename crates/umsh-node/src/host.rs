@@ -309,6 +309,13 @@ impl<M: MacBackend> Host<M> {
             .await
             .map_err(HostError::Mac)?;
 
+        // A closed contact exchange goes once its last frames are settled,
+        // which the cycle just done may have seen to.
+        #[cfg(feature = "software-crypto")]
+        for (_, node) in &self.nodes {
+            node.settle_retiring_meets().await;
+        }
+
         // Forwards are heard only in the MAC, whose table is small enough to
         // forget one. A cycle hears far fewer frames than the table holds,
         // so copying it after every cycle loses none in practice.
@@ -510,13 +517,18 @@ fn route_node<M: MacBackend>(
 }
 
 /// Whether a received frame may reach the node at all, as far as contact
-/// exchange (app-meet.md) is concerned.
+/// exchange (UEP-0022) is concerned.
 ///
 /// A session identity takes Meet unicasts and nothing else: it must never
 /// answer as the long-term node, so no identity response, forward secrecy,
 /// or application payload goes through it. A Meet unicast reaches only a
-/// session identity, and a Hello, being a broadcast, reaches the long-term
-/// one. Meet frames that pass go to the node's receive handlers only.
+/// session identity, and only from a full source key: one naming its
+/// source by hint, or riding a group unicast or a multicast, is dropped. A
+/// Hello, being a broadcast, reaches the long-term identity. Meet frames
+/// that pass go to the node's receive handlers only. The MAC already drops
+/// and counts what a session key refuses
+/// ([`umsh_mac::Mac::register_meet_identity`]); this holds the line for the
+/// long-term identity, and for a backend that does not.
 fn meet_admits<M: MacBackend>(
     node: &LocalNode<M>,
     identity_id: LocalIdentityId,
@@ -530,11 +542,18 @@ fn meet_admits<M: MacBackend>(
         false
     };
     let meet = packet.payload_type() == umsh_core::PayloadType::Meet;
-    if !to_session && !meet {
-        return true;
+    if !meet {
+        return !to_session;
     }
-    let unicast = packet.packet_type() != umsh_core::PacketType::Broadcast;
-    meet && to_session == unicast
+    // A Meet that names its source by hint is never admitted (UEP-0022).
+    if !packet.has_full_source() {
+        return false;
+    }
+    match packet.packet_type() {
+        umsh_core::PacketType::Broadcast => !to_session,
+        umsh_core::PacketType::Unicast | umsh_core::PacketType::UnicastAckReq => to_session,
+        _ => false,
+    }
 }
 
 /// Whether an identity payload's claims are its sender's own: a signature

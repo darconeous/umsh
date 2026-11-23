@@ -136,9 +136,15 @@ def render_registry(name, root, src, chapter_dir):
     A registry file holds `title`, `created-by` (a UEP number), an optional
     `anchor` in that UEP, `policy` (Markdown), and `min` and `max`, the
     bounds of its value space. Each `[[range]]` has `from`, `to`, and `use`
-    (`reserved` or `experimental`); ranges do not overlap. Each `[[value]]`
-    has `value`, `name`, one of `uep` or `draft`, and an optional `anchor`
-    and `deprecated`; no value is allocated twice or inside a range."""
+    (`reserved`, `experimental`, or `private`); ranges do not overlap. Each
+    `[[value]]` has `value`, `name`, one of `uep` or `draft`, and an optional
+    `anchor` and `deprecated`; no value is allocated twice or inside a range.
+
+    Each `[[source]]` lists values the project assigns outside the series,
+    from a JSON file: `file` (relative to the book's root), `list` (the key
+    of its array of objects), `value` and `name` (the keys of each object's
+    value and name), and `from` and `to`, the span its values must fall in.
+    Their rows carry no reference."""
     path = os.path.join(root, "registries", f"{name}.toml")
     try:
         with open(path, "rb") as f:
@@ -148,7 +154,8 @@ def render_registry(name, root, src, chapter_dir):
     except tomllib.TOMLDecodeError as e:
         raise HeaderError(f"registries/{name}.toml is not valid TOML: {e}")
     where = f"registries/{name}.toml"
-    only(registry, {"title", "created-by", "anchor", "policy", "min", "max", "range", "value"}, where)
+    only(registry, {"title", "created-by", "anchor", "policy", "min", "max", "range", "value",
+                    "source"}, where)
     title = need(registry, "title", str, where)
     created_by = need(registry, "created-by", int, where)
     policy = need(registry, "policy", str, where)
@@ -170,13 +177,14 @@ def render_registry(name, root, src, chapter_dir):
         low = need(item, "from", int, f"{where} range")
         high = need(item, "to", int, f"{where} range")
         use = need(item, "use", str, f"{where} range")
-        if use not in ("reserved", "experimental") or low > high or not (within(low) and within(high)):
+        if use not in ("reserved", "experimental", "private") or low > high or not (within(low) and within(high)):
             raise HeaderError(f"{where}: range {low}–{high} is not valid")
         if any(low <= other_high and other_low <= high for other_low, other_high in ranges):
             raise HeaderError(f"{where}: range {low}–{high} overlaps another")
         ranges.append((low, high))
         span = str(low) if low == high else f"{low}–{high}"
-        rows.append((low, span, f"*{use.capitalize()}*", ""))
+        label = "Private use" if use == "private" else use.capitalize()
+        rows.append((low, span, f"*{label}*", ""))
     seen = set()
     for item in need(registry, "value", list, where, optional=True) or []:
         only(item, {"value", "name", "uep", "draft", "anchor", "deprecated"}, f"{where} value")
@@ -197,6 +205,31 @@ def render_registry(name, root, src, chapter_dir):
         reference = link(uep if uep is not None else draft, src, chapter_dir,
                          need(item, "anchor", str, here, optional=True))
         rows.append((value, str(value), label, reference))
+
+    for item in need(registry, "source", list, where, optional=True) or []:
+        only(item, {"file", "list", "value", "name", "from", "to"}, f"{where} source")
+        file = need(item, "file", str, f"{where} source")
+        here = f"{where} source `{file}`"
+        low = need(item, "from", int, here)
+        high = need(item, "to", int, here)
+        try:
+            with open(os.path.join(root, file), encoding="utf-8") as f:
+                entries = json.load(f)[need(item, "list", str, here)]
+        except (OSError, ValueError, KeyError, TypeError) as e:
+            raise HeaderError(f"{here}: cannot read its list: {e}")
+        value_key = need(item, "value", str, here)
+        name_key = need(item, "name", str, here)
+        for entry in entries:
+            value = entry.get(value_key) if isinstance(entry, dict) else None
+            name = entry.get(name_key) if isinstance(entry, dict) else None
+            if not is_number(value) or not isinstance(name, str):
+                raise HeaderError(f"{here}: an entry lacks `{value_key}` or `{name_key}`")
+            if not (low <= value <= high and within(value)):
+                raise HeaderError(f"{here}: value {value} outside {low}–{high}")
+            if value in seen or any(a <= value <= b for a, b in ranges):
+                raise HeaderError(f"{here}: value {value} allocated twice, or inside a range")
+            seen.add(value)
+            rows.append((value, str(value), name.replace("|", "\\|"), ""))
 
     rows.sort(key=lambda row: row[0])
     table = ["| Value | Name | Reference |", "|---:|---|---|"]

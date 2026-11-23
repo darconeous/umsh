@@ -24,7 +24,7 @@ use crate::store::{
     MobileStoredChatDeliveryFailureRecord, MobileStoredNodeKind, MobileStoredNodeRecord,
 };
 use crate::ulcp::UlcpHostOwnership;
-use crate::{IdentitySignatureState, NodeHint, NodeUriPreviewRecord};
+use crate::{IdentitySignatureState, NodeHint, NodeIdentityRecord, NodeUriPreviewRecord};
 
 /// Transient peers kept past this many go, oldest heard first.
 const TRANSIENT_PEERS_KEPT: u32 = 256;
@@ -205,7 +205,8 @@ impl Worker {
         let now_ms = self.clock.now_ms();
         let address = advertisement.peer_address;
         // It arrived now, so it replaces whatever is stored: only a link's
-        // bundle, of unknown age, must earn that (`link_identity_replaces`).
+        // bundle or an exchanged Identity, standing apart from any frame,
+        // must earn that (`standalone_identity_replaces`).
         let stored = self
             .store
             .upsert_peer(
@@ -437,8 +438,12 @@ impl Worker {
         });
     }
 
-    /// Store the peer an exchange brought, once per exchange. The in-person
-    /// code confirmed it, so no signature is asked of its bundle.
+    /// Store the peer an exchange brought, once per exchange. Its holder
+    /// confirmed the exchange by pressing Same, so a key with nothing held
+    /// takes its Identity as it came. Over held details, the Identity
+    /// stands apart from any frame (UEP-0022 #linking): it replaces them
+    /// only as [`standalone_identity_replaces`] allows, so an unsigned one
+    /// never does.
     fn record_exchanged(&self, contact: &MobileMeetContactRecord) -> Option<String> {
         if self.pipeline.borrow().recorded_exchange.as_ref() == Some(&contact.peer_address) {
             return None;
@@ -453,23 +458,35 @@ impl Worker {
             contact.identity_bundle.clone(),
         )
         .ok();
-        // Exchanged now, so it replaces whatever is stored, as a heard
-        // advertisement does.
-        let stored = self.store.upsert_peer(
-            owner,
-            contact.peer_address.clone(),
-            MobilePeerUpsertRecord {
-                advertised_name: identity.as_ref().and_then(|identity| identity.name.clone()),
-                node_kind: identity
-                    .as_ref()
-                    .map(|identity| node_kind(identity.role_code)),
-                advertisement: Some(contact.identity_bundle.clone()),
-                advertisement_authenticated: false,
-                advertisement_received_at_ms: Some(self.clock.now_ms()),
-                ..MobilePeerUpsertRecord::default()
-            },
-        );
-        match stored {
+        // The read and the upsert with no await between: nothing writes the
+        // row in the meantime.
+        let held = match self.store.node(&owner, &contact.peer_address) {
+            Ok(held) => held,
+            Err(error) => {
+                log::error!(error:? = error; "an exchanged contact was not kept");
+                return None;
+            }
+        };
+        // The bundle keeps its own signature, which is what later says
+        // whether its claims are the key's; the session key's MIC that
+        // carried it authenticates nothing about the peer.
+        let upsert = match identity {
+            Some(identity) if standalone_identity_replaces(held.as_ref(), &identity) => {
+                MobilePeerUpsertRecord {
+                    advertised_name: identity.name,
+                    node_kind: Some(node_kind(identity.role_code)),
+                    advertisement: Some(contact.identity_bundle.clone()),
+                    advertisement_authenticated: false,
+                    advertisement_received_at_ms: Some(self.clock.now_ms()),
+                    ..MobilePeerUpsertRecord::default()
+                }
+            }
+            _ => MobilePeerUpsertRecord::default(),
+        };
+        match self
+            .store
+            .upsert_peer(owner, contact.peer_address.clone(), upsert)
+        {
             Ok(()) => Some(contact.peer_address.clone()),
             Err(error) => {
                 log::error!(error:? = error; "an exchanged contact was not kept");
@@ -684,24 +701,35 @@ struct Subject {
     reaction: Option<MobileNotificationReactionRecord>,
 }
 
-/// Whether a link's identity replaces the one stored for its peer: always
-/// over none; otherwise only a validly signed bundle with a timestamp,
-/// over one with no timestamp or an older one. A link is of unknown age,
-/// so an unsigned or undated one never replaces what was heard. The name,
-/// kind and payload travel together, so the caller writes all of them or
-/// none.
+/// Whether a link's identity replaces the one stored for its peer, as
+/// [`standalone_identity_replaces`] says. A link with no bundle that may be
+/// stored replaces nothing. The name, kind and payload travel together, so
+/// the caller writes all of them or none.
 pub(super) fn link_identity_replaces(
     stored: Option<&MobileStoredNodeRecord>,
     link: &NodeUriPreviewRecord,
 ) -> bool {
-    let (Some(identity), Some(_)) = (&link.identity, &link.identity_payload) else {
-        return false;
-    };
-    let Some((address, payload)) = stored.and_then(|node| {
-        node.advertisement
-            .as_ref()
-            .map(|payload| (node.public_address.clone(), payload.clone()))
-    }) else {
+    match (&link.identity, &link.identity_payload) {
+        (Some(identity), Some(_)) => standalone_identity_replaces(stored, identity),
+        _ => false,
+    }
+}
+
+/// Whether an identity that stands apart from any frame, as a link's
+/// bundle or an exchanged Identity does, replaces the details held for its
+/// node (UEP-0011 #signatures): always over none; otherwise only a validly
+/// signed one with a timestamp, over held details with no timestamp or an
+/// older one, counting a held Timestamp only when the held details were
+/// believed. Nothing dates such an identity but its own Timestamp, and
+/// anyone can repeat a captured one, so an unsigned or undated one never
+/// replaces what is held. A name held without a bundle counts as held.
+pub(super) fn standalone_identity_replaces(
+    stored: Option<&MobileStoredNodeRecord>,
+    identity: &NodeIdentityRecord,
+) -> bool {
+    let Some(node) =
+        stored.filter(|node| node.advertisement.is_some() || node.advertised_name.is_some())
+    else {
         return true;
     };
     if identity.signature != IdentitySignatureState::Valid {
@@ -710,10 +738,16 @@ pub(super) fn link_identity_replaces(
     let Some(timestamp) = identity.timestamp else {
         return false;
     };
-    crate::decode_node_identity(address, payload)
-        .ok()
-        .and_then(|stored| stored.timestamp)
-        .is_none_or(|stored| stored < timestamp)
+    // Only held details someone believed date them: an unbelieved bundle's
+    // Timestamp is its sender's word, and must not outrank a signed one.
+    node.advertisement
+        .clone()
+        .and_then(|payload| crate::decode_node_identity(node.public_address.clone(), payload).ok())
+        .filter(|held| {
+            node.advertisement_authenticated || held.signature == IdentitySignatureState::Valid
+        })
+        .and_then(|held| held.timestamp)
+        .is_none_or(|held| held < timestamp)
 }
 
 /// What an advertised role is stored as.

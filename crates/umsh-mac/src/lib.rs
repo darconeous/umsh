@@ -275,6 +275,18 @@ pub const DEFAULT_RX_STRANGERS: usize = 16;
 /// further" into "do not flood at all".
 pub const MAX_FLOOD_HOPS: u8 = 15;
 
+/// The canonical name of the well-known `EMERGENCY` group (UEP-0021).
+pub const EMERGENCY_CHANNEL_NAME: &str = "emergency";
+
+/// The group hint of the well-known `EMERGENCY` group, which
+/// [`EMERGENCY_CHANNEL_NAME`] derives (UEP-0021).
+///
+/// A repeater forwards an `EMERGENCY` multicast ahead of its other forwards.
+/// The hint only picks out the frames worth checking: the frame must also
+/// be unencrypted, carry its full source address, and verify under the
+/// group's key.
+pub const EMERGENCY_CHANNEL_ID: umsh_core::ChannelId = umsh_core::ChannelId([0x26, 0xC7]);
+
 pub use umsh_core::{
     ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS, RouteEvidence, STRONG_DIRECT_RSSI_DBM,
     WEAK_LAST_HOP_RSSI_DBM, established_route_slack,

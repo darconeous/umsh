@@ -298,3 +298,134 @@ pub fn encode(msg: &TextMessage<'_>, buf: &mut [u8]) -> Result<usize, EncodeErro
     buf[prefix_len..prefix_len + msg.body.len()].copy_from_slice(msg.body);
     Ok(prefix_len + msg.body.len())
 }
+
+/// The vectors of UEP-0020 Appendix A: each payload decodes to its message
+/// and its message encodes to the same payload.
+#[cfg(test)]
+mod spec_vectors {
+    use umsh_core::NodeHint;
+
+    use super::{encode, parse};
+    use crate::model::{Fragment, MessageSequence, MessageType, Regarding, TextMessage};
+
+    fn check(payload: &[u8], message: TextMessage<'_>) {
+        assert_eq!(parse(payload).unwrap(), message, "{payload:02X?}");
+        let mut buf = [0u8; 64];
+        let len = encode(&message, &mut buf).unwrap();
+        assert_eq!(&buf[..len], payload);
+    }
+
+    fn sequence(id: u8) -> Option<MessageSequence> {
+        Some(MessageSequence::unfragmented(id))
+    }
+
+    #[test]
+    fn the_appendix_vectors_round_trip() {
+        let hi = TextMessage {
+            sender_handle: Some("Ann"),
+            sequence: sequence(5),
+            ..TextMessage::basic("hi")
+        };
+        check(&[0x13, 0x41, 0x6E, 0x6E, 0x11, 0x05, 0xFF, 0x68, 0x69], hi);
+
+        let ok = TextMessage::basic("ok");
+        check(
+            &[0x21, 0x06, 0x21, 0x03, 0xFF, 0x6F, 0x6B],
+            TextMessage {
+                sequence: sequence(6),
+                regarding: Some(Regarding::Unicast { message_id: 3 }),
+                ..ok
+            },
+        );
+        check(
+            &[0x01, 0x01, 0x21, 0x07, 0x21, 0x03, 0xFF, 0x2B, 0x31],
+            TextMessage {
+                message_type: MessageType::Status,
+                sequence: sequence(7),
+                regarding: Some(Regarding::Unicast { message_id: 3 }),
+                ..TextMessage::basic("+1")
+            },
+        );
+        for (index, body, payload) in [
+            (0, "ab", [0x23, 0x09, 0x00, 0x02, 0xFF, 0x61, 0x62]),
+            (1, "cd", [0x23, 0x09, 0x01, 0x02, 0xFF, 0x63, 0x64]),
+        ] {
+            check(
+                &payload,
+                TextMessage {
+                    sequence: Some(MessageSequence {
+                        message_id: 9,
+                        fragment: Some(Fragment { index, count: 2 }),
+                    }),
+                    ..TextMessage::basic(body)
+                },
+            );
+        }
+        check(
+            &[0x44, 0x03, 0xED, 0x54, 0xA5, 0xFF, 0x6F, 0x6B],
+            TextMessage {
+                regarding: Some(Regarding::Multicast {
+                    message_id: 3,
+                    source_prefix: NodeHint([0xED, 0x54, 0xA5]),
+                }),
+                ..ok
+            },
+        );
+        check(
+            &[0x21, 0x08, 0x31, 0x03, 0xFF, 0x6F, 0x6B],
+            TextMessage {
+                sequence: sequence(8),
+                editing: Some(3),
+                ..ok
+            },
+        );
+        check(
+            &[0x21, 0x01, 0x10, 0xFF, 0x78],
+            TextMessage {
+                sequence: sequence(1),
+                sequence_reset: true,
+                ..TextMessage::basic("x")
+            },
+        );
+        check(&[0xFF, 0x68, 0x69], TextMessage::basic("hi"));
+        // The repair messages of the same appendix.
+        let repair = |message_type, sequence, group| TextMessage {
+            message_type,
+            sequence: Some(sequence),
+            channel_group_resend: group,
+            ..TextMessage::basic("")
+        };
+        let five = MessageSequence::unfragmented(5);
+        check(
+            &[0x01, 0x02, 0x21, 0x05],
+            repair(MessageType::ResendRequest, five, false),
+        );
+        check(
+            &[0x01, 0x02, 0x21, 0x05, 0x60],
+            repair(MessageType::ResendRequest, five, true),
+        );
+        check(
+            &[0x01, 0x03, 0x21, 0x05],
+            repair(MessageType::MessageUnavailable, five, false),
+        );
+        check(
+            &[0x01, 0x02, 0x23, 0x05, 0x01, 0x03],
+            repair(
+                MessageType::ResendRequest,
+                MessageSequence {
+                    message_id: 5,
+                    fragment: Some(Fragment { index: 1, count: 3 }),
+                },
+                false,
+            ),
+        );
+        check(
+            &[0x21, 0x09, 0x31, 0x03],
+            TextMessage {
+                sequence: sequence(9),
+                editing: Some(3),
+                ..TextMessage::basic("")
+            },
+        );
+    }
+}

@@ -672,7 +672,7 @@ share control.
 ### Join channel
 
 One entry point covers both ways in. The field accepts a public channel name or
-a pasted `umsh:cs:` / `umsh:ck:` invitation, and the same staged behavior
+a pasted `umsh:gs:` / `umsh:gk:` invitation, and the same staged behavior
 applies as every other URI import: parse locally, preview, confirm.
 
 A **Suggested Channels** section lists any standard channel the user has left,
@@ -719,7 +719,7 @@ Sharing is the standard system share control in the trailing toolbar position,
 not a row in the form. It opens a sheet with a QR code and URI. A public channel shares only its name. A
 private channel's invitation is key material, and the sheet says so where the
 invitation is, not only on the way in. The name travels written as it is
-read—`umsh:cs:Trail%20Crew`—and canonicalization happens after
+read—`umsh:gs:Trail%20Crew`—and canonicalization happens after
 percent-decoding on the way in, so casing survives sharing without changing
 which channel is meant.
 

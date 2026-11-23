@@ -2751,7 +2751,7 @@ fn a_channel_name_joins_a_named_channel() {
 
 #[test]
 fn a_channel_row_leaves_out_the_emoji_its_badge_shows() {
-    let invitation = "umsh:ck:5BFn8YGKJ6pZR4qV3tW7mNhDrXsCxEaL9kUv2wAjT8bP?n=";
+    let invitation = "umsh:gk:5BFn8YGKJ6pZR4qV3tW7mNhDrXsCxEaL9kUv2wAjT8bP?n=";
     for (encoded, name, title) in [
         ("%F0%9F%94%A5%20Hot%20Topic", "🔥 Hot Topic", "Hot Topic"),
         ("%F0%9F%94%A5", "🔥", "Fire"),
@@ -2782,7 +2782,7 @@ fn an_invitation_counts_down_and_joins_a_private_channel() {
     open_add_channel(&mut app);
     run(
         &mut app,
-        &typed("umsh:ck:5BFn8YGKJ6pZR4qV3tW7mNhDrXsCxEaL9kUv2wAjT"),
+        &typed("umsh:gk:5BFn8YGKJ6pZR4qV3tW7mNhDrXsCxEaL9kUv2wAjT"),
     );
     assert_eq!(
         app.state().channel_entry(),
@@ -3721,7 +3721,7 @@ fn a_setting_refused_reads_back_as_it_stands() {
 fn an_invitation_is_its_channel_link_alone() {
     let store = store();
     let invite = store.message(JO, INVITE).expect("the invitation");
-    assert!(invite.text.as_str().starts_with("umsh:ck:"));
+    assert!(invite.text.as_str().starts_with("umsh:gk:"));
     let mut summary = store.chat(JO).expect("the chat");
     summary.preview(&invite);
     assert_eq!(summary.preview.as_str(), "Channel invite: Base Camp");

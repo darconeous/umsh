@@ -1458,7 +1458,7 @@ const FIRST_DIRECT: ChatId = 0x100;
 const FIRST_SAVED: PeerId = 0x100;
 /// Where channels joined since are numbered from.
 const FIRST_JOINED: ChatId = 0x200;
-const CHANNEL_INVITATION: &str = "umsh:ck:";
+const CHANNEL_INVITATION: &str = "umsh:gk:";
 
 /// This node's address, as the mockup's Share screen shows it.
 const ADDRESS: &str = "Geb9QfXhe5f1vXHcFDnXbvcXShxAFhAxaRp1jr5Bqe3L";
@@ -1530,7 +1530,7 @@ fn push_encoded(uri: &mut ShareUri, name: &str) -> Option<()> {
 
 fn private_uri(key: &str, name: &str) -> Option<ShareUri> {
     let mut uri = ShareUri::new();
-    core::fmt::write(&mut uri, format_args!("umsh:ck:{key}?n=")).ok()?;
+    core::fmt::write(&mut uri, format_args!("umsh:gk:{key}?n=")).ok()?;
     push_encoded(&mut uri, name)?;
     Some(uri)
 }
@@ -3498,8 +3498,8 @@ impl Node for Store {
                 Some(uri)
             }
             Shareable::Channel(2) => private_uri(TRAIL_CREW_KEY, "Trail Crew"),
-            Shareable::Channel(4) => ShareUri::try_from("umsh:cs:public").ok(),
-            Shareable::Channel(6) => ShareUri::try_from("umsh:cs:emergency").ok(),
+            Shareable::Channel(4) => ShareUri::try_from("umsh:gs:public").ok(),
+            Shareable::Channel(6) => ShareUri::try_from("umsh:gs:emergency").ok(),
             Shareable::Channel(chat) => {
                 let index = chat.checked_sub(FIRST_JOINED)? as usize;
                 let joined = self.joined.borrow();
@@ -3508,7 +3508,7 @@ impl Node for Store {
                     ChannelAccess::Private => private_uri(JOINED_KEY, name),
                     _ => {
                         let mut uri = ShareUri::new();
-                        core::fmt::write(&mut uri, format_args!("umsh:cs:")).ok()?;
+                        core::fmt::write(&mut uri, format_args!("umsh:gs:")).ok()?;
                         push_encoded(&mut uri, &folded(name))?;
                         Some(uri)
                     }

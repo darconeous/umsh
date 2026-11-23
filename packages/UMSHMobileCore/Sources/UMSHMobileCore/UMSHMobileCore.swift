@@ -46877,8 +46877,8 @@ public func deriveChannelTint(key: Data)throws  -> Data  {
 /**
  * Build a shareable channel URI.
  *
- * Supplying `name` produces the `umsh:cs:` form, which is not a secret;
- * otherwise the `umsh:ck:` form is produced, which carries the channel key
+ * Supplying `name` produces the `umsh:gs:` form, which is not a secret;
+ * otherwise the `umsh:gk:` form is produced, which carries the channel key
  * and grants full membership to anyone who receives it.
  */
 public func formatChannelInvitation(key: Data, name: String?, displayName: String?, maxFloodHops: UInt8?, region: Data?)throws  -> String  {
@@ -46935,7 +46935,8 @@ public func inspectChannelName(name: String)throws  -> ChannelPreviewRecord  {
 /**
  * Parse a channel URI locally and derive its key and identifier.
  *
- * Accepts `umsh:cs:` (named) and `umsh:ck:` (direct key). A node URI is
+ * Accepts `umsh:gs:` (named) and `umsh:gk:` (direct key), and the deprecated
+ * `cs` and `ck` spellings of them. A node URI is
  * rejected; [`inspect_node_uri`] is its counterpart.
  */
 public func inspectChannelUri(uri: String)throws  -> ChannelPreviewRecord  {

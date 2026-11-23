@@ -251,7 +251,7 @@ place.
 The app handles the `umsh` scheme through an intent filter, routed as the iOS
 app routes `onOpenURL`. Links are held until launch has loaded the store.
 
-1. `umsh:cs:` and `umsh:ck:` are channels. Settings is selected, and the
+1. `umsh:gs:` and `umsh:gk:` are channels. Settings is selected, and the
    channel join preview opens over it.
 2. Any other `umsh:` link is looked up as a node.
    1. A link that does not parse opens the import preview, which says what is

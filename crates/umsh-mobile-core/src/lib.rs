@@ -454,7 +454,8 @@ pub struct ChannelPreviewRecord {
 
 /// Parse a channel URI locally and derive its key and identifier.
 ///
-/// Accepts `umsh:cs:` (named) and `umsh:ck:` (direct key). A node URI is
+/// Accepts `umsh:gs:` (named) and `umsh:gk:` (direct key), and the deprecated
+/// `cs` and `ck` spellings of them. A node URI is
 /// rejected; [`inspect_node_uri`] is its counterpart.
 #[uniffi::export]
 pub fn inspect_channel_uri(uri: String) -> Result<ChannelPreviewRecord, MobileError> {
@@ -464,7 +465,7 @@ pub fn inspect_channel_uri(uri: String) -> Result<ChannelPreviewRecord, MobileEr
             let name =
                 umsh_uri::decode_percent(parsed.name).map_err(|_| MobileError::InvalidUri)?;
             let mut record = named_channel_preview(&name)?;
-            apply_channel_params(&mut record, &parsed.params)?;
+            apply_channel_params(&mut record, &parsed.params);
             Ok(record)
         }
         UmshUri::ChannelByKey(parsed) => {
@@ -472,7 +473,7 @@ pub fn inspect_channel_uri(uri: String) -> Result<ChannelPreviewRecord, MobileEr
             // A well-known channel's key is that channel, whatever link
             // carries it, and its rules come with its name.
             if let Some(mut record) = well_known_preview(&channel.key().0) {
-                apply_channel_params(&mut record, &parsed.params)?;
+                apply_channel_params(&mut record, &parsed.params);
                 return Ok(record);
             }
             let mut record = ChannelPreviewRecord {
@@ -485,7 +486,7 @@ pub fn inspect_channel_uri(uri: String) -> Result<ChannelPreviewRecord, MobileEr
                 max_flood_hops: None,
                 region: None,
             };
-            apply_channel_params(&mut record, &parsed.params)?;
+            apply_channel_params(&mut record, &parsed.params);
             Ok(record)
         }
         UmshUri::Node(_) => Err(MobileError::InvalidUri),
@@ -662,8 +663,8 @@ pub fn channel_conversation_address(key: Vec<u8>) -> Result<String, MobileError>
 
 /// Build a shareable channel URI.
 ///
-/// Supplying `name` produces the `umsh:cs:` form, which is not a secret;
-/// otherwise the `umsh:ck:` form is produced, which carries the channel key
+/// Supplying `name` produces the `umsh:gs:` form, which is not a secret;
+/// otherwise the `umsh:gk:` form is produced, which carries the channel key
 /// and grants full membership to anyone who receives it.
 #[uniffi::export]
 pub fn format_channel_invitation(
@@ -729,14 +730,15 @@ fn named_channel_preview(name: &str) -> Result<ChannelPreviewRecord, MobileError
 /// Overlay a URI's advisory parameters onto a preview.
 ///
 /// These are recommendations from whoever wrote the invitation, not policy: a
-/// region that does not parse is dropped rather than failing the import.
-fn apply_channel_params(
-    record: &mut ChannelPreviewRecord,
-    params: &umsh_uri::ChannelParams<'_>,
-) -> Result<(), MobileError> {
-    if let Some(display_name) = params.display_name {
-        record.display_name =
-            Some(umsh_uri::decode_percent(display_name).map_err(|_| MobileError::InvalidUri)?);
+/// name that is empty or not UTF-8, and a region that does not parse, are
+/// dropped rather than failing the import.
+fn apply_channel_params(record: &mut ChannelPreviewRecord, params: &umsh_uri::ChannelParams<'_>) {
+    if let Some(display_name) = params
+        .display_name
+        .and_then(|name| umsh_uri::decode_percent(name).ok())
+        .filter(|name| !name.is_empty())
+    {
+        record.display_name = Some(display_name);
     }
     record.max_flood_hops = params.max_flood_hops;
     if let Some(region) = params.region {
@@ -744,7 +746,6 @@ fn apply_channel_params(
             .ok()
             .and_then(|text| ulcp::region_code_from_string(text).ok());
     }
-    Ok(())
 }
 
 fn channel_key_from_bytes(key: &[u8]) -> Result<umsh_core::ChannelKey, MobileError> {
@@ -928,7 +929,7 @@ pub(crate) async fn signed_node_identity_bundle(
 #[uniffi::export]
 pub fn inspect_peer_identity(input: String) -> Result<NodeUriPreviewRecord, MobileError> {
     let input = input.trim();
-    if input.starts_with("umsh:") {
+    if umsh_uri::strip_scheme(input).is_some() {
         return inspect_node_uri(input.to_owned());
     }
 
@@ -1384,7 +1385,7 @@ mod tests {
         let with_metadata = inspect_node_uri(format!("umsh:n:{address}:signed-data")).unwrap();
         assert!(with_metadata.has_identity_data);
         assert_eq!(
-            inspect_node_uri("umsh:cs:public".to_owned()),
+            inspect_node_uri("umsh:gs:public".to_owned()),
             Err(MobileError::InvalidUri)
         );
     }
@@ -1396,7 +1397,7 @@ mod tests {
             inspect_channel_uri(format!("umsh:n:{address}")),
             Err(MobileError::InvalidUri)
         );
-        assert!(inspect_channel_uri("umsh:cs:public".to_owned()).is_ok());
+        assert!(inspect_channel_uri("umsh:gs:public".to_owned()).is_ok());
     }
 
     #[test]
@@ -1416,7 +1417,7 @@ mod tests {
 
     #[test]
     fn named_channel_uri_and_plain_name_agree() {
-        let from_uri = inspect_channel_uri("umsh:cs:EMERGENCY".to_owned()).unwrap();
+        let from_uri = inspect_channel_uri("umsh:gs:EMERGENCY".to_owned()).unwrap();
         let from_name = inspect_channel_name("EMERGENCY".to_owned()).unwrap();
         assert_eq!(from_uri.key, from_name.key);
         assert_eq!(from_uri.canonical_name.as_deref(), Some("emergency"));
@@ -1446,7 +1447,7 @@ mod tests {
             Some(region.clone()),
         )
         .unwrap();
-        assert!(uri.starts_with("umsh:ck:"));
+        assert!(uri.starts_with("umsh:gk:"));
 
         let preview = inspect_channel_uri(uri).unwrap();
         assert_eq!(preview.kind, ChannelKindRecord::PrivateKey);
@@ -1464,7 +1465,7 @@ mod tests {
         let uri =
             format_channel_invitation(key.clone(), Some("trail-crew".to_owned()), None, None, None)
                 .unwrap();
-        assert_eq!(uri, "umsh:cs:trail-crew");
+        assert_eq!(uri, "umsh:gs:trail-crew");
 
         let preview = inspect_channel_uri(uri).unwrap();
         assert_eq!(preview.kind, ChannelKindRecord::NamedPublic);
@@ -1481,7 +1482,7 @@ mod tests {
         let uri =
             format_channel_invitation(key.clone(), Some("Trail Crew".to_owned()), None, None, None)
                 .unwrap();
-        assert_eq!(uri, "umsh:cs:Trail%20Crew");
+        assert_eq!(uri, "umsh:gs:Trail%20Crew");
 
         let back = inspect_channel_uri(uri).unwrap();
         assert_eq!(back.key, key);
@@ -1538,7 +1539,7 @@ mod tests {
         let address = umsh_uri::encode_channel_key_base58(&umsh_core::ChannelKey([0x21; 32]));
         let too_long = "A".repeat(umsh_core::REGION_NAME_MAX_LEN + 1);
         let preview =
-            inspect_channel_uri(format!("umsh:ck:{address}?n=Camp;r={too_long}")).unwrap();
+            inspect_channel_uri(format!("umsh:gk:{address}?n=Camp;r={too_long}")).unwrap();
         assert_eq!(preview.display_name.as_deref(), Some("Camp"));
         assert_eq!(preview.region, None);
     }
@@ -1641,6 +1642,62 @@ mod tests {
         assert_eq!(uri, format!("umsh:n:{address}"));
         let preview = inspect_node_uri(uri).unwrap();
         assert_eq!(preview.canonical_address, address);
+    }
+
+    /// The node URIs of UEP-0019 Appendix A: the signed bundle verifies, and
+    /// the same bundle without its end marker and signature does not.
+    #[test]
+    fn the_spec_node_uri_vectors_inspect_as_the_spec_says() {
+        let address = "GySVDr1omr3GTodgWFH7qD1ZKav9C5NMPFjdpwb33LvU";
+        let signed = "9NPVXctGv5bNRLpyNDMXGYvne4bHwV8WxQ1xQoEiA3gemRET41UnDHRfTmWvYSu4TMKK441imEcJSVx3LCwyqj4kY4HZPAJSTrgeazDPGM1nBn59zF";
+        let preview = inspect_node_uri(format!("umsh:n:{address}:{signed}")).unwrap();
+        let record = preview.identity.unwrap();
+        assert_eq!(record.signature, IdentitySignatureState::Valid);
+        assert_eq!(record.name.as_deref(), Some("Alice"));
+        assert!(preview.identity_payload.is_some());
+
+        let unsigned = "NVBjSY2wfbwPypTziMyej18fh";
+        let preview = inspect_node_uri(format!("umsh:n:{address}:{unsigned}")).unwrap();
+        assert_eq!(
+            preview.identity.unwrap().signature,
+            IdentitySignatureState::Unsigned
+        );
+
+        // A bundle that is not base58 leaves the URI naming its node.
+        let preview = inspect_node_uri(format!("umsh:n:{address}:not-base58!")).unwrap();
+        assert!(preview.has_identity_data);
+        assert!(preview.identity.is_none());
+        assert_eq!(preview.canonical_address, address);
+    }
+
+    #[test]
+    fn the_deprecated_group_kinds_are_still_read() {
+        let key = "75hbt6uvDqjPZ9WgFtMhBnTeyHw7cinoHiz4FD2vEz2d";
+        assert_eq!(
+            inspect_channel_uri(format!("umsh:ck:{key}?n=Camp")).unwrap(),
+            inspect_channel_uri(format!("umsh:gk:{key}?n=Camp")).unwrap()
+        );
+        assert_eq!(
+            inspect_channel_uri("umsh:cs:Public".to_owned()).unwrap(),
+            inspect_channel_uri("umsh:gs:Public".to_owned()).unwrap()
+        );
+    }
+
+    #[test]
+    fn an_invitation_with_a_bad_parameter_is_still_an_invitation() {
+        let key = "75hbt6uvDqjPZ9WgFtMhBnTeyHw7cinoHiz4FD2vEz2d";
+        for query in ["n=", "mh=16", "r="] {
+            let preview = inspect_channel_uri(format!("umsh:gk:{key}?{query}")).unwrap();
+            assert_eq!(preview.max_flood_hops, None, "{query}");
+            assert_eq!(preview.region, None, "{query}");
+        }
+        let preview =
+            inspect_channel_uri(format!("umsh:gk:{key}?n=Trail%20Crew;mh=3;r=SJC")).unwrap();
+        assert_eq!(preview.display_name.as_deref(), Some("Trail Crew"));
+        assert_eq!(preview.max_flood_hops, Some(3));
+        assert!(preview.region.is_some());
+        // A name with a third segment is not the group its first part names.
+        assert!(inspect_channel_uri("umsh:gs:a:b".to_owned()).is_err());
     }
 
     #[test]

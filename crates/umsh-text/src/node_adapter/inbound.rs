@@ -5,8 +5,8 @@ use alloc::vec::Vec;
 use umsh_core::{ChannelKey, NodeHint, PayloadType, PublicKey, RouterHint};
 use umsh_node::{PacketFamily, ReceivedPacketRef};
 
-use crate::WellKnownChannels;
 use crate::chat::{ChannelRegistry, TextSource};
+use crate::{ChannelFrame, Refusal, WellKnownChannels};
 
 /// Radio observations for a received frame.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -133,19 +133,6 @@ pub enum Inbound {
     Refused(Refusal),
 }
 
-/// Why a text frame was refused (`multicast-channels.md` §Default Channels).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Refusal {
-    /// `EMERGENCY` chat must be readable by every node in range.
-    EncryptedEmergency,
-    /// `EMERGENCY` chat must name its sender by full key.
-    AnonymousEmergency,
-    /// `EMERGENCY` chat must be signed by the key it names.
-    UnsignedEmergency,
-    /// `public` chat is shown only with its sender's full key.
-    AnonymousPublic,
-}
-
 /// Classify a received frame for a chat session whose identity is
 /// `local_key`.
 ///
@@ -158,9 +145,8 @@ pub enum Refusal {
 /// is deliberately incurious about what it carries. A frame that fails one is
 /// refused rather than shown unmarked—a message the reader would act on in an
 /// emergency must not arrive with its origin or its reach in question.
-/// [`WellKnownChannels::frame_signature_required`] decides which frames must
-/// also have been signed by their sender, so the detached device's receipt
-/// cue holds them to the same rule.
+/// [`WellKnownChannels::refusal`] decides, so the detached device's receipt
+/// cue holds frames to the same rules.
 pub fn inbound_text(
     packet: &ReceivedPacketRef<'_>,
     local_key: &PublicKey,
@@ -182,26 +168,15 @@ pub fn inbound_text(
     }
     let channel = packet.channel().map(|channel| *channel.key());
     if let Some(key) = &channel {
-        if well_known.is_emergency(key) {
-            if packet.encrypted() {
-                return Some(Inbound::Refused(Refusal::EncryptedEmergency));
-            }
-            if !packet.has_full_source() || packet.from_key().is_none() {
-                return Some(Inbound::Refused(Refusal::AnonymousEmergency));
-            }
-            if well_known.frame_signature_required(
-                packet.packet_type(),
-                Some(key),
-                packet.payload_bytes(),
-            ) && !packet.sender_authenticated()
-            {
-                return Some(Inbound::Refused(Refusal::UnsignedEmergency));
-            }
-        } else if well_known.is_public(key)
-            && family == PacketFamily::Multicast
-            && !packet.has_full_source()
-        {
-            return Some(Inbound::Refused(Refusal::AnonymousPublic));
+        let frame = ChannelFrame {
+            packet_type: packet.packet_type(),
+            encrypted: packet.encrypted(),
+            full_source: packet.has_full_source() && packet.from_key().is_some(),
+            signed: packet.sender_authenticated(),
+            payload: packet.payload_bytes(),
+        };
+        if let Some(refusal) = well_known.refusal(key, &frame) {
+            return Some(Inbound::Refused(refusal));
         }
     }
     let origin = match (family, channel) {

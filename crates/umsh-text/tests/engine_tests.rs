@@ -1881,6 +1881,118 @@ fn delete_retires_archive_without_replacement() {
     );
 }
 
+/// A later edit supersedes an earlier edit's own archived frame, so a resend
+/// request for the earlier edit's ID cannot return superseded content.
+#[test]
+fn a_second_edit_retires_the_first_edits_archive() {
+    let mut engine = engine();
+    let original = engine
+        .compose(
+            direct_conv(),
+            1,
+            ComposeIntent::Text {
+                body: "first",
+                status: false,
+            },
+            0,
+        )
+        .unwrap();
+    drain(&mut engine);
+
+    engine
+        .compose(
+            direct_conv(),
+            2,
+            ComposeIntent::Edit {
+                original: ComposeRef::Handle(original),
+                body: "second",
+            },
+            100,
+        )
+        .unwrap();
+    let outputs = drain(&mut engine);
+    assert!(
+        !outputs
+            .iter()
+            .any(|output| matches!(output, Drained::DeleteArchive { message_id: 1 })),
+        "the first edit is still current"
+    );
+
+    engine
+        .compose(
+            direct_conv(),
+            3,
+            ComposeIntent::Edit {
+                original: ComposeRef::Handle(original),
+                body: "third",
+            },
+            200,
+        )
+        .unwrap();
+    let outputs = drain(&mut engine);
+    assert!(
+        outputs
+            .iter()
+            .any(|output| matches!(output, Drained::DeleteArchive { message_id: 1 })),
+        "the superseded edit's archive is retired"
+    );
+    assert!(
+        outputs
+            .iter()
+            .any(|output| matches!(output, Drained::DeleteArchive { message_id: 0 })),
+        "the original's archive is retired as well"
+    );
+}
+
+/// Deleting a message retires every earlier edit's archive as well.
+#[test]
+fn a_delete_retires_earlier_edits_archives() {
+    let mut engine = engine();
+    let original = engine
+        .compose(
+            direct_conv(),
+            1,
+            ComposeIntent::Text {
+                body: "first",
+                status: false,
+            },
+            0,
+        )
+        .unwrap();
+    engine
+        .compose(
+            direct_conv(),
+            2,
+            ComposeIntent::Edit {
+                original: ComposeRef::Handle(original),
+                body: "second",
+            },
+            100,
+        )
+        .unwrap();
+    drain(&mut engine);
+
+    engine
+        .compose(
+            direct_conv(),
+            3,
+            ComposeIntent::Delete {
+                original: ComposeRef::Handle(original),
+            },
+            200,
+        )
+        .unwrap();
+    let outputs = drain(&mut engine);
+    for id in [0, 1] {
+        assert!(
+            outputs
+                .iter()
+                .any(|output| matches!(output, Drained::DeleteArchive { message_id } if *message_id == id)),
+            "archive of ID {id} retired"
+        );
+    }
+}
+
 /// An edit arriving for a still-missing original fills the reserved gap slot
 /// with the edited content, cancels the repair, and drops the superseded
 /// original as a duplicate should it still arrive.
@@ -3397,6 +3509,115 @@ fn resend_request(id: u8, channel_group: bool) -> TextMessage<'static> {
     message
 }
 
+/// A 1-byte request for a message that was fragmented is answered with
+/// fragment zero (UEP-0020 §resend-request).
+#[test]
+fn a_one_byte_request_for_a_fragmented_message_gets_fragment_zero() {
+    let mut engine = engine();
+    let body = "x".repeat(300);
+    engine
+        .compose(
+            direct_conv(),
+            1,
+            ComposeIntent::Text {
+                body: &body,
+                status: false,
+            },
+            0,
+        )
+        .unwrap();
+    let outputs = drain(&mut engine);
+    let first = outputs
+        .iter()
+        .find_map(|output| match output {
+            Drained::Transmit { payload, .. } => Some(payload.clone()),
+            _ => None,
+        })
+        .expect("a fragment was sent");
+
+    feed(
+        &mut engine,
+        &direct_envelope(),
+        None,
+        &resend_request(0, false),
+        1_000,
+    );
+    let outputs = drain(&mut engine);
+    let Some(Drained::LookupOutbound { request_id, .. }) = outputs
+        .iter()
+        .find(|output| matches!(output, Drained::LookupOutbound { .. }))
+    else {
+        panic!("expected a lookup");
+    };
+    // Nothing is stored under the unfragmented key.
+    engine.archive_result(*request_id, ArchiveResult::Unknown, 1_010);
+    let outputs = drain(&mut engine);
+    let Some(Drained::LookupOutbound {
+        request_id,
+        sequence,
+        ..
+    }) = outputs
+        .iter()
+        .find(|output| matches!(output, Drained::LookupOutbound { .. }))
+    else {
+        panic!("expected a second lookup, for fragment zero");
+    };
+    assert_eq!(sequence.message_id, 0);
+    assert_eq!(sequence.fragment.map(|fragment| fragment.index), Some(0));
+    assert!(
+        !outputs
+            .iter()
+            .any(|output| matches!(output, Drained::Transmit { .. })),
+        "no Message Unavailable while fragment zero may still be found"
+    );
+
+    engine.archive_result(*request_id, ArchiveResult::Found { payload: &first }, 1_020);
+    let outputs = drain(&mut engine);
+    let Some(Drained::Transmit { payload, .. }) = outputs
+        .iter()
+        .find(|output| matches!(output, Drained::Transmit { .. }))
+    else {
+        panic!("expected fragment zero to be sent");
+    };
+    assert_eq!(*payload, first);
+
+    // With nothing stored under either key, the answer is Message Unavailable
+    // for the frame the requester named.
+    feed(
+        &mut engine,
+        &direct_envelope(),
+        None,
+        &resend_request(0, false),
+        20_000,
+    );
+    let outputs = drain(&mut engine);
+    let Some(Drained::LookupOutbound { request_id, .. }) = outputs
+        .iter()
+        .find(|output| matches!(output, Drained::LookupOutbound { .. }))
+    else {
+        panic!("expected a lookup");
+    };
+    engine.archive_result(*request_id, ArchiveResult::Unknown, 20_010);
+    let outputs = drain(&mut engine);
+    let Some(Drained::LookupOutbound { request_id, .. }) = outputs
+        .iter()
+        .find(|output| matches!(output, Drained::LookupOutbound { .. }))
+    else {
+        panic!("expected the fragment-zero lookup");
+    };
+    engine.archive_result(*request_id, ArchiveResult::Unknown, 20_020);
+    let outputs = drain(&mut engine);
+    let Some(Drained::Transmit { payload, .. }) = outputs
+        .iter()
+        .find(|output| matches!(output, Drained::Transmit { .. }))
+    else {
+        panic!("expected Message Unavailable");
+    };
+    let answer = umsh_text::parse_text_message(payload).unwrap();
+    assert_eq!(answer.message_type, MessageType::MessageUnavailable);
+    assert_eq!(answer.sequence, Some(MessageSequence::unfragmented(0)));
+}
+
 #[test]
 fn resend_service_answers_found_and_unavailable() {
     let mut engine = engine();
@@ -3518,6 +3739,16 @@ fn resend_service_answers_found_and_unavailable() {
         unreachable!()
     };
     engine.archive_result(*request_id, ArchiveResult::Unknown, 20_010);
+    // The 1-byte request is tried once more, for fragment zero.
+    let outputs = drain(&mut engine);
+    let Drained::LookupOutbound { request_id, .. } = outputs
+        .iter()
+        .find(|output| matches!(output, Drained::LookupOutbound { .. }))
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    engine.archive_result(*request_id, ArchiveResult::Unknown, 20_020);
     let outputs = drain(&mut engine);
     let response = outputs
         .iter()

@@ -1792,7 +1792,7 @@
 <clipPath id="cl30"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl30)">
 <text x="10.0" y="72.0" font-size="16" fill="#9AA3AE" font-weight="700">Channel name or invitation</text>
 <rect x="8.0" y="80.0" width="464.0" height="62.0" fill="#1A2333" rx="12" stroke="#4DA3FF" stroke-width="2.2"/>
-<text x="20.0" y="104.0" font-size="20" fill="#EEF1F5" font-family="Menlo, 'SF Mono', Consolas, monospace">umsh:ck:MASi45ub7Qe4ZE36UT5G6cU4ud8F</text>
+<text x="20.0" y="104.0" font-size="20" fill="#EEF1F5" font-family="Menlo, 'SF Mono', Consolas, monospace">umsh:gk:MASi45ub7Qe4ZE36UT5G6cU4ud8F</text>
 <text x="20.0" y="130.0" font-size="20" fill="#EEF1F5" font-family="Menlo, 'SF Mono', Consolas, monospace">hhe4deS4F3cw9</text>
 <rect x="177.0" y="114.0" width="2.5" height="20.0" fill="#4DA3FF"/>
 <text x="10.0" y="166.0" font-size="16" fill="#F5B544" font-weight="600">Private channel · 3 characters short</text>
@@ -1826,7 +1826,7 @@
 <path d="M381 6 L391 16" fill="none" stroke="#9AA3AE" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
 </g>
 </g></g>
-<text x="1130.0" y="9798.8" font-size="17" fill="#3A3A3C">Device › Channels › Add channel. One field takes a channel name or a umsh:ck: invitation, and the preview says which as you</text>
+<text x="1130.0" y="9798.8" font-size="17" fill="#3A3A3C">Device › Channels › Add channel. One field takes a channel name or a umsh:gk: invitation, and the preview says which as you</text>
 <text x="1130.0" y="9822.8" font-size="17" fill="#3A3A3C">type. A name is short; a key is the painful case shown.</text>
 <text x="2176.0" y="9286.8" font-size="22" fill="#1C1C1E" font-weight="700">32 · EMERGENCY</text>
 <rect x="2176.0" y="9300.8" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>

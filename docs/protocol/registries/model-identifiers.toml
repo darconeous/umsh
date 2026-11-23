@@ -1,0 +1,33 @@
+title = "Model Identifiers"
+created-by = 22
+anchor = "model-identifiers"
+min = 0
+max = 65535
+policy = "Values 1 to 65023 (`0xFDFF`) name boards, and 65024 to 65279 (`0xFE00` to `0xFEFF`) host platforms with no fixed radio hardware, such as a phone. The project assigns them on request, without a UEP, in `docs/hardware/boards.json` and `docs/hardware/platforms.json`, from which this page is drawn. Values from 65280 (`0xFF00`) up are for hardware with no assignment."
+
+[[range]]
+from = 65280
+to = 65535
+use = "private"
+
+[[value]]
+value = 0
+name = "Unspecified"
+uep = 22
+anchor = "model-identifiers"
+
+[[source]]
+file = "../hardware/boards.json"
+list = "boards"
+value = "model_id"
+name = "name"
+from = 1
+to = 65023
+
+[[source]]
+file = "../hardware/platforms.json"
+list = "platforms"
+value = "model_id"
+name = "name"
+from = 65024
+to = 65279

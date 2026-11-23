@@ -5,7 +5,6 @@ use bitflags::bitflags;
 use umsh_core::REGION_NAME_MAX_LEN as REGION_STRING_MAX_LEN;
 use umsh_core::options::{OptionDecoder, OptionEncoder, parse_be_i32, parse_be_u32};
 
-use crate::app_util::parse_utf8;
 use crate::location::NodeLocation;
 use crate::{AppEncodeError, AppParseError};
 
@@ -15,6 +14,9 @@ use crate::{AppEncodeError, AppParseError};
 /// ten of them is already more than a packet comfortably carries
 /// (node-identity.md § Supported Regions).
 pub const MAX_SUPPORTED_REGIONS: usize = 10;
+
+/// Longest Name option value, in bytes (UEP-0011 § Identity Options).
+pub const IDENTITY_NAME_MAX_LEN: usize = 24;
 
 mod opt {
     pub const NAME: u16 = 0;
@@ -177,17 +179,40 @@ impl NodeIdentityPayload {
         let mut supported_regions = None;
         let mut nonce = None;
 
+        // Each single-valued option counts once: a receiver uses the first
+        // record and ignores any repeat, whether or not the first one held a
+        // value it could use (UEP-0011 § Identity Options).
+        let mut seen: u8 = 0;
+        let mut first = |number: u16| {
+            let bit = 1u8 << number;
+            let fresh = seen & bit == 0;
+            seen |= bit;
+            fresh
+        };
+
+        // An option whose value is unusable (over its limit, or a Location
+        // of no bytes) is ignored rather than taken as grounds to discard
+        // the identity. A malformed options block and a Nonce that is not
+        // 4 bytes are the only option faults that discard it.
         let mut decoder = OptionDecoder::new(remaining);
         for result in decoder.by_ref() {
             let (number, value) = result?;
             match number {
-                opt::NAME => name = Some(String::from(parse_utf8(value)?)),
-                opt::LOCATION => {
-                    // Spec: MUST ignore bytes after the 7th
-                    location = Some(NodeLocation::from_bytes(value));
+                opt::NAME if first(number) => {
+                    // A Name that is not valid UTF-8 is displayed with each
+                    // undecodable part replaced (UEP-0003 § Strings).
+                    if value.len() <= IDENTITY_NAME_MAX_LEN {
+                        name = Some(String::from_utf8_lossy(value).into_owned());
+                    }
                 }
-                opt::ALTITUDE => altitude_m = Some(parse_be_i32(value)?),
-                opt::TIMESTAMP => timestamp = Some(parse_be_u32(value)?),
+                opt::LOCATION if first(number) => {
+                    // Bytes past the seventh are ignored by `from_bytes`.
+                    if !value.is_empty() {
+                        location = Some(NodeLocation::from_bytes(value));
+                    }
+                }
+                opt::ALTITUDE if first(number) => altitude_m = parse_be_i32(value).ok(),
+                opt::TIMESTAMP if first(number) => timestamp = parse_be_u32(value).ok(),
                 opt::SUPPORTED_REGIONS => {
                     // Repeated once per region. An entry that is empty,
                     // over-long, or not UTF-8 is skipped rather than taken as
@@ -207,12 +232,19 @@ impl NodeIdentityPayload {
                 opt::NONCE => {
                     // A verbatim copy of the request's 4-byte field—
                     // fixed-width, unlike the minimally encoded integers.
+                    // Any other length discards the identity, repeat or
+                    // not: Signature Domain relies on it to keep a frame
+                    // signature's input from parsing as an identity.
                     let bytes: [u8; 4] = value
                         .try_into()
                         .map_err(|_| AppParseError::InvalidOptionValue)?;
-                    nonce = Some(u32::from_be_bytes(bytes));
+                    if first(number) {
+                        nonce = Some(u32::from_be_bytes(bytes));
+                    }
                 }
-                _ => {} // unknown options are silently skipped
+                // Unknown options, and repeats of a single-valued one, are
+                // skipped.
+                _ => {}
             }
         }
 
@@ -625,6 +657,164 @@ pub(crate) mod tests {
         manual[3] = 0xAA;
         manual[4] = 0xBB;
         assert!(NodeIdentityPayload::from_bytes(&manual[..5]).is_err());
+    }
+
+    /// `ROLE`, `CAPS`, and the options `put` writes, unsigned.
+    fn raw_identity(put: impl FnOnce(&mut OptionEncoder<'_>)) -> Vec<u8> {
+        let mut buf = [0u8; 256];
+        buf[0] = NodeRole::Chat.as_byte();
+        buf[1] = NodeCapabilities::TEXT_MESSAGES.bits();
+        let mut enc = OptionEncoder::new(&mut buf[2..]);
+        put(&mut enc);
+        let len = 2 + enc.finish();
+        buf[..len].to_vec()
+    }
+
+    /// A Name that is not valid UTF-8 is shown with its undecodable parts
+    /// replaced, not grounds to drop the identity (UEP-0003 § Strings).
+    #[test]
+    fn a_name_that_is_not_utf8_decodes_lossily() {
+        let payload = raw_identity(|enc| {
+            enc.put(opt::NAME, b"Al\xFFce\xE2\x82").unwrap();
+            enc.put_u32(opt::TIMESTAMP, 1_700_000_000).unwrap();
+        });
+        let decoded = NodeIdentityPayload::from_bytes(&payload).unwrap();
+        assert_eq!(decoded.name.as_deref(), Some("Al\u{FFFD}ce\u{FFFD}"));
+        assert_eq!(decoded.timestamp, Some(1_700_000_000));
+    }
+
+    /// Values longer than their option's limit, and a Location of no
+    /// bytes, are ignored while the rest of the identity is kept.
+    #[test]
+    fn ignores_option_values_it_cannot_use() {
+        let long_name = [b'N'; IDENTITY_NAME_MAX_LEN + 1];
+        let payload = raw_identity(|enc| {
+            enc.put(opt::NAME, &long_name).unwrap();
+            enc.put(opt::LOCATION, &[]).unwrap();
+            enc.put(opt::ALTITUDE, &[0x00, 0x00, 0x00, 0x00, 0x2A])
+                .unwrap();
+            enc.put(opt::TIMESTAMP, &[0x01, 0x65, 0x53, 0xF1, 0x00])
+                .unwrap();
+            enc.put(opt::NONCE, &0x0102_0304u32.to_be_bytes()).unwrap();
+        });
+        let decoded = NodeIdentityPayload::from_bytes(&payload).unwrap();
+        assert_eq!(decoded.role, NodeRole::Chat);
+        assert_eq!(decoded.capabilities, NodeCapabilities::TEXT_MESSAGES);
+        assert_eq!(decoded.name, None);
+        assert_eq!(decoded.location, None);
+        assert_eq!(decoded.altitude_m, None);
+        assert_eq!(decoded.timestamp, None);
+        assert_eq!(decoded.nonce, Some(0x0102_0304));
+    }
+
+    /// A name of exactly the limit is kept, and so are the first seven
+    /// bytes of an over-long Location.
+    #[test]
+    fn keeps_values_at_the_limit() {
+        let name = "N".repeat(IDENTITY_NAME_MAX_LEN);
+        let payload = raw_identity(|enc| {
+            enc.put(opt::NAME, name.as_bytes()).unwrap();
+            enc.put(opt::LOCATION, &[1, 2, 3, 4, 5, 6, 7, 8, 9])
+                .unwrap();
+        });
+        let decoded = NodeIdentityPayload::from_bytes(&payload).unwrap();
+        assert_eq!(decoded.name.as_deref(), Some(name.as_str()));
+        assert_eq!(
+            decoded.location,
+            Some(NodeLocation::from_bytes(&[1, 2, 3, 4, 5, 6, 7]))
+        );
+    }
+
+    /// The first record of a single-valued option is the one used; a
+    /// repeat is ignored even when the first value was unusable.
+    #[test]
+    fn uses_the_first_of_any_repeats() {
+        let payload = raw_identity(|enc| {
+            enc.put(opt::NAME, b"first").unwrap();
+            enc.put(opt::NAME, b"second").unwrap();
+            enc.put(opt::ALTITUDE, &[0, 0, 0, 0, 1]).unwrap();
+            enc.put_i32(opt::ALTITUDE, 42).unwrap();
+            enc.put_u32(opt::TIMESTAMP, 7).unwrap();
+            enc.put_u32(opt::TIMESTAMP, 9).unwrap();
+            enc.put(opt::NONCE, &1u32.to_be_bytes()).unwrap();
+            enc.put(opt::NONCE, &2u32.to_be_bytes()).unwrap();
+        });
+        let decoded = NodeIdentityPayload::from_bytes(&payload).unwrap();
+        assert_eq!(decoded.name.as_deref(), Some("first"));
+        assert_eq!(decoded.altitude_m, None);
+        assert_eq!(decoded.timestamp, Some(7));
+        assert_eq!(decoded.nonce, Some(1));
+    }
+
+    /// The faults UEP-0011 discards an identity for still fail the parse.
+    #[test]
+    fn discards_what_the_spec_discards() {
+        // Shorter than two bytes.
+        assert!(NodeIdentityPayload::from_bytes(&[NodeRole::Chat.as_byte()]).is_err());
+
+        // A Nonce that is not 4 bytes, even as a repeat.
+        for nonce in [&[1u8, 2, 3][..], &[1, 2, 3, 4, 5], &[]] {
+            let payload = raw_identity(|enc| enc.put(opt::NONCE, nonce).unwrap());
+            assert!(NodeIdentityPayload::from_bytes(&payload).is_err());
+        }
+        let payload = raw_identity(|enc| {
+            enc.put(opt::NONCE, &1u32.to_be_bytes()).unwrap();
+            enc.put(opt::NONCE, &[1, 2]).unwrap();
+        });
+        assert!(NodeIdentityPayload::from_bytes(&payload).is_err());
+
+        // A malformed options block: a record that claims more bytes than
+        // remain.
+        let malformed = [NodeRole::Chat.as_byte(), 0, 0x05, b'A'];
+        assert!(NodeIdentityPayload::from_bytes(&malformed).is_err());
+
+        // Bytes after the end marker that are neither absent nor 64.
+        let mut trailer = raw_identity(|enc| enc.put(opt::NAME, b"Bob").unwrap());
+        trailer.push(0xFF);
+        trailer.extend_from_slice(&[0xAA; 63]);
+        assert!(NodeIdentityPayload::from_bytes(&trailer).is_err());
+    }
+
+    /// The signature covers the bytes on the wire, so a payload whose Name
+    /// decodes lossily and whose integers are ignored still verifies.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn a_leniently_parsed_identity_still_verifies() {
+        use umsh_crypto::NodeIdentity as _;
+        let signer = umsh_crypto::software::SoftwareIdentity::from_secret_bytes(&[0x47; 32]);
+        let mut payload = raw_identity(|enc| {
+            enc.put(opt::NAME, b"Bo\xC3b").unwrap();
+            enc.put(opt::ALTITUDE, &[0, 0, 0, 0, 0x10]).unwrap();
+            enc.put(opt::TIMESTAMP, &[0, 0, 0, 0, 0x20]).unwrap();
+            enc.end_marker().unwrap();
+        });
+        let signature = {
+            let mut sign = core::pin::pin!(signer.sign(&payload));
+            let core::task::Poll::Ready(Ok(signature)) = sign.as_mut().poll(
+                &mut core::task::Context::from_waker(core::task::Waker::noop()),
+            ) else {
+                panic!("software signing completes at once");
+            };
+            signature
+        };
+        payload.extend_from_slice(&signature);
+
+        let parsed = NodeIdentityPayload::from_bytes(&payload).unwrap();
+        assert_eq!(parsed.name.as_deref(), Some("Bo\u{FFFD}b"));
+        assert_eq!(parsed.altitude_m, None);
+        assert_eq!(parsed.timestamp, None);
+        assert_eq!(
+            parsed.signature_state(signer.public_key(), &payload),
+            IdentitySignature::Valid
+        );
+
+        let mut tampered = payload.clone();
+        tampered[4] ^= 0x01;
+        let parsed = NodeIdentityPayload::from_bytes(&tampered).unwrap();
+        assert_eq!(
+            parsed.signature_state(signer.public_key(), &tampered),
+            IdentitySignature::Invalid
+        );
     }
 
     /// A payload signed by `seed`'s key, with its public key.

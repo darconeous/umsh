@@ -189,7 +189,7 @@ been independently verified.
 
 ### Direct-key channel URI
 
-A `umsh:ck:` URI contains the channel membership secret. The preview must say
+A `umsh:gk:` URI contains the channel membership secret. The preview must say
 that anyone possessing this value can participate and impersonate a multicast
 sender within the channel's symmetric authentication model.
 
@@ -200,7 +200,7 @@ display name and accept or override safe routing defaults before choosing
 
 ### Named channel URI
 
-A `umsh:cs:` URI derives a key from a canonical ASCII name. The preview must
+A `umsh:gs:` URI derives a key from a canonical ASCII name. The preview must
 label it **Public named channel**, explain that the name is not a password, and
 show the canonical lowercase form when it differs from the input.
 
@@ -241,7 +241,7 @@ so two people can compare it without decoding the QR code.
 
 Creating a private channel generates a new random 32-byte channel key on the
 phone. The creator supplies a local display name and optionally a region and
-recommended hop count. The resulting `umsh:ck:` URI is a secret invitation.
+recommended hop count. The resulting `umsh:gk:` URI is a secret invitation.
 
 The share sheet should be preceded by a disclosure: forwarding the invitation
 grants full channel membership, and removing a participant later requires a new
@@ -251,7 +251,7 @@ channel key for everyone unless managed channels are defined and implemented.
 
 The user enters an ASCII name. The application previews the canonical form and
 explains that anyone knowing the name can join. A named channel can then be
-shared as `umsh:cs:` without treating the URI as a secret.
+shared as `umsh:gs:` without treating the URI as a secret.
 
 ## Conflicts and updates
 

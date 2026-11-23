@@ -12,7 +12,7 @@ struct ChannelJoinView: View {
     /// ones. Offered here, where the user has come looking for a channel to
     /// join, and nowhere else.
     var rejoinable: [ChannelSummary] = []
-    /// Prefilled by a `umsh:cs:` or `umsh:ck:` link, which then validates
+    /// Prefilled by a `umsh:gs:` or `umsh:gk:` link, which then validates
     /// immediately rather than waiting for the button.
     var initialInput: String? = nil
     /// Called with the conversation's address after a join that opened it,
@@ -241,7 +241,7 @@ struct ChannelJoinView: View {
             )
         default:
             String(
-                localized: "Enter a public channel name, or a umsh:cs: or umsh:ck: invitation. Nothing was joined.",
+                localized: "Enter a public channel name, or a umsh:gs: or umsh:gk: invitation. Nothing was joined.",
                 comment: "Typed text is neither a channel name nor a channel invitation."
             )
         }

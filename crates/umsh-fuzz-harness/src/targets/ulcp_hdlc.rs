@@ -1,6 +1,6 @@
 //! HDLC-Lite: any byte stream, and resynchronization after it.
 
-use umsh_ulcp::hdlc::{Decoder, encode_frame, max_encoded_len};
+use umsh_ulcp::hdlc::{Decoder, FILL, TEXT_MARKER, encode_frame, max_encoded_len};
 
 /// What firmware decodes into: the frame limit plus the FCS is inside it.
 const CAPACITY: usize = umsh_ulcp::frame::FRAME_IN_MAX;
@@ -27,8 +27,10 @@ pub fn run(data: &[u8]) {
     let mut decoder = Decoder::<CAPACITY>::new();
     for frame in feed(&mut decoder, data) {
         assert!(frame.len() + 2 <= CAPACITY, "past the decoder's capacity");
-        // Whatever decoded survives its own encoding.
-        let mut fresh = Decoder::<CAPACITY>::new();
+        // Whatever decoded survives its own encoding. An escaped leading
+        // octet decodes to a frame the ULCP rules would skip on the way
+        // back in, so it goes through the plain decoder.
+        let mut fresh = Decoder::<CAPACITY>::plain();
         assert_eq!(feed(&mut fresh, &encoded(&frame)), [frame]);
     }
 
@@ -42,7 +44,17 @@ pub fn run(data: &[u8]) {
     );
 
     if data.len() + 2 <= CAPACITY {
+        // Outside ULCP any octet may begin a frame.
+        let mut plain = Decoder::<CAPACITY>::plain();
+        assert_eq!(feed(&mut plain, &encoded(data)), [data.to_vec()]);
+
+        // Under ULCP a frame beginning with marked text or fill is skipped,
+        // and every other frame survives.
         let mut fresh = Decoder::<CAPACITY>::new();
-        assert_eq!(feed(&mut fresh, &encoded(data)).concat(), data);
+        let decoded = feed(&mut fresh, &encoded(data));
+        match data.first() {
+            Some(&(TEXT_MARKER | FILL)) => assert!(decoded.is_empty()),
+            _ => assert_eq!(decoded, [data.to_vec()]),
+        }
     }
 }

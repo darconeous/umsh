@@ -1,9 +1,5 @@
 use crate::{AppEncodeError, AppParseError};
 
-pub(crate) fn parse_utf8(input: &[u8]) -> Result<&str, AppParseError> {
-    core::str::from_utf8(input).map_err(|_| AppParseError::InvalidUtf8)
-}
-
 pub(crate) fn fixed<const N: usize>(input: &[u8]) -> Result<&[u8; N], AppParseError> {
     input.try_into().map_err(|_| AppParseError::InvalidLength {
         expected: N,

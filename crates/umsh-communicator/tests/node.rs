@@ -595,7 +595,7 @@ fn a_channel_is_joined_by_its_name_and_shared_by_it() {
     assert_eq!(node.inspect_channel(" "), ChannelEntry::Empty);
     assert_eq!(node.inspect_channel("Trail Crew"), ChannelEntry::Named);
     assert_eq!(node.inspect_channel("trail:crew"), ChannelEntry::Invalid);
-    assert_eq!(node.inspect_channel("umsh:cs:"), ChannelEntry::Empty);
+    assert_eq!(node.inspect_channel("umsh:gs:"), ChannelEntry::Empty);
 
     let crew = node.add_channel("Trail Crew").unwrap();
     assert_eq!(crew.name, "Trail Crew");
@@ -613,7 +613,7 @@ fn a_channel_is_joined_by_its_name_and_shared_by_it() {
             .any(|event| matches!(event, NodeEvent::ChatRemoved(_)))
     );
     let uri = node.share_uri(Shareable::Channel(crew.id)).unwrap();
-    assert_eq!(uri.as_str(), "umsh:cs:trail%20crew");
+    assert_eq!(uri.as_str(), "umsh:gs:trail%20crew");
     // The same channel, by its invitation: joined already.
     assert_eq!(node.add_channel(&uri).unwrap().id, crew.id);
     assert_eq!(node.add_channel("public").unwrap().name, "Public");
@@ -636,17 +636,20 @@ fn a_private_channel_is_joined_by_its_invitation() {
     let sim = device();
     let (node, _) = started(&sim);
     let key = ChannelKey([0x6d; 32]);
-    let uri = format!("umsh:ck:{}?n=Base%20Camp", digits(&key));
+    let uri = format!("umsh:gk:{}?n=Base%20Camp", digits(&key));
     assert_eq!(
-        node.inspect_channel("umsh:ck"),
+        node.inspect_channel("umsh:gk"),
         ChannelEntry::Partial { missing: 44 }
     );
     assert_eq!(
         node.inspect_channel(&uri[..20]),
         ChannelEntry::Partial { missing: 32 }
     );
-    assert_eq!(node.inspect_channel("umsh:ck:0"), ChannelEntry::Invalid);
+    assert_eq!(node.inspect_channel("umsh:gk:0"), ChannelEntry::Invalid);
     assert_eq!(node.inspect_channel(&uri), ChannelEntry::Private);
+    // The deprecated kinds are still read.
+    let deprecated = uri.replacen("umsh:gk:", "UMSH:ck:", 1);
+    assert_eq!(node.inspect_channel(&deprecated), ChannelEntry::Private);
 
     let camp = node.add_channel(&uri).unwrap();
     assert_eq!(camp.name, "Base Camp");
@@ -673,7 +676,7 @@ fn an_invitation_in_a_message_is_joined() {
     let public = WellKnownChannels::derive().public;
     let robin = PublicKey([0x37; 32]);
     let key = ChannelKey([0x6d; 32]);
-    let uri = format!("umsh:ck:{}?n=Base%20Camp", digits(&key));
+    let uri = format!("umsh:gk:{}?n=Base%20Camp", digits(&key));
     let payload = composed(robin, public, "Robin", &format!(" {uri}\n"));
     node.arrive(Arrival::Text(received(&public, robin, &payload)));
     let Some(NodeEvent::Arrived { chat, message }) = events(&node)
@@ -701,7 +704,7 @@ fn an_invitation_in_a_message_is_joined() {
         node.share_uri(Shareable::Channel(camp.id))
             .unwrap()
             .as_str(),
-        format!("umsh:ck:{}?n=Camp", digits(&key))
+        format!("umsh:gk:{}?n=Camp", digits(&key))
     );
 
     // Text around an invitation is a message, not an invitation.

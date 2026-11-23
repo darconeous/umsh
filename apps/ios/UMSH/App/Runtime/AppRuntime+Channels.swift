@@ -31,8 +31,8 @@ extension AppRuntime {
 
     // MARK: - Channels
 
-    /// Resolve typed input—a public channel name or a pasted `umsh:cs:` /
-    /// `umsh:ck:` URI—into a preview, with whatever local context the user
+    /// Resolve typed input—a public channel name or a pasted `umsh:gs:` /
+    /// `umsh:gk:` URI—into a preview, with whatever local context the user
     /// needs to see before committing.
     private func previewChannel(_ input: String) async -> Result<ChannelPreview, MeshEngineError> {
         do {

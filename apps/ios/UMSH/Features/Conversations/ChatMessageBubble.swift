@@ -918,7 +918,7 @@ private struct SelectableMessageText: UIViewRepresentable {
     /// never offering a link that would go nowhere.
     ///
     /// What it will not claim is an opaque path under a scheme it does not
-    /// know, and `umsh:cs:EMERGENCY` is exactly that: no `//`, no authority,
+    /// know, and `umsh:gs:EMERGENCY` is exactly that: no `//`, no authority,
     /// nothing generic to recognize. Marking it here costs the detector
     /// nothing, since it passes over ranges that already carry a link.
     private static func attributed(
@@ -961,7 +961,7 @@ private struct SelectableMessageText: UIViewRepresentable {
     /// sentence does not swallow the full stop, or the comma in a list, or the
     /// bracket around an aside.
     private static let umshURI = try? NSRegularExpression(
-        pattern: #"umsh:(?:n|cs|ck):[A-Za-z0-9\-._~%!$&'()*+,;=:@/?]*[A-Za-z0-9\-_~%$&*+=@/]"#,
+        pattern: #"umsh:(?:n|gs|gk|cs|ck):[A-Za-z0-9\-._~%!$&'()*+,;=:@/?]*[A-Za-z0-9\-_~%$&*+=@/]"#,
         options: [.caseInsensitive]
     )
 

@@ -1761,6 +1761,105 @@ mod tests {
         assert_eq!(peers, vec![before, during]);
     }
 
+    /// A Meet unicast reaches a session key only from a full source key:
+    /// one naming its source by hint is dropped, even from a peer the
+    /// session already reached.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn a_meet_from_a_hint_source_is_not_admitted() {
+        let mac = FakeMac::new(vec![[7u8; 32], [8u8; 32]]);
+        let mut host = crate::Host::new(mac.clone());
+        let node = host.add_node(LocalIdentityId(1));
+        block_on_ready(node.open_meet()).unwrap();
+        let session = node.meet_identity().unwrap();
+        let peer = PublicKey([0x61; 32]);
+        block_on_ready(node.send_meet(Some(&peer), b"meet")).unwrap();
+        let heard = Rc::new(RefCell::new(Vec::new()));
+        let log = heard.clone();
+        let _subscription = node.on_receive(move |packet| {
+            log.borrow_mut().push(packet.has_full_source());
+            true
+        });
+        let meet: &'static [u8] = &[umsh_core::PayloadType::Meet as u8, 1, 2, 3];
+
+        for full_source in [false, true] {
+            mac.script(
+                session,
+                MacEventRef::Received(test_unicast_packet_sourced(
+                    peer,
+                    meet,
+                    umsh_mac::RxMetadata::default(),
+                    full_source,
+                )),
+            );
+            block_on_ready(host.step()).unwrap();
+        }
+
+        assert_eq!(heard.borrow().as_slice(), &[true]);
+
+        // A Hello names its source in full as well.
+        heard.borrow_mut().clear();
+        let identity = LocalIdentityId(1);
+        for full_source in [false, true] {
+            mac.script(
+                identity,
+                MacEventRef::Received(test_packet_sourced(
+                    umsh_core::PacketType::Broadcast,
+                    peer,
+                    meet,
+                    umsh_mac::RxMetadata::default(),
+                    full_source,
+                )),
+            );
+            block_on_ready(host.step()).unwrap();
+        }
+        assert_eq!(heard.borrow().as_slice(), &[true]);
+    }
+
+    /// A closed exchange keeps its session key while a frame sent under it
+    /// awaits its acknowledgment, so the last End or Identity keeps its
+    /// power and its acknowledgment, and erases it once none does. The next
+    /// exchange opens meanwhile, and is not held up by it.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn a_closed_meet_keeps_its_key_until_its_last_frame_settles() {
+        let mac = FakeMac::new(vec![[7u8; 32], [8u8; 32], [9u8; 32], [10u8; 32]]);
+        let mut host = crate::Host::new(mac.clone());
+        let node = host.add_node(LocalIdentityId(1));
+        let peer = PublicKey([0x61; 32]);
+        block_on_ready(node.open_meet()).unwrap();
+        let session = node.meet_identity().unwrap();
+        block_on_ready(node.send_meet(Some(&peer), b"end")).unwrap();
+        mac.state.borrow_mut().in_flight.push(session);
+
+        block_on_ready(node.close_meet());
+        assert_eq!(node.meet_identity(), None);
+        assert!(mac.state.borrow().removed_ephemerals.is_empty());
+        assert!(mac.state.borrow().session_holds.contains(&peer));
+
+        // Only one key fits: the retiring one gives way to the next.
+        mac.state.borrow_mut().meet_room = Some(1);
+        block_on_ready(node.open_meet()).unwrap();
+        let next = node.meet_identity().unwrap();
+        assert_ne!(next, session);
+        assert_eq!(mac.state.borrow().removed_ephemerals, vec![session]);
+        assert!(!mac.state.borrow().session_holds.contains(&peer));
+
+        // Retiring normally: erased on the cycle after its last ack.
+        block_on_ready(node.send_meet(Some(&peer), b"identity")).unwrap();
+        mac.state.borrow_mut().in_flight.push(next);
+        block_on_ready(node.close_meet());
+        mac.script(next, ack_of(peer, 42, 1_100));
+        block_on_ready(host.step()).unwrap();
+        assert_eq!(mac.state.borrow().removed_ephemerals, vec![session]);
+
+        mac.state.borrow_mut().in_flight.clear();
+        mac.script(next, ack_of(peer, 42, 1_200));
+        block_on_ready(host.step()).unwrap();
+        assert_eq!(mac.state.borrow().removed_ephemerals, vec![session, next]);
+        assert!(!mac.state.borrow().session_holds.contains(&peer));
+    }
+
     #[cfg(feature = "software-crypto")]
     #[test]
     fn pfs_request_naming_a_registered_peer_is_refused() {
@@ -2669,9 +2768,40 @@ mod tests {
         payload: &'a [u8],
         rx: umsh_mac::RxMetadata,
     ) -> ReceivedPacketRef<'a> {
+        test_unicast_packet_sourced(from, payload, rx, false)
+    }
+
+    /// A received unicast naming its source by full key when `full_source`
+    /// is set, and by hint otherwise.
+    #[cfg(feature = "software-crypto")]
+    fn test_unicast_packet_sourced<'a>(
+        from: PublicKey,
+        payload: &'a [u8],
+        rx: umsh_mac::RxMetadata,
+        full_source: bool,
+    ) -> ReceivedPacketRef<'a> {
+        test_packet_sourced(
+            umsh_core::PacketType::Unicast,
+            from,
+            payload,
+            rx,
+            full_source,
+        )
+    }
+
+    /// A received packet of `packet_type` with no destination or channel,
+    /// naming its source by full key when `full_source` is set.
+    #[cfg(feature = "software-crypto")]
+    fn test_packet_sourced<'a>(
+        packet_type: umsh_core::PacketType,
+        from: PublicKey,
+        payload: &'a [u8],
+        rx: umsh_mac::RxMetadata,
+        full_source: bool,
+    ) -> ReceivedPacketRef<'a> {
         let wire = Box::leak(payload.to_vec().into_boxed_slice());
         let header = umsh_core::PacketHeader {
-            fcf: umsh_core::Fcf::new(umsh_core::PacketType::Unicast, false, false),
+            fcf: umsh_core::Fcf::new(packet_type, full_source, false),
             options_range: 0..0,
             flood_hops: None,
             dst: None,
@@ -2849,6 +2979,12 @@ mod tests {
         receipts: VecDeque<u32>,
         /// The sends cancelled, in order.
         cancelled: Vec<(LocalIdentityId, SendReceipt)>,
+        /// Session keys registered and not yet removed.
+        meet_identities: Vec<LocalIdentityId>,
+        /// How many session keys fit at once; unlimited when `None`.
+        meet_room: Option<usize>,
+        /// Identities with a frame still awaiting its acknowledgment.
+        in_flight: Vec<LocalIdentityId>,
     }
 
     #[cfg(feature = "software-crypto")]
@@ -3145,9 +3281,34 @@ mod tests {
             Ok(id)
         }
 
+        async fn register_meet_identity(
+            &self,
+            _parent: LocalIdentityId,
+            _identity: SoftwareIdentity,
+        ) -> Result<LocalIdentityId, MacBackendError<Self::SendError, Self::CapacityError>>
+        {
+            let mut state = self.state.borrow_mut();
+            if state
+                .meet_room
+                .is_some_and(|room| state.meet_identities.len() >= room)
+            {
+                return Err(MacBackendError::Capacity(CapacityError));
+            }
+            let id = LocalIdentityId(state.next_ephemeral_id);
+            state.next_ephemeral_id = state.next_ephemeral_id.wrapping_add(1);
+            state.meet_identities.push(id);
+            Ok(id)
+        }
+
         async fn remove_ephemeral(&self, id: LocalIdentityId) -> bool {
-            self.state.borrow_mut().removed_ephemerals.push(id);
+            let mut state = self.state.borrow_mut();
+            state.meet_identities.retain(|meet| *meet != id);
+            state.removed_ephemerals.push(id);
             true
+        }
+
+        async fn has_frames_in_flight(&self, id: LocalIdentityId) -> bool {
+            self.state.borrow().in_flight.contains(&id)
         }
 
         async fn watch_retired_address(

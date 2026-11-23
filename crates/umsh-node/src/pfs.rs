@@ -1471,6 +1471,7 @@ async fn establish<M: MacBackend>(
         release(state, mac, replaced).await;
     }
     let activated = activate_identity(
+        state,
         mac,
         parent,
         local_ephemeral,
@@ -1567,6 +1568,7 @@ struct ActivatedPfsIdentity {
 
 #[cfg(feature = "software-crypto")]
 async fn activate_identity<M: MacBackend>(
+    state: &RefCell<LocalNodeState>,
     mac: &M,
     parent: LocalIdentityId,
     local_ephemeral: SoftwareIdentity,
@@ -1575,7 +1577,20 @@ async fn activate_identity<M: MacBackend>(
 ) -> Result<ActivatedPfsIdentity, NodeError<M>> {
     let _peer_id = mac.hold_peer(peer_ephemeral, PeerHolder::Session).await?;
     let local_public = *local_ephemeral.public_key();
-    let local_ephemeral_id = match mac.register_ephemeral(parent, local_ephemeral).await {
+    let registered = mac
+        .register_ephemeral(parent, local_ephemeral.clone())
+        .await;
+    // A closed contact exchange still awaiting its last acknowledgments
+    // never keeps a session from being established.
+    let registered = match registered {
+        Err(crate::mac::MacBackendError::Capacity(_))
+            if LocalNodeState::give_way_from_retiring_meets(state, mac).await =>
+        {
+            mac.register_ephemeral(parent, local_ephemeral).await
+        }
+        registered => registered,
+    };
+    let local_ephemeral_id = match registered {
         Ok(id) => id,
         Err(error) => {
             let _ = mac.release_peer(&peer_ephemeral, PeerHolder::Session).await;

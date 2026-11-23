@@ -312,7 +312,7 @@ fn payloads(seeds: &Seeds) {
     let key = encode_key();
     seeds.write("uri_base58", "key", key.as_bytes());
     seeds.write("uri_base58", "node", format!("umsh:n:{key}").as_bytes());
-    seeds.write("uri_base58", "channel", b"umsh:cs:general?n=General");
+    seeds.write("uri_base58", "channel", b"umsh:gs:general?n=General");
 
     seeds.write("lan_bridge", "datagram", &[0, 0x20, 0, 0]);
     seeds.write("lan_bridge", "txt", b"\x01v=1\nid=abc\nport=15056\n");
