@@ -134,7 +134,13 @@ impl MobileVirtualRadio {
         enable_phy: bool,
         listener: Arc<dyn MobileVirtualRadioListener>,
     ) -> Result<Arc<Self>, MobileVirtualRadioError> {
-        Self::launch(PathBuf::from(state_dir), None, enable_phy, listener)
+        Self::launch(
+            PathBuf::from(state_dir),
+            None,
+            enable_phy,
+            LanConfig::lan(),
+            listener,
+        )
     }
 
     /// Start a virtual radio as [`Self::start`] does, for hosts that
@@ -153,6 +159,7 @@ impl MobileVirtualRadio {
             PathBuf::from(state_dir),
             Some(PathBuf::from(socket_path)),
             enable_phy,
+            LanConfig::lan(),
             listener,
         )
     }
@@ -199,6 +206,7 @@ impl MobileVirtualRadio {
         dir: PathBuf,
         socket: Option<PathBuf>,
         enable_phy: bool,
+        lan: LanConfig,
         listener: Arc<dyn MobileVirtualRadioListener>,
     ) -> Result<Arc<Self>, MobileVirtualRadioError> {
         let platform =
@@ -227,7 +235,7 @@ impl MobileVirtualRadio {
             }
             Ok(async move {
                 let _held = held;
-                let running = lan::run(device, LanConfig::lan(), host_events, move |notice| {
+                let running = lan::run(device, lan, host_events, move |notice| {
                     listener.on_queued(notice.into())
                 });
                 let serving = async move {
@@ -289,6 +297,19 @@ mod tests {
         }
     }
 
+    /// Start a radio that joins its group on the loopback interface only.
+    /// The device names the group; the interface keeps it on this host. A
+    /// test never joins the LAN: what reaches the group there may be
+    /// carried onto the air.
+    fn start_local(
+        path: &str,
+        enable_phy: bool,
+        listener: Arc<Collect>,
+    ) -> Result<Arc<MobileVirtualRadio>, MobileVirtualRadioError> {
+        let lan = LanConfig::host_local(std::net::Ipv4Addr::new(239, 255, 42, 112), 47_112);
+        MobileVirtualRadio::launch(PathBuf::from(path), None, enable_phy, lan, listener)
+    }
+
     fn scratch(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "umsh-mobile-virtual-radio-{tag}-{}",
@@ -306,9 +327,9 @@ mod tests {
         let (wire_tx, wire) = std_mpsc::channel();
         let listener = Arc::new(Collect(Mutex::new(wire_tx)));
         let path = dir.to_string_lossy().into_owned();
-        let radio = MobileVirtualRadio::start(path.clone(), true, listener.clone()).unwrap();
+        let radio = start_local(&path, true, listener.clone()).unwrap();
         assert_eq!(
-            MobileVirtualRadio::start(path.clone(), true, listener.clone()).err(),
+            start_local(&path, true, listener.clone()).err(),
             Some(MobileVirtualRadioError::StateInUse)
         );
 
@@ -340,7 +361,7 @@ mod tests {
         // The worker lets go of the state as it winds down.
         let mut again = None;
         for _ in 0..100 {
-            match MobileVirtualRadio::start(path.clone(), false, listener.clone()) {
+            match start_local(&path, false, listener.clone()) {
                 Ok(radio) => {
                     again = Some(radio);
                     break;
