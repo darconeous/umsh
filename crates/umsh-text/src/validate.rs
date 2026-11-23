@@ -189,7 +189,13 @@ pub fn validate<'a>(
             let sequence = message
                 .sequence
                 .ok_or(ValidateError::ResendRequestMissingSequence)?;
-            if message.channel_group_resend && envelope.path != DeliveryPath::BlindUnicast {
+            // A Group Resend flag with a value, or on a path other than group
+            // unicast, makes the request one to discard (UEP-0020 §group-resend):
+            // answering from another archive than the one asked for would
+            // be a guess.
+            if info.undecodable(option::CHANNEL_GROUP_RESEND)
+                || (message.channel_group_resend && envelope.path != DeliveryPath::BlindUnicast)
+            {
                 return Err(ValidateError::ChannelGroupResendPath);
             }
             // All other options and the body are ignored once the required

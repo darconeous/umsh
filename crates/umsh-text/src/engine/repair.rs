@@ -14,7 +14,14 @@ pub struct PendingLookup {
     /// The authenticated requester (used only for diagnostics; responses are
     /// addressed by the conversation's delivery mode).
     pub requester: PublicKey,
+    /// The frame the archive is asked for. A 1-byte request for a message
+    /// that was fragmented is asked again for fragment zero.
     pub sequence: MessageSequence,
+    /// What the requester named, which an answer of Message Unavailable
+    /// repeats.
+    pub reply: MessageSequence,
+    /// Whether the lookup is already the fragment-zero second try.
+    pub fallback_tried: bool,
 }
 
 /// Ring of recently transmitted or answered frames, for coalescing resend

@@ -438,6 +438,24 @@ fn channel_group_flag_requires_blind_unicast() {
 }
 
 #[test]
+fn a_group_resend_flag_with_a_value_discards_the_request() {
+    // The flag with a one-byte value, on a group unicast.
+    let bytes = [0x01, 0x02, 0x21, 0x11, 0x61, 0x00];
+    let blind = Envelope {
+        path: DeliveryPath::BlindUnicast,
+        conversation: ConversationKey::ChannelDirect {
+            channel: ChannelTag([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+            peer: peer(),
+        },
+        sender: SenderScope::Peer(peer()),
+    };
+    assert_eq!(
+        validate_bytes(&blind, &bytes),
+        Err(ValidateError::ChannelGroupResendPath)
+    );
+}
+
+#[test]
 fn resend_request_ignores_extras_but_requires_sequence() {
     // Extra Sender Handle and a body: ignored after validation.
     let bytes = [
