@@ -33,7 +33,7 @@ forwarding. **Source** names the chapters of the legacy specification
 | [0019](uep-0019.md) | URI Formats | Standards | Experimental | 0003 0004 0008 0011 0014 | Node, group, and `coap-umsh` URIs: syntax and percent-encoding, the node URI and its identity bundle, named-group and group-key URIs and their parameters, the CoAP URI | `uri-formats`, `multicast-channels` |
 | [0020](uep-0020.md) | Text Messages | Standards | Experimental | 0003 0005 0007 0008 0019 | Payload and conversations, the options and the display rules that keep a message readable, message types, replies and reactions, sender handle, Message Sequence (message ID and fragments), sequence reset, regarding, editing, colors, padding, message body, group invitations, test messages, message repair (ordering and gaps, the resend request, Group Resend, responding, Message Unavailable, automatic repair and its limits, group repair) | `app-text-messages` |
 | [0021](uep-0021.md) | Default Groups | Standards | Experimental | 0005 0007 0008 0020 | `public` and `EMERGENCY`: recognition by key, default membership, the 10-hop flood limit, group unicast only for repair, `public`'s source rule, `EMERGENCY`'s encryption, source, and signature rules, forwarding priority, emergency use, test messages, security considerations | `multicast-channels` |
-| 0022 | Contact Exchange | Standards | Planned | 0004 0005 0007 0011 0019 | Session keys, Meet payloads, code and color, exchange, nearby, transmit power, linking a name to a key, security considerations | `app-meet`, `security-considerations` |
+| [0022](uep-0022.md) | Contact Exchange | Standards | Experimental | 0003 0004 0005 0007 0011 0012 | Session keys, Meet payloads and their carriage, model identifiers, code and session color, exchange, crossed requests, timeouts, malformed frames, nearby, alike colors, transmit power, security considerations (code strength, relays, key erasure, correlation, linking a name to a key) | `app-meet`, `security-considerations` |
 
 ## Proposals {#proposals}
 
@@ -96,8 +96,8 @@ once its UEP is:
 | [Identity Request Options](registries/identity-request-options.md) | 0011 |
 | [Text Message Types](registries/text-message-types.md) | 0020 |
 | [Text Message Options](registries/text-message-options.md) | 0020 |
+| [Model Identifiers](registries/model-identifiers.md) | 0022 |
 | Chat Room Actions | Chat Rooms |
-| Contact Exchange Messages | 0022 |
 | Identity Export Sections | Identity Export Format |
 | Node Management Options | Node Management |
 | ULCP Commands | ULCP: Core |

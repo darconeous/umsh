@@ -28,7 +28,7 @@
 - [UEP-0019: URI Formats](uep-0019.md)
 - [UEP-0020: Text Messages](uep-0020.md)
 - [UEP-0021: Default Groups](uep-0021.md)
-- [UEP-0022: Contact Exchange]()
+- [UEP-0022: Contact Exchange](uep-0022.md)
 
 # Proposals
 
@@ -77,6 +77,7 @@
 - [Identity Request Options](registries/identity-request-options.md)
 - [Text Message Types](registries/text-message-types.md)
 - [Text Message Options](registries/text-message-options.md)
+- [Model Identifiers](registries/model-identifiers.md)
 
 # Guide
 
