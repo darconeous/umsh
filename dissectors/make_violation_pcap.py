@@ -148,7 +148,7 @@ VECTORS = [
           "6C 28 78 E2"),       #   6C28 heard -120 dBm / -3.0 dB
     ),
     (
-        # A trace that shed its signal to fit: 0xFE, then router hints.
+        # A trace that shed its signal to fit: 0xFE, then repeater hints.
         "Beacon carrying a hints-only trace",
         h("C0", SRC_A, "75" "FE" "ED 54 6C 28"),
     ),

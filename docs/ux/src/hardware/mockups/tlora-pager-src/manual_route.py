@@ -316,17 +316,17 @@ def label_row(y, left, right=None):
     return o
 
 
-NR = 44  # a neighbor's row: name, then how the reporting router heard it
+NR = 44  # a neighbor's row: name, then how the reporting repeater heard it
 
 
 def nb_row(y, name, reading=None, age=None, dist=None, bridged=False,
            stale=False, focused=False, trailing=None):
-    """One repeater a router reported hearing, in the form every neighbor
+    """One repeater a repeater reported hearing, in the form every neighbor
     list uses, on Neighbors and in Add hop alike.
 
-    reading is (rssi, snr_tenths) as the router heard it. trailing: "open"
+    reading is (rssi, snr_tenths) as the repeater heard it. trailing: "open"
     (a known node), "lookup" or "asking" (a bare hint), "finish" or
-    "inpath" (Add hop). A row the router has not heard for hours, or one
+    "inpath" (Add hop). A row the repeater has not heard for hours, or one
     already on the route, is faded.
     """
     o = []
@@ -552,14 +552,14 @@ def screen_add_hop_hintonly():
 
 
 def screen_hint_typed():
-    rows = [("label", "Router hint", None),
+    rows = [("label", "Repeater hint", None),
             ("node", "7N*", dict(sub="5EBD · Unknown node", tint=True))]
     return add_hop_titled(rows, "Add hop 3", "after Skinner Ridge",
                           field="7Nq4", found="1 found")
 
 
 def screen_hint_both():
-    rows = [("label", "Router hints", None),
+    rows = [("label", "Repeater hints", None),
             ("node", "3D*", dict(sub="Prefix · 20D3", tint=True)),
             ("node", "59*", dict(sub="Hex · 3D9F"))]
     return add_hop_titled(rows, "Add hop 3", "after Skinner Ridge",
@@ -654,9 +654,9 @@ BOARDS = [
         ("13 · Add hop after a bare hint", screen_add_hop_hintonly(),
          "A hop known only by its hint has no address to ask, so only Known "
          "repeaters are listed."),
-        ("14 · Typing a router hint", screen_hint_typed(),
+        ("14 · Typing a repeater hint", screen_hint_typed(),
          "Typing filters, as on every list. Four or more Base58 characters "
-         "also offer the router hint they fix, with its hex. Enter adds the "
+         "also offer the repeater hint they fix, with its hex. Enter adds the "
          "tinted top result."),
         ("15 · A hint read two ways", screen_hint_both(),
          "“3D9F” is a Base58 prefix and also four hex digits, so both are "
@@ -670,20 +670,20 @@ BOARDS = [
          "floods are acknowledged (one, if this device moved far). Once per "
          "saved route. Keep manual route stops asking until it is edited."),
     ]),
-    ("Neighbors", "The repeaters one router reports hearing, a page at a "
+    ("Neighbors", "The repeaters one repeater reports hearing, a page at a "
      "time. Opening shows the last listing and sends nothing; every page is "
      "one exchange across the mesh.", [
         ("17 · A repeater, Neighbors focused", screen_repeater_neighbors_row(),
          "Offered on any node that advertises repeating, whatever its role, "
          "and from a saved peer's page the same way."),
         ("18 · Neighbors", screen_neighbors(),
-         "Name, then how the router heard each one: bars, RSSI and SNR, how "
-         "long ago, and how far from the router when both placed "
+         "Name, then how the repeater heard each one: bars, RSSI and SNR, how "
+         "long ago, and how far from the repeater when both placed "
          "themselves. A known node opens its page, which has Neighbors "
          "too."),
         ("19 · Asking who a hint is", screen_neighbors_end(),
          "A bare hint shows the search glyph. Press asks it who it is, "
-         "steered down the route to the router; the answer names it in "
+         "steered down the route to the repeater; the answer names it in "
          "place. Bridged: heard over a link, not the air. Rows unheard for "
          "6 hours fade."),
         ("20 · Refreshing", screen_neighbors_asking(),
@@ -694,7 +694,7 @@ BOARDS = [
          "The listing held stays. The line says why, and Refresh is focused, "
          "so a press asks again."),
         ("22 · Never read", screen_neighbors_unread(),
-         "Not read until Refresh. A router asked that lists nobody says "
+         "Not read until Refresh. A repeater asked that lists nobody says "
          "None instead."),
     ]),
 ]

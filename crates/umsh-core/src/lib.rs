@@ -60,8 +60,8 @@ pub use error::{
 pub use packet::{
     BlindAddr, ChannelCommitment, ChannelId, ChannelKey, ChannelTag, FRAME_SIGNATURE_OPTION_LEN,
     Fcf, FloodHops, FrameSignatureRef, MAX_FRAME_LEN, MicSize, NodeHint, OptionNumber,
-    PacketHeader, PacketType, ParsedOptions, PayloadType, PublicKey, RouterHint,
-    RouterHintCandidates, SIGNATURE_INPUT_MAX, SIGNATURE_LABEL, SIGNATURE_LEN, Scf, SecInfo,
+    PacketHeader, PacketType, ParsedOptions, PayloadType, PublicKey, RepeaterHint,
+    RepeaterHintCandidates, SIGNATURE_INPUT_MAX, SIGNATURE_LABEL, SIGNATURE_LEN, Scf, SecInfo,
     SourceAddr, SourceAddrRef, UMSH_VERSION, UnsealedPacket, feed_aad, is_callsign, iter_options,
     signature_input,
 };

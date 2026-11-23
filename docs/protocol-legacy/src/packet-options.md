@@ -116,7 +116,7 @@ This distinction allows forwarding-related metadata (source routes, traces, stat
 
 ### Trace (option 7)
 - Semantics: if present, each hop that forwards the packet prepends a record of itself before retransmitting, so the value lists the hops the packet took, most recent first. If absent, no trace information is added.
-- Each record names the hop's [router hint](addressing.md#router-hint) and the signal with which that hop received the packet. Value layout and forms: see [Trace Option Value](#trace-option-value).
+- Each record names the hop's [repeater hint](addressing.md#repeater-hint) and the signal with which that hop received the packet. Value layout and forms: see [Trace Option Value](#trace-option-value).
 - The option is forwarding-critical. A repeater that does not implement it does not forward a traced packet, so a trace never silently skips a hop; that repeater still forwards untraced packets.
 - A sender MUST NOT include more than one. A receiver reads the first and ignores the rest, and a forwarder carries only the first.
 - A malformed value is handled as unrecognized: a repeater does not forward the packet, and a receiver ignores the trace and still delivers the packet.
@@ -260,7 +260,7 @@ A region name MUST NOT exceed 24 bytes of UTF-8. Names travel on the wire in [id
 
 ### Source Route Option Value
 
-A source-route option contains zero or more router hints:
+A source-route option contains zero or more repeater hints:
 
 ```text
 +----------+----------+----------+-----+
@@ -295,7 +295,7 @@ A complete trace with signal contains zero or more 4-byte records:
 Each hop prepends its own record:
 
 ```text
-new_trace = my_router_hint || rssi || snr || old_trace
+new_trace = my_repeater_hint || rssi || snr || old_trace
 ```
 
 So the list is ordered most-recent hop first. A [bridge](internet-bridging.md) prepends a record as a repeater does, with zero signal bytes.
@@ -305,10 +305,10 @@ A trace can outgrow the frame limit as hops add records: each record adds 4 byte
 | Form | First byte | Length | Contents |
 |---|---|---|---|
 | Complete, with signal | any | multiple of 4 | 4-byte records |
-| Complete, hints only | `0xFE` | odd | `0xFE ‖` 2-byte router hints |
-| Truncated, hints only | `0xFF` | odd | `0xFF ‖` 2-byte router hints, oldest dropped |
+| Complete, hints only | `0xFE` | odd | `0xFE ‖` 2-byte repeater hints |
+| Truncated, hints only | `0xFF` | odd | `0xFF ‖` 2-byte repeater hints, oldest dropped |
 
-Hints are most recent first in every form, and a lone `0xFE` or `0xFF` is valid. The length tells the hints-only forms apart from a record list whose first router hint happens to begin with `0xFE` or `0xFF`. Every other value is malformed: a length of 2 modulo 4, or an odd length beginning with any other byte.
+Hints are most recent first in every form, and a lone `0xFE` or `0xFF` is valid. The length tells the hints-only forms apart from a record list whose first repeater hint happens to begin with `0xFE` or `0xFF`. Every other value is malformed: a length of 2 modulo 4, or an odd length beginning with any other byte.
 
 Before forwarding a traced packet, a repeater computes the exact size of the forwarded packet on the outgoing link, including any options it inserts, and takes the first of these that fits:
 

@@ -9,7 +9,7 @@
 //! Display text (names and their fallbacks, labels) is native.
 
 use super::chat::{MobileAppResent, MobileReaction};
-use crate::RouterHintRecord;
+use crate::RepeaterHintRecord;
 use crate::meet::MobileMeetStateRecord;
 use crate::radio_driver::MobileRadioStateRecord;
 use crate::store::{
@@ -283,8 +283,8 @@ pub struct MobileAppPeerRecord {
     pub advertisement_attributable: bool,
     /// What it advertised says about forwarding, for steering an ask.
     pub repeater_evidence: MobileRepeaterEvidence,
-    /// Its two-byte router hint, rendered.
-    pub router_hint: RouterHintRecord,
+    /// Its two-byte repeater hint, rendered.
+    pub repeater_hint: RepeaterHintRecord,
 }
 
 /// What is known of whether a peer forwards.
@@ -350,29 +350,29 @@ pub struct MobileAppChannelConversationRecord {
     pub needs_emergency_agreement: bool,
 }
 
-/// One neighbor a router reported.
+/// One neighbor a repeater reported.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct MobileAppRepeaterNeighborRecord {
     pub entry: MobileStoredPeerRepeaterEntryRecord,
     /// A three-byte hint rendered as a node hint, a longer or shorter one
-    /// of at least two bytes as the router hint of its first two; `None`
+    /// of at least two bytes as the repeater hint of its first two; `None`
     /// otherwise.
     pub hint_text: Option<String>,
     /// The peer the hint names, when it names one.
     pub peer_address: Option<String>,
 }
 
-/// A neighbor, with the address of the router that reported it.
+/// A neighbor, with the address of the repeater that reported it.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct MobileAppNeighborReportRecord {
     pub reporter_address: String,
     pub neighbor: MobileAppRepeaterNeighborRecord,
 }
 
-/// What a router last said about its neighbors.
+/// What a repeater last said about its neighbors.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct MobileAppRepeaterListingRecord {
-    /// In the order the router listed them.
+    /// In the order the repeater listed them.
     pub entries: Vec<MobileAppRepeaterNeighborRecord>,
     pub total: Option<i64>,
     /// Absent once the listing is complete.
@@ -384,7 +384,7 @@ pub struct MobileAppRepeaterListingRecord {
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct MobileAppMessageRepeaterRecord {
     pub hint: Vec<u8>,
-    /// The router hint, rendered; `None` when it is not two bytes.
+    /// The repeater hint, rendered; `None` when it is not two bytes.
     pub hint_text: Option<String>,
     /// The peer the hint names, when it names one.
     pub peer_address: Option<String>,

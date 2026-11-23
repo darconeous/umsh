@@ -1625,7 +1625,7 @@ async fn a_route_says_where_an_ask_near_its_peer_can_be_steered() {
                 })
         }
     };
-    let router_hint =
+    let repeater_hint =
         |peer: &str| crate::public_identity_bytes(peer.to_owned()).unwrap()[..2].to_vec();
 
     // Nothing learned yet.
@@ -1636,7 +1636,7 @@ async fn a_route_says_where_an_ask_near_its_peer_can_be_steered() {
     assert_eq!(
         vantage(unstored.clone()).await,
         Some((
-            vec![router_hint(&unstored)],
+            vec![repeater_hint(&unstored)],
             true,
             super::MobileRepeaterEvidence::Unknown
         ))
@@ -1681,7 +1681,7 @@ async fn a_route_says_where_an_ask_near_its_peer_can_be_steered() {
     assert_eq!(
         vantage(repeater.clone()).await,
         Some((
-            vec![vec![0x2A, 0xE1], router_hint(&repeater)],
+            vec![vec![0x2A, 0xE1], repeater_hint(&repeater)],
             true,
             super::MobileRepeaterEvidence::Yes
         ))

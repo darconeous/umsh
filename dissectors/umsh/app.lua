@@ -434,7 +434,7 @@ local function dissect_peer_repeater_entry(opts_module, payload, start, entry_le
         -- route, three when an identity named it.
         local shown
         if v_len == 2 then
-          shown = base58.router_hint_full(val) .. " (router hint)"
+          shown = base58.repeater_hint_full(val) .. " (repeater hint)"
         elseif v_len == 3 then
           shown = base58.node_hint_full(val)
         else
@@ -551,11 +551,11 @@ local function dissect_mac_command(payload, subtree, tvb, ctx, pinfo)
             n_filters = n_filters + 1
             n_hint_filters = n_hint_filters + 1
             -- The filter matches a leading part of the node hint, so the
-            -- value may be shorter than one: two bytes is a router hint,
+            -- value may be shorter than one: two bytes is a repeater hint,
             -- which is all a route reveals about the repeaters it names.
             local shown
             if v_len == 2 then
-              shown = base58.router_hint_full(val) .. " (router hint)"
+              shown = base58.repeater_hint_full(val) .. " (repeater hint)"
             elseif v_len == 3 then
               shown = base58.node_hint_full(val)
             else

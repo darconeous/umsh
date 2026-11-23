@@ -136,7 +136,7 @@ pub enum MobileMeshError {
     /// An addressed ask went out and nothing came back before its
     /// deadline.
     NoAnswer,
-    /// A route named something other than two-octet router hints, or more
+    /// A route named something other than two-octet repeater hints, or more
     /// of them than a frame carries.
     InvalidRoute,
     /// A message could not be sent again under its wire ID: its stream has
@@ -188,7 +188,7 @@ pub struct MobileMeshPingEventRecord {
     /// source-routed without a complete trace—it crossed hops nobody
     /// recorded, so no count is claimed.
     pub hop_count: Option<u8>,
-    /// Authenticated intermediate-router hints, the repeater nearest this
+    /// Authenticated intermediate-repeater hints, the repeater nearest this
     /// device first. The two endpoints are not included. Empty when the
     /// response's trace lost hops in transit, since it would name only part
     /// of the path.
@@ -386,7 +386,7 @@ pub enum MobileMeshRouteKind {
     /// the default delivery mode. Also reported for a peer the MAC does not
     /// have registered at all.
     Unknown,
-    /// The peer answered without any intermediate router.
+    /// The peer answered without any intermediate repeater.
     Direct,
     /// An explicit source route, learned by reversing an inbound trace route.
     Source,
@@ -398,7 +398,7 @@ pub enum MobileMeshRouteKind {
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct MobileMeshRouteRecord {
     pub kind: MobileMeshRouteKind,
-    /// Router hints in source-to-destination order. Populated for `Source`
+    /// Repeater hints in source-to-destination order. Populated for `Source`
     /// routes only; the two endpoints are not included.
     pub hints: Vec<Vec<u8>>,
     /// Distance to the peer in hops, the number a ping reply reports: one
@@ -423,7 +423,7 @@ pub struct MobileMeshRouteRecord {
     /// route.
     pub confirmed_age_ms: Option<u64>,
     /// The best path learned while the route was held, flattened because a
-    /// record cannot contain itself: its kind, its router hints in send
+    /// record cannot contain itself: its kind, its repeater hints in send
     /// order, and its distance in hops.
     pub candidate_kind: Option<MobileMeshRouteKind>,
     pub candidate_hints: Vec<Vec<u8>>,
@@ -468,9 +468,9 @@ impl From<Option<umsh_mac::PeerRouteStatus>> for MobileMeshRouteRecord {
     }
 }
 
-/// Router hints as they cross the binding, in send order, checked into
+/// Repeater hints as they cross the binding, in send order, checked into
 /// a route a frame can carry.
-fn router_hints(hints: &[Vec<u8>]) -> Result<Vec<umsh_core::RouterHint>, MobileMeshError> {
+fn repeater_hints(hints: &[Vec<u8>]) -> Result<Vec<umsh_core::RepeaterHint>, MobileMeshError> {
     if hints.len() > umsh_mac::CachedRoute::MAX_HINTS {
         return Err(MobileMeshError::InvalidRoute);
     }
@@ -478,7 +478,7 @@ fn router_hints(hints: &[Vec<u8>]) -> Result<Vec<umsh_core::RouterHint>, MobileM
         .iter()
         .map(|hint| {
             <[u8; 2]>::try_from(hint.as_slice())
-                .map(umsh_core::RouterHint)
+                .map(umsh_core::RepeaterHint)
                 .map_err(|_| MobileMeshError::InvalidRoute)
         })
         .collect()
@@ -490,7 +490,7 @@ fn router_hints(hints: &[Vec<u8>]) -> Result<Vec<umsh_core::RouterHint>, MobileM
 /// An empty path is a direct send.
 fn explicit_route_options(
     options: SendOptions,
-    route: &[umsh_core::RouterHint],
+    route: &[umsh_core::RepeaterHint],
     flood_hops: u8,
 ) -> Result<SendOptions, MobileMeshError> {
     let options = if route.is_empty() {
@@ -514,11 +514,11 @@ pub struct MobileMeshExplicitPath {
 }
 
 impl MobileMeshExplicitPath {
-    fn checked(&self) -> Result<(Vec<umsh_core::RouterHint>, u8), MobileMeshError> {
+    fn checked(&self) -> Result<(Vec<umsh_core::RepeaterHint>, u8), MobileMeshError> {
         if self.flood_hops > umsh_mac::MAX_FLOOD_HOPS {
             return Err(MobileMeshError::InvalidRoute);
         }
-        Ok((router_hints(&self.hints)?, self.flood_hops))
+        Ok((repeater_hints(&self.hints)?, self.flood_hops))
     }
 }
 
@@ -585,7 +585,7 @@ pub struct MobileMeshAdvertisementRecord {
 /// Everything past the hint is optional because the answering node reports
 /// only what it has: an identity supplies the name, position, and regions; a
 /// reception supplies the signal; neither supplies the other. A hop that has
-/// only been heard is named by a two-byte router hint, which is all a trace
+/// only been heard is named by a two-byte repeater hint, which is all a trace
 /// reveals about it.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct MobileMeshPeerRepeaterRecord {
@@ -1117,7 +1117,7 @@ enum WorkerCommand {
         peer: PublicKey,
         /// An explicit path to test, with its flood allowance past the end;
         /// `None` for the usual flood-reach ping.
-        path: Option<(Vec<umsh_core::RouterHint>, u8)>,
+        path: Option<(Vec<umsh_core::RepeaterHint>, u8)>,
     },
     Manage {
         operation_id: u64,
@@ -1196,9 +1196,9 @@ enum WorkerCommand {
         role_code: Option<u8>,
         capability_bits: Option<u8>,
         /// Leading bytes of the one node's hint that should answer; two of
-        /// them is a router hint.
+        /// them is a repeater hint.
         node_hint: Option<Vec<u8>>,
-        /// Routers to steer the request through, in send order; empty for a
+        /// Repeaters to steer the request through, in send order; empty for a
         /// zero-hop ask of this node's own neighbors.
         source_route: Vec<Vec<u8>>,
         response: oneshot::Sender<Result<(), MobileMeshError>>,
@@ -1213,7 +1213,7 @@ enum WorkerCommand {
         cursor: Option<Vec<u8>>,
         /// An explicit path to ask down, in send order; empty for whatever
         /// route the MAC holds.
-        source_route: Vec<umsh_core::RouterHint>,
+        source_route: Vec<umsh_core::RepeaterHint>,
         response: oneshot::Sender<Result<MobileMeshPeerRepeatersPageRecord, MobileMeshError>>,
     },
     SetDiscoverable {
@@ -2295,12 +2295,12 @@ impl MobileMeshSession {
     /// filters asks every node the request reaches.
     ///
     /// `node_hint` narrows the ask to one node by the leading bytes of its
-    /// node hint. Two bytes is a router hint, which is all a route reveals
+    /// node hint. Two bytes is a repeater hint, which is all a route reveals
     /// about the hops it crosses: pair it with a route ending at the hop
     /// *before* the one in question, since a repeater consumes its own hint
     /// only when forwarding and drops a request that still names it.
     ///
-    /// Each entry of `source_route` is one 2-byte router hint in send order.
+    /// Each entry of `source_route` is one 2-byte repeater hint in send order.
     pub async fn discover_identities(
         &self,
         role_code: Option<u8>,
@@ -2377,7 +2377,7 @@ impl MobileMeshSession {
         source_route: Vec<Vec<u8>>,
     ) -> Result<MobileMeshPeerRepeatersPageRecord, MobileMeshError> {
         let peer = decode_peer(&peer_address).map_err(|_| MobileMeshError::InvalidPeer)?;
-        let source_route = router_hints(&source_route)?;
+        let source_route = repeater_hints(&source_route)?;
         let (response, result) = oneshot::channel();
         self.commands
             .send(WorkerCommand::PeerRepeatersPage {
@@ -5061,7 +5061,7 @@ async fn run_worker(
                             response,
                         }) => {
                             let result = async {
-                                let route = router_hints(&source_route)?;
+                                let route = repeater_hints(&source_route)?;
                                 let capabilities =
                                     capability_bits.map(NodeCapabilities::from_bits_truncate);
                                 let filter = umsh_node::IdentityFilter {
@@ -5662,7 +5662,7 @@ fn channel_identity_request_options(
                 .route_hints
                 .iter()
                 .filter_map(|hint| <[u8; 2]>::try_from(hint.as_slice()).ok())
-                .map(umsh_core::RouterHint)
+                .map(umsh_core::RepeaterHint)
                 .collect::<Vec<_>>();
             // An over-long observed route is not a reason to fail the
             // request; fall back to flooding at the distance it implies.
@@ -6107,7 +6107,7 @@ mod tests {
         let metadata = |trace_truncated, hop_count| PongMetadata {
             round_trip_ms: 900,
             hop_count,
-            route_hints: vec![umsh_core::RouterHint([0xA1, 0x01])],
+            route_hints: vec![umsh_core::RepeaterHint([0xA1, 0x01])],
             trace_signal: vec![umsh_core::options::HopSignal::new(-97, 65)],
             trace_truncated,
             rssi_dbm: Some(-90),
@@ -6874,7 +6874,7 @@ mod tests {
             {
                 assert_eq!(
                     options.source_route.as_deref(),
-                    Some(&[umsh_core::RouterHint([1, 2])][..])
+                    Some(&[umsh_core::RepeaterHint([1, 2])][..])
                 );
             }
         }
@@ -7468,7 +7468,7 @@ mod tests {
             });
         assert!(has_vacuous_caps_filter);
 
-        // Steered at a remote vantage point and aimed at one router there by
+        // Steered at a remote vantage point and aimed at one repeater there by
         // its two-byte hint—the shape that identifies an intermediate hop.
         // The ask still goes out with no flood budget for a repeater to spend
         // on its own initiative.
@@ -7827,7 +7827,7 @@ mod tests {
 
         // The pong carried a trace route that accumulated no hints, because
         // there is no repeater between the two. That is a direct peer—not a
-        // source route naming no routers, which would put an empty (and
+        // source route naming no repeaters, which would put an empty (and
         // meaningless) SourceRoute option on every packet alice sends back.
         let route = alice.peer_route(address(&bob_identity)).await.unwrap();
         assert_eq!(route.kind, MobileMeshRouteKind::Direct);

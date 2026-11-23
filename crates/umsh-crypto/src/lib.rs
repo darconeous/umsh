@@ -2116,18 +2116,18 @@ mod tests {
     #[cfg(feature = "software-crypto")]
     #[test]
     fn generate_identity_secret_redraws_short_hint_renderings() {
-        use umsh_core::{NodeHint, RouterHint};
+        use umsh_core::{NodeHint, RepeaterHint};
 
         let filter = umsh_core::hint_filter::Filter::empty(0);
         let node_starred = *SoftwareIdentity::from_secret_bytes(&[1; 32]).public_key();
         assert_eq!(NodeHint::from_public_key(&node_starred).verified_chars(), 3);
-        let router_starred = *SoftwareIdentity::from_secret_bytes(&[15; 32]).public_key();
+        let repeater_starred = *SoftwareIdentity::from_secret_bytes(&[15; 32]).public_key();
         assert_eq!(
-            NodeHint::from_public_key(&router_starred).verified_chars(),
+            NodeHint::from_public_key(&repeater_starred).verified_chars(),
             4
         );
         assert_eq!(
-            RouterHint::from_public_key(&router_starred).verified_chars(),
+            RepeaterHint::from_public_key(&repeater_starred).verified_chars(),
             1
         );
 

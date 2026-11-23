@@ -35,8 +35,8 @@ fn address_of(seed: u8) -> String {
         .canonical_address
 }
 
-/// A node's router hint: the first two octets of its key.
-fn router_hint(seed: u8) -> Vec<u8> {
+/// A node's repeater hint: the first two octets of its key.
+fn repeater_hint(seed: u8) -> Vec<u8> {
     public_identity_bytes(address_of(seed)).unwrap()[..2].to_vec()
 }
 
@@ -464,7 +464,7 @@ async fn a_peer_behind_a_repeater_is_reached_in_two_hops() {
     let reply = phone.ping(SAM, None, Duration::from_secs(20)).await;
     assert_eq!(reply.outcome, MobileMeshPingOutcome::Reply);
     assert_eq!(reply.hop_count, Some(2));
-    assert_eq!(reply.route_hints, vec![router_hint(GLEN)]);
+    assert_eq!(reply.route_hints, vec![repeater_hint(GLEN)]);
     assert_eq!(
         reply.trace_signal.len(),
         1,
@@ -536,7 +536,7 @@ async fn a_held_path_stands_beside_the_one_learned() {
     // Tallac Ridge cannot reach Sam, so sends down the held path miss and
     // the flood fallback finds the way through Glen Alpine Relay.
     let held = MobileMeshExplicitPath {
-        hints: vec![router_hint(MANAGED_SEED)],
+        hints: vec![repeater_hint(MANAGED_SEED)],
         flood_hops: 0,
     };
     assert!(
@@ -551,10 +551,10 @@ async fn a_held_path_stands_beside_the_one_learned() {
     let route = phone.session.peer_route(sam).await.unwrap();
     assert_eq!(
         route.hints,
-        vec![router_hint(MANAGED_SEED)],
+        vec![repeater_hint(MANAGED_SEED)],
         "the hold stands"
     );
-    assert_eq!(route.candidate_hints, vec![router_hint(GLEN)]);
+    assert_eq!(route.candidate_hints, vec![repeater_hint(GLEN)]);
 }
 
 #[tokio::test]

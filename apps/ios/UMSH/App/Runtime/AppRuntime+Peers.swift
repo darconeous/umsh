@@ -32,10 +32,10 @@ extension AppRuntime {
             keepManualPath: keepManualPath,
             learnedPathOffer: learnedPathOffer,
             pingAlongPath: { peer, path in await self.pingPeer(peer, along: path) },
-            parseRouterHint: { text, format in
-                await self.meshEngine.parseRouterHintInput(text, format: format)
+            parseRepeaterHint: { text, format in
+                await self.meshEngine.parseRepeaterHintInput(text, format: format)
             },
-            renderRouterHint: { bytes in try? await self.meshEngine.renderRouterHint(bytes) },
+            renderRepeaterHint: { bytes in try? await self.meshEngine.renderRepeaterHint(bytes) },
             setFavorite: setPeerFavorite,
             setNotifyWhenHeard: setPeerNotifyWhenHeard,
             setConversationNotifications: setConversationNotifications,
@@ -372,7 +372,7 @@ extension AppRuntime {
     private func loadPeerRepeaters(
         _ peer: PeerSummary,
         cursor: Data?,
-        route: [MeshRouterHint]
+        route: [MeshRepeaterHint]
     ) async -> PeerRepeatersPageResult {
         guard let core else { return .failed }
         do {

@@ -72,7 +72,7 @@ UMSH does not define a dedicated path-discovery packet type. Instead, path disco
 
 1. **Outbound discovery**: Node A sends a unicast packet to Node B with the Trace option present and an appropriate flood hop count. The packet floods through the mesh; repeaters prepend their records to the Trace option as they forward.
 
-2. **Path learning**: When Node B receives the packet, the Trace option contains the sequence of repeaters traversed, ordered most-recent first. If the trace is complete, Node B can use its router hints directly as a candidate source route back to Node A.
+2. **Path learning**: When Node B receives the packet, the Trace option contains the sequence of repeaters traversed, ordered most-recent first. If the trace is complete, Node B can use its repeater hints directly as a candidate source route back to Node A.
 
 3. **Return path**: Node B can now send unicast packets to Node A using the learned source route. If the packet was ack-requested, Node B's MAC ack also traverses the mesh, allowing Node A to confirm reachability.
 
@@ -95,7 +95,7 @@ A response to a packet that carried a trace MAY carry one. Any other packet MAY 
 
 A packet carrying neither flood hops nor a source route SHOULD NOT carry a trace at all, whatever the sender knows. No repeater may forward such a packet, so the option can only arrive as empty as it left, and its arrival already proves what an empty trace would have said.
 
-Because router hints are only two bytes, different repeaters may share the same hint, which may result in redundant (but harmless) forwarding along a source route.
+Because repeater hints are only two bytes, different repeaters may share the same hint, which may result in redundant (but harmless) forwarding along a source route.
 
 ## Route Learning
 
@@ -107,7 +107,7 @@ Only the first copy teaches. A duplicate of a packet already accepted, or a late
 
 When a node accepts such a packet live, it can update its routing state for the sender:
 
-- **Trace**: if the packet contains a complete [trace](packet-options.md#trace-option-7), with signal or hints only, the node caches its router hints as a source route for future packets back to the sender. Because the trace is accumulated most-recent first, it already describes the return path from the receiver back toward the original sender. This is the primary mechanism for learning precise multi-hop paths. A truncated trace is not a complete path, and no route is learned from it.
+- **Trace**: if the packet contains a complete [trace](packet-options.md#trace-option-7), with signal or hints only, the node caches its repeater hints as a source route for future packets back to the sender. Because the trace is accumulated most-recent first, it already describes the return path from the receiver back toward the original sender. This is the primary mechanism for learning precise multi-hop paths. A truncated trace is not a complete path, and no route is learned from it.
 - **Flood hop count**: if the packet contains a flood hop count, the node caches the sender's `FHOPS_ACC` value together with any region-code options that arrived on the packet. When no source route is available, these cached flood parameters can be reused for flood responses—scoping the flood to approximately the right radius and regional domain rather than flooding the entire network.
 
 - **Neither**: a packet that arrives carrying no flood hop count and no source route was one that no repeater had permission to forward, so it reached the receiver off the sender's own transmitter. The node SHOULD cache the sender as a direct neighbor. This is the same conclusion an empty trace supports, drawn from the packet's structure rather than from an option, which is what lets an unforwardable packet leave the trace off.

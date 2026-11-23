@@ -79,15 +79,15 @@ struct PeerRow<TitleAccessory: View, Trailing: View>: View {
     }
 }
 
-/// A node known by a router hint, drawn the way a neighbor listing draws a
+/// A node known by a repeater hint, drawn the way a neighbor listing draws a
 /// node: the node the hint most plausibly names, with its name and avatar,
 /// else the hint and a gray hexagon. Screens own navigation around it.
 ///
 /// A hint that names no known node offers to ask the node behind it who it
 /// is, wherever the screen can say how to reach it.
-struct RouterHintRow: View {
-    let hint: MeshRouterHint
-    /// The node the hint names, from `RouterHintNaming.match` or a choice.
+struct RepeaterHintRow: View {
+    let hint: MeshRepeaterHint
+    /// The node the hint names, from `RepeaterHintNaming.match` or a choice.
     let named: PeerSummary?
     /// Lines of the screen's own after the hint.
     var detail: [String] = []

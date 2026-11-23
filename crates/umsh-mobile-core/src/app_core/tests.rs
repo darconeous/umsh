@@ -761,12 +761,12 @@ async fn a_mapped_peer_says_whether_its_advertisement_is_attributable() {
     assert!(!of(&address(6)).advertisement_attributable);
     assert!(of(&address(7)).advertised_identity.is_none());
     assert!(!of(&address(7)).advertisement_attributable);
-    // Each peer's router hint is the first two bytes of its node hint.
+    // Each peer's repeater hint is the first two bytes of its node hint.
     for peer in &peers {
-        assert_eq!(peer.router_hint.bytes, peer.identity.hint.bytes[..2]);
+        assert_eq!(peer.repeater_hint.bytes, peer.identity.hint.bytes[..2]);
         assert_eq!(
-            Some(peer.router_hint.text.clone()),
-            super::mapping::router_hint_text(&peer.identity.hint.bytes[..2])
+            Some(peer.repeater_hint.text.clone()),
+            super::mapping::repeater_hint_text(&peer.identity.hint.bytes[..2])
         );
     }
 }
@@ -829,10 +829,10 @@ fn a_mapped_peer_carries_its_likely_repeater_and_evidence() {
 
 // --- Where an ask near a peer can be steered. ---
 
-fn hint(byte: u8) -> crate::RouterHintRecord {
+fn hint(byte: u8) -> crate::RepeaterHintRecord {
     let bytes = vec![byte, byte];
-    crate::RouterHintRecord {
-        text: super::mapping::router_hint_text(&bytes).unwrap(),
+    crate::RepeaterHintRecord {
+        text: super::mapping::repeater_hint_text(&bytes).unwrap(),
         bytes,
     }
 }

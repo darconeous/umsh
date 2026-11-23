@@ -29,7 +29,7 @@ use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex};
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Timer};
-use umsh_core::{ChannelKey, PublicKey, RouterHint};
+use umsh_core::{ChannelKey, PublicKey, RepeaterHint};
 use umsh_crypto::CryptoEngine;
 use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
 use umsh_hal::CounterStore;
@@ -38,7 +38,7 @@ use umsh_node::{MacBackendError, NodeError, PacketFamily, ReceivedPacketRef, Sen
 use umsh_ulcp::Status;
 use umsh_ulcp::frame::WriteError;
 use umsh_ulcp::items::CHANNEL_IDENTIFIER_LEN;
-use umsh_ulcp::node_msg::{self, Kind, MAX_ROUTE_HINTS, ROUTER_HINT_LEN, RecvMeta, Source};
+use umsh_ulcp::node_msg::{self, Kind, MAX_ROUTE_HINTS, REPEATER_HINT_LEN, RecvMeta, Source};
 use umsh_ulcp_device::{
     Binding, MAX_NODE_MSG_TYPES, NODE_MSG_PAYLOAD_MAX, NODE_MSG_SENDS, NodeMsgRequest,
 };
@@ -77,8 +77,8 @@ pub struct Message {
     pub acked: bool,
     pub rssi_dbm: Option<i16>,
     pub snr_cb: Option<i16>,
-    /// The router hints of a complete trace, nearest repeater first.
-    pub trace: heapless::Vec<u8, { MAX_ROUTE_HINTS * ROUTER_HINT_LEN }>,
+    /// The repeater hints of a complete trace, nearest repeater first.
+    pub trace: heapless::Vec<u8, { MAX_ROUTE_HINTS * REPEATER_HINT_LEN }>,
     /// The payload, type octet first.
     pub payload: heapless::Vec<u8, NODE_MSG_PAYLOAD_MAX>,
 }
@@ -444,9 +444,9 @@ fn send_options(request: &NodeMsgRequest) -> Result<SendOptions, Status> {
     }
     if !request.source_route.is_empty() {
         let mut route = heapless::Vec::new();
-        for hint in request.source_route.chunks_exact(ROUTER_HINT_LEN) {
+        for hint in request.source_route.chunks_exact(REPEATER_HINT_LEN) {
             route
-                .push(RouterHint([hint[0], hint[1]]))
+                .push(RepeaterHint([hint[0], hint[1]]))
                 .map_err(|_| Status::INVALID_ARGUMENT)?;
         }
         options.source_route = Some(route);

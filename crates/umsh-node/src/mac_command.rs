@@ -19,7 +19,7 @@ pub mod identity_filter {
     pub const NONCE: u16 = 1;
     /// Match only nodes whose own [node hint](umsh_core::NodeHint) starts with
     /// this value. 1 to 3 bytes; a 2-byte value is a
-    /// [router hint](umsh_core::RouterHint).
+    /// [repeater hint](umsh_core::RepeaterHint).
     pub const FILTER_NODE_HINT: u16 = 3;
     /// Match only nodes whose primary role equals this value. 1 byte.
     pub const FILTER_NODE_ROLE: u16 = 5;
@@ -58,7 +58,7 @@ pub mod peer_repeaters_response {
 /// hint is optional.
 pub mod peer_repeater_entry {
     /// The peer's node hint: 3 bytes when the responder holds the whole of
-    /// it, or the 2-byte router hint when that is all it has observed.
+    /// it, or the 2-byte repeater hint when that is all it has observed.
     pub const NODE_HINT: u16 = 0;
     /// The peer's display name, as learned from its identity. UTF-8, at most
     /// 24 bytes.
@@ -78,8 +78,8 @@ pub mod peer_repeater_entry {
 const NODE_HINT_LEN: usize = 3;
 
 /// The shortest hint a peer-repeater entry may name a peer by: the 2-byte
-/// router hint a trace or source route reveals.
-const ROUTER_HINT_LEN: usize = 2;
+/// repeater hint a trace or source route reveals.
+const REPEATER_HINT_LEN: usize = 2;
 
 /// Longest peer name a peer-repeater entry carries.
 pub const PEER_REPEATER_NAME_MAX_LEN: usize = 24;
@@ -531,7 +531,7 @@ impl<'a> IdentityRequestFilters<'a> {
                 identity_filter::FILTER_NODE_HINT => {
                     hint_present = true;
                     // A partial hint matches as a prefix of the node hint. That
-                    // is what lets a two-byte router hint—the only name a
+                    // is what lets a two-byte repeater hint—the only name a
                     // route gives an intermediate hop—ask that hop to
                     // identify itself. An empty value matches nothing: it would
                     // otherwise select every node while `narrowed_by_hint` reported
@@ -604,7 +604,7 @@ impl IdentityRequestBuilder {
     /// Add a `FILTER_NODE_HINT` filter that matches on a leading part of the
     /// node hint, for a caller that holds less than the whole of one—a route
     /// names its intermediate hops by a two-byte
-    /// [router hint](umsh_core::RouterHint) and nothing more.
+    /// [repeater hint](umsh_core::RepeaterHint) and nothing more.
     ///
     /// Rejects an empty prefix, which would select every node, and one longer
     /// than a node hint, which would select none.
@@ -756,11 +756,11 @@ pub struct PeerRepeaterEntryView<'a> {
 }
 
 impl<'a> PeerRepeaterEntryView<'a> {
-    /// The peer's hint: 3 bytes for a whole node hint, 2 for a router hint.
+    /// The peer's hint: 3 bytes for a whole node hint, 2 for a repeater hint.
     /// The only required option; an entry without one names nobody.
     pub fn hint(&self) -> Option<&'a [u8]> {
         self.find(peer_repeater_entry::NODE_HINT)
-            .filter(|value| (ROUTER_HINT_LEN..=NODE_HINT_LEN).contains(&value.len()))
+            .filter(|value| (REPEATER_HINT_LEN..=NODE_HINT_LEN).contains(&value.len()))
     }
 
     /// The peer's display name, as learned from its identity.
@@ -996,7 +996,7 @@ impl PeerRepeatersResponseBuilder {
 /// responder happens to know.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PeerRepeaterEntry<'a> {
-    /// 3 bytes when the whole node hint is known, 2 for a router hint.
+    /// 3 bytes when the whole node hint is known, 2 for a repeater hint.
     pub hint: &'a [u8],
     pub name: Option<&'a str>,
     /// RSSI in dBm and SNR from the most recent reception.
@@ -1009,7 +1009,7 @@ pub struct PeerRepeaterEntry<'a> {
 
 impl PeerRepeaterEntry<'_> {
     fn encode(&self) -> Result<Vec<u8>, AppEncodeError> {
-        if !(ROUTER_HINT_LEN..=NODE_HINT_LEN).contains(&self.hint.len()) {
+        if !(REPEATER_HINT_LEN..=NODE_HINT_LEN).contains(&self.hint.len()) {
             return Err(AppEncodeError::InvalidField);
         }
         let mut buf = Vec::new();
@@ -1233,7 +1233,7 @@ mod tests {
                 .unwrap()
         };
 
-        // Two bytes is the router hint a route names its hops by.
+        // Two bytes is the repeater hint a route names its hops by.
         assert!(selects(&[0xAA, 0xBB], NodeHint([0xAA, 0xBB, 0xCC])));
         assert!(!selects(&[0xAA, 0xBC], NodeHint([0xAA, 0xBB, 0xCC])));
         assert!(selects(&[0xAA], NodeHint([0xAA, 0xBB, 0xCC])));

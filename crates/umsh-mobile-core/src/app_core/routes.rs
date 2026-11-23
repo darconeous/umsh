@@ -4,12 +4,12 @@
 
 use std::rc::Rc;
 
-use super::mapping::{self, router_hint_text};
+use super::mapping::{self, repeater_hint_text};
 use super::records::MobileRepeaterEvidence;
 use super::settings::MobilePositionRecord;
 use super::worker::Worker;
 use super::{MobileAppCore, MobileAppError, mesh_error};
-use crate::RouterHintRecord;
+use crate::RepeaterHintRecord;
 use crate::mobile_mesh::{MobileMeshExplicitPath, MobileMeshRouteKind, MobileMeshRouteRecord};
 use crate::store::MobileStoredManualRouteRecord;
 
@@ -27,9 +27,9 @@ const EARTH_RADIUS_METERS: f64 = 6_371_008.8;
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct MobileAppRouteRecord {
     pub kind: MobileMeshRouteKind,
-    /// The path's router hints, rendered. A hint that does not render is
+    /// The path's repeater hints, rendered. A hint that does not render is
     /// left out.
-    pub hints: Vec<RouterHintRecord>,
+    pub hints: Vec<RepeaterHintRecord>,
     pub hop_count: Option<u8>,
     pub flood_hops: Option<u8>,
     pub flood_regions: Vec<Vec<u8>>,
@@ -52,8 +52,8 @@ pub struct MobileAppRouteRecord {
 /// neighborhood.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct MobileAppDiscoveryVantageRecord {
-    /// Router hints to steer through, in send order. Never empty.
-    pub repeaters: Vec<RouterHintRecord>,
+    /// Repeater hints to steer through, in send order. Never empty.
+    pub repeaters: Vec<RepeaterHintRecord>,
     /// The ask ends at the peer; otherwise at the last of `repeaters`.
     pub lands_at_peer: bool,
     /// What the peer's own advertisement said; native code hedges by it.
@@ -63,7 +63,7 @@ pub struct MobileAppDiscoveryVantageRecord {
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct MobileAppRouteCandidateRecord {
     pub kind: MobileMeshRouteKind,
-    pub hints: Vec<RouterHintRecord>,
+    pub hints: Vec<RepeaterHintRecord>,
     pub hop_count: Option<u8>,
 }
 
@@ -98,7 +98,7 @@ pub enum MobileAppPositionReading {
 /// by.
 pub(super) fn discovery_vantage(
     route: &MobileAppRouteRecord,
-    peer_hint: RouterHintRecord,
+    peer_hint: RepeaterHintRecord,
     evidence: MobileRepeaterEvidence,
 ) -> Option<MobileAppDiscoveryVantageRecord> {
     match route.kind {
@@ -151,15 +151,15 @@ impl MobileAppRouteRecord {
     }
 }
 
-pub(super) fn rendered_hints(hints: &[Vec<u8>]) -> Vec<RouterHintRecord> {
+pub(super) fn rendered_hints(hints: &[Vec<u8>]) -> Vec<RepeaterHintRecord> {
     hints
         .iter()
         .filter_map(|bytes| {
-            let text = router_hint_text(bytes);
+            let text = repeater_hint_text(bytes);
             if text.is_none() {
-                log::warn!("a route's router hint does not render");
+                log::warn!("a route's repeater hint does not render");
             }
-            Some(RouterHintRecord {
+            Some(RepeaterHintRecord {
                 bytes: bytes.clone(),
                 text: text?,
             })
@@ -259,7 +259,7 @@ impl Worker {
             None => MobileRepeaterEvidence::Unknown,
         };
         route.discovery_vantage =
-            peer_router_hint(address).and_then(|hint| discovery_vantage(&route, hint, evidence));
+            peer_repeater_hint(address).and_then(|hint| discovery_vantage(&route, hint, evidence));
         Ok(route)
     }
 
@@ -336,9 +336,9 @@ impl Worker {
     }
 }
 
-/// A peer's own router hint, from its address.
-fn peer_router_hint(address: &str) -> Option<RouterHintRecord> {
-    mapping::peer_router_hint(&crate::public_identity_bytes(address.to_owned()).ok()?)
+/// A peer's own repeater hint, from its address.
+fn peer_repeater_hint(address: &str) -> Option<RepeaterHintRecord> {
+    mapping::peer_repeater_hint(&crate::public_identity_bytes(address.to_owned()).ok()?)
 }
 
 /// Checks an address before the session sees it, so a bad one reads as

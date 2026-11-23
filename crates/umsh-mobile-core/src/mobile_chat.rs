@@ -108,7 +108,7 @@ pub struct MobileChatRxMetadataRecord {
     /// frame source-routed without a trace route crossed hops nobody
     /// recorded.
     pub hop_count: Option<u8>,
-    /// Intermediate-router hints in trace-route order: each forwarding
+    /// Intermediate-repeater hints in trace-route order: each forwarding
     /// repeater prepends its own hint, so the list starts nearest us and ends
     /// nearest the sender. That is return-path order—usable directly as a
     /// source route back—and the reverse of the path the frame travelled.
@@ -289,7 +289,7 @@ pub struct MobileChatRepeatRecord {
     pub handle: u32,
     pub fragment_index: Option<u8>,
     /// Repeaters the forwards named, each once, in the order first heard.
-    pub repeaters: Vec<crate::RouterHintRecord>,
+    pub repeaters: Vec<crate::RepeaterHintRecord>,
     /// Forwards that named no repeater, each taken for a repeater of its own.
     pub anonymous_repeats: u16,
 }
@@ -1128,7 +1128,7 @@ fn repeat_record(session_id: u64, repeats: &Repeats) -> MobileChatRepeatRecord {
         repeaters: repeats
             .repeaters
             .iter()
-            .map(|hint| crate::RouterHintRecord {
+            .map(|hint| crate::RepeaterHintRecord {
                 bytes: hint.0.to_vec(),
                 text: hint.to_string(),
             })

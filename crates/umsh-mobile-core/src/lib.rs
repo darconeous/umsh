@@ -10,7 +10,7 @@ use std::{
 };
 
 use lwuri::UriRef;
-use umsh_core::{AddressParseError, NodeHint, PublicKey, RouterHint};
+use umsh_core::{AddressParseError, NodeHint, PublicKey, RepeaterHint};
 use umsh_crypto::{NodeIdentity, software::SoftwareIdentity};
 use umsh_uri::UmshUri;
 use zeroize::Zeroize;
@@ -151,7 +151,7 @@ uniffi::setup_scaffolding!();
 ///
 /// Increment this when a binding-visible operation, record, or error contract
 /// changes incompatibly. It is independent of the UMSH wire version.
-pub const MOBILE_API_VERSION: u16 = 96;
+pub const MOBILE_API_VERSION: u16 = 97;
 
 /// Stable error categories consumed by platform adapters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Error)]
@@ -160,7 +160,7 @@ pub enum MobileError {
     InvalidAddressCharacter,
     AddressOverflow,
     InvalidNodeHintLength,
-    InvalidRouterHintLength,
+    InvalidRepeaterHintLength,
     InvalidSecretKeyLength,
     InvalidPublicKeyLength,
     InvalidUri,
@@ -212,7 +212,7 @@ impl MobileError {
             Self::InvalidAddressCharacter => "mobile.error.address.invalid_character",
             Self::AddressOverflow => "mobile.error.address.overflow",
             Self::InvalidNodeHintLength => "mobile.error.node_hint.invalid_length",
-            Self::InvalidRouterHintLength => "mobile.error.router_hint.invalid_length",
+            Self::InvalidRepeaterHintLength => "mobile.error.repeater_hint.invalid_length",
             Self::InvalidSecretKeyLength => "mobile.error.secret_key.invalid_length",
             Self::InvalidPublicKeyLength => "mobile.error.public_key.invalid_length",
             Self::InvalidUri => "mobile.error.uri.invalid",
@@ -244,7 +244,7 @@ impl MobileError {
             Self::InvalidAddressCharacter => "ADDRESS_INVALID_CHARACTER",
             Self::AddressOverflow => "ADDRESS_OVERFLOW",
             Self::InvalidNodeHintLength => "NODE_HINT_INVALID_LENGTH",
-            Self::InvalidRouterHintLength => "ROUTER_HINT_INVALID_LENGTH",
+            Self::InvalidRepeaterHintLength => "REPEATER_HINT_INVALID_LENGTH",
             Self::InvalidSecretKeyLength => "SECRET_KEY_INVALID_LENGTH",
             Self::InvalidPublicKeyLength => "PUBLIC_KEY_INVALID_LENGTH",
             Self::InvalidUri => "URI_INVALID",
@@ -309,9 +309,9 @@ pub struct NodeHintRecord {
     pub text: String,
 }
 
-/// Canonical rendering information for a two-byte router hint.
+/// Canonical rendering information for a two-byte repeater hint.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
-pub struct RouterHintRecord {
+pub struct RepeaterHintRecord {
     /// Raw hint bytes, matchable against the first two bytes of a known
     /// node's public key.
     pub bytes: Vec<u8>,
@@ -1012,30 +1012,30 @@ pub fn render_node_hint(bytes: Vec<u8>) -> Result<NodeHintRecord, MobileError> {
     Ok(render_node_hint_bytes(bytes))
 }
 
-/// Render a router hint using the protocol's canonical ambiguity rules.
+/// Render a repeater hint using the protocol's canonical ambiguity rules.
 #[uniffi::export]
-pub fn render_router_hint(bytes: Vec<u8>) -> Result<RouterHintRecord, MobileError> {
+pub fn render_repeater_hint(bytes: Vec<u8>) -> Result<RepeaterHintRecord, MobileError> {
     let bytes: [u8; 2] = bytes
         .try_into()
-        .map_err(|_| MobileError::InvalidRouterHintLength)?;
-    Ok(RouterHintRecord {
+        .map_err(|_| MobileError::InvalidRepeaterHintLength)?;
+    Ok(RepeaterHintRecord {
         bytes: bytes.to_vec(),
-        text: RouterHint(bytes).to_string(),
+        text: RepeaterHint(bytes).to_string(),
     })
 }
 
-/// How a person wrote a router hint.
+/// How a person wrote a repeater hint.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
-pub enum RouterHintInputFormat {
+pub enum RepeaterHintInputFormat {
     /// The leading characters of the node's Base58 address, at least four.
     Base58Prefix,
     /// The hint itself as exactly four hexadecimal digits.
     Hex,
 }
 
-/// Why typed text does not yet name a router hint.
+/// Why typed text does not yet name a repeater hint.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
-pub enum RouterHintInputProblem {
+pub enum RepeaterHintInputProblem {
     TooShort,
     TooLong,
     InvalidCharacter,
@@ -1043,48 +1043,48 @@ pub enum RouterHintInputProblem {
     OutOfRange,
 }
 
-/// What typed text says about a router hint: the hints it could mean, or
+/// What typed text says about a repeater hint: the hints it could mean, or
 /// why it means none yet.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
-pub struct RouterHintInputRecord {
+pub struct RepeaterHintInputRecord {
     /// One hint, or two when a Base58 prefix straddles a hint boundary.
-    pub candidates: Vec<RouterHintRecord>,
-    pub problem: Option<RouterHintInputProblem>,
+    pub candidates: Vec<RepeaterHintRecord>,
+    pub problem: Option<RepeaterHintInputProblem>,
 }
 
-/// Read a router hint typed by a person, as a Base58 address prefix or as
+/// Read a repeater hint typed by a person, as a Base58 address prefix or as
 /// hexadecimal. Surrounding whitespace is ignored.
 #[uniffi::export]
-pub fn parse_router_hint_input(
+pub fn parse_repeater_hint_input(
     text: String,
-    format: RouterHintInputFormat,
-) -> RouterHintInputRecord {
+    format: RepeaterHintInputFormat,
+) -> RepeaterHintInputRecord {
     let text = text.trim();
     let parsed = match format {
-        RouterHintInputFormat::Base58Prefix => RouterHint::candidates_from_base58_prefix(text)
+        RepeaterHintInputFormat::Base58Prefix => RepeaterHint::candidates_from_base58_prefix(text)
             .map(|candidates| candidates.iter().collect::<Vec<_>>()),
-        RouterHintInputFormat::Hex => RouterHint::from_hex(text).map(|hint| vec![hint]),
+        RepeaterHintInputFormat::Hex => RepeaterHint::from_hex(text).map(|hint| vec![hint]),
     };
     match parsed {
-        Ok(hints) => RouterHintInputRecord {
+        Ok(hints) => RepeaterHintInputRecord {
             candidates: hints
                 .into_iter()
-                .map(|hint| RouterHintRecord {
+                .map(|hint| RepeaterHintRecord {
                     bytes: hint.0.to_vec(),
                     text: hint.to_string(),
                 })
                 .collect(),
             problem: None,
         },
-        Err(error) => RouterHintInputRecord {
+        Err(error) => RepeaterHintInputRecord {
             candidates: Vec::new(),
             problem: Some(match error {
-                umsh_core::HintInputError::TooShort => RouterHintInputProblem::TooShort,
-                umsh_core::HintInputError::TooLong => RouterHintInputProblem::TooLong,
+                umsh_core::HintInputError::TooShort => RepeaterHintInputProblem::TooShort,
+                umsh_core::HintInputError::TooLong => RepeaterHintInputProblem::TooLong,
                 umsh_core::HintInputError::InvalidCharacter => {
-                    RouterHintInputProblem::InvalidCharacter
+                    RepeaterHintInputProblem::InvalidCharacter
                 }
-                umsh_core::HintInputError::OutOfRange => RouterHintInputProblem::OutOfRange,
+                umsh_core::HintInputError::OutOfRange => RepeaterHintInputProblem::OutOfRange,
             }),
         },
     }
@@ -1187,8 +1187,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn router_hint_input_reads_both_forms() {
-        let texts = |record: RouterHintInputRecord| {
+    fn repeater_hint_input_reads_both_forms() {
+        let texts = |record: RepeaterHintInputRecord| {
             record
                 .candidates
                 .into_iter()
@@ -1196,16 +1196,16 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         assert_eq!(
-            texts(parse_router_hint_input(
+            texts(parse_repeater_hint_input(
                 " 7Nq4 ".into(),
-                RouterHintInputFormat::Base58Prefix
+                RepeaterHintInputFormat::Base58Prefix
             )),
             vec![(vec![0x5E, 0xBD], "7N*".to_string())]
         );
         assert_eq!(
-            texts(parse_router_hint_input(
+            texts(parse_repeater_hint_input(
                 "H12n".into(),
-                RouterHintInputFormat::Base58Prefix
+                RepeaterHintInputFormat::Base58Prefix
             )),
             vec![
                 (vec![0xED, 0xBC], "H1*".to_string()),
@@ -1213,19 +1213,19 @@ mod tests {
             ]
         );
         assert_eq!(
-            texts(parse_router_hint_input(
+            texts(parse_repeater_hint_input(
                 "5ebd".into(),
-                RouterHintInputFormat::Hex
+                RepeaterHintInputFormat::Hex
             )),
             vec![(vec![0x5E, 0xBD], "7N*".to_string())]
         );
         assert_eq!(
-            parse_router_hint_input("7Nq".into(), RouterHintInputFormat::Base58Prefix).problem,
-            Some(RouterHintInputProblem::TooShort)
+            parse_repeater_hint_input("7Nq".into(), RepeaterHintInputFormat::Base58Prefix).problem,
+            Some(RepeaterHintInputProblem::TooShort)
         );
         assert_eq!(
-            parse_router_hint_input("7Nq4".into(), RouterHintInputFormat::Hex).problem,
-            Some(RouterHintInputProblem::InvalidCharacter)
+            parse_repeater_hint_input("7Nq4".into(), RepeaterHintInputFormat::Hex).problem,
+            Some(RepeaterHintInputProblem::InvalidCharacter)
         );
     }
 
@@ -1343,7 +1343,7 @@ mod tests {
     }
 
     #[test]
-    fn reference_router_hints_match_protocol_vectors() {
+    fn reference_repeater_hints_match_protocol_vectors() {
         for (bytes, expected) in [
             ([0x00, 0x00], "111"),
             ([0xA1, 0xB2], "BtC"),
@@ -1351,8 +1351,8 @@ mod tests {
             ([0x00, 0x41], "1*"),
         ] {
             assert_eq!(
-                render_router_hint(bytes.to_vec()).unwrap(),
-                RouterHintRecord {
+                render_repeater_hint(bytes.to_vec()).unwrap(),
+                RepeaterHintRecord {
                     bytes: bytes.to_vec(),
                     text: expected.to_owned(),
                 }
@@ -1360,8 +1360,8 @@ mod tests {
         }
 
         assert_eq!(
-            render_router_hint(vec![0x00, 0x01, 0x02]),
-            Err(MobileError::InvalidRouterHintLength)
+            render_repeater_hint(vec![0x00, 0x01, 0x02]),
+            Err(MobileError::InvalidRepeaterHintLength)
         );
     }
 

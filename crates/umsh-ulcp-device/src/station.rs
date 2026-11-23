@@ -26,7 +26,7 @@ pub const SEARCH_MAX_MS: u64 = 300_000;
 /// The first wait before a network that failed is tried again.
 pub const RETRY_MIN_MS: u64 = 2_000;
 /// The longest: a wrong passphrase is retried a few times an hour, which
-/// costs nothing and recovers by itself when someone fixes the router.
+/// costs nothing and recovers by itself when someone fixes the repeater.
 pub const RETRY_MAX_MS: u64 = 900_000;
 /// How long an association must last to count as a join that worked. One
 /// that drops sooner (a rejecting access point, a link that never carries

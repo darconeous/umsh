@@ -19,7 +19,7 @@ struct Arrival {
     rx: RxMetadata,
     hop_count: Option<u8>,
     /// `None` when the frame carried no trace.
-    hints: Option<std::vec::Vec<RouterHint>>,
+    hints: Option<std::vec::Vec<RepeaterHint>>,
     signals: std::vec::Vec<HopSignal>,
 }
 
@@ -70,7 +70,7 @@ fn a_direct_ack_reports_one_hop_and_how_it_was_heard() {
 #[test]
 fn a_traced_ack_reports_the_repeaters_it_crossed() {
     let remote = DummyIdentity::new([0xAB; 32]);
-    let repeaters = [RouterHint([0x11, 0x22]), RouterHint([0x33, 0x44])];
+    let repeaters = [RepeaterHint([0x11, 0x22]), RepeaterHint([0x33, 0x44])];
 
     let (mut mac, _, receipt, trailer) = pending_request_to(&remote, &keys());
     mac.radio_mut()

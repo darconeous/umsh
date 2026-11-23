@@ -1,4 +1,4 @@
-use crate::RouterHintRecord;
+use crate::RepeaterHintRecord;
 use crate::mobile_chat::MobileChatRxMetadataRecord;
 
 use super::super::MobileStoredChatReceptionRecord;
@@ -7,8 +7,8 @@ use super::*;
 
 const PEER: &str = "peer";
 
-fn hint(bytes: &[u8]) -> RouterHintRecord {
-    RouterHintRecord {
+fn hint(bytes: &[u8]) -> RepeaterHintRecord {
+    RepeaterHintRecord {
         bytes: bytes.to_vec(),
         text: String::new(),
     }
@@ -1348,7 +1348,7 @@ fn an_edit_re_aims_delivery_at_its_own_frames() {
 fn repeats_that_add_nothing_write_nothing() {
     let (_directory, store) = open();
     apply(&store, vec![outbound(10, 1, PEER, 1, "repeated")]);
-    let tally = |anonymous_repeats, repeaters: Vec<RouterHintRecord>| MobileChatRepeatRecord {
+    let tally = |anonymous_repeats, repeaters: Vec<RepeaterHintRecord>| MobileChatRepeatRecord {
         session_id: 10,
         handle: 1,
         fragment_index: None,

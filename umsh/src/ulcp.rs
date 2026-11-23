@@ -276,7 +276,7 @@ pub struct NodeMessage {
     pub redelivered: bool,
     pub rssi_dbm: Option<i16>,
     pub snr_cb: Option<i16>,
-    /// The router hints of a complete trace, nearest repeater first: a
+    /// The repeater hints of a complete trace, nearest repeater first: a
     /// source route back to the sender as it stands.
     pub trace: Vec<u8>,
 }

@@ -418,18 +418,18 @@ departs from it, the board's notes say so and
   path with each leg's signal, **Reset route**, and this visit's earlier pings.
 - Route is a page with the numbered path, what the next send will do, **Ask
   near this node**, and Reset route or **Clear manual path**.
-- An unmatched router hint has the lookup button; a named repeater opens its
+- An unmatched repeater hint has the lookup button; a named repeater opens its
   page.
 
 ## W. Manual path
 
-[![Manual path mockups: the editor, a direct path, adding a hop from a repeater's neighbors, entering a router hint, two hints that fit, discarding changes, and the learned-path prompt in a thread](mockups/manual-path.svg)](mockups/manual-path.svg)
+[![Manual path mockups: the editor, a direct path, adding a hop from a repeater's neighbors, entering a repeater hint, two hints that fit, discarding changes, and the learned-path prompt in a thread](mockups/manual-path.svg)](mockups/manual-path.svg)
 
 - Edit on Route opens the editor as a full-screen dialog: hops drag and are
   removed, **Then flood** runs Off to 15, **Ping along path** tests the
   unsaved path, and the hold runs 30 minutes to 1 day.
 - **Add hop** offers the previous hop's neighbors or the known repeaters, and
-  **Enter router hint** takes a Base58 prefix or 4 hex digits.
+  **Enter repeater hint** takes a Base58 prefix or 4 hex digits.
 - Leaving with changes asks first. The learned-path prompt keeps iOS's rules
   and wording.
 
@@ -511,8 +511,8 @@ screen in this batch shows or edits the radio's own channel list.
 
 - MapLibre, with every node that reports a position as its avatar on a pin.
   The companion radio's own fix is **This radio**.
-- A cell is drawn only when it is coarse, reported by a router, or selected.
-  Router-reported and unverified positions carry iOS's badges.
+- A cell is drawn only when it is coarse, reported by a repeater, or selected.
+  Repeater-reported and unverified positions carry iOS's badges.
 - The node list is a standard bottom sheet on phones and a side sheet on
   tablets. Selecting a pin or a row flies to the node and lifts its row.
 - iOS's filter menu becomes three chips: Show, Heard, and Capabilities.

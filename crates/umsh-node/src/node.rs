@@ -7,7 +7,7 @@ use core::cell::RefCell;
 use core::num::NonZeroU32;
 
 use umsh_core::options::{HopSignal, TraceRef};
-use umsh_core::{ChannelKey, NodeHint, PublicKey, RouterHint};
+use umsh_core::{ChannelKey, NodeHint, PublicKey, RepeaterHint};
 #[cfg(feature = "software-crypto")]
 use umsh_mac::PeerHolder;
 use umsh_mac::{CachedRoute, LocalIdentityId, SendOptions};
@@ -191,7 +191,7 @@ pub struct PongMetadata {
     pub hop_count: Option<u8>,
     /// The repeaters the answer's trace names, nearest this node first.
     /// When the trace was truncated in transit, only the nearest ones.
-    pub route_hints: Vec<RouterHint>,
+    pub route_hints: Vec<RepeaterHint>,
     /// How each repeater in `route_hints` heard the node beyond it, entry
     /// for entry: the first is how the repeater nearest this node heard the
     /// one before it. Empty when the trace lost its signal in transit.
@@ -604,7 +604,7 @@ impl<M: MacBackend> From<umsh_crypto::CryptoError> for NodeError<M> {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct IdentityFilter<'a> {
     /// The leading bytes of the answering node's key: one to three, so a
-    /// router hint names a repeater.
+    /// repeater hint names a repeater.
     pub hint_prefix: Option<&'a [u8]>,
     pub role: Option<NodeRole>,
     pub capabilities: Option<NodeCapabilities>,
@@ -1298,7 +1298,7 @@ impl<M: MacBackend> LocalNode<M> {
     pub async fn request_identities(
         &self,
         filter: &IdentityFilter<'_>,
-        route: &[RouterHint],
+        route: &[RepeaterHint],
     ) -> Result<SendProgressTicket, NodeError<M>> {
         let mut nonce_bytes = [0u8; 4];
         self.fill_random(&mut nonce_bytes).await;

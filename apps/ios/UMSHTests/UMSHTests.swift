@@ -504,25 +504,25 @@ struct MapNodeTests {
         #expect(attributed.map(\.isAttributable) == [true])
     }
 
-    @Test func aRouterPlacesANodeThatHasNotSpokenSinceItAnswered() {
-        let router = peer(id: 2)
+    @Test func aRepeaterPlacesANodeThatHasNotSpokenSinceItAnswered() {
+        let repeater = peer(id: 2)
         let neighbor = peer(id: 1, ownAdvertisementAt: now.addingTimeInterval(-7_200))
         let nodes = MapNode.nodes(
-            peers: [neighbor, router],
-            neighborReports: [report(by: router, at: now.addingTimeInterval(-3_600))]
+            peers: [neighbor, repeater],
+            neighborReports: [report(by: repeater, at: now.addingTimeInterval(-3_600))]
         )
         #expect(nodes.map(\.id) == [.neighbor(hint: hint)])
         #expect(nodes.first?.peer?.id == 1)
     }
 
-    /// The node advertised after the router answered, and named no position:
-    /// the router's older copy does not put one back.
-    @Test func theNodesOwnLaterAdvertisementOverrulesTheRouter() {
-        let router = peer(id: 2)
+    /// The node advertised after the repeater answered, and named no position:
+    /// the repeater's older copy does not put one back.
+    @Test func theNodesOwnLaterAdvertisementOverrulesTheRepeater() {
+        let repeater = peer(id: 2)
         let neighbor = peer(id: 1, ownAdvertisementAt: now.addingTimeInterval(-60))
         let nodes = MapNode.nodes(
-            peers: [neighbor, router],
-            neighborReports: [report(by: router, at: now.addingTimeInterval(-3_600))]
+            peers: [neighbor, repeater],
+            neighborReports: [report(by: repeater, at: now.addingTimeInterval(-3_600))]
         )
         #expect(nodes.isEmpty)
     }
@@ -540,19 +540,19 @@ struct MapNodeTests {
         #expect(nodes.isEmpty)
     }
 
-    @Test func aReportAgesByWhenTheRouterLastHeardTheNode() throws {
-        let router = peer(id: 2)
+    @Test func aReportAgesByWhenTheRepeaterLastHeardTheNode() throws {
+        let repeater = peer(id: 2)
         func reported(minutesAgo: UInt16?) throws -> MapNode {
             try #require(MapNode.nodes(
-                peers: [router],
-                neighborReports: [report(by: router, at: now, minutesAgo: minutesAgo)]
+                peers: [repeater],
+                neighborReports: [report(by: repeater, at: now, minutesAgo: minutesAgo)]
             ).first)
         }
-        // Two days before the router answered.
+        // Two days before the repeater answered.
         let quiet = try reported(minutesAgo: 2_880)
         #expect(!quiet.passes(tier: .all, capabilities: [], recency: .day, now: now))
         #expect(quiet.passes(tier: .all, capabilities: [], recency: .week, now: now))
-        // No figure: the router still had it when it answered.
+        // No figure: the repeater still had it when it answered.
         let unknown = try reported(minutesAgo: nil)
         #expect(unknown.passes(tier: .all, capabilities: [], recency: .hour, now: now))
         // The saturated figure is "long ago", older than any window.

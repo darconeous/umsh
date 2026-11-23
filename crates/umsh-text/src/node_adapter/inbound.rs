@@ -2,7 +2,7 @@
 
 use alloc::vec::Vec;
 
-use umsh_core::{ChannelKey, NodeHint, PayloadType, PublicKey, RouterHint};
+use umsh_core::{ChannelKey, NodeHint, PayloadType, PublicKey, RepeaterHint};
 use umsh_node::{PacketFamily, ReceivedPacketRef};
 
 use crate::chat::{ChannelRegistry, TextSource};
@@ -18,10 +18,10 @@ pub struct RxSummary {
     /// into this device. Absent for a frame source-routed without a
     /// complete trace, whose hops nobody recorded.
     pub hop_count: Option<u8>,
-    /// Intermediate-router hints in trace order: nearest us first, which is
+    /// Intermediate-repeater hints in trace order: nearest us first, which is
     /// usable directly as a source route back. Empty when the trace was
     /// truncated in transit.
-    pub route_hints: Vec<RouterHint>,
+    pub route_hints: Vec<RepeaterHint>,
     pub source_authenticated: bool,
     /// The sender is authenticated as the key the frame names: its frame
     /// signature verified, or a unicast's MIC named it. A channel's MIC

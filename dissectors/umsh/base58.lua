@@ -89,10 +89,10 @@ function M.hint(bytes, budget)
   return table.concat(out)
 end
 
--- A 3-byte node hint renders within 4 characters, a 2-byte router hint
+-- A 3-byte node hint renders within 4 characters, a 2-byte repeater hint
 -- within 3. The budgets come from the addressing chapter.
 function M.node_hint(bytes)   return M.hint(bytes, 4) end
-function M.router_hint(bytes) return M.hint(bytes, 3) end
+function M.repeater_hint(bytes) return M.hint(bytes, 3) end
 
 -- Colon-separated hex, the byte form shown alongside a canonical hint.
 function M.hex_bytes(bytes)
@@ -109,8 +109,8 @@ function M.node_hint_full(bytes)
   return canon .. " (" .. M.hex_bytes(bytes) .. ")"
 end
 
-function M.router_hint_full(bytes)
-  local canon = M.router_hint(bytes)
+function M.repeater_hint_full(bytes)
+  local canon = M.repeater_hint(bytes)
   if not canon then return M.hex_bytes(bytes) end
   return canon .. " (" .. M.hex_bytes(bytes) .. ")"
 end
@@ -124,7 +124,7 @@ end
 -- address is 3 or 32 bytes depending on the S flag.
 function M.addr(bytes)
   if #bytes == 32 then return M.key_full(bytes) end
-  if #bytes == 2  then return M.router_hint_full(bytes) end
+  if #bytes == 2  then return M.repeater_hint_full(bytes) end
   return M.node_hint_full(bytes)
 end
 

@@ -46,10 +46,10 @@ struct PeerSummary: Identifiable, Hashable, Sendable {
     /// What this phone actually knows about whether the node repeats, which
     /// tells a node known not to forward from one never heard at all.
     var repeaterEvidence: MobileRepeaterEvidence = .unknown
-    /// This node's own two-byte router hint, rendered by the core: what a
+    /// This node's own two-byte repeater hint, rendered by the core: what a
     /// repeater carrying its traffic would put on the wire. `nil` for a
     /// summary built here rather than read from the core.
-    var routerHint: MeshRouterHint? = nil
+    var repeaterHint: MeshRepeaterHint? = nil
 
     var displayName: String {
         alias ?? advertisedName ?? (isUlcpDevice ? "Companion radio" : identity.hint.text)
@@ -393,8 +393,8 @@ enum ConversationListItem: Identifiable, Hashable, Sendable {
 struct MessageRepeats: Hashable, Sendable {
     /// A repeater whose forward said who it was.
     struct Repeater: Hashable, Sendable {
-        /// Its router hint, as the core renders it.
-        let hint: MeshRouterHint
+        /// Its repeater hint, as the core renders it.
+        let hint: MeshRepeaterHint
         /// The node the hint most plausibly names, when one does: a guess,
         /// since a two-byte hint cannot prove which node forwarded a frame.
         let name: String?
@@ -767,7 +767,7 @@ struct PeerPingReply: Equatable, Sendable {
     let hopCount: UInt8?
     /// The repeaters the reply crossed, the one nearest this phone first,
     /// already rendered by the Rust core. The two endpoints are not included.
-    let routeHints: [MeshRouterHint]
+    let routeHints: [MeshRepeaterHint]
     /// How each repeater in `routeHints` heard the node one step farther
     /// out, entry for entry. Empty when the reply carried no such readings.
     let traceSignal: [MeshLegSignal]
@@ -800,7 +800,7 @@ struct PeerRoute: Equatable, Sendable {
 
     let kind: Kind
     /// Repeaters named by a source route, in send order.
-    let hints: [MeshRouterHint]
+    let hints: [MeshRepeaterHint]
     /// Distance to the peer in hops, the same number a ping reply's hop
     /// count reports: one for a direct peer, repeaters plus one for a source
     /// route, flood hops plus one for a flood route.
@@ -831,15 +831,15 @@ struct PeerRoute: Equatable, Sendable {
     struct Candidate: Equatable, Sendable {
         let kind: Kind
         /// Repeaters it names, in send order.
-        let hints: [MeshRouterHint]
+        let hints: [MeshRepeaterHint]
         let hopCount: UInt8?
     }
 
     /// Where an ask for identities can be steered to reach the peer's
     /// neighborhood.
     struct DiscoveryVantage: Equatable, Sendable {
-        /// Router hints to steer through, in send order. Never empty.
-        let repeaters: [MeshRouterHint]
+        /// Repeater hints to steer through, in send order. Never empty.
+        let repeaters: [MeshRepeaterHint]
         /// The ask ends at the peer; otherwise at the last of `repeaters`.
         let landsAtPeer: Bool
         /// What the peer's own advertisement said, so the copy can hedge as
@@ -873,7 +873,7 @@ struct PeerRoute: Equatable, Sendable {
 /// A path chosen by hand: the repeaters in send order, then how far the
 /// frame may flood past the last of them. No repeaters is a direct path.
 struct ManualPath: Equatable, Sendable {
-    var hops: [MeshRouterHint]
+    var hops: [MeshRepeaterHint]
     var floodHops: UInt8
 }
 
@@ -917,7 +917,7 @@ enum ManualPathHold: CaseIterable, Identifiable, Hashable, Sendable {
 struct SolicitVantage: Hashable, Sendable {
     let peerName: String
     let peerAddress: String
-    /// Two-byte router hints to steer through, in send order. Never empty.
+    /// Two-byte repeater hints to steer through, in send order. Never empty.
     ///
     /// Snapshotted when the vantage was chosen: the learned route may move
     /// while the sheet is open, and the ask should go where the user aimed it.
@@ -925,7 +925,7 @@ struct SolicitVantage: Hashable, Sendable {
     /// The last repeater the ask passes through, when that is *not* the peer
     /// itself. `nil` means the ask is aimed at the peer, which is what lets the
     /// copy say "at" rather than "near" without overclaiming.
-    let landingRepeater: MeshRouterHint?
+    let landingRepeater: MeshRepeaterHint?
     /// What was known about the peer when the vantage was built. Carried so the
     /// copy can hedge exactly as much as the routing did: aiming at a peer whose
     /// role was never heard is a guess, and reads as one.
@@ -945,16 +945,16 @@ struct SolicitVantage: Hashable, Sendable {
     }
 }
 
-/// Put what name we can to a two-byte router hint.
+/// Put what name we can to a two-byte repeater hint.
 ///
 /// A hint is 16 bits of a public key, so it narrows the field rather than
 /// identifying a node: a single match is named, several matches are counted,
 /// and a match among repeater-capable nodes is preferred over a bare one.
 /// Any name it yields is a guess and must be shown as one.
-enum RouterHintNaming {
+enum RepeaterHintNaming {
     /// The one node a hint most plausibly names, or `nil` when the hint is
     /// ambiguous or matches nothing known.
-    static func match(_ hint: MeshRouterHint, among peers: [PeerSummary]) -> PeerSummary? {
+    static func match(_ hint: MeshRepeaterHint, among peers: [PeerSummary]) -> PeerSummary? {
         let candidates = peers.filter { hint.matches($0.identity) }
         let repeaters = candidates.filter(\.isLikelyRepeater)
         if repeaters.count == 1 { return repeaters.first }
@@ -962,7 +962,7 @@ enum RouterHintNaming {
     }
 
     /// A hint rendered for prose: a matched node's name, else the hint text.
-    static func label(_ hint: MeshRouterHint, among peers: [PeerSummary]) -> String {
+    static func label(_ hint: MeshRepeaterHint, among peers: [PeerSummary]) -> String {
         match(hint, among: peers)?.displayName ?? hint.text
     }
 
@@ -993,7 +993,7 @@ struct PeerRepeaterNeighbor: Hashable, Sendable {
     let rssiDBm: Int16?
     /// Quarter-decibel steps, as the wire carries it.
     let snrQuarterDB: Int16?
-    /// Minutes before `reportedAt` that the router last heard the node.
+    /// Minutes before `reportedAt` that the repeater last heard the node.
     /// Saturates at 65535—about 45 days—which the wire uses to say "long
     /// ago" rather than a measurement.
     let lastHeardMinutes: UInt16?
@@ -1002,7 +1002,7 @@ struct PeerRepeaterNeighbor: Hashable, Sendable {
     /// The disclosed cell's precision in encoded bytes.
     let locationPrecision: UInt8?
     let regionCodes: [Data]
-    /// When the router answered. The ages above are relative to this.
+    /// When the repeater answered. The ages above are relative to this.
     let reportedAt: Date
     /// The node the core matched this neighbor to, by address; `nil` when
     /// it names none of this phone's peers.
@@ -1015,21 +1015,21 @@ struct PeerRepeaterNeighbor: Hashable, Sendable {
 
     var hasLocation: Bool { latitude != nil && longitude != nil }
 
-    /// Whether the router's last-heard figure is a measurement rather than
+    /// Whether the repeater's last-heard figure is a measurement rather than
     /// the saturated "long ago".
     var lastHeardIsMeasured: Bool {
         guard let lastHeardMinutes else { return false }
         return lastHeardMinutes < UInt16.max
     }
 
-    /// When the router last heard the node, on this phone's clock. `nil`
-    /// when the router gave no figure or only the saturated one.
+    /// When the repeater last heard the node, on this phone's clock. `nil`
+    /// when the repeater gave no figure or only the saturated one.
     var lastHeardAt: Date? {
         guard let lastHeardMinutes, lastHeardIsMeasured else { return nil }
         return reportedAt.addingTimeInterval(-Double(lastHeardMinutes) * 60)
     }
 
-    /// Whether the router's last hearing of the node is older than `age`.
+    /// Whether the repeater's last hearing of the node is older than `age`.
     /// The saturated figure is older than any age worth asking about; no
     /// figure at all is not old, merely unknown.
     func lastHeard(isOlderThan age: TimeInterval, now: Date = .now) -> Bool {
@@ -1047,17 +1047,17 @@ struct PeerRepeaterNeighbor: Hashable, Sendable {
     }
 
     /// What to call the neighbor: the known node's name, else the name the
-    /// router relayed, else the hint.
+    /// repeater relayed, else the hint.
     func title(among peers: [PeerSummary]) -> String {
         resolve(among: peers)?.displayName ?? name ?? hintText
     }
 }
 
-/// What one router has said about its neighborhood, as far as this phone
+/// What one repeater has said about its neighborhood, as far as this phone
 /// has asked.
 struct PeerRepeaterListing: Hashable, Sendable {
     let entries: [PeerRepeaterNeighbor]
-    /// How many neighbors the router holds in all, when it said.
+    /// How many neighbors the repeater holds in all, when it said.
     let total: Int?
     /// Where the next page starts. `nil` when the pages in hand are the
     /// whole listing.
@@ -1071,14 +1071,14 @@ struct PeerRepeaterListing: Hashable, Sendable {
 enum PeerRepeatersPageResult: Equatable, Sendable {
     /// The listing as it now stands, this page folded in.
     case page(PeerRepeaterListing)
-    /// The router did not answer within the page deadline.
+    /// The repeater did not answer within the page deadline.
     case noAnswer
     /// The request could not be handed to the radio.
     case failed
     case unavailable(reason: String)
 }
 
-/// A neighbor together with the router that reported it, which is how the
+/// A neighbor together with the repeater that reported it, which is how the
 /// map draws a node this phone has never heard itself.
 struct PeerRepeaterNeighborReport: Hashable, Sendable {
     let reporter: PeerSummary
@@ -1096,7 +1096,7 @@ struct PeerRepeaterNeighborReport: Hashable, Sendable {
 /// Deliberately not `Sendable`: these are main-actor operations owned by the
 /// app root, handed to views that also live on the main actor.
 struct PeerActions {
-    /// Nodes recorded on this phone, used to put names to router hints.
+    /// Nodes recorded on this phone, used to put names to repeater hints.
     var knownPeers: [PeerSummary] = []
     /// Open the conversation with the node, creating it the first time.
     var startConversation: ((PeerSummary) async throws -> DirectConversationSummary)? = nil
@@ -1108,7 +1108,7 @@ struct PeerActions {
     /// Discard that route, reporting whether one was held.
     var resetRoute: ((PeerSummary) async -> Bool)? = nil
     /// Ask the node behind a hint to identify itself, given the hint and the
-    /// two-byte router hints of the repeaters ahead of it in send order.
+    /// two-byte repeater hints of the repeaters ahead of it in send order.
     ///
     /// A route names its hops by two bytes and nothing else, so the answer is
     /// the only way to know who is actually carrying the traffic.
@@ -1123,7 +1123,7 @@ struct PeerActions {
     var loadPeerRepeaters: ((PeerSummary, Data?) async -> PeerRepeatersPageResult)? = nil
     /// The same ask, sent down an explicit path in send order rather than
     /// along whatever route this phone holds for the repeater.
-    var loadPeerRepeatersAlong: ((PeerSummary, Data?, [MeshRouterHint]) async -> PeerRepeatersPageResult)? = nil
+    var loadPeerRepeatersAlong: ((PeerSummary, Data?, [MeshRepeaterHint]) async -> PeerRepeatersPageResult)? = nil
     /// The companion radio's own node, which answers for the repeaters this
     /// phone can reach first. `nil` when no radio has a node identity.
     var radioIdentityPeer: PeerSummary? = nil
@@ -1142,10 +1142,10 @@ struct PeerActions {
     var learnedPathOffer: ((PeerSummary) async -> PeerRoute?)? = nil
     /// Ping the node down an explicit path without installing it.
     var pingAlongPath: ((PeerSummary, ManualPath) async -> PeerPingResult)? = nil
-    /// Read a router hint typed by a person.
-    var parseRouterHint: ((String, RouterHintFormat) async -> RouterHintInput)? = nil
-    /// Render two key bytes as a router hint.
-    var renderRouterHint: ((Data) async -> MeshRouterHint?)? = nil
+    /// Read a repeater hint typed by a person.
+    var parseRepeaterHint: ((String, RepeaterHintFormat) async -> RepeaterHintInput)? = nil
+    /// Render two key bytes as a repeater hint.
+    var renderRepeaterHint: ((Data) async -> MeshRepeaterHint?)? = nil
     /// Mark or unmark the node as a favorite. Saved nodes only.
     var setFavorite: ((PeerSummary, Bool) async throws -> Void)? = nil
     /// Arm or disarm the one-shot watch on the node: notify once, the next

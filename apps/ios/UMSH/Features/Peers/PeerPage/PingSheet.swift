@@ -15,7 +15,7 @@ struct PingPath: Equatable {
 
     enum Stop: Equatable {
         case phone
-        case repeater(MeshRouterHint, preceding: [MeshRouterHint])
+        case repeater(MeshRepeaterHint, preceding: [MeshRepeaterHint])
         case peer
     }
 
@@ -125,7 +125,7 @@ struct PingSheet: View {
                     }
                 } footer: {
                     if let reply = latestReply, hasGuessedNames(reply) {
-                        Text(RouterHintNaming.ambiguityNote)
+                        Text(RepeaterHintNaming.ambiguityNote)
                     }
                 }
                 if actions.resetRoute != nil {
@@ -319,14 +319,14 @@ struct PingSheet: View {
         case .phone:
             .phone(radioName: nil)
         case let .repeater(hint, preceding):
-            .repeater(hint, named: RouterHintNaming.match(hint, among: actions.knownPeers), preceding: preceding)
+            .repeater(hint, named: RepeaterHintNaming.match(hint, among: actions.knownPeers), preceding: preceding)
         case .peer:
             .peer(peer)
         }
     }
 
     private func hasGuessedNames(_ reply: PeerPingReply) -> Bool {
-        reply.routeHints.contains { RouterHintNaming.match($0, among: actions.knownPeers) != nil }
+        reply.routeHints.contains { RepeaterHintNaming.match($0, among: actions.knownPeers) != nil }
     }
 
     /// Everything before the result on show.

@@ -13,7 +13,7 @@
 //!   captured anywhere would otherwise list its owner wherever it was
 //!   played back ([`identity_heard_directly`](crate::identity_heard_directly)).
 //! - **Transmitter observations** ([`umsh_mac::TransmitterObservations`]).
-//!   A repeater prepends its router hint to the trace route of every frame
+//!   A repeater prepends its repeater hint to the trace route of every frame
 //!   it forwards, so every traced frame off the air names the repeater
 //!   that just transmitted it and how well it was heard—including
 //!   repeaters that never send this node anything of their own. The hint
@@ -21,11 +21,11 @@
 //!   carrying this node's own frames from being displaced by those it has
 //!   only heard named.
 //!
-//! A [`RouterHint`] is the first two bytes of a public key and a [`NodeHint`]
+//! A [`RepeaterHint`] is the first two bytes of a public key and a [`NodeHint`]
 //! the first three, so the observation's key is a prefix of the identity's.
 //! That is what lets the two merge: an observation is credited to the
 //! identities its hint begins ([`PeerRepeaterTable::credited`]), and one
-//! credited to none becomes an entry naming a hop by its router hint and
+//! credited to none becomes an entry naming a hop by its repeater hint and
 //! reporting only what was heard.
 //!
 //! An identity-bearing entry counts as heard whenever its identity, a frame
@@ -37,7 +37,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use umsh_core::{NodeHint, PublicKey, RouterHint};
+use umsh_core::{NodeHint, PublicKey, RepeaterHint};
 use umsh_hal::Snr;
 
 use crate::IdentityUpdate;
@@ -58,7 +58,7 @@ const _: () = assert!(MAX_PEER_REPEATERS <= u16::BITS as usize);
 pub const STALE_AFTER_MS: u64 = 2 * 60 * 60 * 1000;
 
 /// How recently an identity must have been heard for a forward under its
-/// router hint to be credited to it when other identities share that hint:
+/// repeater hint to be credited to it when other identities share that hint:
 /// two default advertisement intervals, so one missed advertisement is
 /// forgiven.
 pub const ATTRIBUTION_IDENTITY_AGE_MS: u64 = 8 * 60 * 60 * 1000;
@@ -93,10 +93,10 @@ pub struct PeerRepeaterRecord {
 }
 
 impl PeerRepeaterRecord {
-    /// The router hint an observation would be keyed by—the first two
+    /// The repeater hint an observation would be keyed by—the first two
     /// bytes of the same public key.
-    pub fn router_hint(&self) -> RouterHint {
-        RouterHint([self.hint.0[0], self.hint.0[1]])
+    pub fn repeater_hint(&self) -> RepeaterHint {
+        RepeaterHint([self.hint.0[0], self.hint.0[1]])
     }
 
     /// Note a direct reception at `at_ms`. The newer reception supplies the
@@ -256,7 +256,7 @@ impl PeerRepeaterTable {
         true
     }
 
-    /// Which entries a forward heard at `at_ms` under router hint `hint` is
+    /// Which entries a forward heard at `at_ms` under repeater hint `hint` is
     /// credited to, one bit per entry in [`iter`](Self::iter) order.
     ///
     /// Every entry whose node hint begins with `hint` and whose identity
@@ -264,11 +264,11 @@ impl PeerRepeaterTable {
     /// credited. Failing those, an entry that is the only one beginning with
     /// `hint` is credited however old it is; several such, none of them
     /// recent, leave the forward credited to none.
-    pub fn credited(&self, hint: RouterHint, at_ms: u64) -> u16 {
+    pub fn credited(&self, hint: RepeaterHint, at_ms: u64) -> u16 {
         let mut matching = 0u16;
         let mut recent = 0u16;
         for (index, entry) in self.records.iter().enumerate() {
-            if entry.router_hint() == hint {
+            if entry.repeater_hint() == hint {
                 matching |= 1 << index;
                 if at_ms.saturating_sub(entry.last_identity_ms) < ATTRIBUTION_IDENTITY_AGE_MS {
                     recent |= 1 << index;
@@ -472,7 +472,7 @@ mod tests {
         }
     }
 
-    fn observation(hint: RouterHint, last_seen_ms: u64) -> umsh_mac::TransmitterObservation {
+    fn observation(hint: RepeaterHint, last_seen_ms: u64) -> umsh_mac::TransmitterObservation {
         umsh_mac::TransmitterObservation {
             hint,
             rssi_snr: Some((-95, Snr::from_decibels(2))),
@@ -486,7 +486,7 @@ mod tests {
     fn an_unmeasured_neighbor_is_listed_without_a_signal() {
         let table = PeerRepeaterTable::new();
         let observations = [umsh_mac::TransmitterObservation {
-            hint: RouterHint([0x11, 0x22]),
+            hint: RepeaterHint([0x11, 0x22]),
             rssi_snr: None,
             last_seen_ms: 60_000,
         }];
@@ -583,7 +583,7 @@ mod tests {
         assert_eq!(record.hint, key(0xAA).hint());
     }
 
-    /// A router hint is a node hint's first two bytes, which is the whole
+    /// A repeater hint is a node hint's first two bytes, which is the whole
     /// reason the two tables can be joined at all.
     #[test]
     fn an_identity_claims_the_observation_whose_hint_it_starts_with() {
@@ -597,8 +597,8 @@ mod tests {
         );
         let hint = key(0xAA).hint();
         let observations = [
-            observation(RouterHint([hint.0[0], hint.0[1]]), 120_000),
-            observation(RouterHint([0x11, 0x22]), 60_000),
+            observation(RepeaterHint([hint.0[0], hint.0[1]]), 120_000),
+            observation(RepeaterHint([0x11, 0x22]), 60_000),
         ];
 
         let merged = merge(table.clone(), observations.iter(), 180_000);
@@ -645,7 +645,7 @@ mod tests {
         assert_eq!(alone[0].snr, Some(Snr::from_decibels(8)));
         assert_eq!(alone[0].last_heard_min, Some(1));
 
-        let older = [observation(RouterHint([hint.0[0], hint.0[1]]), 60_000)];
+        let older = [observation(RepeaterHint([hint.0[0], hint.0[1]]), 60_000)];
         let merged = merge(table.clone(), older.iter(), 180_000);
         assert_eq!(merged.len(), 1, "the identity claimed the observation");
         assert_eq!(
@@ -684,9 +684,9 @@ mod tests {
         );
         let refreshed = key(0xAA).hint();
         let observations = [
-            observation(RouterHint([refreshed.0[0], refreshed.0[1]]), 300_000),
+            observation(RepeaterHint([refreshed.0[0], refreshed.0[1]]), 300_000),
             // Never introduced, heard forwarding between the other two.
-            observation(RouterHint([0x11, 0x22]), 100_000),
+            observation(RepeaterHint([0x11, 0x22]), 100_000),
         ];
 
         let merged = merge(table.clone(), observations.iter(), 400_000);
@@ -722,7 +722,7 @@ mod tests {
         assert_eq!(merged[0].rssi_dbm, None);
         assert_eq!(merged[0].snr, None);
 
-        let older = [observation(RouterHint([hint.0[0], hint.0[1]]), 60_000)];
+        let older = [observation(RepeaterHint([hint.0[0], hint.0[1]]), 60_000)];
         let merged = merge(table.clone(), older.iter(), 180_000);
         assert_eq!(merged[0].rssi_dbm, Some(-95));
     }
@@ -829,7 +829,7 @@ mod tests {
 
     const HOUR_MS: u64 = 60 * 60 * 1000;
 
-    /// A key whose node hint is `hint`, so that several can share a router
+    /// A key whose node hint is `hint`, so that several can share a repeater
     /// hint.
     fn key_with_hint(hint: [u8; 3]) -> PublicKey {
         let mut key = [0x5A; 32];
@@ -874,7 +874,7 @@ mod tests {
                 0,
             );
         }
-        let shared = RouterHint([1, 2]);
+        let shared = RepeaterHint([1, 2]);
         assert_eq!(table.credited(shared, HOUR_MS), 0b011, "both recent");
         assert_eq!(
             table.credited(shared, 9 * HOUR_MS),
@@ -882,11 +882,11 @@ mod tests {
             "both too old to tell apart"
         );
         assert_eq!(
-            table.credited(RouterHint([7, 7]), 100 * HOUR_MS),
+            table.credited(RepeaterHint([7, 7]), 100 * HOUR_MS),
             0b100,
             "the only one it could name, however old"
         );
-        assert_eq!(table.credited(RouterHint([9, 9]), HOUR_MS), 0);
+        assert_eq!(table.credited(RepeaterHint([9, 9]), HOUR_MS), 0);
 
         // A fresh advertisement takes the forward from an old one.
         table.observe_identity(
@@ -915,14 +915,14 @@ mod tests {
         }
         let generation = table.generation();
 
-        let unattributed = observation(RouterHint([1, 2]), 9 * HOUR_MS);
+        let unattributed = observation(RepeaterHint([1, 2]), 9 * HOUR_MS);
         table.credit_forwarding(&unattributed);
         assert!(table.iter().all(|entry| entry.last_heard_ms == 0));
         let merged = merge(table.clone(), [unattributed].iter(), 9 * HOUR_MS);
         assert_eq!(merged.len(), 3);
-        assert_eq!(merged[0].hint, [1, 2], "listed under its router hint");
+        assert_eq!(merged[0].hint, [1, 2], "listed under its repeater hint");
 
-        let attributed = observation(RouterHint([1, 2]), HOUR_MS);
+        let attributed = observation(RepeaterHint([1, 2]), HOUR_MS);
         table.credit_forwarding(&attributed);
         assert!(table.iter().all(|entry| entry.last_heard_ms == HOUR_MS));
         let merged = merge(table.clone(), [attributed].iter(), 2 * HOUR_MS);
@@ -1037,7 +1037,7 @@ mod tests {
         }
         // Neither has advertised since: one is heard forwarding, the other
         // off its own transmitter.
-        table.credit_forwarding(&observation(RouterHint([0, 0]), 2 * HOUR_MS));
+        table.credit_forwarding(&observation(RepeaterHint([0, 0]), 2 * HOUR_MS));
         table.note_heard(key_with_hint([1, 0, 0]).hint(), None, 2 * HOUR_MS);
 
         assert!(add(

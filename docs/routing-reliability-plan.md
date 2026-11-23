@@ -155,7 +155,7 @@ Two tables exist, both filled passively and both used only to answer Peer
 Repeaters requests:
 
 - `TransmitterObservations` (`crates/umsh-mac/src/observations.rs`): up to
-  16 router hints, taken from the first hint of any overheard trace, with
+  16 repeater hints, taken from the first hint of any overheard trace, with
   the RSSI/SNR heard here and a last-seen time. No expiry.
 - `PeerRepeaterTable` (`crates/umsh-node/src/peer_repeaters.rs`): up to 16
   identities heard directly that claim the repeater role or bit, with
@@ -528,7 +528,7 @@ carries a budget.
 ### M6. A link table: who we hear, and who hears us *(local policy)*
 
 Two thirds of this table already exists. `TransmitterObservations` keys on
-router hint with the RSSI/SNR heard here and a last-seen time;
+repeater hint with the RSSI/SNR heard here and a last-seen time;
 `PeerRepeaterTable` holds the identity, mobile bit, and location of
 repeaters heard directly. What is missing is reverse evidence, expiry, and
 a consumer other than the Peer Repeaters responder. Grow them into one
@@ -976,7 +976,7 @@ benefit.
 
 ### P4. Wildcard first hop *(considered, not recommended)*
 
-A reserved router hint meaning "any repeater that hears this" would let a
+A reserved repeater hint meaning "any repeater that hears this" would let a
 source route begin with a flood hop, expressing "someone near me, then
 *R₂*, then *R₃*." It would serve a node that knows the far end of a path
 but not who can hear it. The anchor (M6) answers the same question with a

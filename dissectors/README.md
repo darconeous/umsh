@@ -360,7 +360,7 @@ flagged.
 ## MAC Options
 
 The options in the spec's Defined Options table are decoded. Source Route
-and Trace break out their router hints per hop. A Trace with signal also
+and Trace break out their repeater hints per hop. A Trace with signal also
 shows the RSSI and SNR each hop heard, and labels a zero entry as a bridged
 hop; its hints-only and truncated forms show the hops alone, and a malformed
 Trace value is flagged. Region Code and the two callsign options are
@@ -385,7 +385,7 @@ the frame says about its own forwarding:
 | Value | Meaning |
 |---|---|
 | The source address | The sender transmitted it. A name is shown when one is configured, and `sender` when the source is encrypted and no key reveals it |
-| A router hint | The most recent repeater in the trace |
+| A repeater hint | The most recent repeater in the trace |
 | `-` | A repeater transmitted it, but the frame does not name which: a flood hop with no trace, a source route that has run out, or a trace cut to a lone `0xFF` |
 | `?` | Hints remain on a source route and there is no trace, so the sender and a repeater that took its hint off the route look the same |
 
@@ -416,7 +416,7 @@ the ack linked as a correlation only, with the expected tag shown.
 Addresses render in the canonical forms from the addressing chapter: a full
 32-byte key as its 44 base58 digits, and a hint in the star-truncated form,
 with the bytes it was read from alongside—`GySV (ED:54:A5)` for a node hint,
-`Gy* (ED:54)` for a router hint. Characters before the star are ones every key
+`Gy* (ED:54)` for a repeater hint. Characters before the star are ones every key
 matching that hint would produce; the star marks where the hint stops proving
 anything. `umsh.src_addr` and `umsh.dst_addr` carry the canonical text for
 filtering, and the address columns use it whenever no keystore name is known.

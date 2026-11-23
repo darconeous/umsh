@@ -1349,7 +1349,7 @@
     "Enter DFU Mode…" : {
 
     },
-    "Enter Router Hint…" : {
+    "Enter Repeater Hint…" : {
 
     },
     "Enter the network's name." : {
@@ -2025,7 +2025,7 @@
     "Name Not Saved" : {
       "comment" : "Alert title."
     },
-    "Name or router hint" : {
+    "Name or repeater hint" : {
 
     },
     "Name, alias, address, or hint" : {
@@ -2383,7 +2383,7 @@
     "Position" : {
 
     },
-    "Position reported by a router" : {
+    "Position reported by a repeater" : {
 
     },
     "Positioning" : {
@@ -2757,10 +2757,10 @@
     "Router" : {
 
     },
-    "Router hint" : {
+    "Repeater hint" : {
 
     },
-    "Router Hint" : {
+    "Repeater Hint" : {
 
     },
     "Routing regions" : {

@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use umsh_core::{NodeHint, PublicKey, RouterHint};
+use umsh_core::{NodeHint, PublicKey, RepeaterHint};
 
 use super::chat::{REVISE_WINDOW_MS, is_emergency_channel, message_actions, reaction_from_body};
 use super::records::{
@@ -20,7 +20,7 @@ use crate::store::{
     MobileStoredPeerRepeaterListingRecord,
 };
 use crate::{
-    IdentitySignatureState, NodeIdentityRecord, RouterHintRecord, node_identity_record,
+    IdentitySignatureState, NodeIdentityRecord, RepeaterHintRecord, node_identity_record,
     public_identity_record,
 };
 
@@ -33,7 +33,7 @@ pub(super) fn peer(stored: MobileStoredNodeRecord) -> Option<MobileAppPeerRecord
         .as_deref()
         .and_then(|payload| node_identity_record(&key, payload).ok());
     let identity = public_identity_record(&key);
-    let router_hint = peer_router_hint(&identity.hint.bytes)?;
+    let repeater_hint = peer_repeater_hint(&identity.hint.bytes)?;
     Some(MobileAppPeerRecord {
         likely_repeater: likely_repeater(
             advertised_identity
@@ -45,7 +45,7 @@ pub(super) fn peer(stored: MobileStoredNodeRecord) -> Option<MobileAppPeerRecord
             attributable(identity.signature, stored.advertisement_authenticated)
         }),
         repeater_evidence: repeater_evidence(advertised_identity.as_ref(), stored.node_kind),
-        router_hint,
+        repeater_hint,
         identity,
         advertised_identity,
         stored,
@@ -92,25 +92,25 @@ pub(super) fn node_hint_text(bytes: &[u8]) -> Option<String> {
     Some(NodeHint(bytes.try_into().ok()?).to_string())
 }
 
-/// A router hint's text, for exactly two bytes.
-pub(super) fn router_hint_text(bytes: &[u8]) -> Option<String> {
-    Some(RouterHint(bytes.try_into().ok()?).to_string())
+/// A repeater hint's text, for exactly two bytes.
+pub(super) fn repeater_hint_text(bytes: &[u8]) -> Option<String> {
+    Some(RepeaterHint(bytes.try_into().ok()?).to_string())
 }
 
-/// A peer's own router hint: the first two bytes of its key, or of its
+/// A peer's own repeater hint: the first two bytes of its key, or of its
 /// node hint, which a repeater carrying its traffic puts on the wire.
-pub(super) fn peer_router_hint(key_or_hint: &[u8]) -> Option<RouterHintRecord> {
+pub(super) fn peer_repeater_hint(key_or_hint: &[u8]) -> Option<RepeaterHintRecord> {
     let bytes = key_or_hint.get(..2)?.to_vec();
-    Some(RouterHintRecord {
-        text: router_hint_text(&bytes)?,
+    Some(RepeaterHintRecord {
+        text: repeater_hint_text(&bytes)?,
         bytes,
     })
 }
 
-/// A neighbor's hint, as a node hint when it is one, else as the router
+/// A neighbor's hint, as a node hint when it is one, else as the repeater
 /// hint of its first two bytes.
 fn neighbor_hint_text(bytes: &[u8]) -> Option<String> {
-    node_hint_text(bytes).or_else(|| router_hint_text(bytes.get(..2)?))
+    node_hint_text(bytes).or_else(|| repeater_hint_text(bytes.get(..2)?))
 }
 
 /// Whether a peer is likely to forward, from what it advertised when that
@@ -430,7 +430,7 @@ fn message(
         .iter()
         .flat_map(|repeats| &repeats.repeaters)
         .map(|hint| {
-            let hint_text = router_hint_text(hint);
+            let hint_text = repeater_hint_text(hint);
             MobileAppMessageRepeaterRecord {
                 // A hint that does not render names nobody.
                 peer_address: hint_text

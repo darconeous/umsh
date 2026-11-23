@@ -367,18 +367,18 @@ impl core::fmt::Display for NodeHint {
     }
 }
 
-/// Two-byte router hint used in learned routes.
+/// Two-byte repeater hint used in learned routes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct RouterHint(pub [u8; 2]);
+pub struct RepeaterHint(pub [u8; 2]);
 
-impl RouterHint {
-    /// The fewest base58 characters that can determine a router hint.
+impl RepeaterHint {
+    /// The fewest base58 characters that can determine a repeater hint.
     ///
     /// Three digits carry about 15.8 bits, so they never settle sixteen; four
     /// carry about 21.7, which leaves at most two adjacent hints.
     pub const MIN_BASE58_PREFIX: usize = 4;
 
-    /// Derive the router hint from the first two public-key bytes.
+    /// Derive the repeater hint from the first two public-key bytes.
     pub fn from_public_key(key: &PublicKey) -> Self {
         Self([key.0[0], key.0[1]])
     }
@@ -388,14 +388,14 @@ impl RouterHint {
         crate::base58::hint_verified_chars(&self.0, 3)
     }
 
-    /// Every router hint carried by an address that begins with `prefix`.
+    /// Every repeater hint carried by an address that begins with `prefix`.
     ///
     /// The prefix must be at least [`Self::MIN_BASE58_PREFIX`] characters. A
     /// prefix whose completions straddle a hint boundary yields both hints;
     /// a complete address yields its own.
     pub fn candidates_from_base58_prefix(
         prefix: &str,
-    ) -> Result<RouterHintCandidates, crate::HintInputError> {
+    ) -> Result<RepeaterHintCandidates, crate::HintInputError> {
         use crate::{AddressParseError, HintInputError};
         if prefix.len() < Self::MIN_BASE58_PREFIX {
             return Err(HintInputError::TooShort);
@@ -410,7 +410,7 @@ impl RouterHint {
         let last = Self([high[0], high[1]]);
         // Four digits span less than one hint bucket, so the two ends are the
         // same hint or neighbors.
-        Ok(RouterHintCandidates {
+        Ok(RepeaterHintCandidates {
             first,
             second: (last != first).then_some(last),
         })
@@ -437,23 +437,23 @@ impl RouterHint {
     }
 }
 
-/// The one or two router hints a typed base58 prefix can mean.
+/// The one or two repeater hints a typed base58 prefix can mean.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RouterHintCandidates {
+pub struct RepeaterHintCandidates {
     /// The hint of the lowest address beginning with the prefix.
-    pub first: RouterHint,
+    pub first: RepeaterHint,
     /// The hint of the highest one, when it differs.
-    pub second: Option<RouterHint>,
+    pub second: Option<RepeaterHint>,
 }
 
-impl RouterHintCandidates {
+impl RepeaterHintCandidates {
     /// The candidates in ascending order.
-    pub fn iter(&self) -> impl Iterator<Item = RouterHint> + '_ {
+    pub fn iter(&self) -> impl Iterator<Item = RepeaterHint> + '_ {
         core::iter::once(self.first).chain(self.second)
     }
 }
 
-impl core::fmt::Display for RouterHint {
+impl core::fmt::Display for RepeaterHint {
     /// Renders up to three base58 characters of the matching address space,
     /// star-truncated where the hint no longer pins down the encoding.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -514,9 +514,9 @@ impl PublicKey {
         NodeHint::from_public_key(self)
     }
 
-    /// Return the router hint associated with this key.
-    pub fn router_hint(&self) -> RouterHint {
-        RouterHint::from_public_key(self)
+    /// Return the repeater hint associated with this key.
+    pub fn repeater_hint(&self) -> RepeaterHint {
+        RepeaterHint::from_public_key(self)
     }
 }
 
@@ -1910,7 +1910,7 @@ impl<'a> UnsealedPacket<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::{NodeHint, PacketType, PayloadType, PublicKey, RouterHint};
+    use super::{NodeHint, PacketType, PayloadType, PublicKey, RepeaterHint};
     use crate::{AddressParseError, HintInputError};
 
     #[test]
@@ -2041,69 +2041,69 @@ mod tests {
     }
 
     #[test]
-    fn router_hint_verified_chars_match_display() {
+    fn repeater_hint_verified_chars_match_display() {
         for value in 0..=u16::MAX {
-            let hint = RouterHint(value.to_be_bytes());
+            let hint = RepeaterHint(value.to_be_bytes());
             assert_eq!(hint.verified_chars(), shown_before_star(&hint.to_string()));
         }
-        assert_eq!(RouterHint([0xA1, 0xB2]).verified_chars(), 3);
-        assert_eq!(RouterHint([0x5E, 0xA1]).verified_chars(), 2);
-        assert_eq!(RouterHint([0x00, 0x41]).verified_chars(), 1);
+        assert_eq!(RepeaterHint([0xA1, 0xB2]).verified_chars(), 3);
+        assert_eq!(RepeaterHint([0x5E, 0xA1]).verified_chars(), 2);
+        assert_eq!(RepeaterHint([0x00, 0x41]).verified_chars(), 1);
     }
 
     #[test]
-    fn router_hint_display_matches_reference_vectors() {
-        assert_eq!(RouterHint([0x00, 0x00]).to_string(), "111");
-        assert_eq!(RouterHint([0xA1, 0xB2]).to_string(), "BtC");
-        assert_eq!(RouterHint([0x5E, 0xA1]).to_string(), "7N*");
-        assert_eq!(RouterHint([0x84, 0x81]).to_string(), "9v*");
+    fn repeater_hint_display_matches_reference_vectors() {
+        assert_eq!(RepeaterHint([0x00, 0x00]).to_string(), "111");
+        assert_eq!(RepeaterHint([0xA1, 0xB2]).to_string(), "BtC");
+        assert_eq!(RepeaterHint([0x5E, 0xA1]).to_string(), "7N*");
+        assert_eq!(RepeaterHint([0x84, 0x81]).to_string(), "9v*");
         // Carry case: only the first digit is pinned down.
-        assert_eq!(RouterHint([0x00, 0x41]).to_string(), "1*");
+        assert_eq!(RepeaterHint([0x00, 0x41]).to_string(), "1*");
     }
 
     #[test]
-    fn router_hint_candidates_from_base58_prefix() {
+    fn repeater_hint_candidates_from_base58_prefix() {
         let one = |prefix: &str| {
-            let candidates = RouterHint::candidates_from_base58_prefix(prefix).unwrap();
+            let candidates = RepeaterHint::candidates_from_base58_prefix(prefix).unwrap();
             assert_eq!(candidates.second, None, "{prefix}");
             candidates.first
         };
-        assert_eq!(one("7Nq4"), RouterHint([0x5E, 0xBD]));
-        assert_eq!(one("HJC9"), RouterHint([0xF2, 0x22]));
-        assert_eq!(one("BtC9"), RouterHint([0xA1, 0xB2]));
+        assert_eq!(one("7Nq4"), RepeaterHint([0x5E, 0xBD]));
+        assert_eq!(one("HJC9"), RepeaterHint([0xF2, 0x22]));
+        assert_eq!(one("BtC9"), RepeaterHint([0xA1, 0xB2]));
         assert_eq!(
             one("HJC9DJaaQEn88tAzbMM7BrYbsepNEB69RK1gZiKEYCPp"),
-            RouterHint([0xF2, 0x22])
+            RepeaterHint([0xF2, 0x22])
         );
 
         // A prefix that straddles a hint boundary: both render as "H1*".
-        let straddle = RouterHint::candidates_from_base58_prefix("H12n").unwrap();
-        assert_eq!(straddle.first, RouterHint([0xED, 0xBC]));
-        assert_eq!(straddle.second, Some(RouterHint([0xED, 0xBD])));
+        let straddle = RepeaterHint::candidates_from_base58_prefix("H12n").unwrap();
+        assert_eq!(straddle.first, RepeaterHint([0xED, 0xBC]));
+        assert_eq!(straddle.second, Some(RepeaterHint([0xED, 0xBD])));
         // A fifth character settles it.
         assert!(
-            RouterHint::candidates_from_base58_prefix("H12n2")
+            RepeaterHint::candidates_from_base58_prefix("H12n2")
                 .unwrap()
                 .second
                 .is_none()
         );
 
         assert_eq!(
-            RouterHint::candidates_from_base58_prefix("HJC"),
+            RepeaterHint::candidates_from_base58_prefix("HJC"),
             Err(HintInputError::TooShort)
         );
         assert_eq!(
-            RouterHint::candidates_from_base58_prefix("HJ0C"),
+            RepeaterHint::candidates_from_base58_prefix("HJ0C"),
             Err(HintInputError::InvalidCharacter)
         );
         assert_eq!(
-            RouterHint::candidates_from_base58_prefix("Kzzz"),
+            RepeaterHint::candidates_from_base58_prefix("Kzzz"),
             Err(HintInputError::OutOfRange)
         );
     }
 
     #[test]
-    fn router_hint_candidates_always_include_the_true_hint() {
+    fn repeater_hint_candidates_always_include_the_true_hint() {
         for i in 0..=1023u32 {
             let mut key = [0u8; 32];
             for (j, byte) in key.iter_mut().enumerate() {
@@ -2111,22 +2111,31 @@ mod tests {
             }
             let key = PublicKey(key);
             let encoded = key.to_string();
-            let candidates = RouterHint::candidates_from_base58_prefix(&encoded[..4]).unwrap();
+            let candidates = RepeaterHint::candidates_from_base58_prefix(&encoded[..4]).unwrap();
             assert!(
-                candidates.iter().any(|hint| hint == key.router_hint()),
+                candidates.iter().any(|hint| hint == key.repeater_hint()),
                 "{encoded}"
             );
         }
     }
 
     #[test]
-    fn router_hint_from_hex() {
-        assert_eq!(RouterHint::from_hex("5EBD"), Ok(RouterHint([0x5E, 0xBD])));
-        assert_eq!(RouterHint::from_hex("a1b2"), Ok(RouterHint([0xA1, 0xB2])));
-        assert_eq!(RouterHint::from_hex("a1b"), Err(HintInputError::TooShort));
-        assert_eq!(RouterHint::from_hex("a1b23"), Err(HintInputError::TooLong));
+    fn repeater_hint_from_hex() {
         assert_eq!(
-            RouterHint::from_hex("a1g2"),
+            RepeaterHint::from_hex("5EBD"),
+            Ok(RepeaterHint([0x5E, 0xBD]))
+        );
+        assert_eq!(
+            RepeaterHint::from_hex("a1b2"),
+            Ok(RepeaterHint([0xA1, 0xB2]))
+        );
+        assert_eq!(RepeaterHint::from_hex("a1b"), Err(HintInputError::TooShort));
+        assert_eq!(
+            RepeaterHint::from_hex("a1b23"),
+            Err(HintInputError::TooLong)
+        );
+        assert_eq!(
+            RepeaterHint::from_hex("a1g2"),
             Err(HintInputError::InvalidCharacter)
         );
     }
@@ -2142,7 +2151,7 @@ mod tests {
             }
             let key = PublicKey(key);
             let full = key.to_string();
-            for rendered in [key.hint().to_string(), key.router_hint().to_string()] {
+            for rendered in [key.hint().to_string(), key.repeater_hint().to_string()] {
                 let verified = rendered.strip_suffix('*').unwrap_or(&rendered);
                 assert!(
                     full.starts_with(verified),

@@ -2,7 +2,7 @@
 
 UMSH nodes are identified by their 32-byte Ed25519 public keys. Including a full 32-byte address in every packet would be expensive in the constrained LoRa frame budget, so UMSH defines several compact **hint** representations—short prefixes of a public key that allow receivers to quickly identify likely matches without the full key. Hints are not cryptographically authoritative; they serve only as cheap prefilters to avoid unnecessary work.
 
-The sections below describe the three addressing forms used across the protocol: node hints, router hints, and source addresses.
+The sections below describe the three addressing forms used across the protocol: node hints, repeater hints, and source addresses.
 
 ## Presentation
 
@@ -30,22 +30,22 @@ One way to address this is to perform two base58 encodings: one padded with 0x00
 
 Note that there are more efficient ways of calculating this than padding with 0x00 and 0xFF and encoding the whole address twice, but logically that is the process.
 
-## Router Hint
+## Repeater Hint
 
-A **router hint** is defined as:
+A **repeater hint** is defined as:
 
 - the **first two bytes of the repeater's 32-byte public key**
 
-Router hints are used in:
+Repeater hints are used in:
 
 - source-route options
 - trace options
 
-Because router hints are only 2 bytes, collisions are possible in dense networks but are handled gracefully: the MIC-based duplicate suppression ensures that each repeater forwards a given packet at most once, so a router hint collision causes a spurious forward but not a loop or incorrect delivery.
+Because repeater hints are only 2 bytes, collisions are possible in dense networks but are handled gracefully: the MIC-based duplicate suppression ensures that each repeater forwards a given packet at most once, so a repeater hint collision causes a spurious forward but not a loop or incorrect delivery.
 
-### Rendering Router Hints
+### Rendering Repeater Hints
 
-Router hints are rendered using the same procedure as node hints, with a three-character budget and 30 bytes of padding. Because two bytes pin down only slightly more than two base58 digits, the third character is ambiguous for most router hints; the two-characters-plus-`*` form is the common case.
+Repeater hints are rendered using the same procedure as node hints, with a three-character budget and 30 bytes of padding. Because two bytes pin down only slightly more than two base58 digits, the third character is ambiguous for most repeater hints; the two-characters-plus-`*` form is the common case.
 
 ## Source Address
 

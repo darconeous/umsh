@@ -85,7 +85,7 @@ pub(super) struct SendShape {
     pub salted: bool,
     pub flood_hops: Option<u8>,
     /// Never empty: a route that constrains no hop is not attached.
-    pub source_route: Option<Vec<RouterHint, MAX_SOURCE_ROUTE_HINTS>>,
+    pub source_route: Option<Vec<RepeaterHint, MAX_SOURCE_ROUTE_HINTS>>,
     pub operator_callsign: Option<HamAddr>,
     pub trace: bool,
     pub ack_mic: Option<[u8; 4]>,

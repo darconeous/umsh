@@ -5107,12 +5107,12 @@ fn wifi_turned_off_is_only_its_switches() {
     assert_eq!(app.state().wifi.current, b"Okafor-5G");
 }
 
-/// The router the Neighbors screen shown lists for, and what it holds.
+/// The repeater the Neighbors screen shown lists for, and what it holds.
 fn shown_listing(state: &State) -> (String, Option<umsh_ux_communicator::model::Listing>) {
-    let Screen::Neighbors { router, .. } = state.screen() else {
+    let Screen::Neighbors { repeater, .. } = state.screen() else {
         panic!("expected neighbors, got {:?}", state.screen());
     };
-    (router.to_string(), state.node.listing(router))
+    (repeater.to_string(), state.node.listing(repeater))
 }
 
 /// Answers what the fixture was asked, as a board's loop wakes for it.
@@ -5162,11 +5162,11 @@ fn neighbors_reads_nothing_until_refreshed_then_loads_more() {
     // The spinner keeps the screen coming back while it waits.
     assert!(app.state().next_deadline().is_some());
     answer(&mut app, store);
-    let (router, listing) = shown_listing(app.state());
+    let (repeater, listing) = shown_listing(app.state());
     let listing = listing.unwrap();
     assert_eq!((listing.count, listing.total), (3, Some(5)));
     assert!(listing.more && listing.asking.is_none());
-    let known = app.state().node.listed(&router, 1).unwrap();
+    let known = app.state().node.listed(&repeater, 1).unwrap();
     assert_eq!(known.name.as_str(), "Ridge Runner");
     assert!(known.address.is_some());
 
@@ -5197,15 +5197,15 @@ fn a_bare_hint_among_neighbors_is_asked_who_it_is_and_its_own_go_unanswered() {
     turn_to(&mut app, keys::MEMBER_NEIGHBORS);
     run(&mut app, &[Input::Press, Input::Press]);
     answer(&mut app, store);
-    let (router, _) = shown_listing(app.state());
-    let bare = app.state().node.listed(&router, 0).unwrap();
+    let (repeater, _) = shown_listing(app.state());
+    let bare = app.state().node.listed(&repeater, 0).unwrap();
     assert_eq!(bare.address, None);
 
     turn_to(&mut app, keys::neighbor(0));
     run(&mut app, &[Input::Press]);
     assert_eq!(app.state().identifying().as_slice(), [bare.hint]);
     answer(&mut app, store);
-    let named = app.state().node.listed(&router, 0).unwrap();
+    let named = app.state().node.listed(&repeater, 0).unwrap();
     assert_eq!(named.name.as_str(), "Bald Knob");
     assert!(named.address.is_some());
 
@@ -5247,17 +5247,17 @@ fn a_walk_through_neighbors_past_the_stack_replaces_the_page_shown() {
     assert_ne!(bald_knob, riverbend);
     assert!(matches!(
         &app.state().screens[full - 2],
-        Screen::Neighbors { router, .. } if router.as_str() == riverbend
+        Screen::Neighbors { repeater, .. } if repeater.as_str() == riverbend
     ));
     // The listing of the screen beneath is kept while others are asked.
     run(&mut app, &[Input::Press]);
     assert!(app.state().node.listing(&riverbend).is_some());
 }
 
-/// Add hop's router, what it finds by what is typed, and its rows.
+/// Add hop's repeater, what it finds by what is typed, and its rows.
 fn shown_pick(state: &State) -> (String, String, umsh_ux_communicator::nav::PickRows) {
     let Screen::Neighbors {
-        router,
+        repeater,
         pick: Some(pick),
         ..
     } = state.screen()
@@ -5265,7 +5265,7 @@ fn shown_pick(state: &State) -> (String, String, umsh_ux_communicator::nav::Pick
         panic!("expected Add hop, got {:?}", state.screen());
     };
     (
-        router.to_string(),
+        repeater.to_string(),
         pick.find.to_string(),
         state.pick_rows().expect("Add hop's rows"),
     )
@@ -5309,8 +5309,8 @@ fn add_hop_after_a_bare_hint_offers_known_repeaters_and_asks_along_the_route() {
     turn_to(&mut app, keys::ROUTE_ADD);
     run(&mut app, &[Input::Press]);
     // The last hop is known by its hint alone: nobody to ask.
-    let (router, _, rows) = shown_pick(app.state());
-    assert_eq!(router, "");
+    let (repeater, _, rows) = shown_pick(app.state());
+    assert_eq!(repeater, "");
     assert_eq!(rows.row(0), Some(PickRow::Known));
     let names: Vec<_> = known_rows(app.state(), &rows)
         .iter()
@@ -5328,8 +5328,8 @@ fn add_hop_after_a_bare_hint_offers_known_repeaters_and_asks_along_the_route() {
     // the rows have since moved it.
     app.state_mut().press_sheet(1, keys::known(ridge));
     app.finalize_view();
-    let (router, _, rows) = shown_pick(app.state());
-    assert!(!router.is_empty());
+    let (repeater, _, rows) = shown_pick(app.state());
+    assert!(!repeater.is_empty());
     let draft = *app.state().pick_draft().unwrap();
     assert_eq!(draft.hints().len(), 3);
     assert!(draft.dirty);
@@ -5338,7 +5338,7 @@ fn add_hop_after_a_bare_hint_offers_known_repeaters_and_asks_along_the_route() {
     let ridge = known.iter().find(|k| k.name.as_str() == "Ridge Runner");
     assert!(draft.hints().contains(&ridge.unwrap().hint));
     // Opening asks nothing; Refresh asks along the route up to it.
-    assert_eq!(app.state().node.listing(&router), None);
+    assert_eq!(app.state().node.listing(&repeater), None);
     assert_eq!(focus(app.state()), Some(keys::NEIGHBORS_REFRESH));
     run(&mut app, &[Input::Press]);
     assert_eq!(
@@ -5358,8 +5358,8 @@ fn add_hop_reads_this_devices_own_list_and_finishes_beside_the_peer() {
     let store = store();
     let mut app = app!(store);
     add_hop_to(&mut app, "Pat Okafor");
-    let (router, _, _) = shown_pick(app.state());
-    assert_eq!(router, app.state().node.address().as_str());
+    let (repeater, _, _) = shown_pick(app.state());
+    assert_eq!(repeater, app.state().node.address().as_str());
     answer(&mut app, store);
     // Pat is heard here: pinned to the top, where focus lands.
     let (_, _, rows) = shown_pick(app.state());
@@ -5377,7 +5377,7 @@ fn add_hop_reads_this_devices_own_list_and_finishes_beside_the_peer() {
     answer(&mut app, store);
     turn_to(&mut app, keys::neighbor(0));
     run(&mut app, &[Input::Press]);
-    let (router, _, _) = shown_pick(app.state());
+    let (repeater, _, _) = shown_pick(app.state());
     let hops = app.state().pick_draft().unwrap().hints().to_vec();
     assert_eq!(hops.len(), 1);
     assert_eq!(
@@ -5385,7 +5385,7 @@ fn add_hop_reads_this_devices_own_list_and_finishes_beside_the_peer() {
         "Riverbend Camp"
     );
     assert_eq!(
-        app.state().node.known_member(&router).unwrap().sender.name,
+        app.state().node.known_member(&repeater).unwrap().sender.name,
         "Riverbend Camp"
     );
 }
@@ -5422,10 +5422,10 @@ fn typing_in_add_hop_narrows_it_and_offers_the_hints_it_fixes() {
     assert_eq!(focus(app.state()), Some(keys::PICK_FIELD));
     turn_to(&mut app, keys::hint_read(hex));
     run(&mut app, &[Input::Press]);
-    let (router, find, _) = shown_pick(app.state());
+    let (repeater, find, _) = shown_pick(app.state());
     assert_eq!(app.state().pick_draft().unwrap().hints(), &[[0x4b, 0x21]]);
     // Known by its hint alone, the next hop has nobody to ask.
-    assert_eq!((router.as_str(), find.as_str()), ("", ""));
+    assert_eq!((repeater.as_str(), find.as_str()), ("", ""));
 }
 
 #[test]

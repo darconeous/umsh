@@ -46,7 +46,7 @@ use crate::reply_completion::ReplyCompletion;
 ///   3  destination node hint
 ///   3  source node hint
 ///   5  SECINFO: SCF and the frame counter
-///  32  a source route of up to 15 router hints, with its option header
+///  32  a source route of up to 15 repeater hints, with its option header
 ///   3  region code
 ///   1  trace route
 ///   1  end-of-options marker

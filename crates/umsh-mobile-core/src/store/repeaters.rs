@@ -1,6 +1,6 @@
-//! What routers have reported about their neighbors: per router, a
+//! What repeaters have reported about their neighbors: per repeater, a
 //! listing header (`node_peer_repeaters`) and its entries
-//! (`node_peer_repeater_entry`), both hung from the router's `node` row and
+//! (`node_peer_repeater_entry`), both hung from the repeater's `node` row and
 //! gone with it.
 
 use rusqlite::{Connection, OptionalExtension, params};
@@ -8,7 +8,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use super::peers::node_id;
 use super::{MobileAppStore, MobileStoreError, clamp};
 
-/// One neighbor a router reported, as the page carried it.
+/// One neighbor a repeater reported, as the page carried it.
 ///
 /// Stored decoded rather than as the wire entry: the fields are few and
 /// fixed, the map reads them without a decoder in the loop, and the location
@@ -16,7 +16,7 @@ use super::{MobileAppStore, MobileStoreError, clamp};
 /// Instants are Unix milliseconds.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct MobileStoredPeerRepeaterEntryRecord {
-    /// Two or three bytes; the row's key within the router's listing.
+    /// Two or three bytes; the row's key within the repeater's listing.
     pub hint: Vec<u8>,
     pub name: Option<String>,
     pub rssi_dbm: Option<i16>,
@@ -31,22 +31,22 @@ pub struct MobileStoredPeerRepeaterEntryRecord {
     pub reported_at_ms: i64,
 }
 
-/// A neighbor entry with the row of the router that reported it.
+/// A neighbor entry with the row of the repeater that reported it.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct MobileStoredPeerRepeaterReportRecord {
-    /// The reporting router's `node` row ID.
+    /// The reporting repeater's `node` row ID.
     pub reporter_node_id: i64,
     pub entry: MobileStoredPeerRepeaterEntryRecord,
 }
 
-/// What a router last said about its neighbors, as far as this phone asked.
+/// What a repeater last said about its neighbors, as far as this phone asked.
 ///
 /// The cursor is kept so the next open can carry on where the last page
 /// stopped rather than starting the listing over: the ask is the operator's
 /// to make, and the cache should make it cheap to make the right one.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct MobileStoredPeerRepeaterListingRecord {
-    /// In the order the router listed them.
+    /// In the order the repeater listed them.
     pub entries: Vec<MobileStoredPeerRepeaterEntryRecord>,
     /// How many neighbors the whole listing holds, when a page said.
     pub total: Option<i64>,
@@ -59,8 +59,8 @@ pub struct MobileStoredPeerRepeaterListingRecord {
 
 #[uniffi::export]
 impl MobileAppStore {
-    /// Every neighbor any router has reported to this phone, with the row
-    /// of the router that said so, by router and then in listing order.
+    /// Every neighbor any repeater has reported to this phone, with the row
+    /// of the repeater that said so, by repeater and then in listing order.
     /// What the map draws.
     pub fn all_peer_repeater_entries(
         &self,
@@ -69,8 +69,8 @@ impl MobileAppStore {
         all_peer_repeater_entries(&self.connection(), &owner_identity_id)
     }
 
-    /// What a router last said about its neighbors, or `None` when it was
-    /// never asked. Entries come back in the order the router listed them.
+    /// What a repeater last said about its neighbors, or `None` when it was
+    /// never asked. Entries come back in the order the repeater listed them.
     /// The header and the entries are read in one transaction, so a page
     /// saved meanwhile cannot pair one page's cursor with another's entries.
     pub fn peer_repeater_listing(
@@ -120,15 +120,15 @@ impl MobileAppStore {
         })
     }
 
-    /// Record one page of a router's neighbor listing, answered at `at_ms`.
+    /// Record one page of a repeater's neighbor listing, answered at `at_ms`.
     ///
     /// A page asked for without a cursor (`replacing`) is the top of a fresh
     /// listing and replaces whatever was held. A page that followed a cursor
     /// is added to it: new neighbors take their place at the end, and a
-    /// neighbor the router named again—the responder restarts a listing
+    /// neighbor the repeater named again—the responder restarts a listing
     /// whose table has moved under a stale cursor—updates in place rather
     /// than appearing twice. Either way the total, the cursor, and the
-    /// instant are the latest page's. A router with no row has nowhere to
+    /// instant are the latest page's. A repeater with no row has nowhere to
     /// keep the page, and the call does nothing.
     ///
     /// Stored as the Swift store wrote it: region codes back to back, with

@@ -153,7 +153,7 @@ fn asymmetric_shortcut_completes_first_exchange_and_subsequent_bidirectional_sen
                 .with_flood_hops(2);
             if forced_route && round == 0 {
                 options = options
-                    .try_with_source_route(&[scenario.keys[1].router_hint()])
+                    .try_with_source_route(&[scenario.keys[1].repeater_hint()])
                     .unwrap();
             }
             // Dummy XOR crypto does not diffuse counter changes into the
@@ -220,7 +220,7 @@ fn asymmetric_shortcut_completes_first_exchange_and_subsequent_bidirectional_sen
                         .unwrap()
                         .1
                         .route,
-                    CachedRoute::source(&[scenario.keys[1].router_hint()]),
+                    CachedRoute::source(&[scenario.keys[1].repeater_hint()]),
                     "the ACK must replace the provisional direct observation"
                 );
             }
@@ -249,10 +249,10 @@ fn unconsumed_copy_teaches_whole_route_and_consumed_duplicate_gets_first_ack() {
         .identity()
         .public_key()
         .hint();
-    let original = CachedRoute::source(&[RouterHint([4, 5])]).unwrap();
+    let original = CachedRoute::source(&[RepeaterHint([4, 5])]).unwrap();
     mac.peer_registry_mut()
         .update_route(peer_id, original.clone());
-    let route = [RouterHint([6, 7])];
+    let route = [RepeaterHint([6, 7])];
     let mut delivered = 0;
     for consumed in [false, true, true] {
         mac.radio_mut().queue_received_unicast_with_route(
@@ -314,7 +314,7 @@ fn blind_unicast_also_acks_first_consumed_copy() {
         .identity()
         .public_key()
         .hint();
-    let route = [RouterHint([6, 7])];
+    let route = [RepeaterHint([6, 7])];
     let mut delivered = 0;
     for consumed in [false, true, true] {
         mac.radio_mut().queue_received_blind_unicast_with_route(
@@ -424,7 +424,7 @@ fn route_failure_recovery_and_passive_learning_holdoff() {
     mac.peer_registry_mut()
         .offer_route(peer_id, scored(CachedRoute::Direct, -10), now + 1);
     assert!(mac.peer_registry().get(peer_id).unwrap().route.is_none());
-    let alternate = CachedRoute::source(&[RouterHint([1, 2])]).unwrap();
+    let alternate = CachedRoute::source(&[RepeaterHint([1, 2])]).unwrap();
     mac.peer_registry_mut()
         .offer_route(peer_id, scored(alternate.clone(), -60), now + 2);
     expire_attempt(&mut mac, local_id, receipt);
@@ -452,7 +452,7 @@ fn old_timeout_preserves_replacement_and_newer_success_of_same_route() {
             .unwrap()
             .unwrap();
         let expected = if replace {
-            let route = CachedRoute::source(&[RouterHint([1, 2])]).unwrap();
+            let route = CachedRoute::source(&[RepeaterHint([1, 2])]).unwrap();
             mac.peer_registry_mut().update_route(peer_id, route.clone());
             route
         } else {
@@ -485,7 +485,7 @@ fn explicit_route_failure_does_not_invalidate_cache_and_no_flood_stays_disabled(
             .update_route(peer_id, CachedRoute::Direct);
         let mut options = SendOptions::default()
             .with_ack_requested(true)
-            .try_with_source_route(&[RouterHint([1, 2])])
+            .try_with_source_route(&[RepeaterHint([1, 2])])
             .unwrap();
         if !flood {
             options = options.no_flood();
@@ -524,7 +524,7 @@ fn direct_optional_backstop_does_not_retransmit_ack_or_non_ack_data() {
 #[test]
 fn matching_ack_preserves_current_outbound_route_despite_different_return_trace() {
     let (mut mac, local_id, key, peer_id) = mac_with_keyed_peer();
-    let route = CachedRoute::source(&[RouterHint([1, 2])]).unwrap();
+    let route = CachedRoute::source(&[RepeaterHint([1, 2])]).unwrap();
     mac.peer_registry_mut().update_route(peer_id, route.clone());
     let receipt = mac
         .queue_unicast(
@@ -537,7 +537,7 @@ fn matching_ack_preserves_current_outbound_route_despite_different_return_trace(
         .unwrap();
     let ack = mac.ack_trailer_for_test(local_id, &receipt);
     mac.radio_mut()
-        .queue_received_mac_ack_with_trace(ack, &[RouterHint([3, 4])]);
+        .queue_received_mac_ack_with_trace(ack, &[RepeaterHint([3, 4])]);
     block_on(mac.receive_one(|_, _| {})).unwrap();
     assert_eq!(mac.peer_registry().get(peer_id).unwrap().route, Some(route));
 }
@@ -562,7 +562,7 @@ fn ack_trace_upgrades_direct_observations_and_next_send_names_the_repeater() {
                 .unwrap();
             mac.tx_queue_mut().pop_next().unwrap();
             let ack = mac.ack_trailer_for_test(local_id, &receipt);
-            let route = [RouterHint([3, 4]), RouterHint([5, 6])];
+            let route = [RepeaterHint([3, 4]), RepeaterHint([5, 6])];
             mac.radio_mut()
                 .queue_received_mac_ack_with_trace(ack, &route);
             block_on(mac.receive_one(|_, _| {})).unwrap();
@@ -596,11 +596,11 @@ fn older_ack_cannot_replace_a_newer_routed_path() {
         .unwrap()
         .unwrap();
     let ack = mac.ack_trailer_for_test(local_id, &receipt);
-    let replacement = CachedRoute::source(&[RouterHint([1, 2])]).unwrap();
+    let replacement = CachedRoute::source(&[RepeaterHint([1, 2])]).unwrap();
     mac.peer_registry_mut()
         .update_route(peer_id, replacement.clone());
     mac.radio_mut()
-        .queue_received_mac_ack_with_trace(ack, &[RouterHint([3, 4])]);
+        .queue_received_mac_ack_with_trace(ack, &[RepeaterHint([3, 4])]);
     block_on(mac.receive_one(|_, _| {})).unwrap();
     assert_eq!(
         mac.peer_registry().get(peer_id).unwrap().route,
@@ -656,7 +656,7 @@ fn host_source_route_ack_tail_preserves_received_regions() {
 #[test]
 fn terminal_failure_of_cached_source_route_respects_no_flood() {
     let (mut mac, local_id, key, peer_id) = mac_with_keyed_peer();
-    let route = CachedRoute::source(&[RouterHint([1, 2])]).unwrap();
+    let route = CachedRoute::source(&[RepeaterHint([1, 2])]).unwrap();
     mac.peer_registry_mut().update_route(peer_id, route.clone());
     let receipt = mac
         .queue_unicast(
@@ -719,7 +719,7 @@ fn consumed_source_route_without_usable_trace_uses_broader_ack_fallback() {
         Some(CachedRoute::Direct),
         CachedRoute::flood(0, &[]),
         CachedRoute::flood(2, &[]),
-        CachedRoute::source(&[RouterHint([3, 4])]),
+        CachedRoute::source(&[RepeaterHint([3, 4])]),
     ] {
         for accumulated in [0, 6, 15] {
             // No trace; a malformed one; a truncated one, which names no
@@ -812,9 +812,9 @@ fn a_later_copy_of_a_reply_teaches_no_route() {
         .public_key()
         .hint();
     let (a, b, c) = (
-        RouterHint([0xA1, 0xA2]),
-        RouterHint([0xB1, 0xB2]),
-        RouterHint([0xC1, 0xC2]),
+        RepeaterHint([0xA1, 0xA2]),
+        RepeaterHint([0xB1, 0xB2]),
+        RepeaterHint([0xC1, 0xC2]),
     );
 
     // Barely: A heard at -12 dB here, and A heard the peer at -14 dB.
@@ -858,7 +858,7 @@ fn a_stale_duplicate_teaches_nothing() {
         .identity()
         .public_key()
         .hint();
-    let (a, b) = (RouterHint([0xA1, 0xA2]), RouterHint([0xB1, 0xB2]));
+    let (a, b) = (RepeaterHint([0xA1, 0xA2]), RepeaterHint([0xB1, 0xB2]));
     mac.radio_mut().rx_snr = Snr::from_decibels(-12);
     mac.radio_mut()
         .queue_received_traced_unicast(&remote, &reply_keys(), &dst, 7, &[a], &[-140]);
@@ -882,7 +882,7 @@ fn a_flood_distance_never_displaces_a_path() {
         acknowledgment: false,
         last_hop: None,
     };
-    let path = CachedRoute::source(&[RouterHint([1, 2])]).unwrap();
+    let path = CachedRoute::source(&[RepeaterHint([1, 2])]).unwrap();
     let registry = mac.peer_registry_mut();
     registry.offer_route(peer_id, flood.clone(), 1);
     assert_eq!(
@@ -904,8 +904,8 @@ fn a_flood_distance_never_displaces_a_path() {
 #[test]
 fn an_acknowledged_route_takes_a_larger_margin_to_displace() {
     let (mut mac, _, key, peer_id) = mac_with_keyed_peer();
-    let held = CachedRoute::source(&[RouterHint([1, 2])]).unwrap();
-    let better = CachedRoute::source(&[RouterHint([3, 4])]).unwrap();
+    let held = CachedRoute::source(&[RepeaterHint([1, 2])]).unwrap();
+    let better = CachedRoute::source(&[RepeaterHint([3, 4])]).unwrap();
     let registry = mac.peer_registry_mut();
     registry.offer_route(peer_id, scored(held.clone(), -200), 1);
     let revision = registry.get(peer_id).unwrap().route_revision;
@@ -937,7 +937,7 @@ fn a_later_copy_of_a_completed_ack_teaches_no_route() {
         .unwrap();
     mac.tx_queue_mut().pop_next().unwrap();
     let ack = mac.ack_trailer_for_test(local_id, &receipt);
-    let (a, b) = (RouterHint([0xA1, 0xA2]), RouterHint([0xB1, 0xB2]));
+    let (a, b) = (RepeaterHint([0xA1, 0xA2]), RepeaterHint([0xB1, 0xB2]));
     let mut acknowledged = 0;
 
     mac.radio_mut().rx_snr = Snr::from_decibels(-12);
@@ -995,7 +995,7 @@ fn discovery_sends_and_their_acks_carry_a_trace_with_signal() {
 
 /// Carry `frame` through a repeater with identity `seed` that heard it at
 /// `snr`, returning what the repeater forwards and the repeater's hint.
-fn forward_through(frame: &[u8], seed: u8, snr: Snr) -> (heapless::Vec<u8, 256>, RouterHint) {
+fn forward_through(frame: &[u8], seed: u8, snr: Snr) -> (heapless::Vec<u8, 256>, RepeaterHint) {
     let mut repeater = make_mac();
     repeater.repeater_config_mut().mode = crate::RepeaterMode::On;
     repeater.radio_mut().rx_rssi = -90;
@@ -1008,7 +1008,7 @@ fn forward_through(frame: &[u8], seed: u8, snr: Snr) -> (heapless::Vec<u8, 256>,
         .unwrap()
         .identity()
         .public_key()
-        .router_hint();
+        .repeater_hint();
     repeater.radio_mut().queue_received_frame(frame);
     block_on(repeater.receive_one(|_, _| {})).unwrap();
     let forwarded = repeater
@@ -1023,7 +1023,7 @@ fn forward_through(frame: &[u8], seed: u8, snr: Snr) -> (heapless::Vec<u8, 256>,
 /// and Y hear us at all.
 fn route_after_replies(
     with_uplink_evidence: bool,
-) -> (Option<CachedRoute>, RouterHint, RouterHint) {
+) -> (Option<CachedRoute>, RepeaterHint, RepeaterHint) {
     let (mut mac, local_id, key, peer_id) = mac_with_keyed_peer();
     let remote = DummyIdentity::new([0xAB; 32]);
     let dst = mac
@@ -1082,7 +1082,7 @@ fn a_repeater_that_does_not_hear_us_is_not_chosen_as_the_first_hop() {
 /// A keyed peer whose route `[1, 2]` is held for `hold_ms`.
 fn held_route_mac(hold_ms: u64) -> (TestMac, LocalIdentityId, PublicKey, PeerId, CachedRoute) {
     let (mut mac, local_id, key, peer_id) = mac_with_keyed_peer();
-    let route = CachedRoute::source(&[RouterHint([1, 2])]).unwrap();
+    let route = CachedRoute::source(&[RepeaterHint([1, 2])]).unwrap();
     let now = mac.clock().now_ms();
     assert!(
         mac.peer_registry_mut()
@@ -1113,7 +1113,7 @@ fn send_awaiting_ack(
 }
 
 /// Receive an ack carrying `trace`, returning its `via_route_retry` flag.
-fn receive_ack(mac: &mut TestMac, ack: [u8; 8], trace: &[RouterHint]) -> Option<bool> {
+fn receive_ack(mac: &mut TestMac, ack: [u8; 8], trace: &[RepeaterHint]) -> Option<bool> {
     mac.radio_mut()
         .queue_received_mac_ack_with_trace(ack, trace);
     let mut via = None;
@@ -1133,8 +1133,8 @@ fn receive_ack(mac: &mut TestMac, ack: [u8; 8], trace: &[RouterHint]) -> Option<
 fn a_held_route_survives_learning_and_keeps_the_best_offer_as_candidate() {
     let (mut mac, _, _, peer_id, route) = held_route_mac(60_000);
     let now = mac.clock().now_ms();
-    let weak = CachedRoute::source(&[RouterHint([3, 4])]).unwrap();
-    let strong = CachedRoute::source(&[RouterHint([5, 6])]).unwrap();
+    let weak = CachedRoute::source(&[RepeaterHint([3, 4])]).unwrap();
+    let strong = CachedRoute::source(&[RepeaterHint([5, 6])]).unwrap();
     let registry = mac.peer_registry_mut();
     registry.offer_route(peer_id, scored(weak.clone(), -200), now);
     registry.offer_route(
@@ -1191,7 +1191,7 @@ fn a_missed_held_route_floods_but_stays_and_counts_the_fallback() {
             .route_retry
     );
 
-    let learned = [RouterHint([7, 8])];
+    let learned = [RepeaterHint([7, 8])];
     assert_eq!(receive_ack(&mut mac, ack, &learned), Some(true));
     let now = mac.clock().now_ms();
     let info = mac.peer_registry().get(peer_id).unwrap();
@@ -1207,7 +1207,7 @@ fn a_missed_held_route_floods_but_stays_and_counts_the_fallback() {
     // resets the count.
     let (_, ack) = send_awaiting_ack(&mut mac, local_id, &key);
     assert_eq!(
-        receive_ack(&mut mac, ack, &[RouterHint([1, 2])]),
+        receive_ack(&mut mac, ack, &[RepeaterHint([1, 2])]),
         Some(false)
     );
     let info = mac.peer_registry().get(peer_id).unwrap();
@@ -1225,7 +1225,7 @@ fn a_missed_held_route_floods_but_stays_and_counts_the_fallback() {
 fn an_expired_hold_leaves_an_ordinary_route() {
     let (mut mac, _, _, peer_id, route) = held_route_mac(1_000);
     let now = mac.clock().now_ms();
-    let measured = CachedRoute::source(&[RouterHint([3, 4])]).unwrap();
+    let measured = CachedRoute::source(&[RepeaterHint([3, 4])]).unwrap();
     mac.peer_registry_mut()
         .offer_route(peer_id, scored(measured.clone(), -50), now + 999);
     assert_eq!(mac.peer_registry().get(peer_id).unwrap().route, Some(route));
@@ -1247,7 +1247,7 @@ fn adopting_or_clearing_ends_the_hold() {
     let (mut mac, _, _, peer_id, route) = held_route_mac(60_000);
     let now = mac.clock().now_ms();
     assert!(!mac.peer_registry_mut().adopt_candidate(peer_id, now));
-    let learned = CachedRoute::source(&[RouterHint([3, 4])]).unwrap();
+    let learned = CachedRoute::source(&[RepeaterHint([3, 4])]).unwrap();
     mac.peer_registry_mut()
         .offer_route(peer_id, scored(learned.clone(), -40), now);
     assert!(mac.peer_registry_mut().adopt_candidate(peer_id, now));
@@ -1266,7 +1266,7 @@ fn adopting_or_clearing_ends_the_hold() {
 
 #[test]
 fn holds_are_bounded_and_follow_their_peer() {
-    let route = CachedRoute::source(&[RouterHint([1, 2])]).unwrap();
+    let route = CachedRoute::source(&[RepeaterHint([1, 2])]).unwrap();
     let mut registry = PeerRegistry::<4, 1>::new();
     let first = registry
         .try_insert_or_update(PublicKey([1; 32]), PeerHolder::Application)
@@ -1301,7 +1301,7 @@ fn holds_are_bounded_and_follow_their_peer() {
 }
 
 /// The flood budget and source route a queued frame carries.
-fn queued_shape(mac: &mut TestMac) -> (Option<u8>, Option<Vec<RouterHint>>) {
+fn queued_shape(mac: &mut TestMac) -> (Option<u8>, Option<Vec<RepeaterHint>>) {
     let frame = mac.tx_queue_mut().pop_next().unwrap().frame;
     let header = PacketHeader::parse(&frame).unwrap();
     let options = ParsedOptions::extract(&frame, header.options_range.clone()).unwrap();
@@ -1312,7 +1312,7 @@ fn queued_shape(mac: &mut TestMac) -> (Option<u8>, Option<Vec<RouterHint>>) {
                 .as_chunks::<2>()
                 .0
                 .iter()
-                .map(|hint| RouterHint(*hint))
+                .map(|hint| RepeaterHint(*hint))
                 .collect::<std::vec::Vec<_>>()
         }),
     )
@@ -1321,7 +1321,7 @@ fn queued_shape(mac: &mut TestMac) -> (Option<u8>, Option<Vec<RouterHint>>) {
 #[test]
 fn a_held_route_floods_its_own_allowance_past_its_end() {
     let (mut mac, local_id, key, peer_id) = mac_with_keyed_peer();
-    let hint = RouterHint([1, 2]);
+    let hint = RepeaterHint([1, 2]);
     let now = mac.clock().now_ms();
     let options = SendOptions::default().with_flood_hops(10);
     assert!(mac.peer_registry_mut().hold_route(
@@ -1375,12 +1375,12 @@ fn last_hop_dbm(mac: &TestMac, peer_id: PeerId) -> Option<i16> {
 #[test]
 fn a_path_through_the_same_last_repeater_refreshes_the_reading_it_does_not_displace() {
     let (mut mac, _, _, peer_id) = mac_with_keyed_peer();
-    let held = CachedRoute::source(&[RouterHint([1, 1]), RouterHint([9, 9])]).unwrap();
+    let held = CachedRoute::source(&[RepeaterHint([1, 1]), RepeaterHint([9, 9])]).unwrap();
     let registry = mac.peer_registry_mut();
     registry.offer_route(peer_id, measured(held.clone(), -50, -100), 1);
     // Far worse, so it stays a reading and not a route, but the peer is
     // heard by the same repeater.
-    let worse = CachedRoute::source(&[RouterHint([2, 2]), RouterHint([9, 9])]).unwrap();
+    let worse = CachedRoute::source(&[RepeaterHint([2, 2]), RepeaterHint([9, 9])]).unwrap();
     registry.offer_route(peer_id, measured(worse, -900, -60), 2);
     assert_eq!(mac.peer_registry().get(peer_id).unwrap().route, Some(held));
     assert_eq!(last_hop_dbm(&mac, peer_id), Some(-60));
@@ -1389,10 +1389,10 @@ fn a_path_through_the_same_last_repeater_refreshes_the_reading_it_does_not_displ
 #[test]
 fn a_path_ending_elsewhere_leaves_the_reading_alone() {
     let (mut mac, _, _, peer_id) = mac_with_keyed_peer();
-    let held = CachedRoute::source(&[RouterHint([1, 1]), RouterHint([9, 9])]).unwrap();
+    let held = CachedRoute::source(&[RepeaterHint([1, 1]), RepeaterHint([9, 9])]).unwrap();
     let registry = mac.peer_registry_mut();
     registry.offer_route(peer_id, measured(held, -50, -100), 1);
-    let elsewhere = CachedRoute::source(&[RouterHint([1, 1]), RouterHint([8, 8])]).unwrap();
+    let elsewhere = CachedRoute::source(&[RepeaterHint([1, 1]), RepeaterHint([8, 8])]).unwrap();
     registry.offer_route(peer_id, measured(elsewhere, -900, -60), 2);
     assert_eq!(last_hop_dbm(&mac, peer_id), Some(-100));
 }
@@ -1400,7 +1400,7 @@ fn a_path_ending_elsewhere_leaves_the_reading_alone() {
 #[test]
 fn an_offer_that_measured_nothing_keeps_the_last_reading() {
     let (mut mac, _, _, peer_id) = mac_with_keyed_peer();
-    let held = CachedRoute::source(&[RouterHint([9, 9])]).unwrap();
+    let held = CachedRoute::source(&[RepeaterHint([9, 9])]).unwrap();
     let registry = mac.peer_registry_mut();
     registry.offer_route(peer_id, measured(held.clone(), -50, -100), 1);
     registry.offer_route(peer_id, scored(held, -50), 2);
@@ -1411,9 +1411,9 @@ fn an_offer_that_measured_nothing_keeps_the_last_reading() {
 fn a_route_that_takes_over_brings_its_own_reading_or_none() {
     let (mut mac, _, _, peer_id) = mac_with_keyed_peer();
     let registry = mac.peer_registry_mut();
-    let first = CachedRoute::source(&[RouterHint([9, 9])]).unwrap();
+    let first = CachedRoute::source(&[RepeaterHint([9, 9])]).unwrap();
     registry.offer_route(peer_id, measured(first, -500, -100), 1);
-    let better = CachedRoute::source(&[RouterHint([8, 8])]).unwrap();
+    let better = CachedRoute::source(&[RepeaterHint([8, 8])]).unwrap();
     registry.offer_route(peer_id, scored(better.clone(), -10), 2);
     let info = mac.peer_registry().get(peer_id).unwrap();
     assert_eq!(info.route, Some(better));
@@ -1435,7 +1435,7 @@ fn a_restored_route_has_no_reading_and_was_not_chosen_by_hand() {
 fn a_held_route_spends_only_its_allowance_until_a_learned_route_replaces_it() {
     let (mut mac, local_id, key, peer_id) = mac_with_keyed_peer();
     let now = mac.clock().now_ms();
-    let route = CachedRoute::source(&[RouterHint([1, 2])]).unwrap();
+    let route = CachedRoute::source(&[RepeaterHint([1, 2])]).unwrap();
     assert!(
         mac.peer_registry_mut()
             .hold_route(peer_id, route, 2, now + 1_000, now)
@@ -1460,7 +1460,7 @@ fn a_held_route_spends_only_its_allowance_until_a_learned_route_replaces_it() {
     assert_eq!(send(&mut mac), None);
 
     // A learned route replaces it and earns the slack again.
-    let learned = CachedRoute::source(&[RouterHint([7, 7])]).unwrap();
+    let learned = CachedRoute::source(&[RepeaterHint([7, 7])]).unwrap();
     mac.peer_registry_mut()
         .offer_route(peer_id, scored(learned.clone(), -10), now);
     assert_eq!(
@@ -1501,7 +1501,7 @@ fn an_ack_along_a_held_route_keeps_the_slack_its_evidence_earns() {
 fn an_adopted_candidate_brings_its_reading() {
     let (mut mac, _, _, peer_id, _) = held_route_mac(600_000);
     let now = mac.clock().now_ms();
-    let learned = CachedRoute::source(&[RouterHint([7, 7])]).unwrap();
+    let learned = CachedRoute::source(&[RepeaterHint([7, 7])]).unwrap();
     let registry = mac.peer_registry_mut();
     registry.offer_route(peer_id, measured(learned.clone(), -10, -60), now);
     assert!(registry.adopt_candidate(peer_id, now));
@@ -1671,8 +1671,8 @@ fn queue_request_copy(
     mac: &mut TestMac,
     remote: &DummyIdentity,
     accumulated: u8,
-    trace: Option<&[RouterHint]>,
-    source_route: Option<&[RouterHint]>,
+    trace: Option<&[RepeaterHint]>,
+    source_route: Option<&[RepeaterHint]>,
     route_retry: bool,
 ) {
     queue_request(
@@ -1693,8 +1693,8 @@ fn queue_request(
     remote: &DummyIdentity,
     counter: u32,
     accumulated: u8,
-    trace: Option<&[RouterHint]>,
-    source_route: Option<&[RouterHint]>,
+    trace: Option<&[RepeaterHint]>,
+    source_route: Option<&[RepeaterHint]>,
     route_retry: bool,
 ) {
     let dst = mac
@@ -1756,7 +1756,7 @@ fn receive_counting(mac: &mut TestMac) -> usize {
 #[derive(Debug, PartialEq, Eq)]
 struct AckShape {
     flood_hops: Option<u8>,
-    source_route: Option<Vec<RouterHint>>,
+    source_route: Option<Vec<RepeaterHint>>,
     traced: bool,
     route_retry: bool,
     regions: Vec<[u8; 2]>,
@@ -1781,7 +1781,7 @@ fn queued_ack_shape(mac: &mut TestMac) -> AckShape {
                 .as_chunks::<2>()
                 .0
                 .iter()
-                .map(|hint| RouterHint(*hint))
+                .map(|hint| RepeaterHint(*hint))
                 .collect()
         }),
         traced: trace.is_some(),
@@ -1799,8 +1799,8 @@ const LATE_MS: u64 = 60_000;
 /// needs, but it retires nothing: the route stays, held in doubt.
 #[test]
 fn a_route_retry_of_an_acked_request_reacks_by_scoped_flood_and_keeps_the_route() {
-    let dead = [RouterHint([4, 5])];
-    let fresh = [RouterHint([6, 7])];
+    let dead = [RepeaterHint([4, 5])];
+    let fresh = [RepeaterHint([6, 7])];
     // The retry may trace the dead route's own path (a link that works only
     // toward us) or a different one.
     for retry_trace in [dead, fresh] {
@@ -1850,8 +1850,8 @@ fn a_route_retry_of_an_acked_request_reacks_by_scoped_flood_and_keeps_the_route(
 /// frame replaces it.
 #[test]
 fn the_peers_next_frame_replaces_a_route_a_lost_reply_put_in_doubt() {
-    let dead = [RouterHint([4, 5])];
-    let live = [RouterHint([6, 7])];
+    let dead = [RepeaterHint([4, 5])];
+    let live = [RepeaterHint([6, 7])];
     let (mut mac, _, _, peer_id) = mac_with_keyed_peer();
     let remote = DummyIdentity::new([0xAB; 32]);
     // Learned on links no later path will match.
@@ -1891,8 +1891,8 @@ fn the_peers_next_frame_replaces_a_route_a_lost_reply_put_in_doubt() {
 /// route. Any other offer replaces the route, a flood distance included.
 #[test]
 fn doubt_is_settled_by_the_first_offer_or_by_an_acknowledgment() {
-    let held = CachedRoute::source(&[RouterHint([1, 1])]).unwrap();
-    let worse = CachedRoute::source(&[RouterHint([2, 2])]).unwrap();
+    let held = CachedRoute::source(&[RepeaterHint([1, 1])]).unwrap();
+    let worse = CachedRoute::source(&[RepeaterHint([2, 2])]).unwrap();
     let (mut mac, _, key, peer_id) = mac_with_keyed_peer();
     let registry = mac.peer_registry_mut();
     registry.offer_route(peer_id, scored(held.clone(), -50), 1);
@@ -1932,8 +1932,8 @@ fn doubt_is_settled_by_the_first_offer_or_by_an_acknowledgment() {
 /// replaces the route held.
 #[test]
 fn a_route_retry_on_a_new_frame_replaces_the_route() {
-    let held = [RouterHint([4, 5])];
-    let fresh = [RouterHint([6, 7])];
+    let held = [RepeaterHint([4, 5])];
+    let fresh = [RepeaterHint([6, 7])];
     let (mut mac, _, _, peer_id) = mac_with_keyed_peer();
     let remote = DummyIdentity::new([0xAB; 32]);
     mac.peer_registry_mut()
@@ -1950,7 +1950,7 @@ fn a_route_retry_on_a_new_frame_replaces_the_route() {
 fn a_late_plain_retransmission_of_an_acked_request_reacks_along_the_route() {
     let (mut mac, _, _, peer_id) = mac_with_keyed_peer();
     let remote = DummyIdentity::new([0xAB; 32]);
-    let route = [RouterHint([4, 5])];
+    let route = [RepeaterHint([4, 5])];
     mac.peer_registry_mut()
         .update_route(peer_id, CachedRoute::source(&route).unwrap());
     queue_request_copy(&mut mac, &remote, 2, None, None, false);
@@ -1976,7 +1976,7 @@ fn a_late_plain_retransmission_of_an_acked_request_reacks_along_the_route() {
 fn a_route_retry_of_a_request_never_acked_gets_its_first_ack() {
     let (mut mac, _, _, peer_id) = mac_with_keyed_peer();
     let remote = DummyIdentity::new([0xAB; 32]);
-    let route = [RouterHint([6, 7])];
+    let route = [RepeaterHint([6, 7])];
     // Overheard before the last repeater consumed its hint: accepted, and
     // teaching the route, but not ours to acknowledge yet.
     queue_request_copy(&mut mac, &remote, 0, Some(&[]), Some(&route), false);
@@ -2009,11 +2009,11 @@ fn a_lost_reply_floods_the_reack_but_leaves_a_held_route_held() {
     receive_counting(&mut mac);
     assert_eq!(
         queued_ack_shape(&mut mac).source_route,
-        Some(vec![RouterHint([1, 2])])
+        Some(vec![RepeaterHint([1, 2])])
     );
 
     mac.clock().advance_ms(LATE_MS);
-    let fresh = [RouterHint([6, 7])];
+    let fresh = [RepeaterHint([6, 7])];
     queue_request_copy(&mut mac, &remote, 3, Some(&fresh), None, true);
     receive_counting(&mut mac);
     let shape = queued_ack_shape(&mut mac);
@@ -2035,7 +2035,7 @@ fn a_lost_reply_floods_the_reack_but_leaves_a_held_route_held() {
     let now = mac.clock().now_ms();
     assert_eq!(
         mac.peer_registry().get(peer_id).unwrap().route,
-        Some(CachedRoute::source(&[RouterHint([1, 2])]).unwrap())
+        Some(CachedRoute::source(&[RepeaterHint([1, 2])]).unwrap())
     );
     assert!(
         mac.peer_registry()

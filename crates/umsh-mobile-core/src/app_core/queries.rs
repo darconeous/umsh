@@ -112,7 +112,7 @@ impl MobileAppCore {
         Ok(self.store.chat_message_count(owner, conversation_address)?)
     }
 
-    /// What a router last said about its neighbors, or `None` when it was
+    /// What a repeater last said about its neighbors, or `None` when it was
     /// never asked.
     pub fn peer_repeaters(
         &self,

@@ -845,8 +845,8 @@ mod tests {
         assert_eq!(
             pong.route_hints,
             [
-                umsh_core::RouterHint([0xAA, 0x01]),
-                umsh_core::RouterHint([0xBB, 0x02])
+                umsh_core::RepeaterHint([0xAA, 0x01]),
+                umsh_core::RepeaterHint([0xBB, 0x02])
             ]
         );
         assert_eq!(pong.trace_signal.len(), 2);
@@ -2878,7 +2878,7 @@ mod tests {
         test_broadcast_packet_with_trace(from, flood_hops, route, None)
     }
 
-    /// As above, plus an accumulated trace of router hints (carried as a
+    /// As above, plus an accumulated trace of repeater hints (carried as a
     /// hints-only trace)—what a steered solicitation looks like once
     /// repeaters have prepended themselves to it.
     #[cfg(feature = "software-crypto")]
@@ -3024,7 +3024,7 @@ mod tests {
             self.state.borrow().channels.iter().any(|k| k.0 == key.0)
         }
 
-        fn observe(&self, hint: umsh_core::RouterHint, rssi_dbm: i16, snr: umsh_hal::Snr) {
+        fn observe(&self, hint: umsh_core::RepeaterHint, rssi_dbm: i16, snr: umsh_hal::Snr) {
             let mut state = self.state.borrow_mut();
             let last_seen_ms = state.now_ms;
             state.observations.push(umsh_mac::TransmitterObservation {
@@ -3673,12 +3673,12 @@ mod tests {
     }
 
     /// The shape that identifies an intermediate hop: the requester knows only
-    /// the two-byte router hint a route named it by, steers the ask to the hop
+    /// the two-byte repeater hint a route named it by, steers the ask to the hop
     /// before it so it arrives with an empty Route option, and gets an answer
     /// back down the trace the request accumulated on the way.
     #[cfg(feature = "software-crypto")]
     #[test]
-    fn responder_answers_a_router_hint_prefix_and_replies_down_the_trace() {
+    fn responder_answers_a_repeater_hint_prefix_and_replies_down_the_trace() {
         let mac = FakeMac::new(vec![[0x12; 32]]);
         let node = responder_node(&mac);
         let our_key = PublicKey([0x11; 32]);
@@ -3686,9 +3686,9 @@ mod tests {
         node.enable_identity_responder_default(test_profile(our_key));
 
         // Two bytes of our own hint—everything a route reveals about us.
-        let router_hint = &our_key.hint().0[..2];
+        let repeater_hint = &our_key.hint().0[..2];
         let options = crate::mac_command::IdentityRequestBuilder::new()
-            .filter_hint_prefix(router_hint)
+            .filter_hint_prefix(repeater_hint)
             .unwrap()
             .build();
         // Steered here, so the Route option arrived emptied, and traced, so
@@ -3698,14 +3698,14 @@ mod tests {
 
         let plan = node
             .evaluate_identity_request(&steered, requester, &options, 0)
-            .expect("a router-hint prefix selects the node it names");
+            .expect("a repeater-hint prefix selects the node it names");
         block_on_ready(node.send_identity_response(plan));
 
         let unicasts = mac.take_unicasts();
         assert_eq!(unicasts.len(), 1);
         assert_eq!(
             unicasts[0].options.source_route.as_deref(),
-            Some([umsh_core::RouterHint([0x12, 0x34])].as_slice()),
+            Some([umsh_core::RepeaterHint([0x12, 0x34])].as_slice()),
             "the reply retraces the path the question came by"
         );
         assert_eq!(
@@ -3720,13 +3720,13 @@ mod tests {
 
         // A hint that is a prefix of somebody else's is not a prefix of ours.
         let stranger = crate::mac_command::IdentityRequestBuilder::new()
-            .filter_hint_prefix(&[router_hint[0], router_hint[1] ^ 0xFF])
+            .filter_hint_prefix(&[repeater_hint[0], repeater_hint[1] ^ 0xFF])
             .unwrap()
             .build();
         assert!(
             node.evaluate_identity_request(&steered, requester, &stranger, 0)
                 .is_none(),
-            "a prefix naming another router selects nobody here"
+            "a prefix naming another repeater selects nobody here"
         );
     }
 
@@ -3738,7 +3738,7 @@ mod tests {
     fn an_identity_request_is_aimed_and_never_floods() {
         let mac = FakeMac::new(vec![[0x12; 32], [0x13; 32]]);
         let node = responder_node(&mac);
-        let hint = umsh_core::RouterHint([0xA0, 0x9A]);
+        let hint = umsh_core::RepeaterHint([0xA0, 0x9A]);
         let filter = crate::IdentityFilter {
             hint_prefix: Some(&hint.0),
             ..Default::default()
@@ -3762,7 +3762,7 @@ mod tests {
         assert_eq!(options.source_route, None);
         assert!(!options.trace);
 
-        let route = [umsh_core::RouterHint([1, 2])];
+        let route = [umsh_core::RepeaterHint([1, 2])];
         block_on_ready(node.request_identities(&filter, &route)).unwrap();
         let sent = mac.take_broadcasts();
         let [(_, options)] = &sent[..] else {
@@ -4095,8 +4095,8 @@ mod tests {
         assert_eq!(
             route.as_slice(),
             &[
-                umsh_core::RouterHint([0x12, 0x34]),
-                umsh_core::RouterHint([0xAB, 0xCD])
+                umsh_core::RepeaterHint([0x12, 0x34]),
+                umsh_core::RepeaterHint([0xAB, 0xCD])
             ]
         );
         // And still no flood budget: routing it home must not also license
@@ -4143,7 +4143,7 @@ mod tests {
         // requester keeps from it.
         assert_eq!(
             reply.options.source_route.as_deref(),
-            Some([umsh_core::RouterHint([0x12, 0x34])].as_slice())
+            Some([umsh_core::RepeaterHint([0x12, 0x34])].as_slice())
         );
     }
 
@@ -4538,7 +4538,7 @@ mod tests {
             0,
         );
         mac.observe(
-            umsh_core::RouterHint([own.0[0], own.0[1]]),
+            umsh_core::RepeaterHint([own.0[0], own.0[1]]),
             -82,
             umsh_hal::Snr::from_decibels(27),
         );
@@ -4615,13 +4615,13 @@ mod tests {
             0,
         );
         mac.observe(
-            umsh_core::RouterHint([peer.0[0], peer.0[1]]),
+            umsh_core::RepeaterHint([peer.0[0], peer.0[1]]),
             -95,
             umsh_hal::Snr::from_decibels(2),
         );
         // A hop nothing has an identity for still names itself in a trace.
         mac.observe(
-            umsh_core::RouterHint([0x11, 0x22]),
+            umsh_core::RepeaterHint([0x11, 0x22]),
             -70,
             umsh_hal::Snr::from_decibels(-4),
         );
@@ -4658,7 +4658,7 @@ mod tests {
         assert_eq!(
             entries[1].hint(),
             Some(&[0x11, 0x22][..]),
-            "an unclaimed observation is named by its router hint alone"
+            "an unclaimed observation is named by its repeater hint alone"
         );
         assert_eq!(entries[1].name(), None);
         assert_eq!(entries[1].rssi_snr().unwrap().0, -70);
@@ -4838,7 +4838,7 @@ mod tests {
         let (mac, mut host, node, ridge) = host_knowing_ridge();
         mac.state.borrow_mut().now_ms = 30 * 60_000;
         mac.observe(
-            umsh_core::RouterHint([ridge.0[0], ridge.0[1]]),
+            umsh_core::RepeaterHint([ridge.0[0], ridge.0[1]]),
             -80,
             umsh_hal::Snr::from_decibels(3),
         );

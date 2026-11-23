@@ -1,6 +1,6 @@
 //! The option codec and the Trace option a repeater rewrites.
 
-use umsh_core::RouterHint;
+use umsh_core::RepeaterHint;
 use umsh_core::options::{
     HopSignal, OptionDecoder, OptionEncoder, TraceForm, TraceRecord, TraceRef, option_record_len,
 };
@@ -40,7 +40,7 @@ fn round_trip(data: &[u8]) {
 
 fn trace(mut fields: Fields<'_>) {
     let own = TraceRecord {
-        hint: RouterHint([fields.u8(), fields.u8()]),
+        hint: RepeaterHint([fields.u8(), fields.u8()]),
         signal: HopSignal::from_bytes([fields.u8(), fields.u8()]),
     };
     let budget = usize::from(fields.u8());

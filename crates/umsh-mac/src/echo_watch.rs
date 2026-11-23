@@ -21,7 +21,7 @@
 //! A flood with neither says only that someone forwarded it.
 
 use heapless::Vec;
-use umsh_core::{PacketHeader, ParsedOptions, RouterHint};
+use umsh_core::{PacketHeader, ParsedOptions, RepeaterHint};
 
 use crate::{
     LocalIdentityId, MAX_SOURCE_ROUTE_HINTS, cache::DupCacheKey, forward_id, send::SendReceipt,
@@ -41,7 +41,7 @@ pub(crate) struct Echo {
     pub identity_id: LocalIdentityId,
     pub receipt: SendReceipt,
     /// The repeater that transmitted the forward, when the frame names it.
-    pub repeater: Option<RouterHint>,
+    pub repeater: Option<RepeaterHint>,
 }
 
 /// What an overheard frame turned out to be.
@@ -66,7 +66,7 @@ struct EchoWatch {
     receipt: SendReceipt,
     until_ms: u64,
     /// The source route the frame left with, empty for a flood.
-    route: Vec<RouterHint, MAX_SOURCE_ROUTE_HINTS>,
+    route: Vec<RepeaterHint, MAX_SOURCE_ROUTE_HINTS>,
 }
 
 /// A bounded table of frames being listened for.
@@ -117,7 +117,7 @@ impl EchoWatches {
             .and_then(|range| frame.get(range))
         {
             for pair in bytes.as_chunks::<2>().0 {
-                let _ = route.push(RouterHint(*pair));
+                let _ = route.push(RepeaterHint(*pair));
             }
         }
         self.expire(now_ms);
@@ -186,8 +186,8 @@ pub(crate) fn forwarding_repeater(
     header: &PacketHeader,
     options: &ParsedOptions,
     frame: &[u8],
-    route: &[RouterHint],
-) -> Option<RouterHint> {
+    route: &[RepeaterHint],
+) -> Option<RepeaterHint> {
     if let Some(entry) = options
         .trace(frame)
         .and_then(|trace| trace.entries().next())

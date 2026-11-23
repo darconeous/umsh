@@ -66,10 +66,10 @@ struct ComponentGalleryExamples: View {
                 PeerRow(hint: Self.hint, shape: .triangle, title: "Ridge relay", subtitle: "Repeater", showsFavoriteStar: true)
                 PeerRow(hint: Self.purpleHint, shape: .circle, title: "North Ridge Search and Rescue Operations", subtitle: "Chat")
                 PeerRow(hint: nil, shape: .hexagon, title: "Unrecognized key")
-                PeerRow(hint: Self.hint, shape: .hexagon, title: "Hilltop", subtitle: "Position reported by a router") {
+                PeerRow(hint: Self.hint, shape: .hexagon, title: "Hilltop", subtitle: "Position reported by a repeater") {
                     Image(systemName: "antenna.radiowaves.left.and.right")
                         .font(.caption2).foregroundStyle(.secondary)
-                        .accessibilityLabel("Position reported by a router")
+                        .accessibilityLabel("Position reported by a repeater")
                 } trailing: {
                     Text("1.2 km").monospacedDigit()
                 }

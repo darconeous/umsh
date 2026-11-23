@@ -9,7 +9,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use umsh_core::{ChannelTag, NodeHint, PublicKey, RouterHint};
+use umsh_core::{ChannelTag, NodeHint, PublicKey, RepeaterHint};
 use umsh_text::engine::{CompletionStatus, Direction, Presence, StreamCheckpoint};
 use umsh_text::{ConversationKey, MessageType, SenderScope};
 
@@ -373,9 +373,9 @@ fn restore_one(disk: &mut Disk, key: &[u8], record: &[u8]) -> Option<()> {
             let last_heard = input.option(In::u32)?;
             let route = input.option(|input| {
                 let count = input.u8()? as usize;
-                let mut route = heapless::Vec::<RouterHint, ROUTE_MAX>::new();
+                let mut route = heapless::Vec::<RepeaterHint, ROUTE_MAX>::new();
                 for _ in 0..count {
-                    route.push(RouterHint(input.array()?)).ok()?;
+                    route.push(RepeaterHint(input.array()?)).ok()?;
                 }
                 Some(route)
             })?;

@@ -14,7 +14,7 @@ A sender can make a multicast attributable by signing it (the SCF's `D` bit): a 
 
 ## Known Hint Collision Properties
 
-MeshCore originally used 1-byte hints for source, destination, and source-routing addresses, placing the birthday bound at just 16 nodes—far too low for practical networks. UMSH uses 3-byte hints for node addresses and 2-byte hints for router addresses in source routes and traces.
+MeshCore originally used 1-byte hints for source, destination, and source-routing addresses, placing the birthday bound at just 16 nodes—far too low for practical networks. UMSH uses 3-byte hints for node addresses and 2-byte hints for repeater addresses in source routes and traces.
 
 As a concrete example, consider a regional network of approximately 600 active nodes (roughly the scale of the Oregon MeshCore network, concentrated in the Portland area). The probability of at least one collision among all nodes for a given hint size:
 
@@ -32,16 +32,16 @@ A collision costs computation, not reachability. A repeater never takes a hint a
 
 With 3-byte hints the collision probability drops to ~1% even in a 600-node regional network. The only remedy for a collision is for one node to generate a new identity (a new Ed25519 keypair), which for a chat node means all peers must re-learn the new public key. The 3-byte size makes this scenario rare.
 
-### Router hints (2 bytes)
+### Repeater hints (2 bytes)
 
-Router hints are used in source-route and trace options. A router hint collision causes an unintended repeater to forward the packet; MIC-based duplicate suppression ensures each repeater forwards a given packet at most once, so collisions add traffic but not loops or incorrect delivery.
+Repeater hints are used in source-route and trace options. A repeater hint collision causes an unintended repeater to forward the packet; MIC-based duplicate suppression ensures each repeater forwards a given packet at most once, so collisions add traffic but not loops or incorrect delivery.
 
 Source routing is an inherently local operation—only repeaters within radio range of the transmitting node can act on the hint. For a local population of ~50 repeaters:
 
 - 1-byte hints: ~46% collision probability
 - 2-byte hints: ~1.9% collision probability
 
-2-byte router hints reduce the collision probability by roughly 24× relative to 1-byte hints for typical deployments, at a cost of 1 extra byte per hop in source-route and trace options.
+2-byte repeater hints reduce the collision probability by roughly 24× relative to 1-byte hints for typical deployments, at a cost of 1 extra byte per hop in source-route and trace options.
 
 ## Open Issues
 

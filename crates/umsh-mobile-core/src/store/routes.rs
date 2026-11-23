@@ -1,7 +1,7 @@
 //! Paths the person chose for a node (`node_manual_route`), each held until
 //! an instant and hung from the node's row.
 //!
-//! A path's router hints are fixed-width and ordered, so they store as one
+//! A path's repeater hints are fixed-width and ordered, so they store as one
 //! blob of the hints back to back rather than as a table of their own. A
 //! direct path is an empty blob, never NULL.
 
@@ -10,7 +10,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use super::peers::node_id;
 use super::{MobileAppStore, MobileStoreError, clamp};
 
-/// The width of one router hint in a stored path.
+/// The width of one repeater hint in a stored path.
 const HINT_WIDTH: usize = 2;
 
 /// A path the person chose for one node, held until `hold_until_ms`.
@@ -19,7 +19,7 @@ const HINT_WIDTH: usize = 2;
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct MobileStoredManualRouteRecord {
     pub public_address: String,
-    /// Two-byte router hints, in send order. None is a direct path.
+    /// Two-byte repeater hints, in send order. None is a direct path.
     pub hints: Vec<Vec<u8>>,
     /// How far the path floods past its last repeater.
     pub flood_hops: u8,

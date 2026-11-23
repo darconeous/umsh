@@ -82,7 +82,7 @@ ellipsis, suffix, or hexadecimal abbreviations.
   encode the hint padded once with `0x00` and once with `0xFF`; use four
   characters when both encodings agree, otherwise use their two- or
   three-character common prefix followed by `*`.
-- A two-byte router hint uses the same process with a three-character budget and
+- A two-byte repeater hint uses the same process with a three-character budget and
   30 padding bytes. The common result is two verified characters plus `*`.
 - `*` means the following Base58 digit is not determined by the available hint;
   it is not a wildcard entered by the user.
@@ -91,7 +91,7 @@ If a compact screen knows the complete key but cannot fit 44 characters, use a
 name such as **Unnamed node** and move the complete address to the subtitle,
 detail, or disclosure view. Do not manufacture a shorter key display. When only
 a hint is actually available, the canonical rendered hint may be used as the
-identifier and must be labeled **Node hint** or **Router hint**.
+identifier and must be labeled **Node hint** or **Repeater hint**.
 
 Channel keys are also encoded as complete Base58 values when revealed. A
 channel screen may keep the shared key concealed behind **Show channel key**,

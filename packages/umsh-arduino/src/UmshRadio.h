@@ -53,7 +53,7 @@ public:
   bool hasSnr() const { return hasSnr_; }
   // Centibels.
   int16_t snr() const { return snr_; }
-  // The router hints of the path it came by, nearest repeater first, two
+  // The repeater hints of the path it came by, nearest repeater first, two
   // octets each, or null. A reply can send them back as its source route.
   const uint8_t* trace() const { return trace_; }
   uint8_t traceHints() const { return traceHints_; }
@@ -119,7 +119,7 @@ struct UmshSendOptions {
   bool sign;
   // The flood budget, 0 to 15; -1 for the radio's default.
   int8_t floodHops;
-  // A source route: `routeHints` router hints of two octets each, next
+  // A source route: `routeHints` repeater hints of two octets each, next
   // repeater first. Null for the route the radio has learned.
   const uint8_t* route;
   uint8_t routeHints;

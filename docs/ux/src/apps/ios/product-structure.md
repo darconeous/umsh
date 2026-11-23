@@ -551,14 +551,14 @@ with **Finish Here**, which ends the path. Choosing any other row appends it
 and advances to the next hop with that node's neighbors. **Done** returns to
 the editor with every hop added so far.
 
-**Router hint entry.** **Enter Router Hint…** pushes a field with a
+**Repeater hint entry.** **Enter Repeater Hint…** pushes a field with a
 **Base58 Prefix | Hex** segmented control. The control is explicit because a
 string such as `a1b2` is valid in both alphabets. A Base58 prefix needs at
 least four characters, since three cannot fix sixteen bits. A hex hint is
 exactly four digits. A complete pasted address resolves to the node. Below the
-field, the canonical **Router hint** rendering, the hex value, and any known
+field, the canonical **Repeater hint** rendering, the hex value, and any known
 node that matches are shown, with **Add** in the navigation bar. When a
-four-character prefix spans two router hints (about 2% of prefixes), both are
+four-character prefix spans two repeater hints (about 2% of prefixes), both are
 listed, each with its known node or **Unknown node**, and **Add** waits until
 the person picks one or types another character.
 

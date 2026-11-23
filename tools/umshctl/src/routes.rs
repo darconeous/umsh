@@ -19,7 +19,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, Result};
 
-use umsh::core::{PublicKey, RouterHint};
+use umsh::core::{PublicKey, RepeaterHint};
 use umsh::mac::CachedRoute;
 
 use crate::connection;
@@ -314,9 +314,9 @@ fn parse_line(line: &str) -> Option<([u8; 32], RouteRecord)> {
     let route = match fields.next()? {
         "direct" => CachedRoute::Direct,
         "source" => {
-            let hints: Vec<RouterHint> = parse_pairs(fields.next()?)?
+            let hints: Vec<RepeaterHint> = parse_pairs(fields.next()?)?
                 .into_iter()
-                .map(RouterHint)
+                .map(RepeaterHint)
                 .collect();
             // A route longer than a packet can carry is not one to
             // truncate into something that goes somewhere else.
@@ -453,7 +453,7 @@ mod tests {
     #[test]
     fn every_route_shape_survives_the_round_trip() {
         let source =
-            CachedRoute::source(&[RouterHint([0xA1, 0xB2]), RouterHint([0xC3, 0xD4])]).unwrap();
+            CachedRoute::source(&[RepeaterHint([0xA1, 0xB2]), RepeaterHint([0xC3, 0xD4])]).unwrap();
         let flood = CachedRoute::flood(5, &[[0x68, 0xAC], [0x9B, 0x21]]).unwrap();
         let cache = cache_of(&[
             (key(1), record(CachedRoute::Direct, Duration::from_secs(10))),
@@ -543,7 +543,7 @@ mod tests {
     /// invocation's file.
     #[test]
     fn a_peer_the_mac_holds_no_route_for_keeps_its_cached_route() {
-        let source = CachedRoute::source(&[RouterHint([0xA1, 0xB2])]).unwrap();
+        let source = CachedRoute::source(&[RepeaterHint([0xA1, 0xB2])]).unwrap();
         let mut cache = cache_of(&[(key(24), record(source.clone(), Duration::from_secs(600)))]);
         let before = cache.get(&key(24)).unwrap().learned_at;
 
@@ -587,7 +587,7 @@ mod tests {
         );
         assert_eq!(
             describe(
-                &CachedRoute::source(&[RouterHint([0xA1, 0xB2]), RouterHint([0xC3, 0xD4])])
+                &CachedRoute::source(&[RepeaterHint([0xA1, 0xB2]), RepeaterHint([0xC3, 0xD4])])
                     .unwrap()
             ),
             "via a1b2 > c3d4, 3 hops"

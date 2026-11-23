@@ -99,7 +99,7 @@ the existing protocol crates rather than exposing all of their internal types.
 Rust owns:
 
 - fixed-width Base58 address encoding and parsing;
-- canonical `NodeHint` and router-hint rendering;
+- canonical `NodeHint` and repeater-hint rendering;
 - URI parsing, canonicalization, generation, and validation;
 - packet construction, parsing, encryption, authentication, and signatures;
 - pairwise key derivation and channel-key handling;
@@ -508,7 +508,7 @@ The binding design should begin from application operations rather than Rust
 module boundaries. Candidate operations include:
 
 - create, unlock, lock, and inspect a local identity;
-- render/parse a complete address, node hint, or router hint;
+- render/parse a complete address, node hint, or repeater hint;
 - parse and generate supported UMSH URIs;
 - preview an import without mutating application state;
 - create/join a channel and derive its identifiers;

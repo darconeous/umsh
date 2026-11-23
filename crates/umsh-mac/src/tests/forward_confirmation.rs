@@ -8,10 +8,10 @@ use crate::coordinator::{forward_slots, tracked_forward_slots};
 /// The repeater named after this one in the routes these tests send.
 const NEXT_HOP_SEED: u8 = 0x30;
 
-fn next_hop_hint() -> RouterHint {
+fn next_hop_hint() -> RepeaterHint {
     DummyIdentity::new([NEXT_HOP_SEED; 32])
         .public_key()
-        .router_hint()
+        .repeater_hint()
 }
 
 /// A sealed unicast from a stranger to a stranger, carrying `route`.
@@ -19,7 +19,7 @@ fn routed_unicast(
     payload: &[u8],
     ack_requested: bool,
     flood_hops: Option<(u8, u8)>,
-    route: &[RouterHint],
+    route: &[RepeaterHint],
 ) -> heapless::Vec<u8, 256> {
     build_received_unicast_frame(
         &DummyIdentity::new([0xAB; 32]),

@@ -20,7 +20,7 @@
 //!
 //! - A row whose identity cannot be read (a channel ID that is not a UUID,
 //!   a kind this build does not know) is left out of a list.
-//! - A count with bounds (a hop limit, a signal figure a router reported)
+//! - A count with bounds (a hop limit, a signal figure a repeater reported)
 //!   saturates at them.
 //! - An optional figure or reference (a message's wire coordinates, what
 //!   the radio measured, what a reply answers) reads as absent.
@@ -113,7 +113,7 @@ pub enum MobileStoreError {
     /// The record an update names does not exist.
     RecordNotFound,
     /// An argument is not in the form the store keeps: a channel ID that is
-    /// not a UUID, a router hint that is not two octets.
+    /// not a UUID, a repeater hint that is not two octets.
     InvalidArgument,
     /// SQLite refused an operation, or a row did not read as its columns
     /// are declared.

@@ -5,13 +5,13 @@ struct MeshNodeHint: Hashable, Sendable {
     let text: String
 }
 
-/// Two-byte router hint carried in a learned route, rendered by the Rust core
+/// Two-byte repeater hint carried in a learned route, rendered by the Rust core
 /// with the protocol's canonical ambiguity rules.
-struct MeshRouterHint: Hashable, Sendable {
+struct MeshRepeaterHint: Hashable, Sendable {
     let bytes: Data
     let text: String
 
-    /// Whether this hint could have come from `identity`. A router hint is the
+    /// Whether this hint could have come from `identity`. A repeater hint is the
     /// first two bytes of the node's key, so a match narrows the field but
     /// never proves which node forwarded the frame.
     func matches(_ identity: MeshPublicIdentity) -> Bool {
@@ -20,16 +20,16 @@ struct MeshRouterHint: Hashable, Sendable {
     }
 }
 
-/// How a person wrote a router hint by hand.
-enum RouterHintFormat: Hashable, Sendable, CaseIterable {
+/// How a person wrote a repeater hint by hand.
+enum RepeaterHintFormat: Hashable, Sendable, CaseIterable {
     /// The first four or more characters of the node's address.
     case base58Prefix
     /// The hint itself, as four hexadecimal digits.
     case hex
 }
 
-/// What typed text says about a router hint.
-struct RouterHintInput: Equatable, Sendable {
+/// What typed text says about a repeater hint.
+struct RepeaterHintInput: Equatable, Sendable {
     enum Problem: Equatable, Sendable {
         case tooShort
         case tooLong
@@ -38,10 +38,10 @@ struct RouterHintInput: Equatable, Sendable {
     }
 
     /// One hint, or two when a prefix straddles a hint boundary.
-    let candidates: [MeshRouterHint]
+    let candidates: [MeshRepeaterHint]
     let problem: Problem?
 
-    static let empty = RouterHintInput(candidates: [], problem: .tooShort)
+    static let empty = RepeaterHintInput(candidates: [], problem: .tooShort)
 }
 
 struct MeshPublicIdentity: Hashable, Sendable {
@@ -144,7 +144,7 @@ struct MeshChannelPreview: Equatable, Sendable {
 enum MeshEngineError: Error, Equatable, Sendable {
     case invalidAddress
     case invalidNodeHint
-    case invalidRouterHint
+    case invalidRepeaterHint
     case invalidIdentityData
     case invalidChannelURI
     /// A public channel name fell outside the derivation domain: the
@@ -157,9 +157,9 @@ enum MeshEngineError: Error, Equatable, Sendable {
 }
 
 protocol MeshEngine: Actor {
-    func renderRouterHint(_ bytes: Data) throws -> MeshRouterHint
-    /// Read a router hint typed by a person.
-    func parseRouterHintInput(_ text: String, format: RouterHintFormat) -> RouterHintInput
+    func renderRepeaterHint(_ bytes: Data) throws -> MeshRepeaterHint
+    /// Read a repeater hint typed by a person.
+    func parseRepeaterHintInput(_ text: String, format: RepeaterHintFormat) -> RepeaterHintInput
     func inspectPublicIdentity(_ address: String) throws -> MeshPublicIdentity
     func inspectPeerIdentity(_ input: String) throws -> MeshNodeURIPreview
     func unlockIdentity(secretKey: Data) throws -> MeshPublicIdentity

@@ -5,25 +5,25 @@ actor RustMeshEngine: MeshEngine {
     /// The identity last unlocked, until the app core takes it to start.
     private var localIdentity: MobileIdentity?
 
-    func renderRouterHint(_ bytes: Data) throws -> MeshRouterHint {
+    func renderRepeaterHint(_ bytes: Data) throws -> MeshRepeaterHint {
         do {
-            let record = try UMSHMobileCore.renderRouterHint(bytes: bytes)
-            return MeshRouterHint(bytes: record.bytes, text: record.text)
-        } catch MobileError.InvalidRouterHintLength {
-            throw MeshEngineError.invalidRouterHint
+            let record = try UMSHMobileCore.renderRepeaterHint(bytes: bytes)
+            return MeshRepeaterHint(bytes: record.bytes, text: record.text)
+        } catch MobileError.InvalidRepeaterHintLength {
+            throw MeshEngineError.invalidRepeaterHint
         } catch {
             throw MeshEngineError.coreFailure
         }
     }
 
-    func parseRouterHintInput(_ text: String, format: RouterHintFormat) -> RouterHintInput {
-        let coreFormat: UMSHMobileCore.RouterHintInputFormat = switch format {
+    func parseRepeaterHintInput(_ text: String, format: RepeaterHintFormat) -> RepeaterHintInput {
+        let coreFormat: UMSHMobileCore.RepeaterHintInputFormat = switch format {
         case .base58Prefix: .base58Prefix
         case .hex: .hex
         }
-        let record = UMSHMobileCore.parseRouterHintInput(text: text, format: coreFormat)
-        return RouterHintInput(
-            candidates: record.candidates.map { MeshRouterHint(bytes: $0.bytes, text: $0.text) },
+        let record = UMSHMobileCore.parseRepeaterHintInput(text: text, format: coreFormat)
+        return RepeaterHintInput(
+            candidates: record.candidates.map { MeshRepeaterHint(bytes: $0.bytes, text: $0.text) },
             problem: record.problem.map {
                 switch $0 {
                 case .tooShort: .tooShort
@@ -88,7 +88,7 @@ actor RustMeshEngine: MeshEngine {
         case .InvalidUri: invalidURI
         case .InvalidIdentityData: .invalidIdentityData
         case .InvalidNodeHintLength: .invalidNodeHint
-        case .InvalidRouterHintLength: .invalidRouterHint
+        case .InvalidRepeaterHintLength: .invalidRepeaterHint
         case .InvalidRegionCode: .invalidRegion
         case .ChannelNameNotAscii: .channelNameNotASCII
         case .ChannelNameTooLong: .channelNameTooLong

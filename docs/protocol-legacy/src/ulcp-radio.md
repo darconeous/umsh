@@ -376,10 +376,10 @@ space. Requires `CAP_STATS` and `CAP_MESHCORE_FORWARDER`.
 ### PROP 4850: `PROP_STAT_RX_OWN_HINT` {#prop-stat-rx-own-hint}
 
 Packets received over the air whose [trace](packet-options.md#trace-option-7)
-begins with this device's own router hint. A radio cannot receive its own
+begins with this device's own repeater hint. A radio cannot receive its own
 transmission, so each is a copy of one of this device's repeats retransmitted
 without a hop being added, or a packet repeated by another node sharing this
-device's router hint. Packets received over a point-to-point link or a shared
+device's repeater hint. Packets received over a point-to-point link or a shared
 IP bearer are not counted. None of these names a neighbor, and a device does
 not list itself in a [Peer Repeaters
 Response](mac-commands.md#peer-repeaters-response-11). Requires `CAP_STATS` and
@@ -420,5 +420,5 @@ forwarders](repeater-operation.md#adaptive-forwarding) alike. A device remembers
 not exceed 16.
 
 It is what is so now, not a tally: nothing clears it, and a write is
-refused with `STATUS_INVALID_ARGUMENT`. A router hint in a trace is not
+refused with `STATUS_INVALID_ARGUMENT`. A repeater hint in a trace is not
 authenticated, so the value can be inflated by anyone on the channel.

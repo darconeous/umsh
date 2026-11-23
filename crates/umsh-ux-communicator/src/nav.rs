@@ -93,7 +93,7 @@ pub mod keys {
     const PATH: u32 = 0x2B00_0000;
     const WIFI_ROW: u32 = 0x2E00_0000;
     const LORA_CHOICE_ROW: u32 = 0x2F00_0000;
-    /// Add hop's known repeaters, then the router hints typed text fixes.
+    /// Add hop's known repeaters, then the repeater hints typed text fixes.
     const PICK: u32 = 0x3000_0000;
     const PICK_HINT: u32 = 0x100;
     const PICK_KNOWN: u32 = 0x1_0000;
@@ -409,7 +409,7 @@ pub mod keys {
         FocusKey(RAIL | section as u32)
     }
 
-    /// A repeater a router reports hearing, by its place in the listing.
+    /// A repeater a repeater reports hearing, by its place in the listing.
     #[must_use]
     pub const fn neighbor(index: usize) -> FocusKey {
         FocusKey(NEIGHBOR | (index as u32 & !KIND))
@@ -422,14 +422,14 @@ pub mod keys {
         FocusKey(SHEET | (index as u32 & !KIND))
     }
 
-    /// One of the known repeaters Add hop offers, by its router hint:
+    /// One of the known repeaters Add hop offers, by its repeater hint:
     /// their order changes as they are heard, and focus stays with each.
     #[must_use]
     pub const fn known(hint: [u8; 2]) -> FocusKey {
         FocusKey(PICK | PICK_KNOWN | u16::from_be_bytes(hint) as u32)
     }
 
-    /// One of the router hints typed into Add hop fixes, by its place.
+    /// One of the repeater hints typed into Add hop fixes, by its place.
     #[must_use]
     pub const fn hint_read(index: usize) -> FocusKey {
         FocusKey(PICK | PICK_HINT | (index as u32 & 0xFF))
@@ -807,13 +807,13 @@ pub enum Screen {
         asked: Asked,
         focus: FocusState,
     },
-    /// The repeaters the router at `router` reports hearing, as last read;
+    /// The repeaters the repeater at `repeater` reports hearing, as last read;
     /// or, while `pick` is one, Add hop: what the last hop of the route
     /// being edited beneath reports hearing, to choose the next from. An
-    /// empty `router` is a last hop known only by its hint, which cannot
+    /// empty `repeater` is a last hop known only by its hint, which cannot
     /// be asked.
     Neighbors {
-        router: String<44>,
+        repeater: String<44>,
         pick: Option<AddHop>,
         asked: Asked,
         focus: FocusState,
@@ -925,20 +925,20 @@ pub enum EditRow {
     Save,
 }
 
-/// A row of a router's Neighbors, from the top.
+/// A row of a repeater's Neighbors, from the top.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ListRow {
     /// When the listing was read, or that it never was.
     Read,
     /// The repeater at this place in the listing.
     Neighbor(usize),
-    /// That the router listed nobody, or did not answer.
+    /// That the repeater listed nobody, or did not answer.
     Said,
     More,
     Refresh,
 }
 
-/// The row at `index` of a router's Neighbors, `listing` as last read.
+/// The row at `index` of a repeater's Neighbors, `listing` as last read.
 #[must_use]
 pub fn listing_row(listing: Option<&Listing>, index: usize) -> Option<ListRow> {
     let count = listing.map_or(0, |listing| usize::from(listing.count));
@@ -964,7 +964,7 @@ pub fn listing_row(listing: Option<&Listing>, index: usize) -> Option<ListRow> {
     }
 }
 
-/// How many rows a router's Neighbors has, `listing` as last read.
+/// How many rows a repeater's Neighbors has, `listing` as last read.
 #[must_use]
 pub fn listing_rows(listing: Option<&Listing>) -> usize {
     (0..)
@@ -1000,23 +1000,23 @@ pub enum PickRow {
     Heard,
     /// The repeater at this place in the listing.
     Neighbor(u8),
-    /// That the router listed nobody, or did not answer.
+    /// That the repeater listed nobody, or did not answer.
     Said,
     More,
     Refresh,
     /// The label over the known repeaters.
     Known,
     /// The known repeater at this place of the node's last gathering,
-    /// and its router hint.
+    /// and its repeater hint.
     KnownAt(u8, [u8; 2]),
-    /// The label over the router hints typed text fixes.
+    /// The label over the repeater hints typed text fixes.
     Hints,
     Hint(u8),
 }
 
 /// Add hop's rows, as they stand: the field while text is typed, then what
 /// the last hop reports hearing, the peer first, known repeaters, and the
-/// router hints typed text fixes, each narrowed by what is typed. Past [`SHEET_ROWS`], the last
+/// repeater hints typed text fixes, each narrowed by what is typed. Past [`SHEET_ROWS`], the last
 /// are left out.
 #[derive(Clone)]
 pub struct PickRows {
@@ -3925,17 +3925,17 @@ impl State {
     /// Shows what the node whose page is shown reports hearing, as last
     /// read: opening asks for nothing.
     pub fn open_neighbors(&mut self) {
-        let router = match self.screens.last() {
+        let repeater = match self.screens.last() {
             Some(Screen::Member { member, .. }) => member.address.clone(),
             Some(Screen::Peer { detail, .. }) => Some(detail.address.clone()),
             _ => None,
         };
-        let Some(router) = router else {
+        let Some(repeater) = repeater else {
             return;
         };
         let first = if self
             .node
-            .listing(&router)
+            .listing(&repeater)
             .is_some_and(|listing| listing.count > 0)
         {
             keys::neighbor(0)
@@ -3944,7 +3944,7 @@ impl State {
         };
         self.room_for_screen();
         _ = self.screens.push(Screen::Neighbors {
-            router,
+            repeater,
             pick: None,
             asked: Asked::new(),
             focus: FocusState::requesting(first),
@@ -3967,8 +3967,8 @@ impl State {
                 Some(EditRow::You | EditRow::Peer) | None => {}
             },
             Some(Screen::Neighbors { pick: Some(_), .. }) => self.press_pick(index, key),
-            Some(Screen::Neighbors { router, .. }) => {
-                match listing_row(self.node.listing(router).as_ref(), index) {
+            Some(Screen::Neighbors { repeater, .. }) => {
+                match listing_row(self.node.listing(repeater).as_ref(), index) {
                     Some(ListRow::Neighbor(at)) => self.press_neighbor(at),
                     Some(ListRow::More) => self.more_neighbors(),
                     Some(ListRow::Refresh) => self.refresh_neighbors(),
@@ -3979,19 +3979,19 @@ impl State {
         }
     }
 
-    /// Asks the router shown for the top of what it hears again.
+    /// Asks the repeater shown for the top of what it hears again.
     pub fn refresh_neighbors(&mut self) {
         self.ask_listing(false);
     }
 
-    /// Asks the router shown for the page after the last one held.
+    /// Asks the repeater shown for the page after the last one held.
     pub fn more_neighbors(&mut self) {
         self.ask_listing(true);
     }
 
-    /// Asks the router shown for a page of what it hears, keeping the
+    /// Asks the repeater shown for a page of what it hears, keeping the
     /// listings of every Neighbors screen open. Add hop asks along the
-    /// route being edited, up to the router.
+    /// route being edited, up to the repeater.
     fn ask_listing(&mut self, more: bool) {
         let along: Option<heapless::Vec<[u8; 2], MAX_PATH>> = self.pick_draft().map(|draft| {
             let hints = draft.hints();
@@ -4006,19 +4006,19 @@ impl State {
         {
             pick.landing |= !more;
         }
-        let Some(Screen::Neighbors { router, .. }) = self.screens.last() else {
+        let Some(Screen::Neighbors { repeater, .. }) = self.screens.last() else {
             return;
         };
         let shown: heapless::Vec<&str, MAX_SCREENS> = self
             .screens
             .iter()
             .filter_map(|screen| match screen {
-                Screen::Neighbors { router, .. } => Some(router.as_str()),
+                Screen::Neighbors { repeater, .. } => Some(repeater.as_str()),
                 _ => None,
             })
             .collect();
         self.node
-            .ask_listing(router, more, &shown, along.as_deref());
+            .ask_listing(repeater, more, &shown, along.as_deref());
     }
 
     /// The route being edited beneath Add hop, while it is shown.
@@ -4060,12 +4060,12 @@ impl State {
         let Some(detail) = self.node.peer_detail(peer) else {
             return;
         };
-        let router = match draft.hints().last() {
+        let repeater = match draft.hints().last() {
             Some(&hint) => self.hop_address(hint),
             None => Some(self.node.address()),
         };
         self.room_beneath();
-        self.show_pick(router.unwrap_or_default(), peer, detail.address, false);
+        self.show_pick(repeater.unwrap_or_default(), peer, detail.address, false);
     }
 
     /// Makes room on a full stack for a screen over the one shown, by
@@ -4089,16 +4089,22 @@ impl State {
         String::try_from(repeater.address?.as_str()).ok()
     }
 
-    /// Shows Add hop on what the router at `router` reports hearing, in
+    /// Shows Add hop on what the repeater at `repeater` reports hearing, in
     /// place of the one shown when `replace`. This device's own list is
     /// read anew, which sends nothing.
-    fn show_pick(&mut self, router: String<44>, peer: PeerId, address: String<44>, replace: bool) {
+    fn show_pick(
+        &mut self,
+        repeater: String<44>,
+        peer: PeerId,
+        address: String<44>,
+        replace: bool,
+    ) {
         if replace {
             self.screens.pop();
         }
-        let here = router == self.node.address();
+        let here = repeater == self.node.address();
         _ = self.screens.push(Screen::Neighbors {
-            router,
+            repeater,
             pick: Some(AddHop {
                 peer,
                 address,
@@ -4121,12 +4127,12 @@ impl State {
         }
     }
 
-    /// Focus goes to the top of what Add hop's router reports hearing
+    /// Focus goes to the top of what Add hop's repeater reports hearing
     /// once the top of it has come.
     pub(crate) fn listing_landed(&mut self) {
         let node = self.node;
         let Some(Screen::Neighbors {
-            router,
+            repeater,
             pick: Some(pick),
             ..
         }) = self.screens.last_mut()
@@ -4135,7 +4141,7 @@ impl State {
         };
         if !pick.landing
             || node
-                .listing(router)
+                .listing(repeater)
                 .is_none_or(|listing| listing.asking.is_some())
         {
             return;
@@ -4148,7 +4154,7 @@ impl State {
     #[must_use]
     pub fn pick_rows(&self) -> Option<PickRows> {
         let Some(Screen::Neighbors {
-            router,
+            repeater,
             pick: Some(pick),
             ..
         }) = self.screens.last()
@@ -4158,11 +4164,11 @@ impl State {
         let node = self.node;
         let query = pick.find.trim();
         let finding = !query.is_empty();
-        let heard = !router.is_empty();
-        let listing = heard.then(|| node.listing(router)).flatten();
+        let heard = !repeater.is_empty();
+        let listing = heard.then(|| node.listing(repeater)).flatten();
         let count = listing.map_or(0, |listing| usize::from(listing.count));
         let peer_at = heard
-            .then(|| node.listed_place(router, &pick.address))
+            .then(|| node.listed_place(repeater, &pick.address))
             .flatten()
             .filter(|&at| at < count);
         let hops = self.pick_draft().map_or(&[][..], RouteDraft::hints);
@@ -4186,7 +4192,7 @@ impl State {
                 .into_iter()
                 .chain((0..count).filter(|&at| Some(at) != peer_at))
             {
-                let listed = node.listed(router, at);
+                let listed = node.listed(repeater, at);
                 if finding
                     && listed
                         .as_ref()
@@ -4221,7 +4227,7 @@ impl State {
         // held here.
         let mut known = 0;
         // The peer the route goes to is no hop on it.
-        for at in 0..node.gather_known(query, router, &pick.address) {
+        for at in 0..node.gather_known(query, repeater, &pick.address) {
             let Some(repeater) = node.known_repeater(at) else {
                 continue;
             };
@@ -4261,7 +4267,7 @@ impl State {
         let Some(rows) = self.pick_rows() else {
             return;
         };
-        let Some(Screen::Neighbors { router, .. }) = self.screens.last() else {
+        let Some(Screen::Neighbors { repeater, .. }) = self.screens.last() else {
             return;
         };
         // The rows may have moved since they were drawn, as a repeater is
@@ -4285,7 +4291,7 @@ impl State {
                 return;
             }
             Some(PickRow::Neighbor(at)) => {
-                let Some(listed) = self.node.listed(router, usize::from(at)) else {
+                let Some(listed) = self.node.listed(repeater, usize::from(at)) else {
                     return;
                 };
                 (listed.hint, listed.address)
@@ -4386,14 +4392,17 @@ impl State {
 
     /// Opens the node the repeater at `index` in the listing shown most
     /// plausibly is, or asks who it is, of the nodes in earshot of the
-    /// router, when no known node could be.
+    /// repeater, when no known node could be.
     pub fn press_neighbor(&mut self, index: usize) {
         let uptime = self.uptime;
         let node = self.node;
-        let Some(Screen::Neighbors { router, asked, .. }) = self.screens.last_mut() else {
+        let Some(Screen::Neighbors {
+            repeater, asked, ..
+        }) = self.screens.last_mut()
+        else {
             return;
         };
-        let Some(listed) = node.listed(router, index) else {
+        let Some(listed) = node.listed(repeater, index) else {
             return;
         };
         if let Some(address) = listed.address {
@@ -4402,7 +4411,7 @@ impl State {
             }
             return;
         }
-        let Some(listing) = node.listing(router) else {
+        let Some(listing) = node.listing(repeater) else {
             return;
         };
         let hint = listed.hint;
@@ -4505,10 +4514,10 @@ impl State {
             return Some(step);
         }
         // A listing asked for spins in its row until it is answered.
-        if let Screen::Neighbors { router, .. } = screen
+        if let Screen::Neighbors { repeater, .. } = screen
             && self
                 .node
-                .listing(router)
+                .listing(repeater)
                 .is_some_and(|listing| listing.asking.is_some())
         {
             return Some(step);

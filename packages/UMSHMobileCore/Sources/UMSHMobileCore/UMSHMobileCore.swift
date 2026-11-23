@@ -1066,7 +1066,7 @@ public protocol MobileAppCoreProtocol: AnyObject, Sendable {
     /**
      * Ask the nodes in range, or those where `route` ends, for their
      * identities: those with `role`, or with a node hint starting with
-     * `node_hint` (2 or 3 bytes). Each hop of `route` is a 2-byte router
+     * `node_hint` (2 or 3 bytes). Each hop of `route` is a 2-byte repeater
      * hint. Answers arrive as peers changes.
      *
      * An ask without `node_hint` draws every node in range, so one goes
@@ -1159,7 +1159,7 @@ public protocol MobileAppCoreProtocol: AnyObject, Sendable {
     func messageCount(conversationAddress: String) throws  -> Int64
 
     /**
-     * What a router last said about its neighbors, or `None` when it was
+     * What a repeater last said about its neighbors, or `None` when it was
      * never asked.
      */
     func peerRepeaters(publicAddress: String) throws  -> MobileAppRepeaterListingRecord?
@@ -2329,7 +2329,7 @@ open func demotePeer(address: String)async throws   {
     /**
      * Ask the nodes in range, or those where `route` ends, for their
      * identities: those with `role`, or with a node hint starting with
-     * `node_hint` (2 or 3 bytes). Each hop of `route` is a 2-byte router
+     * `node_hint` (2 or 3 bytes). Each hop of `route` is a 2-byte repeater
      * hint. Answers arrive as peers changes.
      *
      * An ask without `node_hint` draws every node in range, so one goes
@@ -2612,7 +2612,7 @@ open func messageCount(conversationAddress: String)throws  -> Int64  {
 }
 
     /**
-     * What a router last said about its neighbors, or `None` when it was
+     * What a repeater last said about its neighbors, or `None` when it was
      * never asked.
      */
 open func peerRepeaters(publicAddress: String)throws  -> MobileAppRepeaterListingRecord?  {
@@ -3585,30 +3585,30 @@ public protocol MobileAppStoreProtocol: AnyObject, Sendable {
     func upsertUlcpDevicePeer(ownerIdentityId: String, publicAddress: String, advertisedName: String?, radioIdentifier: String) throws
 
     /**
-     * Every neighbor any router has reported to this phone, with the row
-     * of the router that said so, by router and then in listing order.
+     * Every neighbor any repeater has reported to this phone, with the row
+     * of the repeater that said so, by repeater and then in listing order.
      * What the map draws.
      */
     func allPeerRepeaterEntries(ownerIdentityId: String) throws  -> [MobileStoredPeerRepeaterReportRecord]
 
     /**
-     * What a router last said about its neighbors, or `None` when it was
-     * never asked. Entries come back in the order the router listed them.
+     * What a repeater last said about its neighbors, or `None` when it was
+     * never asked. Entries come back in the order the repeater listed them.
      * The header and the entries are read in one transaction, so a page
      * saved meanwhile cannot pair one page's cursor with another's entries.
      */
     func peerRepeaterListing(ownerIdentityId: String, publicAddress: String) throws  -> MobileStoredPeerRepeaterListingRecord?
 
     /**
-     * Record one page of a router's neighbor listing, answered at `at_ms`.
+     * Record one page of a repeater's neighbor listing, answered at `at_ms`.
      *
      * A page asked for without a cursor (`replacing`) is the top of a fresh
      * listing and replaces whatever was held. A page that followed a cursor
      * is added to it: new neighbors take their place at the end, and a
-     * neighbor the router named again—the responder restarts a listing
+     * neighbor the repeater named again—the responder restarts a listing
      * whose table has moved under a stale cursor—updates in place rather
      * than appearing twice. Either way the total, the cursor, and the
-     * instant are the latest page's. A router with no row has nowhere to
+     * instant are the latest page's. A repeater with no row has nowhere to
      * keep the page, and the call does nothing.
      *
      * Stored as the Swift store wrote it: region codes back to back, with
@@ -4652,8 +4652,8 @@ open func upsertUlcpDevicePeer(ownerIdentityId: String, publicAddress: String, a
 }
 
     /**
-     * Every neighbor any router has reported to this phone, with the row
-     * of the router that said so, by router and then in listing order.
+     * Every neighbor any repeater has reported to this phone, with the row
+     * of the repeater that said so, by repeater and then in listing order.
      * What the map draws.
      */
 open func allPeerRepeaterEntries(ownerIdentityId: String)throws  -> [MobileStoredPeerRepeaterReportRecord]  {
@@ -4667,8 +4667,8 @@ open func allPeerRepeaterEntries(ownerIdentityId: String)throws  -> [MobileStore
 }
 
     /**
-     * What a router last said about its neighbors, or `None` when it was
-     * never asked. Entries come back in the order the router listed them.
+     * What a repeater last said about its neighbors, or `None` when it was
+     * never asked. Entries come back in the order the repeater listed them.
      * The header and the entries are read in one transaction, so a page
      * saved meanwhile cannot pair one page's cursor with another's entries.
      */
@@ -4684,15 +4684,15 @@ open func peerRepeaterListing(ownerIdentityId: String, publicAddress: String)thr
 }
 
     /**
-     * Record one page of a router's neighbor listing, answered at `at_ms`.
+     * Record one page of a repeater's neighbor listing, answered at `at_ms`.
      *
      * A page asked for without a cursor (`replacing`) is the top of a fresh
      * listing and replaces whatever was held. A page that followed a cursor
      * is added to it: new neighbors take their place at the end, and a
-     * neighbor the router named again—the responder restarts a listing
+     * neighbor the repeater named again—the responder restarts a listing
      * whose table has moved under a stale cursor—updates in place rather
      * than appearing twice. Either way the total, the cursor, and the
-     * instant are the latest page's. A router with no row has nowhere to
+     * instant are the latest page's. A repeater with no row has nowhere to
      * keep the page, and the call does nothing.
      *
      * Stored as the Swift store wrote it: region codes back to back, with
@@ -7259,12 +7259,12 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
      * filters asks every node the request reaches.
      *
      * `node_hint` narrows the ask to one node by the leading bytes of its
-     * node hint. Two bytes is a router hint, which is all a route reveals
+     * node hint. Two bytes is a repeater hint, which is all a route reveals
      * about the hops it crosses: pair it with a route ending at the hop
      * *before* the one in question, since a repeater consumes its own hint
      * only when forwarding and drops a request that still names it.
      *
-     * Each entry of `source_route` is one 2-byte router hint in send order.
+     * Each entry of `source_route` is one 2-byte repeater hint in send order.
      */
     func discoverIdentities(roleCode: UInt8?, capabilityBits: UInt8?, nodeHint: Data?, sourceRoute: [Data]) async throws
 
@@ -8180,12 +8180,12 @@ open func confirmCode(same: Bool)async throws   {
      * filters asks every node the request reaches.
      *
      * `node_hint` narrows the ask to one node by the leading bytes of its
-     * node hint. Two bytes is a router hint, which is all a route reveals
+     * node hint. Two bytes is a repeater hint, which is all a route reveals
      * about the hops it crosses: pair it with a route ending at the hop
      * *before* the one in question, since a repeater consumes its own hint
      * only when forwarding and drops a request that still names it.
      *
-     * Each entry of `source_route` is one 2-byte router hint in send order.
+     * Each entry of `source_route` is one 2-byte repeater hint in send order.
      */
 open func discoverIdentities(roleCode: UInt8?, capabilityBits: UInt8?, nodeHint: Data?, sourceRoute: [Data])async throws   {
     return
@@ -14924,9 +14924,9 @@ public func FfiConverterTypeMobileAppDirectConversationRecord_lower(_ value: Mob
  */
 public struct MobileAppDiscoveryVantageRecord: Equatable, Hashable {
     /**
-     * Router hints to steer through, in send order. Never empty.
+     * Repeater hints to steer through, in send order. Never empty.
      */
-    public var repeaters: [RouterHintRecord]
+    public var repeaters: [RepeaterHintRecord]
     /**
      * The ask ends at the peer; otherwise at the last of `repeaters`.
      */
@@ -14940,8 +14940,8 @@ public struct MobileAppDiscoveryVantageRecord: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * Router hints to steer through, in send order. Never empty.
-         */repeaters: [RouterHintRecord],
+         * Repeater hints to steer through, in send order. Never empty.
+         */repeaters: [RepeaterHintRecord],
         /**
          * The ask ends at the peer; otherwise at the last of `repeaters`.
          */landsAtPeer: Bool,
@@ -14969,14 +14969,14 @@ public struct FfiConverterTypeMobileAppDiscoveryVantageRecord: FfiConverterRustB
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileAppDiscoveryVantageRecord {
         return
             try MobileAppDiscoveryVantageRecord(
-                repeaters: FfiConverterSequenceTypeRouterHintRecord.read(from: &buf),
+                repeaters: FfiConverterSequenceTypeRepeaterHintRecord.read(from: &buf),
                 landsAtPeer: FfiConverterBool.read(from: &buf),
                 evidence: FfiConverterTypeMobileRepeaterEvidence.read(from: &buf)
         )
     }
 
     public static func write(_ value: MobileAppDiscoveryVantageRecord, into buf: inout [UInt8]) {
-        FfiConverterSequenceTypeRouterHintRecord.write(value.repeaters, into: &buf)
+        FfiConverterSequenceTypeRepeaterHintRecord.write(value.repeaters, into: &buf)
         FfiConverterBool.write(value.landsAtPeer, into: &buf)
         FfiConverterTypeMobileRepeaterEvidence.write(value.evidence, into: &buf)
     }
@@ -15184,7 +15184,7 @@ public func FfiConverterTypeMobileAppMessageRecord_lower(_ value: MobileAppMessa
 public struct MobileAppMessageRepeaterRecord: Equatable, Hashable {
     public var hint: Data
     /**
-     * The router hint, rendered; `None` when it is not two bytes.
+     * The repeater hint, rendered; `None` when it is not two bytes.
      */
     public var hintText: String?
     /**
@@ -15196,7 +15196,7 @@ public struct MobileAppMessageRepeaterRecord: Equatable, Hashable {
     // declare one manually.
     public init(hint: Data,
         /**
-         * The router hint, rendered; `None` when it is not two bytes.
+         * The repeater hint, rendered; `None` when it is not two bytes.
          */hintText: String?,
         /**
          * The peer the hint names, when it names one.
@@ -15252,7 +15252,7 @@ public func FfiConverterTypeMobileAppMessageRepeaterRecord_lower(_ value: Mobile
 
 
 /**
- * A neighbor, with the address of the router that reported it.
+ * A neighbor, with the address of the repeater that reported it.
  */
 public struct MobileAppNeighborReportRecord: Equatable, Hashable {
     public var reporterAddress: String
@@ -15337,9 +15337,9 @@ public struct MobileAppPeerRecord: Equatable, Hashable {
      */
     public var repeaterEvidence: MobileRepeaterEvidence
     /**
-     * Its two-byte router hint, rendered.
+     * Its two-byte repeater hint, rendered.
      */
-    public var routerHint: RouterHintRecord
+    public var repeaterHint: RepeaterHintRecord
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -15363,15 +15363,15 @@ public struct MobileAppPeerRecord: Equatable, Hashable {
          * What it advertised says about forwarding, for steering an ask.
          */repeaterEvidence: MobileRepeaterEvidence,
         /**
-         * Its two-byte router hint, rendered.
-         */routerHint: RouterHintRecord) {
+         * Its two-byte repeater hint, rendered.
+         */repeaterHint: RepeaterHintRecord) {
         self.stored = stored
         self.identity = identity
         self.advertisedIdentity = advertisedIdentity
         self.likelyRepeater = likelyRepeater
         self.advertisementAttributable = advertisementAttributable
         self.repeaterEvidence = repeaterEvidence
-        self.routerHint = routerHint
+        self.repeaterHint = repeaterHint
     }
 
 
@@ -15396,7 +15396,7 @@ public struct FfiConverterTypeMobileAppPeerRecord: FfiConverterRustBuffer {
                 likelyRepeater: FfiConverterBool.read(from: &buf),
                 advertisementAttributable: FfiConverterBool.read(from: &buf),
                 repeaterEvidence: FfiConverterTypeMobileRepeaterEvidence.read(from: &buf),
-                routerHint: FfiConverterTypeRouterHintRecord.read(from: &buf)
+                repeaterHint: FfiConverterTypeRepeaterHintRecord.read(from: &buf)
         )
     }
 
@@ -15407,7 +15407,7 @@ public struct FfiConverterTypeMobileAppPeerRecord: FfiConverterRustBuffer {
         FfiConverterBool.write(value.likelyRepeater, into: &buf)
         FfiConverterBool.write(value.advertisementAttributable, into: &buf)
         FfiConverterTypeMobileRepeaterEvidence.write(value.repeaterEvidence, into: &buf)
-        FfiConverterTypeRouterHintRecord.write(value.routerHint, into: &buf)
+        FfiConverterTypeRepeaterHintRecord.write(value.repeaterHint, into: &buf)
     }
 }
 
@@ -15434,7 +15434,7 @@ public struct MobileAppPingReplyRecord: Equatable, Hashable {
      * The path the reply took, rendered. A hint that does not render is
      * left out.
      */
-    public var routeHints: [RouterHintRecord]
+    public var routeHints: [RepeaterHintRecord]
     public var traceSignal: [MobileTraceSignalRecord]
     public var rssiDbm: Int16?
     public var snrCentibels: Int16?
@@ -15455,7 +15455,7 @@ public struct MobileAppPingReplyRecord: Equatable, Hashable {
         /**
          * The path the reply took, rendered. A hint that does not render is
          * left out.
-         */routeHints: [RouterHintRecord], traceSignal: [MobileTraceSignalRecord], rssiDbm: Int16?, snrCentibels: Int16?, lqi: UInt8?,
+         */routeHints: [RepeaterHintRecord], traceSignal: [MobileTraceSignalRecord], rssiDbm: Int16?, snrCentibels: Int16?, lqi: UInt8?,
         /**
          * Only the ping's Route Retry was answered: the route it held failed.
          */viaRouteRetry: Bool,
@@ -15492,7 +15492,7 @@ public struct FfiConverterTypeMobileAppPingReplyRecord: FfiConverterRustBuffer {
             try MobileAppPingReplyRecord(
                 roundTripMs: FfiConverterOptionUInt64.read(from: &buf),
                 hopCount: FfiConverterOptionUInt8.read(from: &buf),
-                routeHints: FfiConverterSequenceTypeRouterHintRecord.read(from: &buf),
+                routeHints: FfiConverterSequenceTypeRepeaterHintRecord.read(from: &buf),
                 traceSignal: FfiConverterSequenceTypeMobileTraceSignalRecord.read(from: &buf),
                 rssiDbm: FfiConverterOptionInt16.read(from: &buf),
                 snrCentibels: FfiConverterOptionInt16.read(from: &buf),
@@ -15505,7 +15505,7 @@ public struct FfiConverterTypeMobileAppPingReplyRecord: FfiConverterRustBuffer {
     public static func write(_ value: MobileAppPingReplyRecord, into buf: inout [UInt8]) {
         FfiConverterOptionUInt64.write(value.roundTripMs, into: &buf)
         FfiConverterOptionUInt8.write(value.hopCount, into: &buf)
-        FfiConverterSequenceTypeRouterHintRecord.write(value.routeHints, into: &buf)
+        FfiConverterSequenceTypeRepeaterHintRecord.write(value.routeHints, into: &buf)
         FfiConverterSequenceTypeMobileTraceSignalRecord.write(value.traceSignal, into: &buf)
         FfiConverterOptionInt16.write(value.rssiDbm, into: &buf)
         FfiConverterOptionInt16.write(value.snrCentibels, into: &buf)
@@ -15722,11 +15722,11 @@ public func FfiConverterTypeMobileAppPreviewRecord_lower(_ value: MobileAppPrevi
 
 
 /**
- * What a router last said about its neighbors.
+ * What a repeater last said about its neighbors.
  */
 public struct MobileAppRepeaterListingRecord: Equatable, Hashable {
     /**
-     * In the order the router listed them.
+     * In the order the repeater listed them.
      */
     public var entries: [MobileAppRepeaterNeighborRecord]
     public var total: Int64?
@@ -15740,7 +15740,7 @@ public struct MobileAppRepeaterListingRecord: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * In the order the router listed them.
+         * In the order the repeater listed them.
          */entries: [MobileAppRepeaterNeighborRecord], total: Int64?,
         /**
          * Absent once the listing is complete.
@@ -15799,13 +15799,13 @@ public func FfiConverterTypeMobileAppRepeaterListingRecord_lower(_ value: Mobile
 
 
 /**
- * One neighbor a router reported.
+ * One neighbor a repeater reported.
  */
 public struct MobileAppRepeaterNeighborRecord: Equatable, Hashable {
     public var entry: MobileStoredPeerRepeaterEntryRecord
     /**
      * A three-byte hint rendered as a node hint, a longer or shorter one
-     * of at least two bytes as the router hint of its first two; `None`
+     * of at least two bytes as the repeater hint of its first two; `None`
      * otherwise.
      */
     public var hintText: String?
@@ -15819,7 +15819,7 @@ public struct MobileAppRepeaterNeighborRecord: Equatable, Hashable {
     public init(entry: MobileStoredPeerRepeaterEntryRecord,
         /**
          * A three-byte hint rendered as a node hint, a longer or shorter one
-         * of at least two bytes as the router hint of its first two; `None`
+         * of at least two bytes as the repeater hint of its first two; `None`
          * otherwise.
          */hintText: String?,
         /**
@@ -15877,12 +15877,12 @@ public func FfiConverterTypeMobileAppRepeaterNeighborRecord_lower(_ value: Mobil
 
 public struct MobileAppRouteCandidateRecord: Equatable, Hashable {
     public var kind: MobileMeshRouteKind
-    public var hints: [RouterHintRecord]
+    public var hints: [RepeaterHintRecord]
     public var hopCount: UInt8?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(kind: MobileMeshRouteKind, hints: [RouterHintRecord], hopCount: UInt8?) {
+    public init(kind: MobileMeshRouteKind, hints: [RepeaterHintRecord], hopCount: UInt8?) {
         self.kind = kind
         self.hints = hints
         self.hopCount = hopCount
@@ -15905,14 +15905,14 @@ public struct FfiConverterTypeMobileAppRouteCandidateRecord: FfiConverterRustBuf
         return
             try MobileAppRouteCandidateRecord(
                 kind: FfiConverterTypeMobileMeshRouteKind.read(from: &buf),
-                hints: FfiConverterSequenceTypeRouterHintRecord.read(from: &buf),
+                hints: FfiConverterSequenceTypeRepeaterHintRecord.read(from: &buf),
                 hopCount: FfiConverterOptionUInt8.read(from: &buf)
         )
     }
 
     public static func write(_ value: MobileAppRouteCandidateRecord, into buf: inout [UInt8]) {
         FfiConverterTypeMobileMeshRouteKind.write(value.kind, into: &buf)
-        FfiConverterSequenceTypeRouterHintRecord.write(value.hints, into: &buf)
+        FfiConverterSequenceTypeRepeaterHintRecord.write(value.hints, into: &buf)
         FfiConverterOptionUInt8.write(value.hopCount, into: &buf)
     }
 }
@@ -15939,10 +15939,10 @@ public func FfiConverterTypeMobileAppRouteCandidateRecord_lower(_ value: MobileA
 public struct MobileAppRouteRecord: Equatable, Hashable {
     public var kind: MobileMeshRouteKind
     /**
-     * The path's router hints, rendered. A hint that does not render is
+     * The path's repeater hints, rendered. A hint that does not render is
      * left out.
      */
-    public var hints: [RouterHintRecord]
+    public var hints: [RepeaterHintRecord]
     public var hopCount: UInt8?
     public var floodHops: UInt8?
     public var floodRegions: [Data]
@@ -15973,9 +15973,9 @@ public struct MobileAppRouteRecord: Equatable, Hashable {
     // declare one manually.
     public init(kind: MobileMeshRouteKind,
         /**
-         * The path's router hints, rendered. A hint that does not render is
+         * The path's repeater hints, rendered. A hint that does not render is
          * left out.
-         */hints: [RouterHintRecord], hopCount: UInt8?, floodHops: UInt8?, floodRegions: [Data],
+         */hints: [RepeaterHintRecord], hopCount: UInt8?, floodHops: UInt8?, floodRegions: [Data],
         /**
          * How long a held path is held for yet; `None` when nothing is held.
          */holdRemainingMs: UInt64?, holdFloodHops: UInt8?,
@@ -16022,7 +16022,7 @@ public struct FfiConverterTypeMobileAppRouteRecord: FfiConverterRustBuffer {
         return
             try MobileAppRouteRecord(
                 kind: FfiConverterTypeMobileMeshRouteKind.read(from: &buf),
-                hints: FfiConverterSequenceTypeRouterHintRecord.read(from: &buf),
+                hints: FfiConverterSequenceTypeRepeaterHintRecord.read(from: &buf),
                 hopCount: FfiConverterOptionUInt8.read(from: &buf),
                 floodHops: FfiConverterOptionUInt8.read(from: &buf),
                 floodRegions: FfiConverterSequenceData.read(from: &buf),
@@ -16037,7 +16037,7 @@ public struct FfiConverterTypeMobileAppRouteRecord: FfiConverterRustBuffer {
 
     public static func write(_ value: MobileAppRouteRecord, into buf: inout [UInt8]) {
         FfiConverterTypeMobileMeshRouteKind.write(value.kind, into: &buf)
-        FfiConverterSequenceTypeRouterHintRecord.write(value.hints, into: &buf)
+        FfiConverterSequenceTypeRepeaterHintRecord.write(value.hints, into: &buf)
         FfiConverterOptionUInt8.write(value.hopCount, into: &buf)
         FfiConverterOptionUInt8.write(value.floodHops, into: &buf)
         FfiConverterSequenceData.write(value.floodRegions, into: &buf)
@@ -18234,7 +18234,7 @@ public struct MobileLimitsRecord: Equatable, Hashable {
      */
     public var manualPathFloodHops: UInt8
     public var nodeHintLen: UInt8
-    public var routerHintLen: UInt8
+    public var repeaterHintLen: UInt8
     /**
      * Location precision, in bytes of cell code.
      */
@@ -18271,7 +18271,7 @@ public struct MobileLimitsRecord: Equatable, Hashable {
          */maxRouteHints: UInt8,
         /**
          * Flood allowance a new manual path starts with.
-         */manualPathFloodHops: UInt8, nodeHintLen: UInt8, routerHintLen: UInt8,
+         */manualPathFloodHops: UInt8, nodeHintLen: UInt8, repeaterHintLen: UInt8,
         /**
          * Location precision, in bytes of cell code.
          */minLocationPrecision: UInt8, maxLocationPrecision: UInt8, defaultLocationPrecision: UInt8,
@@ -18291,7 +18291,7 @@ public struct MobileLimitsRecord: Equatable, Hashable {
         self.maxRouteHints = maxRouteHints
         self.manualPathFloodHops = manualPathFloodHops
         self.nodeHintLen = nodeHintLen
-        self.routerHintLen = routerHintLen
+        self.repeaterHintLen = repeaterHintLen
         self.minLocationPrecision = minLocationPrecision
         self.maxLocationPrecision = maxLocationPrecision
         self.defaultLocationPrecision = defaultLocationPrecision
@@ -18324,7 +18324,7 @@ public struct FfiConverterTypeMobileLimitsRecord: FfiConverterRustBuffer {
                 maxRouteHints: FfiConverterUInt8.read(from: &buf),
                 manualPathFloodHops: FfiConverterUInt8.read(from: &buf),
                 nodeHintLen: FfiConverterUInt8.read(from: &buf),
-                routerHintLen: FfiConverterUInt8.read(from: &buf),
+                repeaterHintLen: FfiConverterUInt8.read(from: &buf),
                 minLocationPrecision: FfiConverterUInt8.read(from: &buf),
                 maxLocationPrecision: FfiConverterUInt8.read(from: &buf),
                 defaultLocationPrecision: FfiConverterUInt8.read(from: &buf),
@@ -18343,7 +18343,7 @@ public struct FfiConverterTypeMobileLimitsRecord: FfiConverterRustBuffer {
         FfiConverterUInt8.write(value.maxRouteHints, into: &buf)
         FfiConverterUInt8.write(value.manualPathFloodHops, into: &buf)
         FfiConverterUInt8.write(value.nodeHintLen, into: &buf)
-        FfiConverterUInt8.write(value.routerHintLen, into: &buf)
+        FfiConverterUInt8.write(value.repeaterHintLen, into: &buf)
         FfiConverterUInt8.write(value.minLocationPrecision, into: &buf)
         FfiConverterUInt8.write(value.maxLocationPrecision, into: &buf)
         FfiConverterUInt8.write(value.defaultLocationPrecision, into: &buf)
@@ -19625,7 +19625,7 @@ public func FfiConverterTypeMobileMeshPeerHeardRecord_lower(_ value: MobileMeshP
  * Everything past the hint is optional because the answering node reports
  * only what it has: an identity supplies the name, position, and regions; a
  * reception supplies the signal; neither supplies the other. A hop that has
- * only been heard is named by a two-byte router hint, which is all a trace
+ * only been heard is named by a two-byte repeater hint, which is all a trace
  * reveals about it.
  */
 public struct MobileMeshPeerRepeaterRecord: Equatable, Hashable {
@@ -19845,7 +19845,7 @@ public struct MobileMeshPingEventRecord: Equatable, Hashable {
      */
     public var hopCount: UInt8?
     /**
-     * Authenticated intermediate-router hints, the repeater nearest this
+     * Authenticated intermediate-repeater hints, the repeater nearest this
      * device first. The two endpoints are not included. Empty when the
      * response's trace lost hops in transit, since it would name only part
      * of the path.
@@ -19880,7 +19880,7 @@ public struct MobileMeshPingEventRecord: Equatable, Hashable {
          * recorded, so no count is claimed.
          */hopCount: UInt8?,
         /**
-         * Authenticated intermediate-router hints, the repeater nearest this
+         * Authenticated intermediate-repeater hints, the repeater nearest this
          * device first. The two endpoints are not included. Empty when the
          * response's trace lost hops in transit, since it would name only part
          * of the path.
@@ -20032,7 +20032,7 @@ public func FfiConverterTypeMobileMeshPropertyWriteRecord_lower(_ value: MobileM
 public struct MobileMeshRouteRecord: Equatable, Hashable {
     public var kind: MobileMeshRouteKind
     /**
-     * Router hints in source-to-destination order. Populated for `Source`
+     * Repeater hints in source-to-destination order. Populated for `Source`
      * routes only; the two endpoints are not included.
      */
     public var hints: [Data]
@@ -20073,7 +20073,7 @@ public struct MobileMeshRouteRecord: Equatable, Hashable {
     public var confirmedAgeMs: UInt64?
     /**
      * The best path learned while the route was held, flattened because a
-     * record cannot contain itself: its kind, its router hints in send
+     * record cannot contain itself: its kind, its repeater hints in send
      * order, and its distance in hops.
      */
     public var candidateKind: MobileMeshRouteKind?
@@ -20084,7 +20084,7 @@ public struct MobileMeshRouteRecord: Equatable, Hashable {
     // declare one manually.
     public init(kind: MobileMeshRouteKind,
         /**
-         * Router hints in source-to-destination order. Populated for `Source`
+         * Repeater hints in source-to-destination order. Populated for `Source`
          * routes only; the two endpoints are not included.
          */hints: [Data],
         /**
@@ -20117,7 +20117,7 @@ public struct MobileMeshRouteRecord: Equatable, Hashable {
          */confirmedAgeMs: UInt64?,
         /**
          * The best path learned while the route was held, flattened because a
-         * record cannot contain itself: its kind, its router hints in send
+         * record cannot contain itself: its kind, its repeater hints in send
          * order, and its distance in hops.
          */candidateKind: MobileMeshRouteKind?, candidateHints: [Data], candidateHopCount: UInt8?) {
         self.kind = kind
@@ -25371,7 +25371,7 @@ public func FfiConverterTypeMobileStoredDirectConversationRecord_lower(_ value: 
 public struct MobileStoredManualRouteRecord: Equatable, Hashable {
     public var publicAddress: String
     /**
-     * Two-byte router hints, in send order. None is a direct path.
+     * Two-byte repeater hints, in send order. None is a direct path.
      */
     public var hints: [Data]
     /**
@@ -25397,7 +25397,7 @@ public struct MobileStoredManualRouteRecord: Equatable, Hashable {
     // declare one manually.
     public init(publicAddress: String,
         /**
-         * Two-byte router hints, in send order. None is a direct path.
+         * Two-byte repeater hints, in send order. None is a direct path.
          */hints: [Data],
         /**
          * How far the path floods past its last repeater.
@@ -25670,7 +25670,7 @@ public func FfiConverterTypeMobileStoredNodeRecord_lower(_ value: MobileStoredNo
 
 
 /**
- * One neighbor a router reported, as the page carried it.
+ * One neighbor a repeater reported, as the page carried it.
  *
  * Stored decoded rather than as the wire entry: the fields are few and
  * fixed, the map reads them without a decoder in the loop, and the location
@@ -25679,7 +25679,7 @@ public func FfiConverterTypeMobileStoredNodeRecord_lower(_ value: MobileStoredNo
  */
 public struct MobileStoredPeerRepeaterEntryRecord: Equatable, Hashable {
     /**
-     * Two or three bytes; the row's key within the router's listing.
+     * Two or three bytes; the row's key within the repeater's listing.
      */
     public var hint: Data
     public var name: String?
@@ -25702,7 +25702,7 @@ public struct MobileStoredPeerRepeaterEntryRecord: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * Two or three bytes; the row's key within the router's listing.
+         * Two or three bytes; the row's key within the repeater's listing.
          */hint: Data, name: String?, rssiDbm: Int16?, snrQuarterDb: Int16?, lastHeardMinutes: UInt16?, latitude: Double?, longitude: Double?, locationPrecision: UInt8?,
         /**
          * Two octets per code, as the wire carries them.
@@ -25782,7 +25782,7 @@ public func FfiConverterTypeMobileStoredPeerRepeaterEntryRecord_lower(_ value: M
 
 
 /**
- * What a router last said about its neighbors, as far as this phone asked.
+ * What a repeater last said about its neighbors, as far as this phone asked.
  *
  * The cursor is kept so the next open can carry on where the last page
  * stopped rather than starting the listing over: the ask is the operator's
@@ -25790,7 +25790,7 @@ public func FfiConverterTypeMobileStoredPeerRepeaterEntryRecord_lower(_ value: M
  */
 public struct MobileStoredPeerRepeaterListingRecord: Equatable, Hashable {
     /**
-     * In the order the router listed them.
+     * In the order the repeater listed them.
      */
     public var entries: [MobileStoredPeerRepeaterEntryRecord]
     /**
@@ -25811,7 +25811,7 @@ public struct MobileStoredPeerRepeaterListingRecord: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * In the order the router listed them.
+         * In the order the repeater listed them.
          */entries: [MobileStoredPeerRepeaterEntryRecord],
         /**
          * How many neighbors the whole listing holds, when a page said.
@@ -25877,11 +25877,11 @@ public func FfiConverterTypeMobileStoredPeerRepeaterListingRecord_lower(_ value:
 
 
 /**
- * A neighbor entry with the row of the router that reported it.
+ * A neighbor entry with the row of the repeater that reported it.
  */
 public struct MobileStoredPeerRepeaterReportRecord: Equatable, Hashable {
     /**
-     * The reporting router's `node` row ID.
+     * The reporting repeater's `node` row ID.
      */
     public var reporterNodeId: Int64
     public var entry: MobileStoredPeerRepeaterEntryRecord
@@ -25890,7 +25890,7 @@ public struct MobileStoredPeerRepeaterReportRecord: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * The reporting router's `node` row ID.
+         * The reporting repeater's `node` row ID.
          */reporterNodeId: Int64, entry: MobileStoredPeerRepeaterEntryRecord) {
         self.reporterNodeId = reporterNodeId
         self.entry = entry
@@ -27231,22 +27231,22 @@ public func FfiConverterTypeRadioPresetRecord_lower(_ value: RadioPresetRecord) 
 
 
 /**
- * What typed text says about a router hint: the hints it could mean, or
+ * What typed text says about a repeater hint: the hints it could mean, or
  * why it means none yet.
  */
-public struct RouterHintInputRecord: Equatable, Hashable {
+public struct RepeaterHintInputRecord: Equatable, Hashable {
     /**
      * One hint, or two when a Base58 prefix straddles a hint boundary.
      */
-    public var candidates: [RouterHintRecord]
-    public var problem: RouterHintInputProblem?
+    public var candidates: [RepeaterHintRecord]
+    public var problem: RepeaterHintInputProblem?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
     public init(
         /**
          * One hint, or two when a Base58 prefix straddles a hint boundary.
-         */candidates: [RouterHintRecord], problem: RouterHintInputProblem?) {
+         */candidates: [RepeaterHintRecord], problem: RepeaterHintInputProblem?) {
         self.candidates = candidates
         self.problem = problem
     }
@@ -27257,24 +27257,24 @@ public struct RouterHintInputRecord: Equatable, Hashable {
 }
 
 #if compiler(>=6)
-extension RouterHintInputRecord: Sendable {}
+extension RepeaterHintInputRecord: Sendable {}
 #endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeRouterHintInputRecord: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RouterHintInputRecord {
+public struct FfiConverterTypeRepeaterHintInputRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RepeaterHintInputRecord {
         return
-            try RouterHintInputRecord(
-                candidates: FfiConverterSequenceTypeRouterHintRecord.read(from: &buf),
-                problem: FfiConverterOptionTypeRouterHintInputProblem.read(from: &buf)
+            try RepeaterHintInputRecord(
+                candidates: FfiConverterSequenceTypeRepeaterHintRecord.read(from: &buf),
+                problem: FfiConverterOptionTypeRepeaterHintInputProblem.read(from: &buf)
         )
     }
 
-    public static func write(_ value: RouterHintInputRecord, into buf: inout [UInt8]) {
-        FfiConverterSequenceTypeRouterHintRecord.write(value.candidates, into: &buf)
-        FfiConverterOptionTypeRouterHintInputProblem.write(value.problem, into: &buf)
+    public static func write(_ value: RepeaterHintInputRecord, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeRepeaterHintRecord.write(value.candidates, into: &buf)
+        FfiConverterOptionTypeRepeaterHintInputProblem.write(value.problem, into: &buf)
     }
 }
 
@@ -27282,22 +27282,22 @@ public struct FfiConverterTypeRouterHintInputRecord: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeRouterHintInputRecord_lift(_ buf: RustBuffer) throws -> RouterHintInputRecord {
-    return try FfiConverterTypeRouterHintInputRecord.lift(buf)
+public func FfiConverterTypeRepeaterHintInputRecord_lift(_ buf: RustBuffer) throws -> RepeaterHintInputRecord {
+    return try FfiConverterTypeRepeaterHintInputRecord.lift(buf)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeRouterHintInputRecord_lower(_ value: RouterHintInputRecord) -> RustBuffer {
-    return FfiConverterTypeRouterHintInputRecord.lower(value)
+public func FfiConverterTypeRepeaterHintInputRecord_lower(_ value: RepeaterHintInputRecord) -> RustBuffer {
+    return FfiConverterTypeRepeaterHintInputRecord.lower(value)
 }
 
 
 /**
- * Canonical rendering information for a two-byte router hint.
+ * Canonical rendering information for a two-byte repeater hint.
  */
-public struct RouterHintRecord: Equatable, Hashable {
+public struct RepeaterHintRecord: Equatable, Hashable {
     /**
      * Raw hint bytes, matchable against the first two bytes of a known
      * node's public key.
@@ -27328,22 +27328,22 @@ public struct RouterHintRecord: Equatable, Hashable {
 }
 
 #if compiler(>=6)
-extension RouterHintRecord: Sendable {}
+extension RepeaterHintRecord: Sendable {}
 #endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeRouterHintRecord: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RouterHintRecord {
+public struct FfiConverterTypeRepeaterHintRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RepeaterHintRecord {
         return
-            try RouterHintRecord(
+            try RepeaterHintRecord(
                 bytes: FfiConverterData.read(from: &buf),
                 text: FfiConverterString.read(from: &buf)
         )
     }
 
-    public static func write(_ value: RouterHintRecord, into buf: inout [UInt8]) {
+    public static func write(_ value: RepeaterHintRecord, into buf: inout [UInt8]) {
         FfiConverterData.write(value.bytes, into: &buf)
         FfiConverterString.write(value.text, into: &buf)
     }
@@ -27353,15 +27353,15 @@ public struct FfiConverterTypeRouterHintRecord: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeRouterHintRecord_lift(_ buf: RustBuffer) throws -> RouterHintRecord {
-    return try FfiConverterTypeRouterHintRecord.lift(buf)
+public func FfiConverterTypeRepeaterHintRecord_lift(_ buf: RustBuffer) throws -> RepeaterHintRecord {
+    return try FfiConverterTypeRepeaterHintRecord.lift(buf)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeRouterHintRecord_lower(_ value: RouterHintRecord) -> RustBuffer {
-    return FfiConverterTypeRouterHintRecord.lower(value)
+public func FfiConverterTypeRepeaterHintRecord_lower(_ value: RepeaterHintRecord) -> RustBuffer {
+    return FfiConverterTypeRepeaterHintRecord.lower(value)
 }
 
 
@@ -34481,7 +34481,7 @@ enum MobileError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
     case InvalidAddressCharacter
     case AddressOverflow
     case InvalidNodeHintLength
-    case InvalidRouterHintLength
+    case InvalidRepeaterHintLength
     case InvalidSecretKeyLength
     case InvalidPublicKeyLength
     case InvalidUri
@@ -34590,7 +34590,7 @@ public struct FfiConverterTypeMobileError: FfiConverterRustBuffer {
         case 2: return .InvalidAddressCharacter
         case 3: return .AddressOverflow
         case 4: return .InvalidNodeHintLength
-        case 5: return .InvalidRouterHintLength
+        case 5: return .InvalidRepeaterHintLength
         case 6: return .InvalidSecretKeyLength
         case 7: return .InvalidPublicKeyLength
         case 8: return .InvalidUri
@@ -34640,7 +34640,7 @@ public struct FfiConverterTypeMobileError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(4))
 
 
-        case .InvalidRouterHintLength:
+        case .InvalidRepeaterHintLength:
             writeInt(&buf, Int32(5))
 
 
@@ -35969,7 +35969,7 @@ enum MobileMeshError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErro
      */
     case NoAnswer
     /**
-     * A route named something other than two-octet router hints, or more
+     * A route named something other than two-octet repeater hints, or more
      * of them than a frame carries.
      */
     case InvalidRoute
@@ -36444,7 +36444,7 @@ public enum MobileMeshRouteKind: Equatable, Hashable {
      */
     case unknown
     /**
-     * The peer answered without any intermediate router.
+     * The peer answered without any intermediate repeater.
      */
     case direct
     /**
@@ -39702,7 +39702,7 @@ enum MobileStoreError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErr
     case RecordNotFound
     /**
      * An argument is not in the form the store keeps: a channel ID that is
-     * not a UUID, a router hint that is not two octets.
+     * not a UUID, a repeater hint that is not two octets.
      */
     case InvalidArgument
     /**
@@ -40897,10 +40897,10 @@ public func FfiConverterTypeMobileWifiStep_lower(_ value: MobileWifiStep) -> Rus
 
 
 /**
- * How a person wrote a router hint.
+ * How a person wrote a repeater hint.
  */
 
-public enum RouterHintInputFormat: Equatable, Hashable {
+public enum RepeaterHintInputFormat: Equatable, Hashable {
 
     /**
      * The leading characters of the node's Base58 address, at least four.
@@ -40918,16 +40918,16 @@ public enum RouterHintInputFormat: Equatable, Hashable {
 }
 
 #if compiler(>=6)
-extension RouterHintInputFormat: Sendable {}
+extension RepeaterHintInputFormat: Sendable {}
 #endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeRouterHintInputFormat: FfiConverterRustBuffer {
-    typealias SwiftType = RouterHintInputFormat
+public struct FfiConverterTypeRepeaterHintInputFormat: FfiConverterRustBuffer {
+    typealias SwiftType = RepeaterHintInputFormat
 
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RouterHintInputFormat {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RepeaterHintInputFormat {
         let variant: Int32 = try readInt(&buf)
         switch variant {
 
@@ -40939,7 +40939,7 @@ public struct FfiConverterTypeRouterHintInputFormat: FfiConverterRustBuffer {
         }
     }
 
-    public static func write(_ value: RouterHintInputFormat, into buf: inout [UInt8]) {
+    public static func write(_ value: RepeaterHintInputFormat, into buf: inout [UInt8]) {
         switch value {
 
 
@@ -40958,24 +40958,24 @@ public struct FfiConverterTypeRouterHintInputFormat: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeRouterHintInputFormat_lift(_ buf: RustBuffer) throws -> RouterHintInputFormat {
-    return try FfiConverterTypeRouterHintInputFormat.lift(buf)
+public func FfiConverterTypeRepeaterHintInputFormat_lift(_ buf: RustBuffer) throws -> RepeaterHintInputFormat {
+    return try FfiConverterTypeRepeaterHintInputFormat.lift(buf)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeRouterHintInputFormat_lower(_ value: RouterHintInputFormat) -> RustBuffer {
-    return FfiConverterTypeRouterHintInputFormat.lower(value)
+public func FfiConverterTypeRepeaterHintInputFormat_lower(_ value: RepeaterHintInputFormat) -> RustBuffer {
+    return FfiConverterTypeRepeaterHintInputFormat.lower(value)
 }
 
 
 
 /**
- * Why typed text does not yet name a router hint.
+ * Why typed text does not yet name a repeater hint.
  */
 
-public enum RouterHintInputProblem: Equatable, Hashable {
+public enum RepeaterHintInputProblem: Equatable, Hashable {
 
     case tooShort
     case tooLong
@@ -40992,16 +40992,16 @@ public enum RouterHintInputProblem: Equatable, Hashable {
 }
 
 #if compiler(>=6)
-extension RouterHintInputProblem: Sendable {}
+extension RepeaterHintInputProblem: Sendable {}
 #endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeRouterHintInputProblem: FfiConverterRustBuffer {
-    typealias SwiftType = RouterHintInputProblem
+public struct FfiConverterTypeRepeaterHintInputProblem: FfiConverterRustBuffer {
+    typealias SwiftType = RepeaterHintInputProblem
 
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RouterHintInputProblem {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RepeaterHintInputProblem {
         let variant: Int32 = try readInt(&buf)
         switch variant {
 
@@ -41017,7 +41017,7 @@ public struct FfiConverterTypeRouterHintInputProblem: FfiConverterRustBuffer {
         }
     }
 
-    public static func write(_ value: RouterHintInputProblem, into buf: inout [UInt8]) {
+    public static func write(_ value: RepeaterHintInputProblem, into buf: inout [UInt8]) {
         switch value {
 
 
@@ -41044,15 +41044,15 @@ public struct FfiConverterTypeRouterHintInputProblem: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeRouterHintInputProblem_lift(_ buf: RustBuffer) throws -> RouterHintInputProblem {
-    return try FfiConverterTypeRouterHintInputProblem.lift(buf)
+public func FfiConverterTypeRepeaterHintInputProblem_lift(_ buf: RustBuffer) throws -> RepeaterHintInputProblem {
+    return try FfiConverterTypeRepeaterHintInputProblem.lift(buf)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeRouterHintInputProblem_lower(_ value: RouterHintInputProblem) -> RustBuffer {
-    return FfiConverterTypeRouterHintInputProblem.lower(value)
+public func FfiConverterTypeRepeaterHintInputProblem_lower(_ value: RepeaterHintInputProblem) -> RustBuffer {
+    return FfiConverterTypeRepeaterHintInputProblem.lower(value)
 }
 
 
@@ -44598,8 +44598,8 @@ fileprivate struct FfiConverterOptionTypeMobileWifiEntryProblem: FfiConverterRus
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterOptionTypeRouterHintInputProblem: FfiConverterRustBuffer {
-    typealias SwiftType = RouterHintInputProblem?
+fileprivate struct FfiConverterOptionTypeRepeaterHintInputProblem: FfiConverterRustBuffer {
+    typealias SwiftType = RepeaterHintInputProblem?
 
     public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
         guard let value = value else {
@@ -44607,13 +44607,13 @@ fileprivate struct FfiConverterOptionTypeRouterHintInputProblem: FfiConverterRus
             return
         }
         writeInt(&buf, Int8(1))
-        FfiConverterTypeRouterHintInputProblem.write(value, into: &buf)
+        FfiConverterTypeRepeaterHintInputProblem.write(value, into: &buf)
     }
 
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
-        case 1: return try FfiConverterTypeRouterHintInputProblem.read(from: &buf)
+        case 1: return try FfiConverterTypeRepeaterHintInputProblem.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -46360,23 +46360,23 @@ fileprivate struct FfiConverterSequenceTypeRadioPresetRecord: FfiConverterRustBu
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterSequenceTypeRouterHintRecord: FfiConverterRustBuffer {
-    typealias SwiftType = [RouterHintRecord]
+fileprivate struct FfiConverterSequenceTypeRepeaterHintRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [RepeaterHintRecord]
 
-    public static func write(_ value: [RouterHintRecord], into buf: inout [UInt8]) {
+    public static func write(_ value: [RepeaterHintRecord], into buf: inout [UInt8]) {
         let len = Int32(value.count)
         writeInt(&buf, len)
         for item in value {
-            FfiConverterTypeRouterHintRecord.write(item, into: &buf)
+            FfiConverterTypeRepeaterHintRecord.write(item, into: &buf)
         }
     }
 
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [RouterHintRecord] {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [RepeaterHintRecord] {
         let len: Int32 = try readInt(&buf)
-        var seq = [RouterHintRecord]()
+        var seq = [RepeaterHintRecord]()
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeRouterHintRecord.read(from: &buf))
+            seq.append(try FfiConverterTypeRepeaterHintRecord.read(from: &buf))
         }
         return seq
     }
@@ -47050,15 +47050,15 @@ public func nodeUriWithIdentity(address: String, identityPayload: Data)throws  -
 })
 }
 /**
- * Read a router hint typed by a person, as a Base58 address prefix or as
+ * Read a repeater hint typed by a person, as a Base58 address prefix or as
  * hexadecimal. Surrounding whitespace is ignored.
  */
-public func parseRouterHintInput(text: String, format: RouterHintInputFormat) -> RouterHintInputRecord  {
-    return try!  FfiConverterTypeRouterHintInputRecord_lift(try! rustCall() {
+public func parseRepeaterHintInput(text: String, format: RepeaterHintInputFormat) -> RepeaterHintInputRecord  {
+    return try!  FfiConverterTypeRepeaterHintInputRecord_lift(try! rustCall() {
         uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_func_parse_router_hint_input(
+    uniffi_umsh_mobile_core_fn_func_parse_repeater_hint_input(
         FfiConverterString.lower(text),
-        FfiConverterTypeRouterHintInputFormat_lower(format),uniffiCallStatus
+        FfiConverterTypeRepeaterHintInputFormat_lower(format),uniffiCallStatus
     )
 })
 }
@@ -47086,12 +47086,12 @@ public func renderNodeHint(bytes: Data)throws  -> NodeHintRecord  {
 })
 }
 /**
- * Render a router hint using the protocol's canonical ambiguity rules.
+ * Render a repeater hint using the protocol's canonical ambiguity rules.
  */
-public func renderRouterHint(bytes: Data)throws  -> RouterHintRecord  {
-    return try  FfiConverterTypeRouterHintRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+public func renderRepeaterHint(bytes: Data)throws  -> RepeaterHintRecord  {
+    return try  FfiConverterTypeRepeaterHintRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
         uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_func_render_router_hint(
+    uniffi_umsh_mobile_core_fn_func_render_repeater_hint(
         FfiConverterData.lower(bytes),uniffiCallStatus
     )
 })
@@ -47997,7 +47997,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_derive_channel_tint() != 23669) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_format_channel_invitation() != 49080) {
+    if (uniffi_umsh_mobile_core_checksum_func_format_channel_invitation() != 62505) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_generate_channel_key() != 31413) {
@@ -48009,7 +48009,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_inspect_channel_name() != 40184) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_inspect_channel_uri() != 22712) {
+    if (uniffi_umsh_mobile_core_checksum_func_inspect_channel_uri() != 60135) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_inspect_node_uri() != 44840) {
@@ -48036,7 +48036,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_node_uri_with_identity() != 62280) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_parse_router_hint_input() != 11757) {
+    if (uniffi_umsh_mobile_core_checksum_func_parse_repeater_hint_input() != 1768) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_public_identity_bytes() != 49391) {
@@ -48045,7 +48045,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_render_node_hint() != 12096) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_render_router_hint() != 41050) {
+    if (uniffi_umsh_mobile_core_checksum_func_render_repeater_hint() != 35195) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_sign_node_identity_bundle() != 45133) {
@@ -48387,7 +48387,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_demote_peer() != 1245) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_discover() != 48651) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_discover() != 45329) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_discovery_wait_ms() != 42576) {
@@ -48432,7 +48432,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_message_count() != 47892) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_peer_repeaters() != 45727) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_peer_repeaters() != 27757) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_phone_node_key() != 15201) {
@@ -48693,7 +48693,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_confirm_code() != 49925) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_discover_identities() != 34081) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_discover_identities() != 4087) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_fail_outbound_transmissions() != 10556) {
@@ -49164,13 +49164,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_upsert_ulcp_device_peer() != 11532) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_all_peer_repeater_entries() != 13309) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_all_peer_repeater_entries() != 49492) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_peer_repeater_listing() != 29854) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_peer_repeater_listing() != 9067) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_save_peer_repeater_page() != 13882) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_save_peer_repeater_page() != 20332) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_clear_manual_route() != 57960) {

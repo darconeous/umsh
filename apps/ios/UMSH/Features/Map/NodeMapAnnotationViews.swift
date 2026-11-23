@@ -32,9 +32,9 @@ struct MapNodeContent: MapContent {
 /// and none at all about whether it is accurate—only the unattributable
 /// case is marked, and only because it means nobody vouched for the claim.
 ///
-/// A position a router reported for one of its neighbors is drawn with a
+/// A position a repeater reported for one of its neighbors is drawn with a
 /// dashed ring and a small antenna: second-hand, and said so, without the
-/// warning that means nobody vouched for it—the router did.
+/// warning that means nobody vouched for it—the repeater did.
 struct MapNodeMarker: View {
     let node: MapNode
     let isSelected: Bool

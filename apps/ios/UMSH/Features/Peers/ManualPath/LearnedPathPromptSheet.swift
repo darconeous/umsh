@@ -86,8 +86,8 @@ struct LearnedPathPromptSheet: View {
             : String(localized: "Flood", comment: "Route kind: every repeater rebroadcasts the frame. A routing term, not water.")
     }
 
-    private func pathText(_ hints: [MeshRouterHint]) -> String {
-        hints.map { RouterHintNaming.label($0, among: actions.knownPeers) }.joined(separator: " › ")
+    private func pathText(_ hints: [MeshRepeaterHint]) -> String {
+        hints.map { RepeaterHintNaming.label($0, among: actions.knownPeers) }.joined(separator: " › ")
     }
 
     private func useLearned() async {

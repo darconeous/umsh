@@ -12,7 +12,7 @@ use hamaddr::HamAddr;
 use umsh_core::{
     BlindAddr, MicSize, OptionNumber, PacketBuilder, PacketHeader, PacketType, PayloadType,
 };
-use umsh_core::{PublicKey, RouterHint};
+use umsh_core::{PublicKey, RepeaterHint};
 use umsh_crypto::NodeIdentity;
 use umsh_crypto::replay::REPLAY_BACKTRACK_SLOTS;
 use umsh_crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256};
@@ -553,7 +553,7 @@ impl<const PEERS: usize, const HOLDS: usize> Harness<PEERS, HOLDS> {
         if flags & 0x0080 != 0
             && let Ok(routed) = options
                 .clone()
-                .try_with_source_route(&[RouterHint([0x11, 0x22]), RouterHint([0x33, 0x44])])
+                .try_with_source_route(&[RepeaterHint([0x11, 0x22]), RepeaterHint([0x33, 0x44])])
         {
             options = routed;
         }

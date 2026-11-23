@@ -40,8 +40,8 @@ private func node(
 
 private let everything = PeerVerb.Availability(identify: true, message: true, ping: true, neighbors: true, manage: true)
 
-private func hint(_ text: String, _ bytes: UInt8...) -> MeshRouterHint {
-    MeshRouterHint(bytes: Data(bytes), text: text)
+private func hint(_ text: String, _ bytes: UInt8...) -> MeshRepeaterHint {
+    MeshRepeaterHint(bytes: Data(bytes), text: text)
 }
 
 @Suite
@@ -94,7 +94,7 @@ struct PingPathTests {
     private func reply(
         hopCount: UInt8?,
         unnamed: UInt8?,
-        hints: [MeshRouterHint] = [],
+        hints: [MeshRepeaterHint] = [],
         trace: [MeshLegSignal] = [],
         rssi: Int16? = -97,
         snr: Int16? = 65
@@ -189,10 +189,10 @@ struct RouteLegTests {
 @Suite
 struct SolicitVantageTests {
     /// The route's one repeater.
-    private let routeHint = RouterHintRecord(bytes: Data([5, 6]), text: "BtC")
-    /// The peer's router hint: the first two bytes of its key, as the core
+    private let routeHint = RepeaterHintRecord(bytes: Data([5, 6]), text: "BtC")
+    /// The peer's repeater hint: the first two bytes of its key, as the core
     /// derives it.
-    private let peerHint = RouterHintRecord(bytes: Data([1, 2]), text: "Rm7")
+    private let peerHint = RepeaterHintRecord(bytes: Data([1, 2]), text: "Rm7")
 
     private func route(_ vantage: MobileAppDiscoveryVantageRecord?) -> PeerRoute {
         PeerRoute(MobileAppRouteRecord(
@@ -243,7 +243,7 @@ struct SolicitVantageTests {
     @Test func aRepeaterAtTheEndOfAFullPathStopsOneShort() throws {
         // A peer known to repeat whose route already holds 15 hints: the
         // core cannot add the peer's own, so the ask lands one short.
-        let hints = (0..<15).map { RouterHintRecord(bytes: Data([0x10, UInt8($0)]), text: "h\($0)") }
+        let hints = (0..<15).map { RepeaterHintRecord(bytes: Data([0x10, UInt8($0)]), text: "h\($0)") }
         let full = route(MobileAppDiscoveryVantageRecord(
             repeaters: hints,
             landsAtPeer: false,

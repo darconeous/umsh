@@ -25,7 +25,7 @@ use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use umsh_core::{ChannelKey, ChannelTag, NodeHint, PublicKey, RouterHint};
+use umsh_core::{ChannelKey, ChannelTag, NodeHint, PublicKey, RepeaterHint};
 
 use crate::engine::sequence::MessageHandle;
 use crate::engine::{
@@ -367,7 +367,7 @@ pub struct Repeats {
     pub handle: MessageHandle,
     pub fragment: Option<u8>,
     /// Repeaters the forwards named, each once, in the order first heard.
-    pub repeaters: Vec<RouterHint>,
+    pub repeaters: Vec<RepeaterHint>,
     /// Forwards that named no repeater, which may include one repeater's
     /// several.
     pub anonymous: u16,

@@ -40,7 +40,7 @@ pub struct MobileLimitsRecord {
     /// Flood allowance a new manual path starts with.
     pub manual_path_flood_hops: u8,
     pub node_hint_len: u8,
-    pub router_hint_len: u8,
+    pub repeater_hint_len: u8,
     /// Location precision, in bytes of cell code.
     pub min_location_precision: u8,
     pub max_location_precision: u8,
@@ -66,7 +66,7 @@ pub fn mobile_limits() -> MobileLimitsRecord {
         max_route_hints: narrow(umsh_mac::CachedRoute::MAX_HINTS),
         manual_path_flood_hops: umsh_mac::ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS,
         node_hint_len: narrow(umsh_ulcp::node_msg::HINT_LEN),
-        router_hint_len: narrow(umsh_ulcp::node_msg::ROUTER_HINT_LEN),
+        repeater_hint_len: narrow(umsh_ulcp::node_msg::REPEATER_HINT_LEN),
         min_location_precision: 1,
         max_location_precision: umsh_node::location::MAX_PRECISION,
         default_location_precision: DEFAULT_LOCATION_PRECISION,
@@ -133,7 +133,7 @@ mod tests {
             (
                 limits.max_route_hints,
                 limits.node_hint_len,
-                limits.router_hint_len
+                limits.repeater_hint_len
             ),
             (15, 3, 2)
         );

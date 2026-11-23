@@ -99,7 +99,7 @@ Each cache entry is small (equal to the cache key size—typically 4 to 16 bytes
    - If this repeater matched a source-route hint, it is forwarding a source-routed hop. Skip directly to step 10 (trace processing), **including when the hint just removed was the last one**. Steps 7 through 9 describe flood forwarding and MUST NOT be applied to a source-routed hop.
 
 7. **Region policy** *(flood forwarding only!)*
-   - If the router has no region configuration at all, skip this section. A repeater with no configured regions applies no regional restriction and forwards a tagged packet whatever its region.
+   - If the repeater has no region configuration at all, skip this section. A repeater with no configured regions applies no regional restriction and forwards a tagged packet whatever its region.
    - If none of the region codes in the packet match those configured on the repeater, do not forward.
    - If the packet has no region code option, the repeater SHOULD insert its configured default region before flood-forwarding. A repeater with no default region configured forwards the packet untagged; the default region is not implied by the configured region list.
      - If one or more region codes are already present, the repeater MUST preserve them unchanged.

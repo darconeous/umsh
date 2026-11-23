@@ -150,7 +150,6 @@ Some UEP terms differ from those of the legacy book and the code:
 | Channel commitment | Group ID |
 | Channel tag (16 bytes) | The first 16 bytes of the group ID |
 | Blind unicast (`BUNI`, `BUAR`) | Group unicast (`GUNI`, `GUAR`) |
-| Router hint | Repeater hint |
 
 "Channel" for a radio channel, as in Channel Access, is unchanged.
 

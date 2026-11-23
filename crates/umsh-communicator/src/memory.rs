@@ -17,7 +17,7 @@ use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use umsh_core::{ChannelTag, NodeHint, PublicKey, RouterHint};
+use umsh_core::{ChannelTag, NodeHint, PublicKey, RepeaterHint};
 use umsh_text::chat::{self, Insert, Mutation};
 use umsh_text::engine::{
     ArchiveKey, CompletionStatus, Direction, Presence, ResolvedRef, StreamCheckpoint,
@@ -1492,7 +1492,7 @@ impl<D: Durable> ChatStore for MemoryStore<D> {
             .map(|key| PublicKey(*key))
     }
 
-    fn peers_with_router_hint(&self, hint: RouterHint) -> impl Iterator<Item = PublicKey> + '_ {
+    fn peers_with_repeater_hint(&self, hint: RepeaterHint) -> impl Iterator<Item = PublicKey> + '_ {
         let [a, b] = hint.0;
         self.index
             .hints
@@ -2059,7 +2059,7 @@ mod tests {
         store
             .update_peer(
                 &peer,
-                PeerChange::Route(Some(&[umsh_core::RouterHint([1, 2])])),
+                PeerChange::Route(Some(&[umsh_core::RepeaterHint([1, 2])])),
             )
             .unwrap();
         let chat = store.chat_for(&direct()).unwrap();
@@ -2368,7 +2368,7 @@ mod tests {
         store
             .update_peer(
                 &peer,
-                PeerChange::Route(Some(&[RouterHint([4, 5]); ROUTE_MAX])),
+                PeerChange::Route(Some(&[RepeaterHint([4, 5]); ROUTE_MAX])),
             )
             .unwrap();
         store

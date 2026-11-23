@@ -394,7 +394,7 @@ fn running_low_gives_up_what_was_queued() {
         .unwrap()
         .identity()
         .public_key()
-        .router_hint();
+        .repeater_hint();
     let routed = build_received_unicast_frame(
         &DummyIdentity::new([0xAB; 32]),
         &PairwiseKeys {
@@ -406,7 +406,7 @@ fn running_low_gives_up_what_was_queued() {
         false,
         None,
         None,
-        Some(&[own, RouterHint([0x44, 0x33])]),
+        Some(&[own, RepeaterHint([0x44, 0x33])]),
     );
     receive(&mut mac, &routed);
     assert!(
@@ -564,7 +564,7 @@ fn routed_through(mac: &TestMac) -> heapless::Vec<u8, 256> {
         .unwrap()
         .identity()
         .public_key()
-        .router_hint();
+        .repeater_hint();
     build_received_unicast_frame(
         &DummyIdentity::new([0xAB; 32]),
         &PairwiseKeys {

@@ -346,7 +346,10 @@ fn station_callsign_edit_vectors() {
             ),
         ),
     ];
-    let hint = DummyIdentity::new([0x30; 32]).public_key().router_hint().0;
+    let hint = DummyIdentity::new([0x30; 32])
+        .public_key()
+        .repeater_hint()
+        .0;
     let place = |(frame, at): Frame| {
         let mut frame = frame.to_vec();
         for &at in at {

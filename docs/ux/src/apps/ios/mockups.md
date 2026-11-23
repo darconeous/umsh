@@ -286,7 +286,7 @@ separate metadata-and-scope preview before transmission; it is not automatic.
 
 ## D3–D7. Manual path
 
-[![Manual path override mockups: peer detail with a held path, the editor with repeaters and as a direct path, Add Hop, router hint entry, an ambiguous hint, and the learned-path prompt](mockups/manual-path.svg)](mockups/manual-path.svg)
+[![Manual path override mockups: peer detail with a held path, the editor with repeaters and as a direct path, Add Hop, repeater hint entry, an ambiguous hint, and the learned-path prompt](mockups/manual-path.svg)](mockups/manual-path.svg)
 
 The Route screen (boards 8 and 9 under D) replaces boards 1 and 2 here: the
 held path shows there, and its **Edit** opens the editor in place rather than
@@ -321,9 +321,9 @@ node's neighbors; **Done** returns to the editor. Signal figures are the
 previous hop's reception of each neighbor. The footer names the path the
 listing was asked through.
 
-### D6. Router hint entry
+### D6. Repeater hint entry
 
-Boards 5 and 6. When a Base58 prefix spans two router hints, the result section
+Boards 5 and 6. When a Base58 prefix spans two repeater hints, the result section
 lists both and **Add** waits for a choice. Both examples are real: `7Nq4` fixes
 the hint `5EBD`, and `H12n` straddles `EDBC` and `EDBD`, which both render as
 `H1*`.
@@ -767,7 +767,7 @@ Conversations
 
 Peers
   List <-> Map -> Node detail -> Messages / Data / Room / Management
-                              -> Manual path -> Add hop -> Router hint
+                              -> Manual path -> Add hop -> Repeater hint
 
 Channels
   Joined / Suggested / On the radio only

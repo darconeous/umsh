@@ -58,7 +58,7 @@ pub enum AddressParseError {
     Overflow,
 }
 
-/// Errors returned while reading a router hint typed by a person.
+/// Errors returned while reading a repeater hint typed by a person.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HintInputError {
     /// Too few characters to determine sixteen bits.

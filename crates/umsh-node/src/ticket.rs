@@ -2,7 +2,7 @@ use alloc::rc::Rc;
 use core::cell::RefCell;
 use core::task::{Context, Poll, Waker};
 
-use umsh_core::RouterHint;
+use umsh_core::RepeaterHint;
 use umsh_mac::{LocalIdentityId, SendReceipt, TxAbandonReason};
 
 /// Distinct named repeaters a [`RepeatTally`] remembers. Past this, a newly
@@ -13,7 +13,7 @@ pub const MAX_TALLIED_REPEATERS: usize = 8;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RepeatTally {
     /// Repeaters the forwards named, each once, in the order first heard.
-    pub repeaters: heapless::Vec<RouterHint, MAX_TALLIED_REPEATERS>,
+    pub repeaters: heapless::Vec<RepeaterHint, MAX_TALLIED_REPEATERS>,
     /// Forwards that named no repeater. One repeater may forward a frame
     /// more than once, so this counts repeats, not repeaters.
     pub anonymous: u16,
@@ -27,7 +27,7 @@ impl RepeatTally {
         self.repeaters.len() + usize::from(self.anonymous)
     }
 
-    pub(crate) fn note(&mut self, repeater: Option<RouterHint>) {
+    pub(crate) fn note(&mut self, repeater: Option<RepeaterHint>) {
         match repeater {
             Some(hint) if self.repeaters.contains(&hint) => return,
             Some(hint) if self.repeaters.push(hint).is_ok() => {}
@@ -41,7 +41,7 @@ impl RepeatTally {
     /// here; the unnamed count is the larger of the two, since every send
     /// of a message is heard by the same repeaters. Returns whether a
     /// repeater was added.
-    pub fn merge(&mut self, repeaters: &[RouterHint], anonymous: u16) -> bool {
+    pub fn merge(&mut self, repeaters: &[RepeaterHint], anonymous: u16) -> bool {
         let mut added = false;
         for &hint in repeaters {
             if !self.repeaters.contains(&hint) && self.repeaters.push(hint).is_ok() {
@@ -260,16 +260,19 @@ mod tests {
     #[test]
     fn merging_tallies_adds_new_repeaters_and_keeps_the_larger_unnamed_count() {
         let mut tally = RepeatTally::default();
-        assert!(tally.merge(&[RouterHint([1, 2])], 1));
+        assert!(tally.merge(&[RepeaterHint([1, 2])], 1));
         let revision = tally.revision;
 
         // The same word again changes nothing.
-        assert!(!tally.merge(&[RouterHint([1, 2])], 1));
+        assert!(!tally.merge(&[RepeaterHint([1, 2])], 1));
         assert_eq!(tally.revision, revision);
 
         // A smaller unnamed count is the same repeaters, heard less.
-        assert!(tally.merge(&[RouterHint([3, 4]), RouterHint([1, 2])], 0));
-        assert_eq!(tally.repeaters, [RouterHint([1, 2]), RouterHint([3, 4])]);
+        assert!(tally.merge(&[RepeaterHint([3, 4]), RepeaterHint([1, 2])], 0));
+        assert_eq!(
+            tally.repeaters,
+            [RepeaterHint([1, 2]), RepeaterHint([3, 4])]
+        );
         assert_eq!(tally.anonymous, 1);
 
         assert!(tally.merge(&[], 2));
@@ -361,7 +364,7 @@ mod tests {
     #[test]
     fn repeat_tally_names_each_repeater_once() {
         let mut tally = RepeatTally::default();
-        let hint = RouterHint([1, 2]);
+        let hint = RepeaterHint([1, 2]);
         tally.note(Some(hint));
         tally.note(Some(hint));
         tally.note(None);

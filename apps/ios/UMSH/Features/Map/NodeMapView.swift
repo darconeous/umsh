@@ -13,7 +13,7 @@ struct NodeMapView: View {
     @Binding var radioSnapshot: RadioSnapshot
     @Binding var conversations: [DirectConversationSummary]
     let peers: [PeerSummary]
-    /// Positions routers have reported for their neighbors, drawn beside the
+    /// Positions repeaters have reported for their neighbors, drawn beside the
     /// nodes' own claims for nodes that made none.
     var neighborReports: [PeerRepeaterNeighborReport] = []
     /// Whether launch bootstrap is still running, so an empty map reads as
@@ -396,7 +396,7 @@ struct NodeMapView: View {
     /// A cell this coarse covers a city or more; a marker on its own would
     /// read as an address the node never gave. Finer cells draw their circle
     /// only when selected, so a crowded map stays legible. A position a
-    /// router reported always draws its cell: the uncertainty is the point
+    /// repeater reported always draws its cell: the uncertainty is the point
     /// of showing a second-hand pin at all.
     private func shouldDrawCell(_ node: MapNode) -> Bool {
         node.isCoarse || node.isReported || node.id == selectedNodeID

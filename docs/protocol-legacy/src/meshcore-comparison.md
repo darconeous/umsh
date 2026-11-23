@@ -18,7 +18,7 @@ Both protocols use Ed25519 public keys as node identities and perform X25519 ECD
 | Destination address | 3-byte hint | 1-byte hash |
 | Channel identifier | 2-byte derived hint | 1-byte hash of SHA-256 of channel key |
 
-UMSH uses 3-byte hints for node addresses and 2-byte hints for router addresses in source routes and traces, giving 1-in-16,777,216 collision resistance on node identifiers. An explicit `S` flag includes the full 32-byte source key when needed (first contact, ephemeral keys). MeshCore uses 1-byte source and destination hashes in regular encrypted unicast payloads, while routing paths support configurable 1-, 2-, or 3-byte node hashes. A dedicated `ANON_REQ` packet type carries the full 32-byte sender public key for first-contact or anonymous exchanges. The tradeoff is that MeshCore saves bytes per address field in the common case, but requires a special packet type for any situation where the full key must be transmitted.
+UMSH uses 3-byte hints for node addresses and 2-byte hints for repeater addresses in source routes and traces, giving 1-in-16,777,216 collision resistance on node identifiers. An explicit `S` flag includes the full 32-byte source key when needed (first contact, ephemeral keys). MeshCore uses 1-byte source and destination hashes in regular encrypted unicast payloads, while routing paths support configurable 1-, 2-, or 3-byte node hashes. A dedicated `ANON_REQ` packet type carries the full 32-byte sender public key for first-contact or anonymous exchanges. The tradeoff is that MeshCore saves bytes per address field in the common case, but requires a special packet type for any situation where the full key must be transmitted.
 
 ## Packet Structure
 
@@ -61,7 +61,7 @@ The cryptographic gap is substantial:
 | Direct/source routing | Yes, via source-route option | Yes (ROUTE_TYPE_DIRECT) |
 | Hybrid routing | Source route + flood hop count in same packet | Not supported |
 | Path discovery | Trace option on any flooded packet | Dedicated PATH payload type |
-| Route learning | Trace option accumulates router hints and per-hop signal during flooding; used as a source route by the recipient | Explicit returned-path messages |
+| Route learning | Trace option accumulates repeater hints and per-hop signal during flooding; used as a source route by the recipient | Explicit returned-path messages |
 | Forwarding confirmation | Yes (retries with backoff) | Not defined |
 | Channel access | CAD with random backoff; SNR-based contention windows | Listen-before-talk with random backoff; SNR-based flood retransmit delay |
 | Signal-quality filtering | Min RSSI and min SNR options | SNR-based retransmit prioritization (implicit, no explicit thresholds) |
@@ -87,7 +87,7 @@ When a MeshCore repeater receives a transport-scoped packet, it iterates through
 
 This payload-dependent transport-code mechanism was introduced in MeshCore commit `03fc9490`.
 
-Both protocols support automatic route learning, but through different mechanisms. UMSH uses a Trace option that accumulates a record of each hop as a packet floods—its router hint and the signal it was received with; the recipient caches the accumulated trace as a source route for all subsequent communication with the sender—replies, acknowledgments, and new messages alike (see [Route Learning](beacons.md#route-learning)). MeshCore uses a dedicated returned-path message type.
+Both protocols support automatic route learning, but through different mechanisms. UMSH uses a Trace option that accumulates a record of each hop as a packet floods—its repeater hint and the signal it was received with; the recipient caches the accumulated trace as a source route for all subsequent communication with the sender—replies, acknowledgments, and new messages alike (see [Route Learning](beacons.md#route-learning)). MeshCore uses a dedicated returned-path message type.
 
 Both protocols define channel access mechanisms. MeshCore checks for preamble or signal detection before transmitting and defers with a randomized backoff (120–360 ms) if the channel is busy, with a forced-transmit safety valve after 4 seconds. Flood retransmissions use a random delay proportional to airtime and a score-based priority derived from received SNR. UMSH uses CAD with random backoff and SNR-based contention windows for collision avoidance. UMSH additionally defines hop-by-hop forwarding confirmation with retries, providing reliability across the forwarding chain that MeshCore does not offer.
 

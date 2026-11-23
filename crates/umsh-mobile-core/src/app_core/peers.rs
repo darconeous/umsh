@@ -381,7 +381,7 @@ impl Worker {
     }
 }
 
-/// A route of 2-byte router hints, and a node hint of 2 or 3 bytes.
+/// A route of 2-byte repeater hints, and a node hint of 2 or 3 bytes.
 fn checked_discovery(node_hint: Option<&[u8]>, route: &[Vec<u8>]) -> Result<(), MobileAppError> {
     let hint_fits = node_hint.is_none_or(|hint| matches!(hint.len(), 2 | 3));
     if !hint_fits || route.iter().any(|hop| hop.len() != 2) {
@@ -571,7 +571,7 @@ impl MobileAppCore {
 
     /// Ask the nodes in range, or those where `route` ends, for their
     /// identities: those with `role`, or with a node hint starting with
-    /// `node_hint` (2 or 3 bytes). Each hop of `route` is a 2-byte router
+    /// `node_hint` (2 or 3 bytes). Each hop of `route` is a 2-byte repeater
     /// hint. Answers arrive as peers changes.
     ///
     /// An ask without `node_hint` draws every node in range, so one goes

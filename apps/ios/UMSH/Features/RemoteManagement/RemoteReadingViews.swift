@@ -19,7 +19,7 @@ struct RemoteReadingFooter: View {
     }
 
     /// The same footer for a reading that is not a property category—a
-    /// router's neighbor listing, say—so every cached screen dates itself
+    /// repeater's neighbor listing, say—so every cached screen dates itself
     /// in the same words.
     init(asOf: Date?, isFresh: Bool, isBusy: Bool, subject: String) {
         self.asOf = asOf

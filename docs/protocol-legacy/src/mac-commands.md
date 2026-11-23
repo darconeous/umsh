@@ -118,9 +118,9 @@ regardless of the [general rule](beacons.md#when-to-include-a-trace).
 
 A repeater consumes its own hint while forwarding, not while receiving, so a
 request whose Route option still names a repeater is one that repeater drops.
-Asking a named router to identify itself therefore means steering the request to
-the hop *before* it and narrowing it with that router's two-byte hint: the
-request arrives with an empty Route option, and the router answers it as any
+Asking a named repeater to identify itself therefore means steering the request to
+the hop *before* it and narrowing it with that repeater's two-byte hint: the
+request arrives with an empty Route option, and the repeater answers it as any
 other node in that neighborhood would.
 
 These requirements MAY be relaxed for specific private channels, but MUST remain in place for all public channels. Note that these requirements are specifically designed to allow discovering identities from a specific repeater location on the mesh network.
@@ -148,7 +148,7 @@ Non-filter options (such as NONCE) do not participate in this matching.
 | Key | Critical | Name | Value | Description |
 |---:|---|---|---|---|
 | 1 | Yes | NONCE | 4 bytes | Correlation identifier the responder MUST echo in its response's [Nonce option](node-identity.md#nonce-option-5). Not a filter. |
-| 3 | Yes | FILTER_NODE_HINT | 1–3 bytes | Respond only if this is a leading part of the responder's own [node hint](addressing.md#node-hint). A 3-byte value is the whole hint; a 2-byte value is the [router hint](addressing.md#router-hint), which is all a [Source Route](packet-options.md#source-route-option-3) or [Trace](packet-options.md#trace-option-7) reveals about the hops it names. A zero-length value matches nothing. |
+| 3 | Yes | FILTER_NODE_HINT | 1–3 bytes | Respond only if this is a leading part of the responder's own [node hint](addressing.md#node-hint). A 3-byte value is the whole hint; a 2-byte value is the [repeater hint](addressing.md#repeater-hint), which is all a [Source Route](packet-options.md#source-route-option-3) or [Trace](packet-options.md#trace-option-7) reveals about the hops it names. A zero-length value matches nothing. |
 | 5 | Yes | FILTER_NODE_ROLE | 1 byte | Respond only if the responder's [primary role](node-identity.md#node-primary-role) equals this value. |
 | 7 | Yes | FILTER_NODE_CAPS | 1 byte | Respond only if the responder's [capability bitmap](node-identity.md#capability-bitmap) has every bit set that is set in this value. |
 
@@ -231,11 +231,11 @@ Asks the destination—typically a repeater—for its list of known peer repeate
 
 A repeater answers any node. Any other node, an [adaptive forwarder](repeater-operation.md#adaptive-forwarding) included, answers its [administrators](app-node-management.md) and no one else: it keeps the same list but is not a repeater its neighbors plan on.
 
-The list is the responder's repeater neighborhood: the repeaters it has heard from their own transmitters. A repeater enters it in one of two ways. Forwarding a frame the responder receives is one—a repeater prepends its record to the frame's [Trace](packet-options.md#trace-option-7), so the first hint names the repeater whose transmission was just heard. Advertising is the other—a [node identity](node-identity.md) claiming the repeater role or capability, heard directly rather than forwarded, on a frame that authenticated its sender and passed replay detection (see [Signature Usage](node-identity.md#signature-usage)). Frames heard from nodes that are not repeaters, identities that arrived through a repeater, and identities believed only on their embedded signature put nothing in the list. Nor does anything naming the responder itself: a trace that begins with its own router hint, or its own identity. A neighbor need not be on the air: a repeater reached over a point-to-point link, such as an attached host, is listed the same way and simply carries no signal measurements.
+The list is the responder's repeater neighborhood: the repeaters it has heard from their own transmitters. A repeater enters it in one of two ways. Forwarding a frame the responder receives is one—a repeater prepends its record to the frame's [Trace](packet-options.md#trace-option-7), so the first hint names the repeater whose transmission was just heard. Advertising is the other—a [node identity](node-identity.md) claiming the repeater role or capability, heard directly rather than forwarded, on a frame that authenticated its sender and passed replay detection (see [Signature Usage](node-identity.md#signature-usage)). Frames heard from nodes that are not repeaters, identities that arrived through a repeater, and identities believed only on their embedded signature put nothing in the list. Nor does anything naming the responder itself: a trace that begins with its own repeater hint, or its own identity. A neighbor need not be on the air: a repeater reached over a point-to-point link, such as an attached host, is listed the same way and simply carries no signal measurements.
 
 A trace hint is not authenticated, so a repeater the list holds only by trace is unproven until it is heard forwarding a frame the responder itself sent. When the trace entries are full, a repeater heard only by trace takes the place of an unproven entry, never a proven one.
 
-A trace hint is credited to the advertised entries whose node hint begins with it and whose identity was heard in the past eight hours, or, failing those, to the only advertised entry that begins with it. A credited hint is listed as part of those entries; a hint credited to none is listed under its router hint alone. An advertised entry counts as heard whenever its identity, a trace hint credited to it, or a frame it originated—a broadcast, or one sent to the responder or to a channel the responder holds—is heard directly. It stays listed until a week passes without its identity being heard directly again, whatever else is heard from it. When the advertised entries are full, a newly advertised repeater takes the place of one not heard in two hours before any other, then of a mobile one, then of one claiming only the repeater role, then of one with only the repeater capability, then of any other, the least recently heard first within each; it never takes the place of one that outranks it.
+A trace hint is credited to the advertised entries whose node hint begins with it and whose identity was heard in the past eight hours, or, failing those, to the only advertised entry that begins with it. A credited hint is listed as part of those entries; a hint credited to none is listed under its repeater hint alone. An advertised entry counts as heard whenever its identity, a trace hint credited to it, or a frame it originated—a broadcast, or one sent to the responder or to a channel the responder holds—is heard directly. It stays listed until a week passes without its identity being heard directly again, whatever else is heard from it. When the advertised entries are full, a newly advertised repeater takes the place of one not heard in two hours before any other, then of a mobile one, then of one claiming only the repeater role, then of one with only the repeater capability, then of any other, the least recently heard first within each; it never takes the place of one that outranks it.
 
 The command-specific payload is a CoAP-style option list, using the delta-length encoding defined in [Packet Options](packet-options.md#attribute-encoding):
 
@@ -272,7 +272,7 @@ The options per entry:
 
 | Number | Name | Value | Description |
 |---:|---|---|---|
-| 0 | Node Hint | 2 or 3 bytes | The peer's [node hint](addressing.md#node-hint)—3 bytes when the responder holds it in full, or the 2-byte [router hint](addressing.md#router-hint) when that is all it has observed. The only required option. |
+| 0 | Node Hint | 2 or 3 bytes | The peer's [node hint](addressing.md#node-hint)—3 bytes when the responder holds it in full, or the 2-byte [repeater hint](addressing.md#repeater-hint) when that is all it has observed. The only required option. |
 | 1 | Node Name | UTF-8, max 24 bytes | The peer's display name, as learned from its [identity](node-identity.md#node-name-option-0). |
 | 2 | RSSI/SNR | 2 bytes | Signal measurements from the most recent reception: RSSI as an unsigned value representing negative dBm (e.g. 130 = −130 dBm), then SNR as a signed value in quarter-dB steps. |
 | 3 | Last Heard | 1–2 bytes | Minutes since the responder last heard the peer, as a minimal big-endian unsigned integer. Saturates at 65535 (about 45 days). |

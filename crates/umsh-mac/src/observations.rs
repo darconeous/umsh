@@ -1,7 +1,7 @@
 //! Which repeaters this node has heard forwarding, and how well.
 //!
 //! Route learning records the way to a *peer*; this records the last
-//! reception from a neighboring *repeater*. A repeater prepends its router
+//! reception from a neighboring *repeater*. A repeater prepends its repeater
 //! hint to the trace route of every frame it forwards, so the first hint of
 //! a trace names the transmitter just heard, and a frame with no such hint
 //! came off its originator and names no repeater at all. The two differ for
@@ -16,13 +16,13 @@
 //! point-to-point link forwards like any other repeater and is recorded like
 //! one, with no measurement, since no radio was between it and this node.
 //!
-//! A trace hint is not authenticated: anyone on the air can put any router
+//! A trace hint is not authenticated: anyone on the air can put any repeater
 //! hint at the front of a frame. So an entry is *unproven* until the
 //! repeater it names is heard forwarding one of this node's own frames,
 //! which no one can produce on demand, and a full table never lets an
 //! unproven reception displace a proven entry.
 
-use umsh_core::RouterHint;
+use umsh_core::RepeaterHint;
 use umsh_hal::Snr;
 
 /// How many repeaters the table remembers.
@@ -37,7 +37,7 @@ pub const MAX_TRANSMITTER_OBSERVATIONS: usize = 16;
 pub struct TransmitterObservation {
     /// All a trace route reveals about the hop that forwarded a frame, and
     /// so all this table can key on.
-    pub hint: RouterHint,
+    pub hint: RepeaterHint,
     /// RSSI in dBm and SNR of the most recent reception, when a radio
     /// measured it. `None` for a neighbor reached over a link with no radio
     /// in it.
@@ -76,7 +76,12 @@ impl TransmitterObservations {
     /// The reception proves nothing about `hint`, so a full table makes room
     /// for it only by displacing an unproven entry. Returns `false` when it
     /// was left out because every entry is proven.
-    pub fn observe(&mut self, hint: RouterHint, rssi_snr: Option<(i16, Snr)>, now_ms: u64) -> bool {
+    pub fn observe(
+        &mut self,
+        hint: RepeaterHint,
+        rssi_snr: Option<(i16, Snr)>,
+        now_ms: u64,
+    ) -> bool {
         self.record(hint, rssi_snr, now_ms, false)
     }
 
@@ -86,23 +91,23 @@ impl TransmitterObservations {
     /// A full table makes room by displacing the least recently heard
     /// unproven entry, or, when every entry is proven, the least recently
     /// heard of those.
-    pub fn vouch(&mut self, hint: RouterHint, rssi_snr: Option<(i16, Snr)>, now_ms: u64) {
+    pub fn vouch(&mut self, hint: RepeaterHint, rssi_snr: Option<(i16, Snr)>, now_ms: u64) {
         self.record(hint, rssi_snr, now_ms, true);
     }
 
     /// Whether the entry for `hint` is held and proven.
-    pub fn is_proven(&self, hint: &RouterHint) -> bool {
+    pub fn is_proven(&self, hint: &RepeaterHint) -> bool {
         self.position(hint)
             .is_some_and(|index| self.proven & (1 << index) != 0)
     }
 
-    fn position(&self, hint: &RouterHint) -> Option<usize> {
+    fn position(&self, hint: &RepeaterHint) -> Option<usize> {
         self.entries.iter().position(|entry| &entry.hint == hint)
     }
 
     fn record(
         &mut self,
-        hint: RouterHint,
+        hint: RepeaterHint,
         rssi_snr: Option<(i16, Snr)>,
         now_ms: u64,
         proven: bool,
@@ -178,7 +183,7 @@ impl TransmitterObservations {
     }
 
     /// The observation for one transmitter, if it is still held.
-    pub fn get(&self, hint: &RouterHint) -> Option<&TransmitterObservation> {
+    pub fn get(&self, hint: &RepeaterHint) -> Option<&TransmitterObservation> {
         self.entries.iter().find(|entry| &entry.hint == hint)
     }
 }
@@ -187,8 +192,8 @@ impl TransmitterObservations {
 mod tests {
     use super::*;
 
-    fn hint(seed: u8) -> RouterHint {
-        RouterHint([seed, seed])
+    fn hint(seed: u8) -> RepeaterHint {
+        RepeaterHint([seed, seed])
     }
 
     fn measured(rssi_dbm: i16, snr_db: i8) -> Option<(i16, Snr)> {

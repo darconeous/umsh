@@ -1,14 +1,14 @@
 import SwiftUI
 
-/// What one router says about the repeaters around it, a page at a time.
+/// What one repeater says about the repeaters around it, a page at a time.
 ///
-/// Opens on whatever this phone last heard from the router and puts nothing
+/// Opens on whatever this phone last heard from the repeater and puts nothing
 /// on the air until asked: every page is one exchange across the mesh at
 /// everyone's expense, so Refresh asks for the top of the listing, Load more
 /// for the page after the last one held, and neither happens on its own.
 ///
 /// A plain MAC command any node may send, so unlike the Manage Device
-/// screens this needs no standing as an administrator—only a router that
+/// screens this needs no standing as an administrator—only a repeater that
 /// keeps a neighbor table and is in reach.
 struct PeerRepeatersScreen: View {
     let peer: PeerSummary

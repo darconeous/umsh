@@ -15,7 +15,7 @@ use super::records::MobileAppRepeaterListingRecord;
 use super::routes::{checked_address, rendered_hints};
 use super::worker::Worker;
 use super::{MobileAppCore, MobileAppError, mesh_error};
-use crate::RouterHintRecord;
+use crate::RepeaterHintRecord;
 use crate::meet::MobileMeetExchange;
 use crate::mobile_mesh::{
     MobileMeshExplicitPath, MobileMeshPeerRepeatersPageRecord, MobileMeshPingOutcome,
@@ -42,7 +42,7 @@ pub struct MobileAppPingReplyRecord {
     pub hop_count: Option<u8>,
     /// The path the reply took, rendered. A hint that does not render is
     /// left out.
-    pub route_hints: Vec<RouterHintRecord>,
+    pub route_hints: Vec<RepeaterHintRecord>,
     pub trace_signal: Vec<MobileTraceSignalRecord>,
     pub rssi_dbm: Option<i16>,
     pub snr_centibels: Option<i16>,

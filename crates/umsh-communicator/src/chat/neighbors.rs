@@ -1,4 +1,4 @@
-//! What routers report hearing: the repeaters each one lists in answer to
+//! What repeaters report hearing: the repeaters each one lists in answer to
 //! a Peer Repeaters Request, a page at a time, kept for the interface to
 //! read. Nothing is kept across a reboot.
 //!
@@ -8,7 +8,7 @@
 use alloc::vec::Vec as AllocVec;
 use core::fmt::Write as _;
 
-use umsh_core::{NodeHint, PublicKey, RouterHint, base58};
+use umsh_core::{NodeHint, PublicKey, RepeaterHint, base58};
 use umsh_node::NodeIdentityPayload;
 use umsh_node::location::NodeLocation;
 use umsh_node::mac_command::PeerRepeatersResponseView;
@@ -25,7 +25,7 @@ use crate::record::{PeerFilter, PeerRecord};
 use crate::store::ChatStore;
 use crate::task::{AskWay, Command, NeighborsCursor};
 
-/// How many routers' listings are kept. Past it, the one asked longest ago
+/// How many repeaters' listings are kept. Past it, the one asked longest ago
 /// whose screen is not open goes. More than the interface can have open at
 /// once.
 const KEPT: usize = 4;
@@ -33,8 +33,8 @@ const KEPT: usize = 4;
 /// How long an ask waits for its answer.
 pub(crate) const ANSWER_MS: u64 = 30_000;
 
-/// One router's listing.
-pub(crate) struct Router {
+/// One repeater's listing.
+pub(crate) struct Repeater {
     /// The repeaters it reported, the one it heard most recently first.
     entries: AllocVec<Entry>,
     /// How many it said it hears.
@@ -59,13 +59,13 @@ struct Asking {
     until_ms: u64,
 }
 
-/// A repeater as the router reported it.
+/// A repeater as the repeater reported it.
 struct Entry {
-    /// Its node hint, or router hint, as the router gave it: two or three
+    /// Its node hint, or repeater hint, as the repeater gave it: two or three
     /// bytes of its address.
     hint: [u8; 3],
     hint_len: u8,
-    /// What it calls itself, as the router heard.
+    /// What it calls itself, as the repeater heard.
     name: Option<String<24>>,
     signal: Option<Signal>,
     heard_min: Option<u16>,
@@ -77,16 +77,16 @@ impl Entry {
         &self.hint[..usize::from(self.hint_len)]
     }
 
-    fn router_hint(&self) -> [u8; 2] {
+    fn repeater_hint(&self) -> [u8; 2] {
         [self.hint[0], self.hint[1]]
     }
 }
 
 impl<S: ChatStore> Chats<S> {
-    /// Asks the router at `address` for the top of what it hears, or, when
+    /// Asks the repeater at `address` for the top of what it hears, or, when
     /// `more`, the page after the last one held, the way `way` says. An
     /// ask already waiting is left to its answer. The listings of the
-    /// routers at `shown` are kept.
+    /// repeaters at `shown` are kept.
     pub fn ask_listing(
         &mut self,
         address: &str,
@@ -99,31 +99,29 @@ impl<S: ChatStore> Chats<S> {
         let Some(key) = key_at(address) else {
             return;
         };
-        if self
-            .routers
-            .get(&key.0)
-            .is_some_and(|router| router.asking.is_some() || (more && router.cursor.is_none()))
-        {
+        if self.repeaters.get(&key.0).is_some_and(|repeater| {
+            repeater.asking.is_some() || (more && repeater.cursor.is_none())
+        }) {
             return;
         }
-        if !self.routers.contains_key(&key.0)
-            && self.routers.len() >= KEPT
+        if !self.repeaters.contains_key(&key.0)
+            && self.repeaters.len() >= KEPT
             && let Some(oldest) = self
-                .routers
+                .repeaters
                 .iter()
                 .filter(|(key, _)| {
                     !shown
                         .iter()
                         .any(|shown| key_at(shown).is_some_and(|shown| shown.0 == **key))
                 })
-                .min_by_key(|(_, router)| router.used_ms)
+                .min_by_key(|(_, repeater)| repeater.used_ms)
                 .map(|(key, _)| *key)
         {
-            self.routers.remove(&oldest);
+            self.repeaters.remove(&oldest);
         }
         self.nonce = self.nonce.wrapping_add(1);
         let nonce = self.nonce;
-        let router = self.routers.entry(key.0).or_insert_with(|| Router {
+        let repeater = self.repeaters.entry(key.0).or_insert_with(|| Repeater {
             entries: AllocVec::new(),
             total: None,
             cursor: None,
@@ -132,16 +130,16 @@ impl<S: ChatStore> Chats<S> {
             no_answer: false,
             used_ms: now_ms,
         });
-        router.used_ms = now_ms;
-        router.no_answer = false;
-        router.asking = Some(Asking {
+        repeater.used_ms = now_ms;
+        repeater.no_answer = false;
+        repeater.asking = Some(Asking {
             nonce,
             more,
             until_ms: now_ms + ANSWER_MS,
         });
-        let cursor = if more { router.cursor.clone() } else { None };
+        let cursor = if more { repeater.cursor.clone() } else { None };
         self.commands.push_back(Command::AskNeighbors {
-            router: key,
+            repeater: key,
             nonce,
             cursor,
             way,
@@ -149,19 +147,19 @@ impl<S: ChatStore> Chats<S> {
         events(NodeEvent::ListingChanged);
     }
 
-    /// Takes a page of what `router` reports hearing, `body` its Peer
+    /// Takes a page of what `repeater` reports hearing, `body` its Peer
     /// Repeaters Response. One that answers no ask waiting is ignored. A
     /// page of the top replaces the listing; a later one adds to it what it
     /// does not already hold.
     pub fn neighbors_page(
         &mut self,
-        router: PublicKey,
+        repeater: PublicKey,
         body: &[u8],
         now_ms: u64,
         events: &mut dyn FnMut(NodeEvent),
     ) {
         let page = PeerRepeatersResponseView::new(body);
-        let Some(kept) = self.routers.get_mut(&router.0) else {
+        let Some(kept) = self.repeaters.get_mut(&repeater.0) else {
             return;
         };
         let Some(asking) = kept
@@ -221,13 +219,13 @@ impl<S: ChatStore> Chats<S> {
     /// Gives up on asks that have waited past [`ANSWER_MS`].
     pub(super) fn lapse_listings(&mut self, now_ms: u64, events: &mut dyn FnMut(NodeEvent)) {
         let mut lapsed = false;
-        for router in self.routers.values_mut() {
-            if router
+        for repeater in self.repeaters.values_mut() {
+            if repeater
                 .asking
                 .is_some_and(|asking| asking.until_ms <= now_ms)
             {
-                router.asking = None;
-                router.no_answer = true;
+                repeater.asking = None;
+                repeater.no_answer = true;
                 lapsed = true;
             }
         }
@@ -236,33 +234,33 @@ impl<S: ChatStore> Chats<S> {
         }
     }
 
-    /// What the router at `address` reports hearing, as last read.
+    /// What the repeater at `address` reports hearing, as last read.
     pub fn listing(&self, address: &str, now_ms: u64) -> Option<Listing> {
         let key = key_at(address)?;
-        let router = self.routers.get(&key.0)?;
+        let repeater = self.repeaters.get(&key.0)?;
         Some(Listing {
-            count: router.entries.len() as u8,
-            total: router.total,
-            more: router.cursor.is_some() && router.entries.len() < MAX_LISTED,
-            read_ms_ago: router.read_at_ms.map(|at| now_ms.saturating_sub(at)),
-            asking: router.asking.map(|asking| {
+            count: repeater.entries.len() as u8,
+            total: repeater.total,
+            more: repeater.cursor.is_some() && repeater.entries.len() < MAX_LISTED,
+            read_ms_ago: repeater.read_at_ms.map(|at| now_ms.saturating_sub(at)),
+            asking: repeater.asking.map(|asking| {
                 if asking.more {
                     ListingAsk::More
                 } else {
                     ListingAsk::Top
                 }
             }),
-            no_answer: router.no_answer,
+            no_answer: repeater.no_answer,
             hint: [key.0[0], key.0[1]],
         })
     }
 
-    /// The `index`th repeater the router at `address` reports hearing: as
-    /// the node it most plausibly is, else as the router named it, else by
+    /// The `index`th repeater the repeater at `address` reports hearing: as
+    /// the node it most plausibly is, else as the repeater named it, else by
     /// its hint.
     pub fn listed(&self, address: &str, index: usize) -> Option<Listed> {
         let key = key_at(address)?;
-        let entry = self.routers.get(&key.0)?.entries.get(index)?;
+        let entry = self.repeaters.get(&key.0)?.entries.get(index)?;
         let kept = self.kept_with(entry.hint());
         let (name_text, avatar, address) = match &kept {
             Some(kept) => (
@@ -274,33 +272,33 @@ impl<S: ChatStore> Chats<S> {
                 let mut hint = String::<24>::new();
                 match entry.hint_len {
                     3 => _ = write!(hint, "{}", NodeHint(entry.hint)),
-                    _ => _ = write!(hint, "{}", RouterHint(entry.router_hint())),
+                    _ => _ = write!(hint, "{}", RepeaterHint(entry.repeater_hint())),
                 }
-                let avatar = AvatarStyle::router_hint(&hint);
+                let avatar = AvatarStyle::repeater_hint(&hint);
                 (entry.name.clone().unwrap_or(hint), avatar, None)
             }
         };
         let distance_m = match (entry.at, self.located(&key)) {
-            (Some(at), Some(router)) => Some(meters_between(router.center(), at.center())),
+            (Some(at), Some(repeater)) => Some(meters_between(repeater.center(), at.center())),
             _ => None,
         };
         Some(Listed {
             name: name_text,
             avatar,
             address,
-            hint: entry.router_hint(),
+            hint: entry.repeater_hint(),
             signal: entry.signal,
             heard_min: entry.heard_min,
             distance_m,
         })
     }
 
-    /// Where the node at `node` is in what the router at `router` reports
+    /// Where the node at `node` is in what the repeater at `repeater` reports
     /// hearing.
-    pub fn listed_place(&self, router: &str, node: &str) -> Option<usize> {
+    pub fn listed_place(&self, repeater: &str, node: &str) -> Option<usize> {
         let node = key_at(node)?;
-        self.routers
-            .get(&key_at(router)?.0)?
+        self.repeaters
+            .get(&key_at(repeater)?.0)?
             .entries
             .iter()
             .position(|entry| node.0.starts_with(entry.hint()))
@@ -308,17 +306,17 @@ impl<S: ChatStore> Chats<S> {
 
     /// Known nodes that forward others' frames, whose names have a word
     /// starting with `query` (all, when it is empty), the most recently
-    /// heard first, one to a router hint, leaving out the node at `peer`
-    /// and those the router at `router` reports hearing.
+    /// heard first, one to a repeater hint, leaving out the node at `peer`
+    /// and those the repeater at `repeater` reports hearing.
     pub fn known_repeaters(
         &self,
         query: &str,
-        router: &str,
+        repeater: &str,
         peer: &str,
         now_ms: u64,
         wall: Option<u32>,
     ) -> Vec<KnownRepeater, MAX_KNOWN> {
-        let listed = key_at(router).and_then(|key| self.routers.get(&key.0));
+        let listed = key_at(repeater).and_then(|key| self.repeaters.get(&key.0));
         let left_out = key_at(peer);
         // The most recently heard so far, in order: each goes into its
         // place as it is met, which for so few costs less than a sort.
@@ -381,7 +379,7 @@ impl<S: ChatStore> Chats<S> {
                 let key = self.only_peer_with(NodeHint([a, b, c]))?;
                 self.store.peer(&key).ok().flatten()
             }
-            [a, b] => self.name_router_hint(RouterHint([a, b])),
+            [a, b] => self.name_repeater_hint(RepeaterHint([a, b])),
             _ => None,
         }
     }

@@ -306,8 +306,8 @@ check("encode32 rejects wrong length", base58.encode32("\x00"), nil)
 -- hint would produce them, so the star marks where the hint stops proving.
 check("node hint ED54A5",   base58.node_hint(from_hex("ED54A5")),   "GySV")
 check("node hint 6C28FD",   base58.node_hint(from_hex("6C28FD")),   "8HDH")
-check("router hint ED54",   base58.router_hint(from_hex("ED54")),   "Gy*")
-check("router hint 6C28",   base58.router_hint(from_hex("6C28")),   "8H*")
+check("repeater hint ED54",   base58.repeater_hint(from_hex("ED54")),   "Gy*")
+check("repeater hint 6C28",   base58.repeater_hint(from_hex("6C28")),   "8H*")
 check("node hint never exceeds its budget",
       #base58.node_hint(from_hex("000000")) <= 4, true)
 check("hint agrees with the full key it came from",
@@ -316,8 +316,8 @@ check("hint agrees with the full key it came from",
 
 check("node hint carries the byte form",
       base58.node_hint_full(from_hex("ED54A5")), "GySV (ED:54:A5)")
-check("router hint carries the byte form",
-      base58.router_hint_full(from_hex("ED54")), "Gy* (ED:54)")
+check("repeater hint carries the byte form",
+      base58.repeater_hint_full(from_hex("ED54")), "Gy* (ED:54)")
 check("addr picks the full key form by length",
       base58.addr(from_hex(NODE_A_PUB)),
       "GySVDr1omr3GTodgWFH7qD1ZKav9C5NMPFjdpwb33LvU")
@@ -1626,8 +1626,8 @@ local pr_pages = dissect_payload(
   "02 0B 13AABBCC 1102 FF 021122 2264F8 FF 03DDEEFF 3105")
 check("both entries are walked",
       has(pr_pages, "Peer Repeater"), true)
-check("the observation-only entry names a router hint",
-      has(pr_pages, "router hint"), true)
+check("the observation-only entry names a repeater hint",
+      has(pr_pages, "repeater hint"), true)
 check("its signal is still reported", has(pr_pages, "RSSI: -100 dBm"), true)
 check("a negative SNR reads as one",  has(pr_pages, "SNR: -2.00 dB"), true)
 check("the unterminated final entry is still counted",
@@ -2275,7 +2275,7 @@ else
 
   local b58 = require("base58")
   local SENDER_A = "Transmitted By: " .. b58.node_hint(NODE_A_HINT) .. " (sender)"
-  local REPEATER = "Transmitted By: " .. b58.router_hint_full(from_hex("AABB")) .. " (repeater)"
+  local REPEATER = "Transmitted By: " .. b58.repeater_hint_full(from_hex("AABB")) .. " (repeater)"
   local NOT_SENDER = "Transmitted By: - (not the sender)"
   local EITHER = "Transmitted By: ? (sender or a repeater on its source route)"
 

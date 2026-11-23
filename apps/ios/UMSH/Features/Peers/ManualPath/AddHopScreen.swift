@@ -69,8 +69,8 @@ struct AddHopScreen: View {
                         Section { Text(problem).foregroundStyle(.red) }
                     }
                     Section {
-                        NavigationLink("Enter Router Hint…") {
-                            RouterHintEntryScreen(
+                        NavigationLink("Enter Repeater Hint…") {
+                            RepeaterHintEntryScreen(
                                 actions: actions,
                                 isInPath: { hint in hops.contains { $0.hint == hint } },
                                 add: { hint in
@@ -81,7 +81,7 @@ struct AddHopScreen: View {
                     }
                 }
             }
-            .searchable(text: $query, prompt: "Name or router hint")
+            .searchable(text: $query, prompt: "Name or repeater hint")
             .navigationTitle("Add Hop \(hops.count + 1)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -124,7 +124,7 @@ struct AddHopScreen: View {
     }
 
     /// The repeaters ahead of the previous hop, which the ask is sent down.
-    private var pathToPrevious: [MeshRouterHint] {
+    private var pathToPrevious: [MeshRepeaterHint] {
         hops.dropLast().map(\.hint)
     }
 
@@ -227,7 +227,7 @@ struct AddHopScreen: View {
                         subject: "the repeater"
                     )
                     if !pathToPrevious.isEmpty {
-                        Text("Asked through \(pathToPrevious.map { RouterHintNaming.label($0, among: actions.knownPeers) }.joined(separator: " › ")).")
+                        Text("Asked through \(pathToPrevious.map { RepeaterHintNaming.label($0, among: actions.knownPeers) }.joined(separator: " › ")).")
                     }
                 }
             }
@@ -280,14 +280,14 @@ struct AddHopScreen: View {
     // MARK: - Choosing
 
     private func choose(_ neighbor: PeerRepeaterNeighbor) async {
-        guard let hint = await routerHint(neighbor.hint.prefix(2)) else { return }
+        guard let hint = await repeaterHint(neighbor.hint.prefix(2)) else { return }
         var hop = ManualPathHop(hint: hint, node: neighbor.resolve(among: actions.knownPeers))
         if let rssi = neighbor.rssiDBm { hop.signal = "\(rssi) dBm" }
         append(hop)
     }
 
     private func choose(_ peer: PeerSummary) {
-        guard let hint = peer.routerHint else { return }
+        guard let hint = peer.repeaterHint else { return }
         append(ManualPathHop(hint: hint, node: peer))
     }
 
@@ -300,8 +300,8 @@ struct AddHopScreen: View {
         source = .neighbors
     }
 
-    private func routerHint(_ bytes: Data) async -> MeshRouterHint? {
-        await actions.renderRouterHint?(Data(bytes))
+    private func repeaterHint(_ bytes: Data) async -> MeshRepeaterHint? {
+        await actions.renderRepeaterHint?(Data(bytes))
     }
 
     // MARK: - Asking

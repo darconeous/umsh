@@ -1,34 +1,34 @@
 import SwiftUI
 
-/// Type a repeater's router hint by hand: the start of its address, or the
+/// Type a repeater's repeater hint by hand: the start of its address, or the
 /// hint itself in hex.
 ///
 /// The form is chosen rather than guessed, since text such as `a1b2` reads
 /// in both alphabets. Four base58 characters can straddle two hints; when
 /// they do, both are offered and one must be picked.
-struct RouterHintEntryScreen: View {
+struct RepeaterHintEntryScreen: View {
     let actions: PeerActions
-    let isInPath: (MeshRouterHint) -> Bool
-    let add: (MeshRouterHint) -> Void
+    let isInPath: (MeshRepeaterHint) -> Bool
+    let add: (MeshRepeaterHint) -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @State private var format = RouterHintFormat.base58Prefix
+    @State private var format = RepeaterHintFormat.base58Prefix
     @State private var text = ""
-    @State private var input = RouterHintInput.empty
-    @State private var picked: MeshRouterHint?
+    @State private var input = RepeaterHintInput.empty
+    @State private var picked: MeshRepeaterHint?
     @FocusState private var isFieldFocused: Bool
 
     private struct ParseKey: Hashable {
         let text: String
-        let format: RouterHintFormat
+        let format: RepeaterHintFormat
     }
 
     var body: some View {
         List {
             Section {
                 Picker("Form", selection: $format) {
-                    Text("Base58 Prefix").tag(RouterHintFormat.base58Prefix)
-                    Text("Hex").tag(RouterHintFormat.hex)
+                    Text("Base58 Prefix").tag(RepeaterHintFormat.base58Prefix)
+                    Text("Hex").tag(RepeaterHintFormat.hex)
                 }
                 .pickerStyle(.segmented)
                 TextField(format == .hex ? "5EBD" : "7Nq4", text: $text)
@@ -45,11 +45,11 @@ struct RouterHintEntryScreen: View {
 
             if input.candidates.count == 1, let hint = input.candidates.first {
                 Section("Hop") {
-                    LabeledContent("Router hint", value: hint.text)
+                    LabeledContent("Repeater hint", value: hint.text)
                     LabeledContent("Hex", value: hint.hexText)
                     LabeledContent(
                         "Known node",
-                        value: RouterHintNaming.match(hint, among: actions.knownPeers)?.displayName ?? "None"
+                        value: RepeaterHintNaming.match(hint, among: actions.knownPeers)?.displayName ?? "None"
                     )
                     if isInPath(hint) {
                         Text("Already in the path.").foregroundStyle(.secondary)
@@ -73,7 +73,7 @@ struct RouterHintEntryScreen: View {
                 }
             }
         }
-        .navigationTitle("Router Hint")
+        .navigationTitle("Repeater Hint")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
@@ -85,7 +85,7 @@ struct RouterHintEntryScreen: View {
         .task(id: ParseKey(text: text, format: format)) {
             picked = nil
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty, let parse = actions.parseRouterHint else {
+            guard !trimmed.isEmpty, let parse = actions.parseRepeaterHint else {
                 input = .empty
                 return
             }
@@ -93,13 +93,13 @@ struct RouterHintEntryScreen: View {
         }
     }
 
-    private func candidateRow(_ hint: MeshRouterHint) -> some View {
-        let named = RouterHintNaming.match(hint, among: actions.knownPeers)
+    private func candidateRow(_ hint: MeshRepeaterHint) -> some View {
+        let named = RepeaterHintNaming.match(hint, among: actions.knownPeers)
         return PeerRow(
             hint: named?.identity.hint ?? MeshNodeHint(bytes: hint.bytes, text: hint.text),
             shape: named?.avatarShape ?? .hexagon,
             title: named?.displayName ?? "Unknown node",
-            subtitle: "Router hint \(hint.text) · \(hint.hexText)",
+            subtitle: "Repeater hint \(hint.text) · \(hint.hexText)",
             size: .compact,
             trailing: {
                 if picked == hint {
@@ -112,7 +112,7 @@ struct RouterHintEntryScreen: View {
     }
 
     /// The one hint Add would append, once there is exactly one.
-    private var chosen: MeshRouterHint? {
+    private var chosen: MeshRepeaterHint? {
         let hint = input.candidates.count == 1 ? input.candidates.first : picked
         guard let hint, !isInPath(hint) else { return nil }
         return hint

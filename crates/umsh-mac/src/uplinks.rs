@@ -19,7 +19,7 @@
 //!   it accepts, and this node's own transmission comes first, so those
 //!   repeaters either did not hear it or heard it too weakly to use.
 
-use umsh_core::{RouterHint, options::HopSignal};
+use umsh_core::{RepeaterHint, options::HopSignal};
 
 /// How many repeaters the table remembers.
 pub(crate) const MAX_UPLINK_OBSERVATIONS: usize = 16;
@@ -44,7 +44,7 @@ pub(crate) enum Uplink {
 
 #[derive(Clone, Copy, Debug)]
 struct UplinkObservation {
-    hint: RouterHint,
+    hint: RepeaterHint,
     /// When the repeater last heard us, in whole seconds of the monotonic
     /// clock, and how well when the frame said.
     heard: Option<(u32, Option<HopSignal>)>,
@@ -78,20 +78,25 @@ impl UplinkObservations {
     }
 
     /// Record that `hint` took a frame off this node's transmission.
-    pub(crate) fn note_heard(&mut self, hint: RouterHint, signal: Option<HopSignal>, now_ms: u64) {
+    pub(crate) fn note_heard(
+        &mut self,
+        hint: RepeaterHint,
+        signal: Option<HopSignal>,
+        now_ms: u64,
+    ) {
         self.entry(hint, now_ms).heard = Some((seconds(now_ms), signal));
     }
 
     /// Record that `hint` forwarded a frame of ours it had taken from
     /// another repeater.
-    pub(crate) fn note_unheard(&mut self, hint: RouterHint, now_ms: u64) {
+    pub(crate) fn note_unheard(&mut self, hint: RepeaterHint, now_ms: u64) {
         self.entry(hint, now_ms).unheard_s = Some(seconds(now_ms));
     }
 
     /// What the table says about `hint` now. The more recent of the two
     /// kinds of evidence wins; a tie goes to having been heard, since that
     /// one is a positive observation.
-    pub(crate) fn uplink(&self, hint: &RouterHint, now_ms: u64) -> Uplink {
+    pub(crate) fn uplink(&self, hint: &RepeaterHint, now_ms: u64) -> Uplink {
         let Some(entry) = self.entries.iter().find(|entry| &entry.hint == hint) else {
             return Uplink::Unknown;
         };
@@ -107,7 +112,7 @@ impl UplinkObservations {
         }
     }
 
-    fn entry(&mut self, hint: RouterHint, now_ms: u64) -> &mut UplinkObservation {
+    fn entry(&mut self, hint: RepeaterHint, now_ms: u64) -> &mut UplinkObservation {
         if let Some(index) = self.entries.iter().position(|entry| entry.hint == hint) {
             return &mut self.entries[index];
         }
@@ -138,8 +143,8 @@ impl UplinkObservations {
 mod tests {
     use super::*;
 
-    fn hint(seed: u8) -> RouterHint {
-        RouterHint([seed, seed])
+    fn hint(seed: u8) -> RepeaterHint {
+        RepeaterHint([seed, seed])
     }
 
     #[test]

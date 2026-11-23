@@ -133,7 +133,7 @@ UMSH supports MIC sizes of 4, 8, 12, and 16 bytes (see [Security & Cryptography]
 
 UMSH and Reticulum take fundamentally different approaches to routing.
 
-UMSH provides **source routing**—the sender can specify the exact sequence of repeaters a packet should traverse, using 2-byte router hints. This can be combined with flood routing: a packet can be source-routed to a specific area and then flood locally. Path discovery is built into the MAC layer via the Trace option, which accumulates router hints as a packet floods—the recipient caches the accumulated trace as a source route for all subsequent communication with the sender (see [Route Learning](beacons.md#route-learning)).
+UMSH provides **source routing**—the sender can specify the exact sequence of repeaters a packet should traverse, using 2-byte repeater hints. This can be combined with flood routing: a packet can be source-routed to a specific area and then flood locally. Path discovery is built into the MAC layer via the Trace option, which accumulates repeater hints as a packet floods—the recipient caches the accumulated trace as a source route for all subsequent communication with the sender (see [Route Learning](beacons.md#route-learning)).
 
 UMSH defines channel access mechanisms (CAD with random backoff, SNR-based contention windows) and forwarding confirmation with retries, providing reliable hop-by-hop delivery and collision avoidance. Reticulum does not define equivalent mechanisms at the protocol level, though RNode firmware provides CSMA with persistence probability for LoRa interfaces independently of Reticulum.
 

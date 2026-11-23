@@ -279,16 +279,16 @@ struct DiscoverPeersView: View {
             // Known to repeat, but the route to it already holds as many
             // hints as a path can, so the peer's own cannot be added.
             guard let landing = vantage.landingRepeater else { return nil }
-            let name = RouterHintNaming.label(landing, among: peerActions.knownPeers)
+            let name = RepeaterHintNaming.label(landing, among: peerActions.knownPeers)
             return String(
-                localized: "The path to \(peer) is already as long as a path can be, so the ask stops at \(name), the last repeater on the way there, and is answered by whatever is in range of it. \(RouterHintNaming.ambiguityNote)",
+                localized: "The path to \(peer) is already as long as a path can be, so the ask stops at \(name), the last repeater on the way there, and is answered by whatever is in range of it. \(RepeaterHintNaming.ambiguityNote)",
                 comment: "Footer under Discover's ask that stops short of a peer known to repeat because the path to it is at its length limit. The first placeholder is the peer, the second the repeater it stops at, the last a sentence about guessed repeater names."
             )
         case (false, _):
             guard let landing = vantage.landingRepeater else { return nil }
-            let name = RouterHintNaming.label(landing, among: peerActions.knownPeers)
+            let name = RepeaterHintNaming.label(landing, among: peerActions.knownPeers)
             return String(
-                localized: "This phone has no evidence \(peer) repeats, so the ask stops at \(name), the last repeater on the way there, and is answered by whatever is in range of it. \(RouterHintNaming.ambiguityNote)",
+                localized: "This phone has no evidence \(peer) repeats, so the ask stops at \(name), the last repeater on the way there, and is answered by whatever is in range of it. \(RepeaterHintNaming.ambiguityNote)",
                 comment: "Footer under Discover's ask that stops short of a peer. The first placeholder is the peer, the second the repeater it stops at, the last a sentence about guessed repeater names."
             )
         }

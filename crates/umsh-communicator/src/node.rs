@@ -10,7 +10,7 @@ use core::task::Poll;
 
 use embassy_sync::waitqueue::WakerRegistration;
 
-use umsh_core::{ChannelKey, PublicKey, RouterHint};
+use umsh_core::{ChannelKey, PublicKey, RepeaterHint};
 use umsh_text::ConversationKey;
 use umsh_text::chat::Seeds;
 use umsh_text::node_adapter::{BudgetQuery, Departure, Sent};
@@ -197,8 +197,8 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
         };
         self.with_chats(|chats, now_ms, time, events| match arrival {
             Arrival::Text(inbound) => chats.receive(inbound, now_ms, time, events),
-            Arrival::Neighbors { router, body } => {
-                chats.neighbors_page(router, &body, now_ms, events)
+            Arrival::Neighbors { repeater, body } => {
+                chats.neighbors_page(repeater, &body, now_ms, events)
             }
             Arrival::Identity {
                 key,
@@ -659,10 +659,11 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
     }
 
     fn identify_repeater(&self, hint: [u8; 2], before: &[[u8; 2]]) {
-        let before: Vec<RouterHint, MAX_PATH> = before.iter().copied().map(RouterHint).collect();
+        let before: Vec<RepeaterHint, MAX_PATH> =
+            before.iter().copied().map(RepeaterHint).collect();
         self.chats
             .borrow_mut()
-            .identify_repeater(RouterHint(hint), &before);
+            .identify_repeater(RepeaterHint(hint), &before);
         self.wake();
     }
 
@@ -681,7 +682,7 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
                 hints
                     .iter()
                     .copied()
-                    .map(RouterHint)
+                    .map(RepeaterHint)
                     .take(MAX_PATH)
                     .collect(),
             ),
@@ -693,14 +694,14 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
         self.wake();
     }
 
-    fn listed_place(&self, router: &str, node: &str) -> Option<usize> {
-        self.chats.borrow().listed_place(router, node)
+    fn listed_place(&self, repeater: &str, node: &str) -> Option<usize> {
+        self.chats.borrow().listed_place(repeater, node)
     }
 
-    fn gather_known(&self, query: &str, router: &str, peer: &str) -> usize {
+    fn gather_known(&self, query: &str, repeater: &str, peer: &str) -> usize {
         let known = self.chats.borrow().known_repeaters(
             query,
-            router,
+            repeater,
             peer,
             self.clock.now_ms(),
             self.clock.wall(),
@@ -774,7 +775,7 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
     }
 
     fn repeater(&self, hint: [u8; 2]) -> Option<Repeater> {
-        self.chats.borrow().repeater(RouterHint(hint))
+        self.chats.borrow().repeater(RepeaterHint(hint))
     }
 
     fn load_route(&self, peer: PeerId) {
@@ -1316,11 +1317,11 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
     }
 }
 
-/// The router hints `text` fixes: as the start of an address in Base58,
+/// The repeater hints `text` fixes: as the start of an address in Base58,
 /// which can straddle two, then as four hexadecimal digits.
 pub(crate) fn hint_reads(text: &str) -> Vec<HintRead, MAX_HINT_READS> {
     let mut reads = Vec::new();
-    if let Ok(prefix) = RouterHint::candidates_from_base58_prefix(text) {
+    if let Ok(prefix) = RepeaterHint::candidates_from_base58_prefix(text) {
         for hint in core::iter::once(prefix.first).chain(prefix.second) {
             _ = reads.push(HintRead {
                 hint: hint.0,
@@ -1328,7 +1329,7 @@ pub(crate) fn hint_reads(text: &str) -> Vec<HintRead, MAX_HINT_READS> {
             });
         }
     }
-    if let Ok(hint) = RouterHint::from_hex(text) {
+    if let Ok(hint) = RepeaterHint::from_hex(text) {
         _ = reads.push(HintRead {
             hint: hint.0,
             hex: true,

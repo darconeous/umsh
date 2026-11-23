@@ -247,7 +247,7 @@ struct ReadMappingParityTests {
         let repeaters = value.repeaters.map { repeater in
             // The app names only a hint the core rendered; an unrendered
             // hint keeps its hex fallback and no name, so no peer either.
-            let peer = repeater.name == nil ? nil : RouterHintNaming.match(repeater.hint, among: peers)
+            let peer = repeater.name == nil ? nil : RepeaterHintNaming.match(repeater.hint, among: peers)
             // The app keeps only the name; the address is the same match's.
             #expect(peer?.displayName == repeater.name)
             return record([

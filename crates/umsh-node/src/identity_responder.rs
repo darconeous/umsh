@@ -19,7 +19,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use heapless::Deque;
-use umsh_core::{ChannelKey, NodeHint, PayloadType, PublicKey, RouterHint, options::TraceRef};
+use umsh_core::{ChannelKey, NodeHint, PayloadType, PublicKey, RepeaterHint, options::TraceRef};
 use umsh_mac::{PacketFamily, Snr};
 
 use crate::identity::{NodeCapabilities, NodeIdentityPayload, NodeRole};
@@ -401,14 +401,14 @@ pub(crate) struct IdentityResponsePlan {
     /// request was confined to the requester's neighbours on the way in, and
     /// its reply stays there too rather than being flooded back.
     pub(crate) no_flood: bool,
-    /// Routers to steer the reply back through, in send order; empty when the
+    /// Repeaters to steer the reply back through, in send order; empty when the
     /// request arrived with no trace to follow.
     ///
     /// A steered solicitation is the case this exists for: the requester is
     /// several hops away, the reply carries no flood budget, and broadcast
     /// reception left the MAC with no cached route to them. The trace the
     /// request accumulated on the way in is the path home.
-    pub(crate) route: Vec<RouterHint>,
+    pub(crate) route: Vec<RepeaterHint>,
     /// Whether the reply asks the repeaters that carry it to record
     /// themselves, mirroring the Trace option the request arrived with.
     ///

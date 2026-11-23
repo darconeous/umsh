@@ -3,7 +3,7 @@
 The fourth `nRF52840 + SX1262`-class board, riding on everything proved
 out on the T-Echo, Wio Tracker L1, and T1000-E. The motivation is
 different from the earlier bringups: this is the first **solar-autonomous
-outdoor router-class node**. The end state is not a bench toy—it is a
+outdoor repeater-class node**. The end state is not a bench toy—it is a
 `companion-ncp` build acting as an always-on autonomous UMSH device node
 (beacon, duty ledger, Advertisement/Identity Request responder) on a roof
 or pole, recharging itself.
@@ -133,7 +133,7 @@ If (1) or (2) turn out wrong, stop and re-derive from the actual
 
 - GNSS beyond power-off. The L76K needs net-new UART/NMEA plumbing
   (no board currently has any); it is **Phase 7, explicitly
-  deferrable**—a solar router node doesn't need a fix to do its
+  deferrable**—a solar repeater node doesn't need a fix to do its
   job. Until then GNSS is held powered-down (`GNSS_ENABLE`
   inactive) to save its quiescent draw.
 - Grove connector—not initialized. (If used later, remember the

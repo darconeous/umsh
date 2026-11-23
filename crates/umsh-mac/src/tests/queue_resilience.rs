@@ -45,7 +45,7 @@ fn fill_queue(mac: &mut TestMac) {
 #[test]
 fn a_retry_that_finds_the_queue_full_is_deferred_not_lost() {
     let (mut mac, local_id, peer_key) = keyed_mac();
-    let route = [RouterHint([1, 2])];
+    let route = [RepeaterHint([1, 2])];
     let options = SendOptions::default()
         .with_ack_requested(true)
         .try_with_source_route(&route)

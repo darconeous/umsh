@@ -19,7 +19,7 @@ use umsh_communicator::{
 use umsh_core::options::HopSignal;
 use umsh_core::{
     ChannelId, ChannelKey, ChannelTag, Fcf, PacketHeader, PacketType, ParsedOptions, PayloadType,
-    PublicKey, RouterHint, SourceAddrRef,
+    PublicKey, RepeaterHint, SourceAddrRef,
 };
 use umsh_crypto::CryptoEngine;
 use umsh_crypto::NodeIdentity;
@@ -2795,7 +2795,7 @@ fn a_saved_peers_route_is_read_from_the_device_node() {
     assert!(matches!(node.command(), Some(Command::ReadRoute { peer }) if peer == robin));
     assert!(node.command().is_none(), "read once");
 
-    let hints = [RouterHint([0xA1, 0x01]), RouterHint([0xB2, 0x02])];
+    let hints = [RepeaterHint([0xA1, 0x01]), RepeaterHint([0xB2, 0x02])];
     let route = || CachedRoute::source(&hints);
     clock.set(62_000);
     node.arrive(Arrival::Route {
@@ -2871,7 +2871,7 @@ fn forgetting_a_peer_held_by_hand_retells_their_chat() {
         .unwrap();
     node.arrive(Arrival::Route {
         peer: robin,
-        route: CachedRoute::source(&[RouterHint([0xA1, 0x01])]),
+        route: CachedRoute::source(&[RepeaterHint([0xA1, 0x01])]),
         confirmed_age_ms: None,
         held: Some(HeldRoute {
             remaining_ms: 3_600_000,
@@ -2901,7 +2901,7 @@ fn a_route_read_before_a_change_offers_nothing() {
     let sim = device();
     let (node, clock) = started(&sim);
     let (robin, peer) = saved_robin(&sim, &node, clock);
-    let route = || CachedRoute::source(&[RouterHint([0xA1, 0x01])]);
+    let route = || CachedRoute::source(&[RepeaterHint([0xA1, 0x01])]);
     let read = |changed, learned: Option<Learned>| Arrival::Route {
         peer: robin,
         route: route(),
@@ -2916,7 +2916,7 @@ fn a_route_read_before_a_change_offers_nothing() {
     };
     let learned = Some(Learned {
         hops: 2,
-        via: Some(RouterHint([0xB2, 0x02])),
+        via: Some(RepeaterHint([0xB2, 0x02])),
     });
     clock.set(10_000);
     node.arrive(read(false, learned));
@@ -2943,10 +2943,10 @@ fn a_route_held_by_hand_counts_down_and_then_is_ordinary() {
     assert!(asks(&node, |c| matches!(
         c,
         Command::HoldRoute { peer, hints, flood_hops: 1, hold_ms: 3_600_000 }
-            if *peer == robin && hints.as_slice() == [RouterHint([0xA1, 0x01])]
+            if *peer == robin && hints.as_slice() == [RepeaterHint([0xA1, 0x01])]
     )));
 
-    let route = || CachedRoute::source(&[RouterHint([0xA1, 0x01])]);
+    let route = || CachedRoute::source(&[RepeaterHint([0xA1, 0x01])]);
     let held = |remaining_ms| {
         Some(HeldRoute {
             remaining_ms,
@@ -3027,7 +3027,7 @@ fn a_ping_along_a_route_goes_by_it_and_holds_nothing() {
     let sim = device();
     let (node, clock) = started(&sim);
     let (robin, peer) = saved_robin(&sim, &node, clock);
-    let along = [RouterHint([0xA1, 0x01]), RouterHint([0xB2, 0x02])];
+    let along = [RepeaterHint([0xA1, 0x01]), RepeaterHint([0xB2, 0x02])];
     node.ping_along(peer, &[along[0].0, along[1].0], 2);
     assert!(asks(&node, |c| matches!(
         c,
@@ -3120,7 +3120,7 @@ fn a_ping_answer_keeps_its_path_and_how_each_hop_was_heard() {
     assert_eq!(node.ping_view(peer), Some(PingView::Waiting));
 
     let mut heard = rx(4);
-    heard.route_hints = vec![RouterHint([0xA1, 0x01]), RouterHint([0xB2, 0x02])];
+    heard.route_hints = vec![RepeaterHint([0xA1, 0x01]), RepeaterHint([0xB2, 0x02])];
     node.arrive(Arrival::Pong {
         peer: robin,
         round_trip_ms: 1_380,
@@ -3163,7 +3163,7 @@ fn a_truncated_ping_answer_never_shows_a_whole_path() {
     let sim = device();
     let (node, clock) = started(&sim);
     let (robin, peer) = saved_robin(&sim, &node, clock);
-    let nearest = vec![RouterHint([0xA1, 0x01])];
+    let nearest = vec![RepeaterHint([0xA1, 0x01])];
     for (hop_count, route_hints, unnamed) in [
         (Some(5), nearest.clone(), Some(3)),
         (None, nearest.clone(), None),
@@ -3217,21 +3217,21 @@ fn a_repeater_is_asked_by_way_of_those_before_it() {
     let Some(Command::AskRepeater { hint, route }) = node.command() else {
         panic!("nothing asked");
     };
-    assert_eq!(hint, RouterHint([0xB2, 0x02]));
-    assert_eq!(route, [RouterHint([0xA1, 0x01])]);
+    assert_eq!(hint, RepeaterHint([0xB2, 0x02]));
+    assert_eq!(route, [RepeaterHint([0xA1, 0x01])]);
 }
 
-/// A router's listing is asked for a page at a time. A page answers only
+/// A repeater's listing is asked for a page at a time. A page answers only
 /// the ask waiting, a later page adds what the listing does not already
 /// hold, and an ask left unanswered says so and keeps what was read.
 #[test]
-fn a_routers_listing_is_read_a_page_at_a_time() {
+fn a_repeaters_listing_is_read_a_page_at_a_time() {
     use umsh_communicator::task::NeighborsBody;
     use umsh_node::mac_command::{PeerRepeaterEntry, PeerRepeatersResponseBuilder};
     let sim = device();
     let (node, clock) = started(&sim);
-    let router = PublicKey([0x52; 32]);
-    let address = address_of(&router);
+    let repeater = PublicKey([0x52; 32]);
+    let address = address_of(&repeater);
     assert_eq!(node.listing(&address), None);
 
     let asked = |more: bool| {
@@ -3239,11 +3239,11 @@ fn a_routers_listing_is_read_a_page_at_a_time() {
         node.ask_listing(&address, more, &[], None);
         assert!(asks(&node, |c| match c {
             Command::AskNeighbors {
-                router: to,
+                repeater: to,
                 nonce,
                 cursor,
                 way: AskWay::Routed,
-            } if *to == router => {
+            } if *to == repeater => {
                 sent.set(Some((*nonce, cursor.as_deref().map(<[u8]>::to_vec))));
                 true
             }
@@ -3260,7 +3260,7 @@ fn a_routers_listing_is_read_a_page_at_a_time() {
             assert!(builder.try_push(entry).unwrap());
         }
         Arrival::Neighbors {
-            router,
+            repeater,
             body: NeighborsBody::from_slice(&builder.build().unwrap()).unwrap(),
         }
     };
@@ -3337,14 +3337,14 @@ fn repeater_named(name: &str) -> NodeIdentityPayload {
     NodeIdentityPayload::from_bytes(&bytes).unwrap()
 }
 
-/// Add hop asks a router along the route before it, flooding no further,
+/// Add hop asks a repeater along the route before it, flooding no further,
 /// with none as direct; this device's own list is read here.
 #[test]
 fn an_ask_goes_the_way_add_hop_says() {
     let sim = device();
     let (node, _) = started(&sim);
-    let router = PublicKey([0x52; 32]);
-    let address = address_of(&router);
+    let repeater = PublicKey([0x52; 32]);
+    let address = address_of(&repeater);
     let way = |along: Option<&[[u8; 2]]>, of: &str| {
         node.ask_listing(of, false, &[], along);
         let seen = RefCell::new(None);
@@ -3359,7 +3359,7 @@ fn an_ask_goes_the_way_add_hop_says() {
     };
     assert_eq!(
         way(Some(&[[0xA1, 0x01]]), &address),
-        AskWay::Along([RouterHint([0xA1, 0x01])].into_iter().collect())
+        AskWay::Along([RepeaterHint([0xA1, 0x01])].into_iter().collect())
     );
     let other = address_of(&PublicKey([0x53; 32]));
     assert_eq!(
@@ -3370,7 +3370,7 @@ fn an_ask_goes_the_way_add_hop_says() {
 }
 
 /// Known repeaters are those that forward, the most recently heard first,
-/// narrowed by a word of their names, less those the router lists; the
+/// narrowed by a word of their names, less those the repeater lists; the
 /// peer's place in a listing is found by its address.
 #[test]
 fn known_repeaters_come_most_recent_first_less_those_listed() {
@@ -3398,12 +3398,12 @@ fn known_repeaters_come_most_recent_first_less_those_listed() {
     heard(eugene, repeater_named("Eugene"), 3_000);
     heard(coburg, repeater_named("Coburg"), 4_000);
     clock.set(60_000);
-    let names_but = |query: &str, router: &str, peer: &str| -> Vec<String> {
-        (0..node.gather_known(query, router, peer))
+    let names_but = |query: &str, repeater: &str, peer: &str| -> Vec<String> {
+        (0..node.gather_known(query, repeater, peer))
             .map(|at| node.known_repeater(at).unwrap().name.to_string())
             .collect()
     };
-    let names = |query: &str, router: &str| names_but(query, router, "");
+    let names = |query: &str, repeater: &str| names_but(query, repeater, "");
     assert_eq!(names("", ""), ["Coburg", "Eugene", "Fox Hollow"]);
     assert_eq!(names("hol", ""), ["Fox Hollow"]);
     node.gather_known("", "", "");
@@ -3412,9 +3412,9 @@ fn known_repeaters_come_most_recent_first_less_those_listed() {
     assert_eq!(first.address.as_str(), address_of(&coburg));
     assert_eq!(first.hint, [0x63, 0x63]);
 
-    // Coburg and Fox Hollow are listed by the router, and so are left out.
-    let router = PublicKey([0x52; 32]);
-    let at = address_of(&router);
+    // Coburg and Fox Hollow are listed by the repeater, and so are left out.
+    let repeater = PublicKey([0x52; 32]);
+    let at = address_of(&repeater);
     node.ask_listing(&at, false, &[], None);
     let nonce = Cell::new(0);
     assert!(asks(&node, |c| match c {
@@ -3436,7 +3436,7 @@ fn known_repeaters_come_most_recent_first_less_those_listed() {
         );
     }
     node.arrive(Arrival::Neighbors {
-        router,
+        repeater,
         body: NeighborsBody::from_slice(&page.build().unwrap()).unwrap(),
     });
     assert_eq!(names("", &at), ["Eugene"]);
@@ -3458,7 +3458,7 @@ fn known_repeaters_come_most_recent_first_less_those_listed() {
 /// Four hexadecimal digits are also read as Base58, and a Base58 prefix
 /// too short to fix a hint is read as nothing.
 #[test]
-fn typed_text_is_read_as_the_router_hints_it_fixes() {
+fn typed_text_is_read_as_the_repeater_hints_it_fixes() {
     let sim = device();
     let (node, _) = started(&sim);
     let reads = node.hint_reads("3D9F");

@@ -1,12 +1,12 @@
-//! The rows of a router's Neighbors, what it reports hearing as last read,
-//! which [`super::sheet`] lays out: each repeater's name, how the router
-//! heard it and how long ago, and how far from the router, then Load more
+//! The rows of a repeater's Neighbors, what it reports hearing as last read,
+//! which [`super::sheet`] lays out: each repeater's name, how the repeater
+//! heard it and how long ago, and how far from the repeater, then Load more
 //! and Refresh. Opening asks for nothing; every page is one exchange across
 //! the mesh. A known node's row opens its page; a bare hint's asks who it
 //! is. Backspace goes back.
 //!
 //! Add hop lists in the same rows, and adds the known repeaters and the
-//! router hints typed text fixes in rows of their own.
+//! repeater hints typed text fixes in rows of their own.
 
 use buoyant::view::prelude::*;
 use embedded_graphics::pixelcolor::Rgb565;
@@ -21,7 +21,7 @@ use crate::board::Metrics;
 use crate::model::{Signal, age};
 use crate::{font, icon, theme};
 
-/// A repeater's row: its name, then how the router heard it.
+/// A repeater's row: its name, then how the repeater heard it.
 pub(super) const NEIGHBOR: u32 = 44;
 /// The label over the list.
 const LABEL: u32 = 26;
@@ -30,7 +30,7 @@ const STALE_MIN: u16 = 6 * 60;
 /// The room a name leaves for the words at its end.
 const END_WORDS: u32 = 96;
 
-/// A known repeater's row, or a router hint's.
+/// A known repeater's row, or a repeater hint's.
 pub(super) const NODE: u32 = super::path::NODE;
 /// Add hop's field, while text is typed into it.
 const FIELD: u32 = 28;
@@ -38,7 +38,7 @@ const FIELD_RADIUS: u16 = 14;
 
 /// What the listing says around its rows: a label over them, such as when
 /// it was read, with what it says at its end; or in their place, that it
-/// was never read, that the router listed nobody, or that it did not
+/// was never read, that the repeater listed nobody, or that it did not
 /// answer and why.
 #[derive(Clone)]
 pub(super) enum Caption {
@@ -116,7 +116,7 @@ pub(super) fn caption_look(
     )
 }
 
-/// A repeater the router reported, as its row draws it.
+/// A repeater the repeater reported, as its row draws it.
 #[derive(Clone)]
 pub(super) struct NeighborLook {
     pub(super) name: String<24>,
@@ -150,7 +150,7 @@ pub(super) enum End {
 
 /// A repeater's row: its avatar and name, then the bars and the reading
 /// (or that a bridge carried it), how long ago, and how far from the
-/// router. Built each time it is drawn.
+/// repeater. Built each time it is drawn.
 pub(super) fn neighbor_look(look: &NeighborLook) -> impl View<Rgb565, ()> + use<> {
     let m = look.m;
     let stale = look.heard_min.is_some_and(|min| min >= STALE_MIN) || look.end == End::InPath;
@@ -265,7 +265,7 @@ fn end_view(end: End, phase: u8, m: &'static Metrics) -> impl View<Rgb565, ()> +
     ))
 }
 
-/// A known repeater, or a router hint typed text fixes, as its row draws
+/// A known repeater, or a repeater hint typed text fixes, as its row draws
 /// it in Add hop.
 #[derive(Clone)]
 pub(super) struct NodeLook {
@@ -284,7 +284,7 @@ pub(super) struct NodeLook {
     pub(super) m: &'static Metrics,
 }
 
-/// A known repeater's row, or a router hint's: its avatar and name, what
+/// A known repeater's row, or a repeater hint's: its avatar and name, what
 /// follows it, and how long ago it was heard, or that it is already on the
 /// route. Built each time it is drawn.
 pub(super) fn node_look(look: &NodeLook) -> impl View<Rgb565, ()> + use<> {
@@ -414,7 +414,7 @@ pub(super) fn field_look(look: &FieldLook) -> impl View<Rgb565, ()> + use<> {
     .padding(Edges::Vertical, 3)
 }
 
-/// How the router heard a repeater, how long ago, and how far from it,
+/// How the repeater heard a repeater, how long ago, and how far from it,
 /// such as `−101 dBm · SNR 1.5 · 6m · 6.1 km`.
 fn reading(look: &NeighborLook) -> String<48> {
     let minus = |negative: bool| if negative { "\u{2212}" } else { "" };
@@ -458,7 +458,7 @@ fn reading(look: &NeighborLook) -> String<48> {
 #[derive(Clone, Copy)]
 pub(super) struct TextLook {
     pub(super) label: &'static str,
-    /// How many are held, of how many the router said it hears.
+    /// How many are held, of how many the repeater said it hears.
     pub(super) count: Option<(u8, Option<u8>)>,
     /// What it asked for is waited for.
     pub(super) busy: bool,

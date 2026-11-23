@@ -35,9 +35,9 @@ struct MobileCoreSmokeTest {
         precondition(hint.bytes == Data([0xA1, 0xB2, 0x03]))
         precondition(hint.text == "BtC5")
 
-        let routerHint = try renderRouterHint(bytes: Data([0xA1, 0xB2]))
-        precondition(routerHint.bytes == Data([0xA1, 0xB2]))
-        precondition(routerHint.text == "BtC")
+        let repeaterHint = try renderRepeaterHint(bytes: Data([0xA1, 0xB2]))
+        precondition(repeaterHint.bytes == Data([0xA1, 0xB2]))
+        precondition(repeaterHint.text == "BtC")
 
         let identity = try MobileIdentity.unlock(
             secretKey: Data(repeating: 7, count: 32)

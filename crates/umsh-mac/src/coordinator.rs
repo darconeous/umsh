@@ -6,7 +6,7 @@ use rand::{Rng, RngExt as _};
 use umsh_core::{
     BlindAddr, BuildError, ChannelCommitment, ChannelId, ChannelKey, FloodHops, NodeHint,
     OptionNumber, PacketBuilder, PacketHeader, PacketType, ParseError, ParsedOptions, PayloadType,
-    PublicKey, RouteEvidence, RouterHint, SIGNATURE_INPUT_MAX, SourceAddrRef, UnsealedPacket,
+    PublicKey, RepeaterHint, RouteEvidence, SIGNATURE_INPUT_MAX, SourceAddrRef, UnsealedPacket,
     established_route_slack,
     options::{HopSignal, OptionEncoder, TraceRecord, TraceRef},
 };
@@ -759,7 +759,7 @@ enum ForwardStationAction {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ForwardPlan {
-    router_hint: RouterHint,
+    repeater_hint: RepeaterHint,
     consume_source_route: bool,
     decrement_flood_hops: bool,
     insert_region_code: Option<[u8; 2]>,
@@ -1287,7 +1287,7 @@ pub struct MacCounters {
     /// Receptions off the air whose trace route names this node as the
     /// hop just heard. A radio cannot hear itself, so each is a copy of
     /// one of this node's own repeats put back on the air without a hop
-    /// added, or a repeater sharing this node's router hint.
+    /// added, or a repeater sharing this node's repeater hint.
     pub rx_own_hint: u32,
     /// Frames addressed to this node, authenticated where they carry a
     /// MIC, that it refused to accept, deliver, or acknowledge because
@@ -2875,7 +2875,7 @@ impl<
         flood_hops: u8,
         trace_route: bool,
         route_retry: bool,
-        source_route: Option<&[RouterHint]>,
+        source_route: Option<&[RepeaterHint]>,
         regions: &[[u8; 2]],
     ) -> Result<&'a [u8], SendError> {
         let (placeholder, seal) = match ack_trailer {
@@ -6101,7 +6101,7 @@ impl<
         from: LocalIdentityId,
         receipt: SendReceipt,
         frame: &[u8],
-        source_route: Option<&[RouterHint]>,
+        source_route: Option<&[RepeaterHint]>,
         requested_flood_hops: Option<u8>,
     ) -> Result<(), SendError> {
         let resend = ResendRecord::try_new(frame, source_route)
@@ -6187,7 +6187,7 @@ impl<
         from: LocalIdentityId,
         peer: PublicKey,
         frame: &[u8],
-        source_route: Option<&Vec<RouterHint, MAX_SOURCE_ROUTE_HINTS>>,
+        source_route: Option<&Vec<RepeaterHint, MAX_SOURCE_ROUTE_HINTS>>,
         requested_flood_hops: Option<u8>,
     ) -> Result<SendReceipt, SendError> {
         let resend = ResendRecord::try_new(frame, source_route.map(|route| route.as_slice()))
@@ -6351,7 +6351,7 @@ impl<
         &self,
         peer_id: Option<PeerId>,
         options: &SendOptions,
-    ) -> Option<Vec<RouterHint, MAX_SOURCE_ROUTE_HINTS>> {
+    ) -> Option<Vec<RepeaterHint, MAX_SOURCE_ROUTE_HINTS>> {
         // An explicitly supplied route that constrains no hop is the same as
         // no route at all, and must not reach the wire as an empty option.
         if let Some(route) = options.source_route.as_ref() {
@@ -6376,7 +6376,7 @@ impl<
     fn needs_route_discovery(
         &self,
         peer_id: Option<PeerId>,
-        source_route: Option<&Vec<RouterHint, MAX_SOURCE_ROUTE_HINTS>>,
+        source_route: Option<&Vec<RepeaterHint, MAX_SOURCE_ROUTE_HINTS>>,
     ) -> bool {
         let Some((peer_id, peer)) = peer_id.and_then(|id| Some((id, self.peer_registry.get(id)?)))
         else {
@@ -6408,7 +6408,7 @@ impl<
     ///
     /// [`Mac::queue_mac_ack_for_peer`] asks the same question of the
     /// cached route it is about to attach, before it has fields to read.
-    fn frame_is_repeatable(flood_hops: Option<u8>, source_route: Option<&[RouterHint]>) -> bool {
+    fn frame_is_repeatable(flood_hops: Option<u8>, source_route: Option<&[RepeaterHint]>) -> bool {
         flood_hops.is_some_and(|hops| hops > 0)
             || source_route.is_some_and(|route| !route.is_empty())
     }
@@ -6437,7 +6437,7 @@ impl<
         &self,
         peer_id: Option<PeerId>,
         options: &SendOptions,
-        source_route: Option<&Vec<RouterHint, MAX_SOURCE_ROUTE_HINTS>>,
+        source_route: Option<&Vec<RepeaterHint, MAX_SOURCE_ROUTE_HINTS>>,
     ) -> Option<u8> {
         let requested = options.flood_hops?;
         let cached = peer_id
@@ -7638,7 +7638,7 @@ impl<
     /// its source.
     ///
     /// A repeater is not a relay for itself. Re-flooding a packet we sent
-    /// wastes airtime, and because the forwarding rewrite prepends our router
+    /// wastes airtime, and because the forwarding rewrite prepends our repeater
     /// hint to the trace route it also fabricates a hop that never happened—
     /// the destination then learns a return path that starts by routing back
     /// through the originator.
@@ -7856,11 +7856,11 @@ impl<
         };
         // A node never hears itself forward, so a trace naming this node as
         // the hop just heard is a copy of one of its own repeats—or a
-        // repeater sharing its router hint, which nothing here can tell
+        // repeater sharing its repeater hint, which nothing here can tell
         // apart. Either way it is not a neighbor. Off the air no such copy
         // should exist, so those are counted; a LAN or a bridge's link
         // hands a node its own traffic back as a matter of course.
-        if Some(hint) == self.repeater_router_hint() {
+        if Some(hint) == self.own_repeater_hint() {
             if rx.origin.is_measured() {
                 MacCounters::bump(&mut self.counters.rx_own_hint);
             }
@@ -7884,10 +7884,10 @@ impl<
     /// one else can produce on demand: it has to be heard first. The same
     /// receptions [`note_transmitter_observation`](Self::note_transmitter_observation)
     /// passes over prove nothing either.
-    fn vouch_for_transmitter(&mut self, hint: RouterHint, rx: &RxInfo) {
+    fn vouch_for_transmitter(&mut self, hint: RepeaterHint, rx: &RxInfo) {
         if rx.origin == RxOrigin::LocalTx
             || rx.buffered.is_some()
-            || Some(hint) == self.repeater_router_hint()
+            || Some(hint) == self.own_repeater_hint()
         {
             return;
         }
@@ -8076,9 +8076,9 @@ impl<
         // source route, which would attach an empty SourceRoute option to
         // everything sent back. Only a repeater consuming the final hint
         // may leave an empty option behind, for provenance.
-        let mut hints: Vec<RouterHint, MAX_SOURCE_ROUTE_HINTS> = Vec::new();
+        let mut hints: Vec<RepeaterHint, MAX_SOURCE_ROUTE_HINTS> = Vec::new();
         for pair in remaining.as_chunks::<2>().0.iter().rev() {
-            hints.push(RouterHint(*pair)).ok()?;
+            hints.push(RepeaterHint(*pair)).ok()?;
         }
         for hint in traced_hints {
             hints.push(hint).ok()?;
@@ -8140,7 +8140,7 @@ impl<
 
     /// The first hop of a path through `hint`, refined by whatever this
     /// node knows about whether that repeater hears it.
-    fn first_hop(&self, hint: RouterHint, inbound: Hop, now_ms: u64) -> Hop {
+    fn first_hop(&self, hint: RepeaterHint, inbound: Hop, now_ms: u64) -> Hop {
         match self.uplinks.uplink(&hint, now_ms) {
             Uplink::Heard(Some(entry)) => match entry.snr_centibels() {
                 Some(snr) => Hop::Outbound(snr),
@@ -8165,7 +8165,7 @@ impl<
     /// repeats may have shown whether it hears us.
     fn first_hop_to_peer(&self, peer_id: PeerId, inbound: Hop, now_ms: u64) -> Hop {
         match self.peer_registry.get(peer_id) {
-            Some(peer) => self.first_hop(peer.public_key.router_hint(), inbound, now_ms),
+            Some(peer) => self.first_hop(peer.public_key.repeater_hint(), inbound, now_ms),
             None => inbound,
         }
     }
@@ -8484,7 +8484,7 @@ impl<
     fn source_route_from_trace(
         &self,
         trace: &TraceRef<'_>,
-    ) -> Option<heapless::Vec<RouterHint, { crate::MAX_SOURCE_ROUTE_HINTS }>> {
+    ) -> Option<heapless::Vec<RepeaterHint, { crate::MAX_SOURCE_ROUTE_HINTS }>> {
         let mut route = heapless::Vec::new();
         for hint in trace.complete_hints()? {
             route.push(hint).ok()?;
@@ -8747,7 +8747,7 @@ impl<
             return None;
         }
 
-        let router_hint = self.repeater_router_hint()?;
+        let repeater_hint = self.own_repeater_hint()?;
         let station_action = self.classify_forward_station_action(header, options)?;
 
         let source_route_bytes = options
@@ -8775,7 +8775,7 @@ impl<
             // first real flood hop. Everything gated below—hop accounting,
             // signal thresholds, region policy, contention delay—is flood
             // behavior and does not apply to a hop that was named explicitly.
-            if source_route_bytes[..2] != router_hint.0 {
+            if source_route_bytes[..2] != repeater_hint.0 {
                 return None;
             }
             consume_source_route = true;
@@ -8886,7 +8886,7 @@ impl<
         }
 
         Some(ForwardPlan {
-            router_hint,
+            repeater_hint,
             consume_source_route,
             decrement_flood_hops,
             insert_region_code,
@@ -9104,7 +9104,7 @@ impl<
                         TraceRewrite::Budget(budget) => {
                             let parsed = TraceRef::parse(value).ok_or(CapacityError)?;
                             let own = TraceRecord {
-                                hint: plan.router_hint,
+                                hint: plan.repeater_hint,
                                 signal: plan.signal,
                             };
                             let mut forwarded = [0u8; FRAME];
@@ -9289,7 +9289,7 @@ impl<
         &self,
         peer: &PublicKey,
         header: &PacketHeader,
-        source_route: Option<&heapless::Vec<RouterHint, MAX_SOURCE_ROUTE_HINTS>>,
+        source_route: Option<&heapless::Vec<RepeaterHint, MAX_SOURCE_ROUTE_HINTS>>,
         requested: Option<u8>,
     ) -> Option<u8> {
         // The failed attempt was narrowed against a route assumption—either
@@ -9322,12 +9322,12 @@ impl<
         requested.or(existing).or(cached).or(route_len).or(Some(5))
     }
 
-    fn repeater_router_hint(&self) -> Option<RouterHint> {
+    fn own_repeater_hint(&self) -> Option<RepeaterHint> {
         self.identities
             .iter()
             .filter_map(|slot| slot.as_ref())
             .next()
-            .map(|slot| slot.identity().public_key().router_hint())
+            .map(|slot| slot.identity().public_key().repeater_hint())
     }
 
     fn effective_min_snr(options: &ParsedOptions, repeater: &RepeaterConfig) -> Option<i8> {

@@ -10,7 +10,7 @@ type BearerMac = Mac<DummyPlatform, 4, 16, 8, 16, 16, 256, 64, 0>;
 
 const LAN: BearerId = BearerId::LAN;
 
-/// A node with an identity (so it has a router hint to forward under),
+/// A node with an identity (so it has a repeater hint to forward under),
 /// and the repeater as given.
 fn make_bearer_mac(repeater: bool) -> BearerMac {
     let mut mac = Mac::new(
@@ -144,7 +144,7 @@ fn unicast_mac() -> (BearerMac, LocalIdentityId, PublicKey) {
 #[test]
 fn a_bearer_copy_confirms_a_forwarded_send_as_backhaul_does() {
     let (mut mac, local_id, peer_key) = unicast_mac();
-    let route = [RouterHint([1, 2])];
+    let route = [RepeaterHint([1, 2])];
     let options = SendOptions::default()
         .with_ack_requested(true)
         .try_with_source_route(&route)

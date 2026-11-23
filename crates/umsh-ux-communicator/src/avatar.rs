@@ -123,7 +123,7 @@ impl AvatarStyle {
     /// hexagon lettered `hint_text`, in gray, as two octets are too few to
     /// color.
     #[must_use]
-    pub fn router_hint(hint_text: &str) -> Self {
+    pub fn repeater_hint(hint_text: &str) -> Self {
         Self::peer([0x80; 3], hint_text, PeerShape::Hexagon)
     }
 

@@ -68,7 +68,7 @@ struct RouteScreen: View {
                     id: index + 1,
                     kind: .repeater(
                         hint,
-                        named: RouterHintNaming.match(hint, among: actions.knownPeers),
+                        named: RepeaterHintNaming.match(hint, among: actions.knownPeers),
                         preceding: Array(route.hints.prefix(index))
                     )
                 )
@@ -92,8 +92,8 @@ struct RouteScreen: View {
                 }
             }
         } footer: {
-            if route.hints.contains(where: { RouterHintNaming.match($0, among: actions.knownPeers) != nil }) {
-                Text(RouterHintNaming.ambiguityNote)
+            if route.hints.contains(where: { RepeaterHintNaming.match($0, among: actions.knownPeers) != nil }) {
+                Text(RepeaterHintNaming.ambiguityNote)
             }
         }
     }

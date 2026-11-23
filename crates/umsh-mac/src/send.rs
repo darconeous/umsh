@@ -2,7 +2,7 @@ use core::num::NonZeroU8;
 use heapless::Vec;
 use umsh_core::{
     ChannelId, ChannelKey, FloodHops, MicSize, NodeHint, PacketHeader, PacketType, ParsedOptions,
-    PayloadType, PublicKey, RouterHint, SecInfo, options::TraceRef,
+    PayloadType, PublicKey, RepeaterHint, SecInfo, options::TraceRef,
 };
 use umsh_hal::Snr;
 
@@ -78,7 +78,7 @@ pub struct SendReceipt(pub u32);
 ///   contact or identity announcements; costs 29 extra bytes per frame.
 /// - **`salt`**—append a random 2-byte salt to SECINFO, adding nonce diversity and
 ///   preventing correlation of frames sharing the same counter value across sessions.
-/// - **`source_route`**—provide an explicit list of [`RouterHint`] values to route the
+/// - **`source_route`**—provide an explicit list of [`RepeaterHint`] values to route the
 ///   frame along a known path rather than relying on flood forwarding. Routed hops cost no
 ///   flood budget, and a route chosen here earns no slack past its far end, so a unicast
 ///   along it carries no flood-hop field unless `route_slack` asks for one.
@@ -103,7 +103,7 @@ pub struct SendOptions {
     /// Whether to include a Trace option.
     pub trace: bool,
     /// Optional explicit source route.
-    pub source_route: Option<Vec<RouterHint, MAX_SOURCE_ROUTE_HINTS>>,
+    pub source_route: Option<Vec<RepeaterHint, MAX_SOURCE_ROUTE_HINTS>>,
     /// Flood budget past the end of the route, overriding the MAC's own.
     pub route_slack: Option<u8>,
     /// Optional region-code option.
@@ -219,7 +219,7 @@ impl SendOptions {
     }
 
     /// Copy a source route into fixed-capacity storage.
-    pub fn try_with_source_route(mut self, route: &[RouterHint]) -> Result<Self, CapacityError> {
+    pub fn try_with_source_route(mut self, route: &[RepeaterHint]) -> Result<Self, CapacityError> {
         let mut owned = Vec::new();
         for hint in route {
             owned.push(*hint).map_err(|_| CapacityError)?;
@@ -359,7 +359,7 @@ pub struct ResendRecord<const FRAME: usize = MAX_RESEND_FRAME_LEN> {
     /// Exact sealed frame bytes.
     pub frame: Vec<u8, FRAME>,
     /// Optional source route retained for retransmission.
-    pub source_route: Option<Vec<RouterHint, MAX_SOURCE_ROUTE_HINTS>>,
+    pub source_route: Option<Vec<RepeaterHint, MAX_SOURCE_ROUTE_HINTS>>,
     /// Flood budget the application originally asked for, before any narrowing
     /// against a cached route. A route-retry rebuild floods with this rather
     /// than the tight budget the failed attempt carried.
@@ -370,7 +370,7 @@ impl<const FRAME: usize> ResendRecord<FRAME> {
     /// Copy frame bytes and an optional route into fixed-capacity storage.
     pub fn try_new(
         frame: &[u8],
-        source_route: Option<&[RouterHint]>,
+        source_route: Option<&[RepeaterHint]>,
     ) -> Result<Self, CapacityError> {
         let mut stored_frame = Vec::new();
         for byte in frame {
@@ -1334,12 +1334,12 @@ impl<'a> RepeaterHints<'a> {
 }
 
 impl Iterator for RepeaterHints<'_> {
-    type Item = RouterHint;
+    type Item = RepeaterHint;
 
     fn next(&mut self) -> Option<Self::Item> {
         let chunk = self.bytes.get(self.cursor..self.cursor + 2)?;
         self.cursor += 2;
-        Some(RouterHint([chunk[0], chunk[1]]))
+        Some(RepeaterHint([chunk[0], chunk[1]]))
     }
 }
 
@@ -1810,7 +1810,7 @@ pub enum MacEventRef<'a> {
         receipt: SendReceipt,
         /// The repeater that transmitted the forward, when the frame names
         /// it: by trace route, or by the hint missing from our source route.
-        repeater: Option<RouterHint>,
+        repeater: Option<RepeaterHint>,
     },
     /// The MAC gave up on a send; `reason` says why.
     ///

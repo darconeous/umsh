@@ -5,7 +5,7 @@ enum ApplicationStoreError: Error, Equatable, Sendable {
     case applicationSupportUnavailable
     case openFailed(Int32)
     case recordNotFound
-    /// A channel ID that is not a UUID, or a router hint that is not two
+    /// A channel ID that is not a UUID, or a repeater hint that is not two
     /// octets.
     case invalidArgument
     /// SQLite's extended result code plus its own account of it. The code
@@ -85,13 +85,13 @@ struct StoredNode: Equatable, Sendable {
     let advertisementReceivedAt: Date?
 }
 
-/// One neighbor a router reported, as the page carried it.
+/// One neighbor a repeater reported, as the page carried it.
 ///
 /// Stored decoded rather than as the wire entry: the fields are few and
 /// fixed, the map reads them without a decoder in the loop, and the location
 /// arrives from the core already reduced to a center and a precision.
 struct StoredPeerRepeaterEntry: Equatable, Sendable {
-    /// Two or three bytes; the row's key within the router's listing.
+    /// Two or three bytes; the row's key within the repeater's listing.
     let hint: Data
     let name: String?
     let rssiDBm: Int16?

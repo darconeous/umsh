@@ -1510,7 +1510,7 @@ pub struct Details {
     pub time: Option<u32>,
     /// How many hops it took: one when heard directly.
     pub hops: Option<u8>,
-    /// The routers it came through, already formatted.
+    /// The repeaters it came through, already formatted.
     pub route: String<24>,
     /// The signal's strength, in dBm.
     pub rssi: Option<i16>,
@@ -1537,7 +1537,7 @@ pub const MAX_REPEATERS: usize = 8;
 /// A repeater overheard carrying a message of mine.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Repeater {
-    /// The router hint it forwarded under.
+    /// The repeater hint it forwarded under.
     pub hint: [u8; 2],
     /// The node it most plausibly is, by name, else its hint.
     pub name: SharedText,
@@ -1546,17 +1546,17 @@ pub struct Repeater {
     pub address: Option<SharedText>,
 }
 
-/// The most repeaters a router's listing holds.
+/// The most repeaters a repeater's listing holds.
 pub const MAX_LISTED: usize = 16;
 
-/// What a router reports hearing, as far as it has been read.
+/// What a repeater reports hearing, as far as it has been read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Listing {
     /// How many repeaters are held.
     pub count: u8,
-    /// How many the router said it hears.
+    /// How many the repeater said it hears.
     pub total: Option<u8>,
-    /// The router has more to give.
+    /// The repeater has more to give.
     pub more: bool,
     /// How long ago the top of it was read; `None` before it has been.
     pub read_ms_ago: Option<u64>,
@@ -1564,12 +1564,12 @@ pub struct Listing {
     pub asking: Option<ListingAsk>,
     /// The last ask went unanswered.
     pub no_answer: bool,
-    /// The router's own router hint: an ask about a repeater it hears goes
+    /// The repeater's own repeater hint: an ask about a repeater it hears goes
     /// by way of it.
     pub hint: [u8; 2],
 }
 
-/// What a router is asked for.
+/// What a repeater is asked for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ListingAsk {
     /// The top of its listing, again.
@@ -1578,7 +1578,7 @@ pub enum ListingAsk {
     More,
 }
 
-/// A repeater a router reports hearing.
+/// A repeater a repeater reports hearing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Listed {
     /// The node it most plausibly is, by name, else its hint.
@@ -1586,13 +1586,13 @@ pub struct Listed {
     pub avatar: AvatarStyle,
     /// The address of the node it most plausibly is, when one is known.
     pub address: Option<String<44>>,
-    /// The router hint it forwards under.
+    /// The repeater hint it forwards under.
     pub hint: [u8; 2],
-    /// How the router heard it; `None` when over a link with no radio.
+    /// How the repeater heard it; `None` when over a link with no radio.
     pub signal: Option<Signal>,
-    /// How many minutes ago the router last heard it.
+    /// How many minutes ago the repeater last heard it.
     pub heard_min: Option<u16>,
-    /// How far it is from the router, when both placed themselves.
+    /// How far it is from the repeater, when both placed themselves.
     pub distance_m: Option<u32>,
 }
 
@@ -1602,7 +1602,7 @@ pub struct KnownRepeater {
     pub address: String<44>,
     pub name: String<24>,
     pub avatar: AvatarStyle,
-    /// The router hint it forwards under.
+    /// The repeater hint it forwards under.
     pub hint: [u8; 2],
     /// How long ago it was last heard, such as `2h`.
     pub age: String<6>,
@@ -1611,7 +1611,7 @@ pub struct KnownRepeater {
 /// The most known repeaters Add hop offers.
 pub const MAX_KNOWN: usize = 5;
 
-/// A router hint that typed text fixes: as the start of an address in
+/// A repeater hint that typed text fixes: as the start of an address in
 /// Base58, or as four hexadecimal digits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HintRead {
@@ -1620,7 +1620,7 @@ pub struct HintRead {
     pub hex: bool,
 }
 
-/// The most router hints typed text fixes: two that a Base58 prefix
+/// The most repeater hints typed text fixes: two that a Base58 prefix
 /// straddles, and its reading as hexadecimal.
 pub const MAX_HINT_READS: usize = 3;
 
@@ -1865,7 +1865,7 @@ pub enum NodeEvent {
     PingSettled(PeerId),
     /// The route to a saved peer changed.
     RouteChanged(PeerId),
-    /// What a router reports hearing changed, or how asking it goes.
+    /// What a repeater reports hearing changed, or how asking it goes.
     ListingChanged,
     /// Settings were applied, as set or adjusted.
     SettingsChanged,
@@ -2064,9 +2064,9 @@ pub trait Node {
     /// `message`.
     fn request_identity(&self, chat: ChatId, message: MessageId);
 
-    /// Asks the repeater that forwards under `hint`, a router hint, who it
+    /// Asks the repeater that forwards under `hint`, a repeater hint, who it
     /// is: of the nodes in earshot of the last of the repeaters `before`,
-    /// router hints in the order they forward, or of this device when there
+    /// repeater hints in the order they forward, or of this device when there
     /// are none, the ones whose hint it is.
     fn identify_repeater(&self, hint: [u8; 2], before: &[[u8; 2]]);
 
@@ -2112,7 +2112,7 @@ pub trait Node {
     /// Where the latest ping to `peer` stands; `None` when none was sent.
     fn ping_view(&self, peer: PeerId) -> Option<PingView>;
 
-    /// The repeater that forwards under `hint`, a router hint: the node it
+    /// The repeater that forwards under `hint`, a repeater hint: the node it
     /// most plausibly is, else the hint alone. `None` when there is no room
     /// to say.
     fn repeater(&self, hint: [u8; 2]) -> Option<Repeater>;
@@ -2150,40 +2150,40 @@ pub trait Node {
     /// learned one until the route is held again.
     fn keep_manual_route(&self, peer: PeerId);
 
-    /// What the router at `address` reports hearing, as last read; `None`
+    /// What the repeater at `address` reports hearing, as last read; `None`
     /// when it has not been asked.
     fn listing(&self, address: &str) -> Option<Listing>;
 
-    /// The `index`th repeater the router at `address` reports hearing, the
+    /// The `index`th repeater the repeater at `address` reports hearing, the
     /// one it heard most recently first.
     fn listed(&self, address: &str, index: usize) -> Option<Listed>;
 
-    /// Asks the router at `address` for the top of what it hears, or, when
+    /// Asks the repeater at `address` for the top of what it hears, or, when
     /// `more`, the page after the last one held: by way of `along`, the
     /// repeater nearest this device first, flooding no further, or as a
     /// message to it would go when that is `None`. This device's own
     /// address reads what it hears itself, sending nothing. How it goes
-    /// comes as [`NodeEvent::ListingChanged`]. The listings of the routers
+    /// comes as [`NodeEvent::ListingChanged`]. The listings of the repeaters
     /// at `shown`, whose screens are open, are kept.
     fn ask_listing(&self, address: &str, more: bool, shown: &[&str], along: Option<&[[u8; 2]]>);
 
-    /// Where the node at `node` is in what the router at `router` reports
+    /// Where the node at `node` is in what the repeater at `repeater` reports
     /// hearing, as last read.
-    fn listed_place(&self, router: &str, node: &str) -> Option<usize>;
+    fn listed_place(&self, repeater: &str, node: &str) -> Option<usize>;
 
     /// Gathers up to [`MAX_KNOWN`] known nodes that forward others'
     /// frames, whose names have a word starting with `query` (all, when it
-    /// is empty), the most recently heard first, one to a router hint,
-    /// leaving out the node at `peer` and those the router at `router`
+    /// is empty), the most recently heard first, one to a repeater hint,
+    /// leaving out the node at `peer` and those the repeater at `repeater`
     /// reports hearing; returns how many there are.
     /// [`Node::known_repeater`] reads them by place until the next
     /// gathering.
-    fn gather_known(&self, query: &str, router: &str, peer: &str) -> usize;
+    fn gather_known(&self, query: &str, repeater: &str, peer: &str) -> usize;
 
     /// The known repeater at `index` of the last gathering.
     fn known_repeater(&self, index: usize) -> Option<KnownRepeater>;
 
-    /// The router hints `text` fixes, Base58 readings first.
+    /// The repeater hints `text` fixes, Base58 readings first.
     fn hint_reads(&self, text: &str) -> Vec<HintRead, MAX_HINT_READS>;
 
     /// The clock's settings as they stand.

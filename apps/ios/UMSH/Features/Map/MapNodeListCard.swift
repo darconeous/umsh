@@ -109,7 +109,7 @@ struct MapNodeListCard: View {
                 Image(systemName: "antenna.radiowaves.left.and.right")
                     .font(.caption2)
                     .foregroundStyle(Color(uiColor: .secondaryLabel))
-                    .accessibilityLabel("Position reported by a router")
+                    .accessibilityLabel("Position reported by a repeater")
             }
         } trailing: {
             if let distance = distanceText(node) {

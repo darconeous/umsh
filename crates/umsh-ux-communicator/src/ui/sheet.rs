@@ -1,4 +1,4 @@
-//! The route editor, a router's Neighbors, and Add hop, drawn by one view:
+//! The route editor, a repeater's Neighbors, and Add hop, drawn by one view:
 //! a header over a list of rows, each a button drawn from a description of
 //! it, and what opens over the editor. Add hop's field, while text is
 //! typed, is its first row.
@@ -86,7 +86,7 @@ pub fn view(state: &State) -> Option<impl View<Rgb565, State> + use<>> {
             )
         }
         Screen::Neighbors {
-            router,
+            repeater,
             pick: Some(pick),
             ..
         } => {
@@ -109,7 +109,7 @@ pub fn view(state: &State) -> Option<impl View<Rgb565, State> + use<>> {
             (
                 about,
                 Source::Pick {
-                    router: router.clone(),
+                    repeater: repeater.clone(),
                     find: pick.find.clone(),
                     rows,
                     heard,
@@ -120,17 +120,17 @@ pub fn view(state: &State) -> Option<impl View<Rgb565, State> + use<>> {
                 NEIGHBOR,
             )
         }
-        Screen::Neighbors { router, .. } => {
+        Screen::Neighbors { repeater, .. } => {
             let mut name: String<32> = String::new();
-            if let Some(member) = node.known_member(router) {
+            if let Some(member) = node.known_member(repeater) {
                 _ = name.push_str(&member.sender.name);
             }
             _ = title.push_str("Neighbors");
             (
                 name,
                 Source::Listing {
-                    router: router.clone(),
-                    listing: node.listing(router),
+                    repeater: repeater.clone(),
+                    listing: node.listing(repeater),
                     identifying: state.identifying(),
                     phase: state.spinner_phase(),
                 },
@@ -220,9 +220,9 @@ enum Source {
         pinged: Pinged,
         adjusting: Option<Adjust>,
     },
-    /// What the router at `router` reports hearing.
+    /// What the repeater at `repeater` reports hearing.
     Listing {
-        router: String<44>,
+        repeater: String<44>,
         listing: Option<Listing>,
         /// The bare hints asked who they are, still waited for.
         identifying: Vec<[u8; 2], MAX_PATH>,
@@ -231,7 +231,7 @@ enum Source {
     /// Add hop: what the last hop of the route being edited reports
     /// hearing, as `heard` labels it, and the rest it offers.
     Pick {
-        router: String<44>,
+        repeater: String<44>,
         /// What is typed, which the field at the top shows.
         find: String<16>,
         rows: PickRows,
@@ -364,7 +364,7 @@ impl Source {
                 }
             }
             Self::Listing {
-                router,
+                repeater,
                 listing,
                 identifying,
                 phase,
@@ -388,7 +388,7 @@ impl Source {
                         }),
                         false,
                     ),
-                    Some(ListRow::Neighbor(at)) => match node.listed(router, at) {
+                    Some(ListRow::Neighbor(at)) => match node.listed(repeater, at) {
                         Some(listed) => (
                             Row::Neighbor(NeighborLook {
                                 end: match (
@@ -429,7 +429,7 @@ impl Source {
                 }
             }
             Self::Pick {
-                router,
+                repeater,
                 find,
                 rows,
                 heard,
@@ -482,7 +482,7 @@ impl Source {
                         )),
                         false,
                     ),
-                    Some(PickRow::Neighbor(at)) => match node.listed(router, usize::from(at)) {
+                    Some(PickRow::Neighbor(at)) => match node.listed(repeater, usize::from(at)) {
                         Some(listed) => (
                             Row::Neighbor(NeighborLook {
                                 end: if rows.peer_at == Some(at) {
@@ -539,9 +539,9 @@ impl Source {
                     Some(PickRow::Hints) => (
                         Row::Caption(Caption::Label(
                             label(if rows.hints.len() > 1 {
-                                "Router hints"
+                                "Repeater hints"
                             } else {
-                                "Router hint"
+                                "Repeater hint"
                             }),
                             None,
                         )),
@@ -596,7 +596,7 @@ fn label(text: &str) -> String<32> {
     String::try_from(text).unwrap_or_default()
 }
 
-/// What a listing says in place of its rows: that the router did not
+/// What a listing says in place of its rows: that the repeater did not
 /// answer, or that it listed nobody.
 fn said(listing: Option<&Listing>) -> Caption {
     if listing.is_some_and(|listing| listing.no_answer) {
@@ -633,7 +633,7 @@ enum Row {
         flooding: bool,
     },
     Neighbor(NeighborLook),
-    /// A known repeater, or a router hint typed text fixes.
+    /// A known repeater, or a repeater hint typed text fixes.
     Node(NodeLook),
     /// Add hop's field, while text is typed.
     Field(FieldLook),

@@ -6,10 +6,10 @@ struct PathRailStop: Identifiable {
         /// The phone the path starts from, with the radio it sends through
         /// when that is worth saying.
         case phone(radioName: String?)
-        /// A repeater known only by its router hint: the node it most
+        /// A repeater known only by its repeater hint: the node it most
         /// plausibly names, if any, and the repeaters ahead of it in send
         /// order, which is the path an ask to identify it has to take.
-        case repeater(MeshRouterHint, named: PeerSummary?, preceding: [MeshRouterHint])
+        case repeater(MeshRepeaterHint, named: PeerSummary?, preceding: [MeshRepeaterHint])
         /// The node at the far end.
         case peer(PeerSummary)
     }
@@ -122,7 +122,7 @@ struct PathRail: View {
                     open(named)
                 } label: {
                     HStack {
-                        RouterHintRow(hint: hint, named: named)
+                        RepeaterHintRow(hint: hint, named: named)
                         Image(systemName: "chevron.forward")
                             .font(.footnote.weight(.semibold))
                             .foregroundStyle(.tertiary)
@@ -132,7 +132,7 @@ struct PathRail: View {
                 }
                 .buttonStyle(.plain)
             } else {
-                RouterHintRow(
+                RepeaterHintRow(
                     hint: hint,
                     named: named,
                     discover: identifyRepeater.map { identify in

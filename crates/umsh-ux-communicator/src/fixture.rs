@@ -424,18 +424,18 @@ const STAGES: [u64; 5] = [
     DELIVERED_AFTER,
 ];
 
-/// The router hint `address` forwards under, and how it is written.
-fn router_hint(address: &str) -> Option<([u8; 2], String<8>)> {
+/// The repeater hint `address` forwards under, and how it is written.
+fn repeater_hint(address: &str) -> Option<([u8; 2], String<8>)> {
     let key = umsh_core::base58::decode(address.as_bytes()).ok()?;
-    let hint = umsh_core::RouterHint([key[0], key[1]]);
+    let hint = umsh_core::RepeaterHint([key[0], key[1]]);
     let mut text = String::new();
     core::fmt::write(&mut text, format_args!("{hint}")).ok()?;
     Some((hint.0, text))
 }
 
-/// How many routers' listings the fixture keeps.
+/// How many repeaters' listings the fixture keeps.
 const LISTINGS: usize = 4;
-/// How long Riverbend takes to answer, and how long any other router is
+/// How long Riverbend takes to answer, and how long any other repeater is
 /// waited for before it goes unanswered.
 const LISTING_DELAY: u64 = 1_500;
 const NO_ANSWER_AFTER: u64 = 30_000;
@@ -444,7 +444,7 @@ const HERE_DELAY: u64 = 100;
 /// How many repeaters a page lists.
 const LISTING_PAGE: usize = 3;
 
-/// A router asked what it hears.
+/// A repeater asked what it hears.
 struct FixtureListing {
     address: String<44>,
     /// How many pages of its listing are held.
@@ -478,7 +478,7 @@ impl FixtureListing {
     }
 }
 
-/// What the router at `address` reports hearing: Riverbend and this
+/// What the repeater at `address` reports hearing: Riverbend and this
 /// device answer, and no other.
 fn lists_of(address: &str) -> &'static [ListsAs] {
     match address {
@@ -1037,9 +1037,9 @@ pub struct Store {
     repeater_identified: Cell<bool>,
     /// The repeaters the last repeater asked who it is was asked by way of.
     repeater_route: RefCell<Vec<[u8; 2], MAX_PATH>>,
-    /// What routers were asked to list, and what they answered.
+    /// What repeaters were asked to list, and what they answered.
     listings: RefCell<Vec<FixtureListing, LISTINGS>>,
-    /// The repeaters the last router asked to list was asked by way of,
+    /// The repeaters the last repeater asked to list was asked by way of,
     /// when it was asked along a route.
     listing_route: RefCell<Option<Vec<[u8; 2], MAX_PATH>>>,
     /// The known repeaters of the last `gather_known`.
@@ -1836,16 +1836,16 @@ impl Store {
         self.along.borrow().clone()
     }
 
-    /// How many repeaters the router at `router` is held to report hearing.
-    fn listing_count(&self, router: &str) -> usize {
+    /// How many repeaters the repeater at `repeater` is held to report hearing.
+    fn listing_count(&self, repeater: &str) -> usize {
         self.listings
             .borrow()
             .iter()
-            .find(|listing| listing.address == router)
+            .find(|listing| listing.address == repeater)
             .map_or(0, FixtureListing::count)
     }
 
-    /// The repeaters the last router asked to list was asked by way of, in
+    /// The repeaters the last repeater asked to list was asked by way of, in
     /// the order they forward, when it was asked along a route.
     #[must_use]
     pub fn listing_route(&self) -> Option<Vec<[u8; 2], MAX_PATH>> {
@@ -1890,7 +1890,7 @@ impl Store {
 
     /// A repeater as a message's details list it.
     fn repeater(&self, carrier: &Carrier) -> Option<Repeater> {
-        let (hint, text) = router_hint(carrier.address)?;
+        let (hint, text) = repeater_hint(carrier.address)?;
         if carrier.known || self.repeater_identified.get() {
             Some(Repeater {
                 hint,
@@ -1906,7 +1906,7 @@ impl Store {
             Some(Repeater {
                 hint,
                 name: SharedText::new(self.heap, &text)?,
-                avatar: AvatarStyle::router_hint(&text),
+                avatar: AvatarStyle::repeater_hint(&text),
                 address: None,
             })
         }
@@ -1991,16 +1991,16 @@ impl Store {
     fn held_repeater(&self, hint: [u8; 2]) -> Option<Repeater> {
         if let Some(carrier) = [RIVERBEND, BALD_KNOB, RIDGE_RUNNER]
             .iter()
-            .find(|carrier| router_hint(carrier.address).is_some_and(|(h, _)| h == hint))
+            .find(|carrier| repeater_hint(carrier.address).is_some_and(|(h, _)| h == hint))
         {
             return self.repeater(carrier);
         }
         let mut text: String<8> = String::new();
-        core::fmt::write(&mut text, format_args!("{}", umsh_core::RouterHint(hint))).ok()?;
+        core::fmt::write(&mut text, format_args!("{}", umsh_core::RepeaterHint(hint))).ok()?;
         Some(Repeater {
             hint,
             name: SharedText::new(self.heap, &text)?,
-            avatar: AvatarStyle::router_hint(&text),
+            avatar: AvatarStyle::repeater_hint(&text),
             address: None,
         })
     }
@@ -2921,7 +2921,7 @@ impl Node for Store {
         // Only the one repeater not known has an identity to come.
         if !self.repeater_identified.get()
             && self.repeater_at.get().is_none()
-            && router_hint(BALD_KNOB.address).is_some_and(|(known, _)| known == hint)
+            && repeater_hint(BALD_KNOB.address).is_some_and(|(known, _)| known == hint)
         {
             self.repeater_at.set(Some(self.now.get() + IDENTITY_DELAY));
         }
@@ -3044,7 +3044,7 @@ impl Node for Store {
                 }
             }),
             no_answer: listing.no_answer,
-            hint: router_hint(address).map_or([0; 2], |(hint, _)| hint),
+            hint: repeater_hint(address).map_or([0; 2], |(hint, _)| hint),
         })
     }
 
@@ -3062,13 +3062,13 @@ impl Node for Store {
             _ => None,
         };
         // A made-up address that is no key goes by the hint given it.
-        let (hint, hint_text) = match entry.address.and_then(router_hint) {
+        let (hint, hint_text) = match entry.address.and_then(repeater_hint) {
             Some(read) => read,
             None => {
                 let mut text = String::new();
                 core::fmt::write(
                     &mut text,
-                    format_args!("{}", umsh_core::RouterHint(entry.hint)),
+                    format_args!("{}", umsh_core::RepeaterHint(entry.hint)),
                 )
                 .ok()?;
                 (entry.hint, text)
@@ -3085,13 +3085,13 @@ impl Node for Store {
                 distance_m: entry.distance_m,
             },
             None => Listed {
-                // Named as the router heard it, else by its hint.
+                // Named as the repeater heard it, else by its hint.
                 name: if entry.address.is_some() || entry.name.is_empty() {
                     s(&hint_text)
                 } else {
                     s(entry.name)
                 },
-                avatar: AvatarStyle::router_hint(&hint_text),
+                avatar: AvatarStyle::repeater_hint(&hint_text),
                 address: None,
                 hint,
                 signal: entry.signal,
@@ -3143,15 +3143,15 @@ impl Node for Store {
         self.queue(NodeEvent::ListingChanged);
     }
 
-    fn listed_place(&self, router: &str, node: &str) -> Option<usize> {
-        let count = self.listing_count(router);
-        lists_of(router)[..count]
+    fn listed_place(&self, repeater: &str, node: &str) -> Option<usize> {
+        let count = self.listing_count(repeater);
+        lists_of(repeater)[..count]
             .iter()
             .position(|entry| entry.address == Some(node))
     }
 
-    fn gather_known(&self, query: &str, router: &str, peer: &str) -> usize {
-        let listed = &lists_of(router)[..self.listing_count(router)];
+    fn gather_known(&self, query: &str, repeater: &str, peer: &str) -> usize {
+        let listed = &lists_of(repeater)[..self.listing_count(repeater)];
         let known: Vec<KnownRepeater, MAX_KNOWN> = KNOWN_REPEATERS
             .iter()
             .filter(|(carrier, _, _)| {
@@ -3166,7 +3166,7 @@ impl Node for Store {
                     address: s(carrier.address),
                     name: s(carrier.name),
                     avatar: AvatarStyle::peer(carrier.color, &carrier.address[..4], *shape),
-                    hint: router_hint(carrier.address)?.0,
+                    hint: repeater_hint(carrier.address)?.0,
                     age: s(age),
                 })
             })
@@ -3183,7 +3183,7 @@ impl Node for Store {
 
     fn hint_reads(&self, text: &str) -> Vec<HintRead, MAX_HINT_READS> {
         let mut reads = Vec::new();
-        if let Ok(prefix) = umsh_core::RouterHint::candidates_from_base58_prefix(text) {
+        if let Ok(prefix) = umsh_core::RepeaterHint::candidates_from_base58_prefix(text) {
             for hint in core::iter::once(prefix.first).chain(prefix.second) {
                 _ = reads.push(HintRead {
                     hint: hint.0,
@@ -3191,7 +3191,7 @@ impl Node for Store {
                 });
             }
         }
-        if let Ok(hint) = umsh_core::RouterHint::from_hex(text) {
+        if let Ok(hint) = umsh_core::RepeaterHint::from_hex(text) {
             _ = reads.push(HintRead {
                 hint: hint.0,
                 hex: true,

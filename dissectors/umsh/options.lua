@@ -293,8 +293,8 @@ M.SINGLETON_OPTIONS = {
 --
 --   Complete, with signal:  length a multiple of 4, records of
 --                           RH(2) ‖ RSSI(1) ‖ SNR(1)
---   Complete, hints only:   0xFE, then 2-byte router hints (odd length)
---   Truncated, hints only:  0xFF, then 2-byte router hints (odd length),
+--   Complete, hints only:   0xFE, then 2-byte repeater hints (odd length)
+--   Truncated, hints only:  0xFF, then 2-byte repeater hints (odd length),
 --                           oldest dropped
 --
 -- Every other value is malformed: a length of 2 modulo 4, or an odd length

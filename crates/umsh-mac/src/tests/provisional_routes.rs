@@ -4,9 +4,9 @@
 use super::*;
 use crate::{PROVISIONAL_ROUTE_LIFETIME_MS, PROVISIONAL_ROUTE_SUPPRESSION_MS, PROVISIONAL_ROUTES};
 
-const R1: RouterHint = RouterHint([0x01, 0x02]);
-const R2: RouterHint = RouterHint([0x03, 0x04]);
-const R9: RouterHint = RouterHint([0x09, 0x09]);
+const R1: RepeaterHint = RepeaterHint([0x01, 0x02]);
+const R2: RepeaterHint = RepeaterHint([0x03, 0x04]);
+const R9: RepeaterHint = RepeaterHint([0x09, 0x09]);
 
 /// How a test beacon names its source.
 #[derive(Clone, Copy)]
@@ -21,7 +21,7 @@ enum Source<'a> {
 fn beacon(
     source: Source<'_>,
     flood_hops: Option<u8>,
-    source_route: Option<&[RouterHint]>,
+    source_route: Option<&[RepeaterHint]>,
     trace: Option<&[u8]>,
 ) -> std::vec::Vec<u8> {
     let mut buf = [0u8; 256];
@@ -46,7 +46,7 @@ fn beacon(
 }
 
 /// A flooded beacon that crossed `hops`, nearest first.
-fn traced_beacon(source: Source<'_>, hops: &[RouterHint]) -> std::vec::Vec<u8> {
+fn traced_beacon(source: Source<'_>, hops: &[RepeaterHint]) -> std::vec::Vec<u8> {
     let (value, len) = encode_trace(hops);
     beacon(source, Some(3), None, Some(&value[..len]))
 }
@@ -62,7 +62,7 @@ fn provisional(mac: &TestMac, peer_id: PeerId) -> Option<CachedRoute> {
         .cloned()
 }
 
-fn source_route(hints: &[RouterHint]) -> CachedRoute {
+fn source_route(hints: &[RepeaterHint]) -> CachedRoute {
     CachedRoute::source(hints).unwrap()
 }
 

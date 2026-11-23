@@ -553,7 +553,7 @@ fn entry(hint: &[u8], name: Option<&str>, minutes_ago: i64) -> MobileStoredPeerR
     }
 }
 
-/// Ridge's listing names a node hint, and router hints that several peers
+/// Ridge's listing names a node hint, and repeater hints that several peers
 /// share: one decided by an advertisement (0x0102), one by a stored kind
 /// over an advertisement that does not decode (0x0506), one by a stored
 /// bridge (0x0708). It ends with a hint nobody holds. Echo B's stopped

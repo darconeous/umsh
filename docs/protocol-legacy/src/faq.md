@@ -8,9 +8,9 @@ Not without the pairwise key. A MAC Ack carries two fields: a public [ack MIC](s
 
 No. The `MIC` field is located at the end of the packet and can be read directly from the wire. It is computed using the [blind unicast payload keys](security.md#blind-unicast-payload-keys), which combine the pairwise shared secret with the channel key. The receiver reads the MIC, uses it (together with the channel's `K_enc_channel`) as the IV to decrypt `ENC_DST_SRC`, and then derives the pairwise keys from the recovered source address. The pairwise keys are XORed with the channel keys to produce the blind unicast payload keys, which are used to authenticate and decrypt `ENC_PAYLOAD`. If either address has been tampered with, the derived pairwise keys will be wrong and payload authentication will fail. There is no circular dependency—only a specific processing order (see [Blind Unicast](packet-types.md#blind-unicast-packet)).
 
-### Can source-routed packets loop if router hints collide?
+### Can source-routed packets loop if repeater hints collide?
 
-No, for two reasons. First, the forwarding path is bounded by the number of router hints in the source route plus the flood hop count—a packet cannot be forwarded more times than the sum of these values. Second, duplicate suppression (see [Duplicate Suppression](repeater-operation.md#duplicate-suppression)) ensures that each repeater forwards a given packet at most once (identified by MIC). Even if a router hint collision causes an unintended repeater to forward the packet, the probability of subsequent hints also colliding with nearby repeaters drops dramatically at each hop, making extended misrouting extremely unlikely.
+No, for two reasons. First, the forwarding path is bounded by the number of repeater hints in the source route plus the flood hop count—a packet cannot be forwarded more times than the sum of these values. Second, duplicate suppression (see [Duplicate Suppression](repeater-operation.md#duplicate-suppression)) ensures that each repeater forwards a given packet at most once (identified by MIC). Even if a repeater hint collision causes an unintended repeater to forward the packet, the probability of subsequent hints also colliding with nearby repeaters drops dramatically at each hop, making extended misrouting extremely unlikely.
 
 ### What happens when a cached source route goes stale?
 
@@ -27,7 +27,7 @@ The key point is that this is still the same logical packet, not a new applicati
 
 ### Why doesn't UMSH define a dedicated path-discovery packet type?
 
-The existing primitives are sufficient. A node can discover a path by sending a flooded packet (broadcast, unicast, or beacon) with the [Trace option](packet-options.md#trace-option-7) present. Repeaters prepend their records as they forward. The recipient can use the router hints of a complete trace directly as a candidate source route. This avoids adding protocol complexity for a function that composes naturally from existing features. See [Path Discovery](beacons.md#path-discovery) for the full procedure.
+The existing primitives are sufficient. A node can discover a path by sending a flooded packet (broadcast, unicast, or beacon) with the [Trace option](packet-options.md#trace-option-7) present. Repeaters prepend their records as they forward. The recipient can use the repeater hints of a complete trace directly as a candidate source route. This avoids adding protocol complexity for a function that composes naturally from existing features. See [Path Discovery](beacons.md#path-discovery) for the full procedure.
 
 ### How does UMSH handle frame counter overflow?
 

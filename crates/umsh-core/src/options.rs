@@ -1,6 +1,6 @@
 use core::ops::Range;
 
-use crate::{EncodeError, ParseError, RouterHint};
+use crate::{EncodeError, ParseError, RepeaterHint};
 
 /// Incremental encoder for CoAP-style delta/length option blocks.
 ///
@@ -169,11 +169,11 @@ impl HopSignal {
     }
 }
 
-/// One hop of a Trace option with signal: the hop's router hint, then the
+/// One hop of a Trace option with signal: the hop's repeater hint, then the
 /// signal it heard the frame at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TraceRecord {
-    pub hint: RouterHint,
+    pub hint: RepeaterHint,
     pub signal: HopSignal,
 }
 
@@ -190,9 +190,9 @@ impl TraceRecord {
 pub enum TraceForm {
     /// Complete, one 4-byte record per hop.
     Signal,
-    /// Complete, `0xFE` then one router hint per hop.
+    /// Complete, `0xFE` then one repeater hint per hop.
     HintsOnly,
-    /// `0xFF` then the most recent hops' router hints; older hops dropped.
+    /// `0xFF` then the most recent hops' repeater hints; older hops dropped.
     Truncated,
 }
 
@@ -202,7 +202,7 @@ const TRACE_TRUNCATED: u8 = 0xFF;
 /// One hop of a trace, whatever its form.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TraceEntry {
-    pub hint: RouterHint,
+    pub hint: RepeaterHint,
     /// The signal the hop heard the frame at, when the trace still has it.
     pub signal: Option<HopSignal>,
 }
@@ -275,14 +275,14 @@ impl<'a> TraceRef<'a> {
         self.entries
             .chunks_exact(self.entry_len())
             .map(move |entry| TraceEntry {
-                hint: RouterHint([entry[0], entry[1]]),
+                hint: RepeaterHint([entry[0], entry[1]]),
                 signal: signal.then(|| HopSignal::from_bytes([entry[2], entry[3]])),
             })
     }
 
-    /// The router hints of a complete trace, most recent first; `None` for
+    /// The repeater hints of a complete trace, most recent first; `None` for
     /// a truncated one, from which no route may be built.
-    pub fn complete_hints(self) -> Option<impl Iterator<Item = RouterHint> + 'a> {
+    pub fn complete_hints(self) -> Option<impl Iterator<Item = RepeaterHint> + 'a> {
         self.is_complete()
             .then(|| self.entries().map(|entry| entry.hint))
     }
@@ -335,7 +335,7 @@ impl<'a> TraceRef<'a> {
     }
 
     /// Write `sentinel ‖ own ‖` the newest `kept` earlier hints.
-    fn write_hints(&self, sentinel: u8, own: RouterHint, kept: usize, out: &mut [u8]) -> usize {
+    fn write_hints(&self, sentinel: u8, own: RepeaterHint, kept: usize, out: &mut [u8]) -> usize {
         out[0] = sentinel;
         out[1..3].copy_from_slice(&own.0);
         for (index, entry) in self.entries().take(kept).enumerate() {
@@ -631,11 +631,11 @@ mod tests {
     // ── Trace ────────────────────────────────────────────────────────────
 
     use super::{TraceEntry, TraceForm, TraceRecord, TraceRef};
-    use crate::RouterHint;
+    use crate::RepeaterHint;
 
     fn record(hint: u8) -> TraceRecord {
         TraceRecord {
-            hint: RouterHint([hint, hint]),
+            hint: RepeaterHint([hint, hint]),
             signal: HopSignal::new(-90, 20),
         }
     }
@@ -679,14 +679,14 @@ mod tests {
         value[..4].copy_from_slice(&record(0xB0).to_bytes());
         value[4..].copy_from_slice(
             &TraceRecord {
-                hint: RouterHint([0xA0, 0xA0]),
+                hint: RepeaterHint([0xA0, 0xA0]),
                 signal: HopSignal::POINT_TO_POINT,
             }
             .to_bytes(),
         );
         let trace = TraceRef::parse(&value).unwrap();
         let entries: std::vec::Vec<TraceEntry> = trace.entries().collect();
-        assert_eq!(entries[0].hint, RouterHint([0xB0, 0xB0]));
+        assert_eq!(entries[0].hint, RepeaterHint([0xB0, 0xB0]));
         assert_eq!(entries[0].signal, Some(HopSignal::new(-90, 20)));
         assert_eq!(entries[1].signal, Some(HopSignal::POINT_TO_POINT));
         let hints: std::vec::Vec<_> = TraceRef::parse(&[0xFE, 0xB0, 0xB0])

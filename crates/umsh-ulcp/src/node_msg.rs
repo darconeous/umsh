@@ -18,9 +18,9 @@ use crate::status::Status;
 pub const KEY_LEN: usize = 32;
 /// Length of a node hint in `RX_SRC`.
 pub const HINT_LEN: usize = 3;
-/// Length of one router hint in a source route or trace.
-pub const ROUTER_HINT_LEN: usize = 2;
-/// Most router hints a source route or trace carries.
+/// Length of one repeater hint in a source route or trace.
+pub const REPEATER_HINT_LEN: usize = 2;
+/// Most repeater hints a source route or trace carries.
 pub const MAX_ROUTE_HINTS: usize = 15;
 /// Largest flood budget a send may ask for.
 pub const MAX_FLOOD_HOPS: u8 = MAX_ANNOUNCE_FLOOD_HOPS;
@@ -41,7 +41,7 @@ pub mod tx_flag {
 pub mod tx_opt {
     /// `TX_OPT_FLOOD_HOPS`: UINT8, 0 to 15.
     pub const FLOOD_HOPS: u32 = 1;
-    /// `TX_OPT_SOURCE_ROUTE`: 1 to 15 router hints, next repeater first.
+    /// `TX_OPT_SOURCE_ROUTE`: 1 to 15 repeater hints, next repeater first.
     pub const SOURCE_ROUTE: u32 = 2;
     /// `TX_OPT_TX_POWER`: INT8, dBm.
     pub const TX_POWER: u32 = 3;
@@ -67,7 +67,7 @@ pub mod rx_opt {
     pub const RSSI: u32 = 1;
     /// `RX_OPT_SNR`: INT16, centibels.
     pub const SNR: u32 = 2;
-    /// `RX_OPT_TRACE`: the router hints of a complete trace, nearest
+    /// `RX_OPT_TRACE`: the repeater hints of a complete trace, nearest
     /// repeater first.
     pub const TRACE: u32 = 3;
 }
@@ -151,8 +151,8 @@ fn take_array<const N: usize>(rest: &mut &[u8]) -> Result<[u8; N], NodeMsgError>
 /// Whether `hints` is a well-formed source route or trace.
 const fn valid_route(hints: &[u8]) -> bool {
     !hints.is_empty()
-        && hints.len().is_multiple_of(ROUTER_HINT_LEN)
-        && hints.len() <= MAX_ROUTE_HINTS * ROUTER_HINT_LEN
+        && hints.len().is_multiple_of(REPEATER_HINT_LEN)
+        && hints.len() <= MAX_ROUTE_HINTS * REPEATER_HINT_LEN
 }
 
 /// Parsed `Send` metadata.
@@ -171,7 +171,7 @@ pub struct SendMeta<'a> {
     pub peer: Option<[u8; KEY_LEN]>,
     /// The flood budget, when given.
     pub flood_hops: Option<u8>,
-    /// The router hints of a source route, next repeater first.
+    /// The repeater hints of a source route, next repeater first.
     pub source_route: Option<&'a [u8]>,
     /// The transmit power in dBm, when given.
     pub tx_power: Option<i8>,
@@ -304,7 +304,7 @@ pub struct RecvMeta<'a> {
     pub rssi_dbm: Option<i16>,
     /// SNR in centibels.
     pub snr_cb: Option<i16>,
-    /// The router hints of a complete trace, nearest repeater first.
+    /// The repeater hints of a complete trace, nearest repeater first.
     pub trace: Option<&'a [u8]>,
 }
 
@@ -316,7 +316,7 @@ impl<'a> RecvMeta<'a> {
         + KEY_LEN
         + (2 + 1)
         + (2 + 2)
-        + (2 + MAX_ROUTE_HINTS * ROUTER_HINT_LEN);
+        + (2 + MAX_ROUTE_HINTS * REPEATER_HINT_LEN);
 
     /// The `RX_FLAGS` octet.
     pub const fn flags(&self) -> u8 {
@@ -638,7 +638,7 @@ mod tests {
     #[test]
     fn the_largest_messages_fit_a_frame() {
         const LORA_MAX: usize = 255;
-        let route = [0x5A; MAX_ROUTE_HINTS * ROUTER_HINT_LEN];
+        let route = [0x5A; MAX_ROUTE_HINTS * REPEATER_HINT_LEN];
         for (kind, overhead) in [
             (Kind::Broadcast, 5),
             (Kind::Unicast, 29),

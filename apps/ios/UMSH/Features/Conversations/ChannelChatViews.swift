@@ -208,7 +208,7 @@ struct ChannelMemberSheet: View {
 /// arrived says how it got here: how far, by what route, and how strong.
 struct MessageDetailsSheet: View {
     let message: ChatMessageSummary
-    var renderRouterHint: ((Data) async -> MeshRouterHint?)? = nil
+    var renderRepeaterHint: ((Data) async -> MeshRepeaterHint?)? = nil
     /// How a repeater this phone knows opens its page.
     var peerBrowsing: RemotePeerBrowsing? = nil
     /// Asks the node behind a hint who it is, by way of the repeaters
@@ -218,7 +218,7 @@ struct MessageDetailsSheet: View {
 
     /// The route's hints as the core renders them, in trace-route order:
     /// nearest this phone first.
-    @State private var route: [MeshRouterHint] = []
+    @State private var route: [MeshRepeaterHint] = []
 
     private var knownPeers: [PeerSummary] { peerBrowsing?.knownPeers ?? [] }
 
@@ -322,13 +322,13 @@ struct MessageDetailsSheet: View {
         .navigationTitle("Message Details")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: message.reception?.routeHints) {
-            guard let hints = message.reception?.routeHints, let renderRouterHint else {
+            guard let hints = message.reception?.routeHints, let renderRepeaterHint else {
                 route = []
                 return
             }
-            var rendered: [MeshRouterHint] = []
+            var rendered: [MeshRepeaterHint] = []
             for hint in hints {
-                guard let value = await renderRouterHint(hint) else { return }
+                guard let value = await renderRepeaterHint(hint) else { return }
                 rendered.append(value)
             }
             route = rendered
@@ -343,16 +343,16 @@ struct MessageDetailsSheet: View {
     /// One repeater. A node this phone knows opens its page; a hint that
     /// names none offers to ask the node behind it.
     @ViewBuilder
-    private func hintRow(_ hint: MeshRouterHint, precededBy preceding: [MeshRouterHint]) -> some View {
-        let named = RouterHintNaming.match(hint, among: knownPeers)
+    private func hintRow(_ hint: MeshRepeaterHint, precededBy preceding: [MeshRepeaterHint]) -> some View {
+        let named = RepeaterHintNaming.match(hint, among: knownPeers)
         if let named, let peerBrowsing {
             NavigationLink {
                 peerBrowsing.open(named)
             } label: {
-                RouterHintRow(hint: hint, named: named)
+                RepeaterHintRow(hint: hint, named: named)
             }
         } else {
-            RouterHintRow(
+            RepeaterHintRow(
                 hint: hint,
                 named: named,
                 discover: identifyRepeater.map { identify in
@@ -363,9 +363,9 @@ struct MessageDetailsSheet: View {
     }
 
     @ViewBuilder
-    private func ambiguityNote(for hints: [MeshRouterHint]) -> some View {
-        if hints.contains(where: { RouterHintNaming.match($0, among: knownPeers) != nil }) {
-            Text(RouterHintNaming.ambiguityNote)
+    private func ambiguityNote(for hints: [MeshRepeaterHint]) -> some View {
+        if hints.contains(where: { RepeaterHintNaming.match($0, among: knownPeers) != nil }) {
+            Text(RepeaterHintNaming.ambiguityNote)
         }
     }
 }

@@ -3,7 +3,7 @@ import SwiftUI
 /// One repeater on a manual path being edited.
 struct ManualPathHop: Identifiable, Hashable {
     let id = UUID()
-    let hint: MeshRouterHint
+    let hint: MeshRepeaterHint
     /// The node chosen, when it was picked from a list rather than typed.
     var node: PeerSummary?
     var enteredByHand = false
@@ -14,11 +14,11 @@ struct ManualPathHop: Identifiable, Hashable {
     /// The node this hop names: the one chosen, else the one its hint most
     /// plausibly is.
     func named(among peers: [PeerSummary]) -> PeerSummary? {
-        node ?? RouterHintNaming.match(hint, among: peers)
+        node ?? RepeaterHintNaming.match(hint, among: peers)
     }
 }
 
-extension MeshRouterHint {
+extension MeshRepeaterHint {
     /// The two bytes as four hex digits, the form a hint is typed in.
     var hexText: String {
         bytes.map { String(format: "%02X", $0) }.joined()
@@ -40,7 +40,7 @@ struct ManualPathHopRow: View {
             ))
         }
         if let signal = hop.signal { detail.append(signal) }
-        return RouterHintRow(hint: hop.hint, named: hop.named(among: knownPeers), detail: detail)
+        return RepeaterHintRow(hint: hop.hint, named: hop.named(among: knownPeers), detail: detail)
     }
 }
 

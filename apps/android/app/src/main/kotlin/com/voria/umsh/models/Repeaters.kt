@@ -18,7 +18,7 @@ data class RepeaterNeighbor(
     val peerAddress: String?,
 )
 
-/** What one router said about its neighborhood. */
+/** What one repeater said about its neighborhood. */
 data class NeighborReport(val reporter: PeerSummary, val neighbor: RepeaterNeighbor)
 
 /** A peer's cached repeater listing. */

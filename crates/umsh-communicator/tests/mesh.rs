@@ -1340,7 +1340,7 @@ async fn a_held_route_that_misses_floods_and_offers_what_the_floods_taught() {
             assert!(status.hold_remaining_ms.is_some(), "{status:?}");
             assert_eq!(
                 status.route,
-                umsh::mac::CachedRoute::source(&[umsh_core::RouterHint(nobody)]),
+                umsh::mac::CachedRoute::source(&[umsh_core::RepeaterHint(nobody)]),
             );
             tokio::time::sleep(Duration::from_millis(200)).await;
             assert_eq!(
@@ -1386,7 +1386,9 @@ async fn a_held_route_that_misses_floods_and_offers_what_the_floods_taught() {
             assert_eq!(status.hold_remaining_ms, None, "{status:?}");
             assert_eq!(
                 status.route,
-                umsh::mac::CachedRoute::source(&[umsh_core::RouterHint([ridge.0[0], ridge.0[1]])]),
+                umsh::mac::CachedRoute::source(&[umsh_core::RepeaterHint([
+                    ridge.0[0], ridge.0[1]
+                ])]),
             );
             assert_eq!(alice.node.learned_route(peer), None);
             assert!(matches!(
@@ -1398,7 +1400,7 @@ async fn a_held_route_that_misses_floods_and_offers_what_the_floods_taught() {
 }
 
 /// What this device hears is read from its own device node, a page as a
-/// router would give it, with nothing sent: the repeater heard carrying a
+/// repeater would give it, with nothing sent: the repeater heard carrying a
 /// ping is listed.
 #[tokio::test(flavor = "current_thread")]
 async fn this_devices_own_list_is_read_here() {

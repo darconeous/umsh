@@ -8,7 +8,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-use umsh::core::{ChannelKey, MicSize, PublicKey, RegionCode, RouterHint};
+use umsh::core::{ChannelKey, MicSize, PublicKey, RegionCode, RepeaterHint};
 use umsh::crypto::software::{SoftwareAes, SoftwareSha256};
 use umsh::crypto::{ChannelNameError, CryptoEngine, MAX_CHANNEL_NAME_LEN};
 use umsh::node::Channel;
@@ -419,7 +419,7 @@ impl FromStr for RegionCodeArg {
 /// An empty route is not a way to say "flood"—`--flood` is—so it is
 /// rejected rather than quietly meaning something else.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RouteArg(pub Vec<RouterHint>);
+pub struct RouteArg(pub Vec<RepeaterHint>);
 
 impl FromStr for RouteArg {
     type Err = String;
@@ -430,10 +430,10 @@ impl FromStr for RouteArg {
             .filter(|hint| !hint.is_empty())
             .map(|hint| {
                 if hint.len() == 4 {
-                    parse_hex::<2>(hint).map(RouterHint)
+                    parse_hex::<2>(hint).map(RepeaterHint)
                 } else {
                     parse_key32(hint)
-                        .map(|key| RouterHint::from_public_key(&PublicKey(key)))
+                        .map(|key| RepeaterHint::from_public_key(&PublicKey(key)))
                         .map_err(|error| {
                             format!("repeater {hint:?}: 4 hex digits or a full key: {error}")
                         })
@@ -588,7 +588,7 @@ mod tests {
         let route = format!("a1b2,{KEY_HEX}").parse::<RouteArg>().unwrap();
         assert_eq!(
             route.0,
-            vec![RouterHint([0xA1, 0xB2]), RouterHint([0xC4, 0xC4])]
+            vec![RepeaterHint([0xA1, 0xB2]), RepeaterHint([0xC4, 0xC4])]
         );
         // An empty route would silently mean "flood", which is a separate
         // flag, so it is an error rather than a shorthand.

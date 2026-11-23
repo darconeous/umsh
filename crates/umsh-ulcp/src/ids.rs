@@ -380,7 +380,7 @@ pub mod prop {
     /// as the hop just heard (`PROP_STAT_RX_OWN_HINT`)—`UINT32_LE`. A
     /// radio cannot hear itself, so each is a copy of one of the node's own
     /// repeats put back on the air without a hop added, or a repeater
-    /// sharing its router hint. Requires `CAP_STATS` and `CAP_REPEATER`.
+    /// sharing its repeater hint. Requires `CAP_STATS` and `CAP_REPEATER`.
     pub const STAT_RX_OWN_HINT: u32 = 4850;
     /// Times the radio driver reset the radio chip because it stopped
     /// doing what it was told (`PROP_STAT_RADIO_RESETS`)—`UINT32_LE`.

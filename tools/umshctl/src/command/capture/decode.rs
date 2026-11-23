@@ -8,7 +8,7 @@ use hamaddr::HamAddr;
 use umsh::core::options::{OptionDecoder, TraceForm, TraceRef};
 use umsh::core::{
     FRAME_SIGNATURE_OPTION_LEN, OptionNumber, PacketHeader, PacketType, PayloadType, PublicKey,
-    RegionCode, RouterHint, SourceAddrRef,
+    RegionCode, RepeaterHint, SourceAddrRef,
 };
 
 use crate::output::styled;
@@ -538,7 +538,7 @@ fn signature_text(signature: &[u8]) -> String {
     }
 }
 
-/// Render a route option as its list of router hints.
+/// Render a route option as its list of repeater hints.
 fn route_text(value: &[u8]) -> String {
     if !value.len().is_multiple_of(2) {
         return hex_text(value);
@@ -547,7 +547,7 @@ fn route_text(value: &[u8]) -> String {
         .as_chunks::<2>()
         .0
         .iter()
-        .map(|hint| RouterHint(*hint).to_string())
+        .map(|hint| RepeaterHint(*hint).to_string())
         .collect::<Vec<_>>()
         .join(",")
 }

@@ -1,12 +1,12 @@
 import SwiftUI
 
-/// One repeater a router reported as its neighbor, as every neighbor list
+/// One repeater a repeater reported as its neighbor, as every neighbor list
 /// draws it: the known node's name and avatar when this phone has one, the
-/// signal and age the router gave, and the regions and position when it had
+/// signal and age the repeater gave, and the regions and position when it had
 /// any. Screens own navigation and menus around it.
 struct NeighborRow<Trailing: View>: View {
     let neighbor: PeerRepeaterNeighbor
-    /// The router that reported it, whose position the distance is from.
+    /// The repeater that reported it, whose position the distance is from.
     let reporter: PeerSummary
     let knownPeers: [PeerSummary]
     private let trailing: Trailing
@@ -23,7 +23,7 @@ struct NeighborRow<Trailing: View>: View {
         self.trailing = trailing()
     }
 
-    /// How long since the router last heard a neighbor before the row is
+    /// How long since the repeater last heard a neighbor before the row is
     /// drawn as a memory rather than a presence.
     static var staleAge: TimeInterval { 6 * 60 * 60 }
 
@@ -96,13 +96,13 @@ struct NeighborRow<Trailing: View>: View {
         cellMeters: Double?
     ) -> String? {
         guard let identity = reporter.advertisedIdentity,
-              let routerLatitude = identity.latitude,
-              let routerLongitude = identity.longitude
+              let repeaterLatitude = identity.latitude,
+              let repeaterLongitude = identity.longitude
         else { return nil }
         return LocationPresentation.separationText(
             centerMeters: LocationPresentation.distanceMeters(
-                fromLatitude: routerLatitude,
-                longitude: routerLongitude,
+                fromLatitude: repeaterLatitude,
+                longitude: repeaterLongitude,
                 toLatitude: latitude,
                 longitude: longitude
             ),
@@ -125,7 +125,7 @@ struct NeighborRow<Trailing: View>: View {
         ) ?? String(localized: "Bridged", comment: "A neighbor heard over a non-radio link, so it has no signal reading.")
     }
 
-    /// When the router last heard the node, as an age on this phone's clock.
+    /// When the repeater last heard the node, as an age on this phone's clock.
     /// The wire's saturated figure is not a measurement and is not shown as
     /// one.
     private static func heardText(_ neighbor: PeerRepeaterNeighbor) -> String? {

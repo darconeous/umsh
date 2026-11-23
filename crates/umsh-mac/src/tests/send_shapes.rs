@@ -123,7 +123,7 @@ impl Setup {
             .note_arrival(self.peer_id, false, now_ms);
     }
 
-    fn cache_route(&mut self, hints: &[RouterHint]) {
+    fn cache_route(&mut self, hints: &[RepeaterHint]) {
         self.mac.peer_registry_mut().update_route(
             self.peer_id,
             CachedRoute::Source(heapless::Vec::from_slice(hints).unwrap()),
@@ -213,7 +213,7 @@ fn a_cached_route_counts_against_capacity() {
     let acked = SendOptions::default().with_ack_requested(true);
     for kind in [Kind::Unicast, Kind::BlindUnicast] {
         let mut setup = fresh();
-        setup.cache_route(&[RouterHint([0x01, 0x02]), RouterHint([0x03, 0x04])]);
+        setup.cache_route(&[RepeaterHint([0x01, 0x02]), RepeaterHint([0x03, 0x04])]);
         setup.hear_peer_directly();
         let len = assert_capacity_is_exact(setup, kind, &acked);
         assert!(len <= MAX_FRAME);
@@ -243,7 +243,7 @@ fn an_untraced_send_that_cannot_retry_fills_the_frame() {
     let options = SendOptions::default()
         .with_ack_requested(true)
         .no_flood()
-        .try_with_source_route(&[RouterHint([0x01, 0x02])])
+        .try_with_source_route(&[RepeaterHint([0x01, 0x02])])
         .unwrap();
     let options = SendOptions {
         flood_hops: None,
@@ -299,9 +299,9 @@ fn the_ack_mic_goes_before_the_trace() {
 #[test]
 fn a_route_that_does_not_fit_is_flooded_instead() {
     let route = [
-        RouterHint([0x01, 0x02]),
-        RouterHint([0x03, 0x04]),
-        RouterHint([0x05, 0x06]),
+        RepeaterHint([0x01, 0x02]),
+        RepeaterHint([0x03, 0x04]),
+        RepeaterHint([0x05, 0x06]),
     ];
     let options = SendOptions::default();
     let mut setup = fresh();

@@ -38,7 +38,7 @@ import com.voria.umsh.app.LocalAppRuntime
 import com.voria.umsh.app.Tags
 import com.voria.umsh.app.UmshKey
 import com.voria.umsh.app.runtimeViewModel
-import com.voria.umsh.core.renderRouterHint
+import com.voria.umsh.core.renderRepeaterHint
 import com.voria.umsh.designsystem.DetailPane
 import com.voria.umsh.designsystem.EmptyState
 import com.voria.umsh.designsystem.SectionHeader
@@ -203,7 +203,7 @@ fun MessageDetailsScreen(key: UmshKey.MessageDetails, onBack: (() -> Unit)?) {
                         if (reception.routeHints.isNotEmpty()) {
                             SectionHeader(stringResource(R.string.details_section_route))
                             // Listed the way the message traveled: sender first.
-                            reception.routeHints.asReversed().forEach { HintRow(null, routerHintText(it)) }
+                            reception.routeHints.asReversed().forEach { HintRow(null, repeaterHintText(it)) }
                         }
                     } else if (!shown.isOutbound) {
                         Note(stringResource(R.string.details_no_reception))
@@ -313,6 +313,6 @@ private fun decibels(centibels: Int, locale: Locale): String =
         maximumFractionDigits = 1
     }.format(centibels / 10.0)
 
-/** A two-byte router hint as the core renders it; its hex if the core refuses it. */
-private fun routerHintText(hint: Octets): String =
-    runCatching { renderRouterHint(hint.toByteArray()).text }.getOrElse { hint.hex() }
+/** A two-byte repeater hint as the core renders it; its hex if the core refuses it. */
+private fun repeaterHintText(hint: Octets): String =
+    runCatching { renderRepeaterHint(hint.toByteArray()).text }.getOrElse { hint.hex() }

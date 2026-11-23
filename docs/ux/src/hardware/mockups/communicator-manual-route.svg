@@ -1076,7 +1076,7 @@
 </g>
 </g></g>
 <text x="2178.0" y="3618.0" font-size="17" fill="#3A3A3C">A hop known only by its hint has no address to ask, so only Known repeaters are listed.</text>
-<text x="80.0" y="3732.0" font-size="22" fill="#1C1C1E" font-weight="700">14 · Typing a router hint</text>
+<text x="80.0" y="3732.0" font-size="22" fill="#1C1C1E" font-weight="700">14 · Typing a repeater hint</text>
 <rect x="80.0" y="3746.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
 <clipPath id="scr14"><rect width="480" height="222"/></clipPath>
 <g transform="translate(92,3758) scale(2)"><g clip-path="url(#scr14)">
@@ -1090,7 +1090,7 @@
 <rect x="89.2" y="59.0" width="2.5" height="20.0" fill="#4DA3FF"/>
 <text x="458.0" y="75.0" font-size="16" fill="#7F8995" font-weight="500" text-anchor="end">1 found</text>
 <clipPath id="cl25"><rect x="0" y="86" width="480" height="136"/></clipPath><g clip-path="url(#cl25)">
-<text x="12.0" y="105.0" font-size="16" fill="#9AA3AE" font-weight="700">Router hint</text>
+<text x="12.0" y="105.0" font-size="16" fill="#9AA3AE" font-weight="700">Repeater hint</text>
 <rect x="0.0" y="112.0" width="480.0" height="34.0" fill="#18304D"/>
 <path d="M12.49 131.60A5.20 5.20 0 0 1 12.49 126.40L16.99 118.60A5.20 5.20 0 0 1 21.50 116.00L30.50 116.00A5.20 5.20 0 0 1 35.01 118.60L39.51 126.40A5.20 5.20 0 0 1 39.51 131.60L35.01 139.40A5.20 5.20 0 0 1 30.50 142.00L21.50 142.00A5.20 5.20 0 0 1 16.99 139.40Z" fill="#808080"/>
 <text x="26.0" y="127.2" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">7N</text>
@@ -1125,7 +1125,7 @@
 <path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
 </g>
 </g></g>
-<text x="82.0" y="4244.0" font-size="17" fill="#3A3A3C">Typing filters, as on every list. Four or more Base58 characters also offer the router hint they fix, with its hex. Enter adds the</text>
+<text x="82.0" y="4244.0" font-size="17" fill="#3A3A3C">Typing filters, as on every list. Four or more Base58 characters also offer the repeater hint they fix, with its hex. Enter adds the</text>
 <text x="82.0" y="4268.0" font-size="17" fill="#3A3A3C">tinted top result.</text>
 <text x="1128.0" y="3732.0" font-size="22" fill="#1C1C1E" font-weight="700">15 · A hint read two ways</text>
 <rect x="1128.0" y="3746.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
@@ -1141,7 +1141,7 @@
 <rect x="89.2" y="59.0" width="2.5" height="20.0" fill="#4DA3FF"/>
 <text x="458.0" y="75.0" font-size="16" fill="#7F8995" font-weight="500" text-anchor="end">2 found</text>
 <clipPath id="cl26"><rect x="0" y="86" width="480" height="136"/></clipPath><g clip-path="url(#cl26)">
-<text x="12.0" y="105.0" font-size="16" fill="#9AA3AE" font-weight="700">Router hints</text>
+<text x="12.0" y="105.0" font-size="16" fill="#9AA3AE" font-weight="700">Repeater hints</text>
 <rect x="0.0" y="112.0" width="480.0" height="34.0" fill="#18304D"/>
 <path d="M12.49 131.60A5.20 5.20 0 0 1 12.49 126.40L16.99 118.60A5.20 5.20 0 0 1 21.50 116.00L30.50 116.00A5.20 5.20 0 0 1 35.01 118.60L39.51 126.40A5.20 5.20 0 0 1 39.51 131.60L35.01 139.40A5.20 5.20 0 0 1 30.50 142.00L21.50 142.00A5.20 5.20 0 0 1 16.99 139.40Z" fill="#808080"/>
 <text x="26.0" y="127.2" font-size="9.88" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">3D</text>
@@ -1239,7 +1239,7 @@
 <text x="82.0" y="5000.0" font-size="17" fill="#3A3A3C">After two sends in a row miss on the manual route while their floods are acknowledged (one, if this device moved far). Once per</text>
 <text x="82.0" y="5024.0" font-size="17" fill="#3A3A3C">saved route. Keep manual route stops asking until it is edited.</text>
 <text x="80.0" y="5148.0" font-size="34" fill="#1C1C1E" font-weight="700">Neighbors</text>
-<text x="80.0" y="5186.0" font-size="19" fill="#3A3A3C">The repeaters one router reports hearing, a page at a time. Opening shows the last listing and sends nothing; every page is one exchange across the mesh.</text>
+<text x="80.0" y="5186.0" font-size="19" fill="#3A3A3C">The repeaters one repeater reports hearing, a page at a time. Opening shows the last listing and sends nothing; every page is one exchange across the mesh.</text>
 <text x="80.0" y="5244.0" font-size="22" fill="#1C1C1E" font-weight="700">17 · A repeater, Neighbors focused</text>
 <rect x="80.0" y="5258.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
 <clipPath id="scr17"><rect width="480" height="222"/></clipPath>
@@ -1383,8 +1383,8 @@
 <path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
 </g>
 </g></g>
-<text x="1130.0" y="5756.0" font-size="17" fill="#3A3A3C">Name, then how the router heard each one: bars, RSSI and SNR, how long ago, and how far from the router when both placed</text>
-<text x="1130.0" y="5780.0" font-size="17" fill="#3A3A3C">themselves. A known node opens its page, which has Neighbors too.</text>
+<text x="1130.0" y="5756.0" font-size="17" fill="#3A3A3C">Name, then how the repeater heard each one: bars, RSSI and SNR, how long ago, and how far from the repeater when both</text>
+<text x="1130.0" y="5780.0" font-size="17" fill="#3A3A3C">placed themselves. A known node opens its page, which has Neighbors too.</text>
 <text x="2176.0" y="5244.0" font-size="22" fill="#1C1C1E" font-weight="700">19 · Asking who a hint is</text>
 <rect x="2176.0" y="5258.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
 <clipPath id="scr19"><rect width="480" height="222"/></clipPath>
@@ -1489,7 +1489,7 @@
 <path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
 </g>
 </g></g>
-<text x="2178.0" y="5756.0" font-size="17" fill="#3A3A3C">A bare hint shows the search glyph. Press asks it who it is, steered down the route to the router; the answer names it in place.</text>
+<text x="2178.0" y="5756.0" font-size="17" fill="#3A3A3C">A bare hint shows the search glyph. Press asks it who it is, steered down the route to the repeater; the answer names it in place.</text>
 <text x="2178.0" y="5780.0" font-size="17" fill="#3A3A3C">Bridged: heard over a link, not the air. Rows unheard for 6 hours fade.</text>
 <text x="80.0" y="5870.0" font-size="22" fill="#1C1C1E" font-weight="700">20 · Refreshing</text>
 <rect x="80.0" y="5884.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
@@ -1739,5 +1739,5 @@
 <path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
 </g>
 </g></g>
-<text x="2178.0" y="6382.0" font-size="17" fill="#3A3A3C">Not read until Refresh. A router asked that lists nobody says None instead.</text>
+<text x="2178.0" y="6382.0" font-size="17" fill="#3A3A3C">Not read until Refresh. A repeater asked that lists nobody says None instead.</text>
 </svg>

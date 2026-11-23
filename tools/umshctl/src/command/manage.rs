@@ -527,11 +527,11 @@ const PEER_REPEATERS_PAGE_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn print_peer_repeater(entry: &umsh::node::mac_command::PeerRepeaterEntryView<'_>) {
     // The entry's own length says how much of the hint the responder held:
-    // the whole node hint from an identity, or the router hint a trace
+    // the whole node hint from an identity, or the repeater hint a trace
     // named. Each renders in the address form the rest of the tool uses.
     let hint = match entry.hint() {
         Some([a, b, c]) => umsh::core::NodeHint([*a, *b, *c]).to_string(),
-        Some([a, b]) => umsh::core::RouterHint([*a, *b]).to_string(),
+        Some([a, b]) => umsh::core::RepeaterHint([*a, *b]).to_string(),
         // An entry that names nobody is not an entry; the responder is
         // still describing a real neighborhood around it.
         _ => return,

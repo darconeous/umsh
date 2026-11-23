@@ -587,7 +587,7 @@ struct ConversationThreadView: View {
             NavigationStack {
                 MessageDetailsSheet(
                     message: message,
-                    renderRouterHint: peerActions.renderRouterHint,
+                    renderRepeaterHint: peerActions.renderRepeaterHint,
                     peerBrowsing: peerBrowsing,
                     identifyRepeater: peerActions.identifyRepeater
                 ) { inspectedMessage = nil }

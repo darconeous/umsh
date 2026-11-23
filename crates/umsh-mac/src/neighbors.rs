@@ -8,7 +8,7 @@
 //! forwarding by (UEP-0018).
 //!
 //! A node is told apart by the first two bytes of its address, the part a
-//! router hint also carries.
+//! repeater hint also carries.
 
 /// How many neighbors are remembered. The count stops here.
 pub const MAX_NEIGHBORS_HEARD: usize = 128;

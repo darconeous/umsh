@@ -786,10 +786,10 @@ pub struct NodeMsgRequest {
     pub peer: Option<[u8; items::PUBLIC_KEY_LEN]>,
     /// The flood budget, or `None` for the device's default.
     pub flood_hops: Option<u8>,
-    /// Router hints, next repeater first; empty for none.
+    /// Repeater hints, next repeater first; empty for none.
     pub source_route: HeaplessVec<
         u8,
-        { umsh_ulcp::node_msg::MAX_ROUTE_HINTS * umsh_ulcp::node_msg::ROUTER_HINT_LEN },
+        { umsh_ulcp::node_msg::MAX_ROUTE_HINTS * umsh_ulcp::node_msg::REPEATER_HINT_LEN },
     >,
     /// The transmit power in dBm, or `None` for the identity's own.
     pub tx_power_dbm: Option<i8>,
@@ -939,7 +939,7 @@ enum AckReturn {
     Flood,
     /// Steer back down the trace the frame accumulated, which repeaters
     /// prepend to and so already reads in return order.
-    Source(HeaplessVec<umsh_core::RouterHint, MAX_ACK_ROUTE_HINTS>),
+    Source(HeaplessVec<umsh_core::RepeaterHint, MAX_ACK_ROUTE_HINTS>),
 }
 
 impl AckPlan {
@@ -1089,7 +1089,7 @@ impl AckPlan {
     /// a route can name.
     fn route_from_trace(
         trace: &TraceRef<'_>,
-    ) -> Option<HeaplessVec<umsh_core::RouterHint, MAX_ACK_ROUTE_HINTS>> {
+    ) -> Option<HeaplessVec<umsh_core::RepeaterHint, MAX_ACK_ROUTE_HINTS>> {
         let mut route = HeaplessVec::new();
         for hint in trace.complete_hints()? {
             route.push(hint).ok()?;
@@ -17784,7 +17784,7 @@ mod tests {
     // ─── CAP_HOST_AUTO_ACK gate ──────────────────────────────────────
 
     use umsh_core::options::TraceRecord;
-    use umsh_core::{MicSize, PublicKey, RouterHint};
+    use umsh_core::{MicSize, PublicKey, RepeaterHint};
 
     const HOST_PUB: [u8; 32] = [0xC4; 32];
     const PEER_PUB: [u8; 32] = [0x0A; 32];
@@ -19300,7 +19300,7 @@ mod tests {
 
     /// A sealed UNAR as it arrives at the end of a source route: the route
     /// option emptied by the last repeater and kept for provenance, the
-    /// trace the routed hops recorded when the sender asked for one (router
+    /// trace the routed hops recorded when the sender asked for one (repeater
     /// hints, carried as a hints-only trace), and the flood tail (if any)
     /// the frame spent past the route's end.
     fn sealed_routed_unar(
@@ -19463,8 +19463,11 @@ mod tests {
             [(1, -90, None), (2, -100, umsh_core::FloodHops::new(1, 0))]
         {
             let records: Vec<u8> = [
-                (RouterHint([0xA1, 0xB2]), HopSignal::new(-50, 0)),
-                (RouterHint([0xC3, 0xD4]), HopSignal::new(first_hop_rssi, 0)),
+                (RepeaterHint([0xA1, 0xB2]), HopSignal::new(-50, 0)),
+                (
+                    RepeaterHint([0xC3, 0xD4]),
+                    HopSignal::new(first_hop_rssi, 0),
+                ),
             ]
             .into_iter()
             .flat_map(|(hint, signal)| TraceRecord { hint, signal }.to_bytes())
@@ -19542,7 +19545,7 @@ mod tests {
             .frame_counter(1)
             .ack_requested()
             .mic_size(MicSize::Mic8)
-            .source_route(&[umsh_core::RouterHint([1, 2])])
+            .source_route(&[umsh_core::RepeaterHint([1, 2])])
             .trace()
             .payload(&[3, 1, 2])
             .build()

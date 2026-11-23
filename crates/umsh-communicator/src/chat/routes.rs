@@ -10,7 +10,7 @@ use alloc::collections::BTreeMap;
 use core::fmt::Write as _;
 
 use umsh_core::options::HopSignal;
-use umsh_core::{PublicKey, RouterHint};
+use umsh_core::{PublicKey, RepeaterHint};
 use umsh_mac::CachedRoute;
 use umsh_text::node_adapter::RxSummary;
 use umsh_ux_communicator::heapless::{String, Vec};
@@ -88,7 +88,7 @@ enum Outcome {
     Reply {
         round_trip_ms: u64,
         hops: Option<u8>,
-        hints: Vec<RouterHint, MAX_PATH>,
+        hints: Vec<RepeaterHint, MAX_PATH>,
         truncated: bool,
         legs: Vec<Leg, { MAX_PATH + 1 }>,
         flooded: bool,
@@ -156,7 +156,7 @@ impl<S: ChatStore> Chats<S> {
             hints: hints
                 .iter()
                 .take(CachedRoute::MAX_HINTS)
-                .map(|&hint| RouterHint(hint))
+                .map(|&hint| RepeaterHint(hint))
                 .collect(),
             flood_hops,
             hold_ms,
@@ -404,7 +404,7 @@ impl<S: ChatStore> Chats<S> {
 
     /// The repeaters `hints` name, in their order. The list ends where the
     /// text heap does, so that each still lines up with its hop.
-    fn path(&self, hints: &[RouterHint]) -> Vec<model::Repeater, MAX_PATH> {
+    fn path(&self, hints: &[RepeaterHint]) -> Vec<model::Repeater, MAX_PATH> {
         hints
             .iter()
             .map_while(|&hint| self.repeater(hint))
@@ -443,7 +443,7 @@ impl<S: ChatStore> Chats<S> {
         events: &mut dyn FnMut(NodeEvent),
     ) {
         self.hear(&peer, rx, now_ms, events);
-        let hints: Vec<RouterHint, MAX_PATH> =
+        let hints: Vec<RepeaterHint, MAX_PATH> =
             rx.route_hints.iter().take(MAX_PATH).copied().collect();
         let mut legs: Vec<Leg, { MAX_PATH + 1 }> = Vec::new();
         _ = legs.push(match (rx.rssi_dbm, rx.snr_centibels) {

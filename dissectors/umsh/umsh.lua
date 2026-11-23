@@ -69,7 +69,7 @@ f.opt_region_code  = ProtoField.string ("umsh.opt.region_code",   "Region Code")
 -- is off by a byte from the hints a reader is looking for.
 f.opt_trace        = ProtoField.string ("umsh.opt.trace",         "Trace")
 f.opt_srcroute     = ProtoField.string ("umsh.opt.source_route",  "Source Route")
-f.opt_router_hint  = ProtoField.string ("umsh.opt.route_repeater","Router Hint")
+f.opt_repeater_hint  = ProtoField.string ("umsh.opt.route_repeater","Repeater Hint")
 f.opt_op_callsign  = ProtoField.string ("umsh.opt.op_callsign",   "Operator Callsign")
 f.opt_sta_callsign = ProtoField.string ("umsh.opt.sta_callsign",  "Station Callsign")
 f.opt_min_rssi     = ProtoField.int8   ("umsh.opt.min_rssi",      "Min RSSI",         base.DEC)
@@ -153,7 +153,7 @@ f.ack_verified  = ProtoField.bool    ("umsh.ack.verified",      "Keyed ACK Tag V
 umsh.fields = {
   f.fcf, f.fcf_version, f.fcf_type, f.fcf_full_src, f.fcf_reserved, f.fcf_fhops,
   f.fhops, f.fhops_rem, f.fhops_acc,
-  f.options, f.opt_region_code, f.opt_trace, f.opt_srcroute, f.opt_router_hint,
+  f.options, f.opt_region_code, f.opt_trace, f.opt_srcroute, f.opt_repeater_hint,
   f.opt_op_callsign, f.opt_sta_callsign, f.opt_min_rssi, f.opt_min_snr,
   f.opt_route_retry, f.opt_fence, f.opt_ack_mic, f.opt_ack_frame,
   f.opt_frame_sig, f.opt_frame_sig_ctr,
@@ -331,7 +331,7 @@ local function addr_short(s)
   return hint_short(s)
 end
 
--- A route option's repeaters as canonical router hints, in the order they sit
+-- A route option's repeaters as canonical repeater hints, in the order they sit
 -- on the wire, joined by an arrow pointing the way the packet travels. This is
 -- what a route field is worth in a column: the raw bytes there include the
 -- option header and read as noise.
@@ -341,7 +341,7 @@ end
 -- receiver and the packet moved right to left. A source route names the
 -- next repeater first, so it moves left to right.
 --
--- `hints` is a list of 2-byte router hints.
+-- `hints` is a list of 2-byte repeater hints.
 local function route_path(hints, arrow)
   -- An empty route is a normal state, not a finding: a trace that no
   -- repeater has touched yet, or a source route the last named repeater
@@ -350,12 +350,12 @@ local function route_path(hints, arrow)
   if #hints == 0 then return "—" end
   local out = {}
   for i, hint in ipairs(hints) do
-    out[i] = base58.router_hint(hint) or bytes_to_hex(hint)
+    out[i] = base58.repeater_hint(hint) or bytes_to_hex(hint)
   end
   return table.concat(out, arrow)
 end
 
--- A run of 2-byte router hints as a list, and whether a byte is left over.
+-- A run of 2-byte repeater hints as a list, and whether a byte is left over.
 local function split_hints(val)
   local hints = {}
   for i = 1, #val // 2 do hints[i] = val:sub(i * 2 - 1, i * 2) end
@@ -517,8 +517,8 @@ local function add_transmitted_by(tree, buf)
   local value, text
   if kind == options.TX_REPEATER then
     range = buf(_ctx.trace_off + hop.offset, 2)
-    value = base58.router_hint(hop.hint) or ""
-    text  = base58.router_hint_full(hop.hint) .. " (repeater)"
+    value = base58.repeater_hint(hop.hint) or ""
+    text  = base58.repeater_hint_full(hop.hint) .. " (repeater)"
   elseif kind == options.TX_FORWARDED then
     value, text = "-", "- (not the sender)"
   elseif kind == options.TX_UNKNOWN then
@@ -720,28 +720,28 @@ local function parse_options(buf, start_off, bound, tree, static_opts_out, pinfo
         opts_tree:add(f.opt_region_code, tvbr, cs):set_text("Region Code: " .. cs)
 
       elseif num == options.OPT_SOURCE_ROUTE then
-        -- The value is a run of 2-byte router hints, one per repeater. The
+        -- The value is a run of 2-byte repeater hints, one per repeater. The
         -- repeater count is not the hop count: a route naming N repeaters
         -- describes N+1 transmissions, since the legs into the first
         -- repeater and out of the last one belong to no hint.
         local hints, extra = split_hints(val)
         _ctx.source_route = _ctx.source_route or val
-        local routers = #hints
+        local repeaters = #hints
         local path    = route_path(hints, " → ")
         local item = opts_tree:add(f.opt_srcroute, buf(opt_off, consumed), path)
         local note = ""
-        if routers > 0 then
-          note = string.format(" (%d repeater%s%s)", routers,
-                               routers == 1 and "" or "s",
+        if repeaters > 0 then
+          note = string.format(" (%d repeater%s%s)", repeaters,
+                               repeaters == 1 and "" or "s",
                                extra and ", 1 trailing byte" or "")
         elseif extra then
           note = " (1 trailing byte)"
         end
         item:set_text("Source Route: " .. path .. note)
         for i, hint in ipairs(hints) do
-          item:add(f.opt_router_hint, buf(val_off + (i - 1) * 2, 2),
-                   base58.router_hint(hint) or ""):set_text(
-            string.format("Repeater %d: %s", i, base58.router_hint_full(hint)))
+          item:add(f.opt_repeater_hint, buf(val_off + (i - 1) * 2, 2),
+                   base58.repeater_hint(hint) or ""):set_text(
+            string.format("Repeater %d: %s", i, base58.repeater_hint_full(hint)))
         end
 
       elseif num == options.OPT_TRACE then
@@ -780,9 +780,9 @@ local function parse_options(buf, start_off, bound, tree, static_opts_out, pinfo
           item:set_text(label .. ": " .. path .. note)
           for i, entry in ipairs(trace.entries) do
             local hint_range = buf(val_off + entry.offset, 2)
-            local text = string.format("Repeater %d: %s", i, base58.router_hint_full(entry.hint))
-            local hint_item = item:add(f.opt_router_hint, hint_range,
-                                       base58.router_hint(entry.hint) or "")
+            local text = string.format("Repeater %d: %s", i, base58.repeater_hint_full(entry.hint))
+            local hint_item = item:add(f.opt_repeater_hint, hint_range,
+                                       base58.repeater_hint(entry.hint) or "")
             if entry.rssi then
               local signal = signal_text(entry.rssi, entry.snr)
               local sig_range = buf(val_off + entry.offset + 2, 2)

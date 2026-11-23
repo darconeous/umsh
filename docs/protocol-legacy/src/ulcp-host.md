@@ -712,7 +712,7 @@ frame just taught it (see [Route Learning](beacons.md#route-learning)); the
 device holds no other routing state for the host's peers:
 
 - A frame carrying a complete [trace](packet-options.md#trace-option-7) is
-  acknowledged down its router hints as the ack's source route; the trace is accumulated most-recent first, so it
+  acknowledged down its repeater hints as the ack's source route; the trace is accumulated most-recent first, so it
   already reads in return order. An empty trace is a direct neighbor and
   gets a direct ack.
 - A frame carrying no complete trace but a flood hop count gets `FHOPS_REM`

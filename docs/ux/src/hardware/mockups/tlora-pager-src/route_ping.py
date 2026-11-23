@@ -35,7 +35,7 @@ RAIL = "#3A414B"
 # ---------------------------------------------------------------- glyphs
 def node_avatar(cx, cy, r, name):
     """A node on the path. A hint no known node matches is drawn in the
-    iOS app's neutral gray: a router hint is too short to color."""
+    iOS app's neutral gray: a repeater hint is too short to color."""
     out = g.avatar(cx, cy, r, name)
     if name.endswith("*") and name != "Member 4Fz*":
         out[0] = re.sub(r'fill="#[0-9A-Fa-f]{6}"', 'fill="#808080"', out[0],

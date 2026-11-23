@@ -41,7 +41,7 @@ extension PeerSummary {
             isLikelyRepeater: record.likelyRepeater,
             advertisedIdentityIsAttributable: record.advertisementAttributable,
             repeaterEvidence: record.repeaterEvidence,
-            routerHint: MeshRouterHint(record.routerHint)
+            repeaterHint: MeshRepeaterHint(record.repeaterHint)
         )
     }
 }
@@ -239,7 +239,7 @@ extension ChatMessageSummary {
         let stored = StoredChatMessage(record.stored)
         let repeaters = record.repeaters.map { repeater in
             MessageRepeats.Repeater(
-                hint: MeshRouterHint(
+                hint: MeshRepeaterHint(
                     bytes: repeater.hint,
                     text: repeater.hintText ?? repeater.hint.map { String(format: "%02x", $0) }.joined()
                 ),
@@ -357,8 +357,8 @@ extension MobileStoredChatMessageRefRecord {
 
 // MARK: - Commands
 
-extension MeshRouterHint {
-    init(_ record: RouterHintRecord) {
+extension MeshRepeaterHint {
+    init(_ record: RepeaterHintRecord) {
         self.init(bytes: record.bytes, text: record.text)
     }
 }
@@ -368,7 +368,7 @@ extension PeerPingReply {
         self.init(
             roundTripMilliseconds: record.roundTripMs,
             hopCount: record.hopCount,
-            routeHints: record.routeHints.map(MeshRouterHint.init),
+            routeHints: record.routeHints.map(MeshRepeaterHint.init),
             traceSignal: record.traceSignal.map {
                 MeshLegSignal(rssiDBm: $0.rssiDbm, signalToNoiseCentibels: $0.snrCentibels)
             },
@@ -397,7 +397,7 @@ extension PeerRoute {
     init(_ record: MobileAppRouteRecord, now: Date = Date()) {
         self.init(
             kind: Kind(record.kind),
-            hints: record.hints.map(MeshRouterHint.init),
+            hints: record.hints.map(MeshRepeaterHint.init),
             hopCount: record.hopCount,
             floodHops: record.floodHops,
             floodRegions: record.floodRegions,
@@ -406,11 +406,11 @@ extension PeerRoute {
             fallbackAcks: record.fallbackAcks,
             lastAcknowledged: record.confirmedAgeMs.map { now.addingTimeInterval(-Double($0) / 1000) },
             candidate: record.candidate.map {
-                Candidate(kind: Kind($0.kind), hints: $0.hints.map(MeshRouterHint.init), hopCount: $0.hopCount)
+                Candidate(kind: Kind($0.kind), hints: $0.hints.map(MeshRepeaterHint.init), hopCount: $0.hopCount)
             },
             discoveryVantage: record.discoveryVantage.map {
                 DiscoveryVantage(
-                    repeaters: $0.repeaters.map(MeshRouterHint.init),
+                    repeaters: $0.repeaters.map(MeshRepeaterHint.init),
                     landsAtPeer: $0.landsAtPeer,
                     evidence: $0.evidence
                 )

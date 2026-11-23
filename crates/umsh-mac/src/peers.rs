@@ -1,7 +1,7 @@
 use core::num::NonZeroU32;
 
 use heapless::{LinearMap, Vec};
-use umsh_core::{ChannelId, ChannelKey, NodeHint, PublicKey, RouterHint, options::HopSignal};
+use umsh_core::{ChannelId, ChannelKey, NodeHint, PublicKey, RepeaterHint, options::HopSignal};
 use umsh_crypto::{DerivedChannelKeys, PairwiseKeys};
 
 use crate::CapacityError;
@@ -34,7 +34,7 @@ pub enum CachedRoute {
     /// Explicit source route taken from the inbound traceroute (already in return order).
     /// Each hint names one repeater; the path is one hop longer than the
     /// route has hints.
-    Source(Vec<RouterHint, 15>),
+    Source(Vec<RepeaterHint, 15>),
     /// Flood-delivery parameters learned from an inbound packet.
     ///
     /// `flood_hops` is the `FHOPS_ACC` the peer was last heard at, which is
@@ -61,7 +61,7 @@ impl CachedRoute {
     /// For callers outside this crate, which have no reason to name a
     /// fixed-capacity container. Refusing an over-long route beats
     /// truncating one, which would send traffic to the wrong place.
-    pub fn source(hints: &[RouterHint]) -> Option<Self> {
+    pub fn source(hints: &[RepeaterHint]) -> Option<Self> {
         Vec::from_slice(hints).ok().map(Self::Source)
     }
 
@@ -114,7 +114,7 @@ pub(crate) enum FarHop {
     /// This node, directly.
     Peer,
     /// The repeater named by the route's last hint.
-    Repeater(RouterHint),
+    Repeater(RepeaterHint),
 }
 
 /// Who takes or gives back a hold on a peer entry.
@@ -1565,7 +1565,7 @@ mod tests {
         assert_eq!(CachedRoute::Direct.hop_count(), 1);
         assert_eq!(CachedRoute::source(&[]).unwrap().hop_count(), 1);
         assert_eq!(
-            CachedRoute::source(&[RouterHint([1, 2]), RouterHint([3, 4])])
+            CachedRoute::source(&[RepeaterHint([1, 2]), RepeaterHint([3, 4])])
                 .unwrap()
                 .hop_count(),
             3

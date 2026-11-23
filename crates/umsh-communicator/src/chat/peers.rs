@@ -7,7 +7,7 @@
 
 use core::fmt::Write as _;
 
-use umsh_core::{NodeHint, PublicKey, RouterHint, base58};
+use umsh_core::{NodeHint, PublicKey, RepeaterHint, base58};
 use umsh_mac::SendOptions;
 use umsh_node::{IdentityUpdate, NodeCapabilities, NodeIdentityPayload, NodeRole, PING_MIC_SIZE};
 use umsh_text::node_adapter::{RxSummary, channel_reach, with_flood_reach};
@@ -260,10 +260,10 @@ impl<S: ChatStore> Chats<S> {
     /// The known node a repeater's `hint` most plausibly names: the one it
     /// could be that forwards, else the one it could be at all. Two octets
     /// never prove which node it was.
-    pub(super) fn name_router_hint(&self, hint: RouterHint) -> Option<PeerRecord> {
+    pub(super) fn name_repeater_hint(&self, hint: RepeaterHint) -> Option<PeerRecord> {
         let candidates: alloc::vec::Vec<PeerRecord> = self
             .store
-            .peers_with_router_hint(hint)
+            .peers_with_repeater_hint(hint)
             .filter_map(|key| self.store.peer(&key).ok().flatten())
             .collect();
         let mut forwarding = candidates.iter().filter(|kept| forwards(kept));
@@ -278,8 +278,8 @@ impl<S: ChatStore> Chats<S> {
 
     /// How a repeater that forwarded under `hint` is shown: as the node it
     /// most plausibly is, else by the hint alone.
-    pub fn repeater(&self, hint: RouterHint) -> Option<model::Repeater> {
-        let (name, avatar, known) = match self.name_router_hint(hint) {
+    pub fn repeater(&self, hint: RepeaterHint) -> Option<model::Repeater> {
+        let (name, avatar, known) = match self.name_repeater_hint(hint) {
             Some(kept) => (
                 name(&kept.key, Some(&kept)),
                 avatar(&kept.key, Some(&kept)),
@@ -288,7 +288,7 @@ impl<S: ChatStore> Chats<S> {
             None => {
                 let mut text = String::<32>::new();
                 _ = write!(text, "{hint}");
-                let avatar = AvatarStyle::router_hint(&text);
+                let avatar = AvatarStyle::repeater_hint(&text);
                 (text, avatar, None)
             }
         };
@@ -647,8 +647,8 @@ impl<S: ChatStore> Chats<S> {
         let Some(kept) = self.saved_peer(peer) else {
             return;
         };
-        let route: Vec<RouterHint, { model::MAX_PATH }> =
-            hints.iter().copied().map(RouterHint).collect();
+        let route: Vec<RepeaterHint, { model::MAX_PATH }> =
+            hints.iter().copied().map(RepeaterHint).collect();
         // Given even when empty: no route at all would let the MAC send by
         // the route it holds, and an empty one is direct.
         let Ok(options) = SendOptions::default()
@@ -975,7 +975,7 @@ impl<S: ChatStore> Chats<S> {
     /// Asks the repeater that forwards under `hint` who it is, by way of
     /// the repeaters `before` it: with none, only the nodes in earshot, as
     /// one heard carrying our own frame is.
-    pub fn identify_repeater(&mut self, hint: RouterHint, before: &[RouterHint]) {
+    pub fn identify_repeater(&mut self, hint: RepeaterHint, before: &[RepeaterHint]) {
         self.commands.push_back(Command::AskRepeater {
             hint,
             route: before.to_vec(),

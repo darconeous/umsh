@@ -13,7 +13,7 @@ use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use umsh_core::{ChannelTag, NodeHint, PublicKey, RouterHint};
+use umsh_core::{ChannelTag, NodeHint, PublicKey, RepeaterHint};
 use umsh_text::engine::sequence::MessageHandle;
 use umsh_text::engine::{
     ArchiveKey, ComposeIntent, ComposeRef, DeliveryState, Direction, Engine, EngineConfig,
@@ -1211,7 +1211,7 @@ pub fn peers<H: Harness>(harness: &mut H) {
         store.peer(&key(1)).unwrap().unwrap().name.as_deref(),
         Some("trail node")
     );
-    let route = [RouterHint([9, 9]), RouterHint([8, 8])];
+    let route = [RepeaterHint([9, 9]), RepeaterHint([8, 8])];
     store
         .update_peer(&key(1), PeerChange::Route(Some(&route)))
         .unwrap();
@@ -1229,12 +1229,14 @@ pub fn peers<H: Harness>(harness: &mut H) {
     );
     assert_eq!(
         store
-            .peers_with_router_hint(RouterHint([1, 0xEE]))
+            .peers_with_repeater_hint(RepeaterHint([1, 0xEE]))
             .collect::<Vec<_>>(),
         [key(1)]
     );
     assert_eq!(
-        store.peers_with_router_hint(RouterHint([0xEE, 1])).count(),
+        store
+            .peers_with_repeater_hint(RepeaterHint([0xEE, 1]))
+            .count(),
         0
     );
     assert_eq!(

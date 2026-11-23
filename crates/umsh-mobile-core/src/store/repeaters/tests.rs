@@ -20,7 +20,7 @@ fn open() -> (tempfile::TempDir, Arc<MobileAppStore>) {
 }
 
 /// The node row ID of a new peer.
-fn router(store: &MobileAppStore, owner: &str, address: &str) -> i64 {
+fn repeater(store: &MobileAppStore, owner: &str, address: &str) -> i64 {
     store
         .upsert_peer(
             owner.into(),
@@ -50,14 +50,14 @@ fn entry(store: &MobileAppStore, node: i64, hint: &[u8], position: i64) {
 }
 
 #[test]
-fn entries_list_by_router_then_listing_order_for_the_identity_only() {
+fn entries_list_by_repeater_then_listing_order_for_the_identity_only() {
     let (_directory, store) = open();
     store
         .insert_identity("bob".into(), "bob-public".into(), 1)
         .unwrap();
-    let first = router(&store, OWNER, "router-a");
-    let second = router(&store, OWNER, "router-b");
-    let bobs = router(&store, "bob", "router-a");
+    let first = repeater(&store, OWNER, "repeater-a");
+    let second = repeater(&store, OWNER, "repeater-b");
+    let bobs = repeater(&store, "bob", "repeater-a");
     entry(&store, second, &[0xB0, 0x01], 0);
     entry(&store, first, &[0xA0, 0x02], 1);
     entry(&store, first, &[0xA0, 0x01], 0);
@@ -87,7 +87,7 @@ fn entries_list_by_router_then_listing_order_for_the_identity_only() {
 #[test]
 fn an_entry_reads_back_decoded_and_clamped() {
     let (_directory, store) = open();
-    let node = router(&store, OWNER, "router");
+    let node = repeater(&store, OWNER, "repeater");
     store
         .connection()
         .execute(
@@ -186,10 +186,10 @@ fn names(listing: &MobileStoredPeerRepeaterListingRecord) -> Vec<&str> {
 }
 
 #[test]
-fn a_router_never_asked_or_not_stored_has_no_listing() {
+fn a_repeater_never_asked_or_not_stored_has_no_listing() {
     let (_directory, store) = open();
-    router(&store, OWNER, "router");
-    assert_eq!(listing(&store, "router"), None);
+    repeater(&store, OWNER, "repeater");
+    assert_eq!(listing(&store, "repeater"), None);
     assert_eq!(listing(&store, "stranger"), None);
     // A stranger's page has nowhere to go.
     save_page(
@@ -214,7 +214,7 @@ fn a_router_never_asked_or_not_stored_has_no_listing() {
 #[test]
 fn a_first_page_round_trips_in_listing_order() {
     let (_directory, store) = open();
-    router(&store, OWNER, "router");
+    repeater(&store, OWNER, "repeater");
     let entries = vec![
         neighbor(&[0xB0, 0x01], "B", 10),
         neighbor(&[0xA0, 0x01, 0x02], "A", 11),
@@ -222,7 +222,7 @@ fn a_first_page_round_trips_in_listing_order() {
     save_page(
         &store,
         OWNER,
-        "router",
+        "repeater",
         entries.clone(),
         Some(&[0, 1, 2]),
         true,
@@ -230,7 +230,7 @@ fn a_first_page_round_trips_in_listing_order() {
     )
     .unwrap();
     assert_eq!(
-        listing(&store, "router"),
+        listing(&store, "repeater"),
         Some(MobileStoredPeerRepeaterListingRecord {
             entries,
             total: Some(3),
@@ -243,11 +243,11 @@ fn a_first_page_round_trips_in_listing_order() {
 #[test]
 fn a_following_page_appends_and_a_repeated_neighbor_updates_in_place() {
     let (_directory, store) = open();
-    router(&store, OWNER, "router");
+    repeater(&store, OWNER, "repeater");
     save_page(
         &store,
         OWNER,
-        "router",
+        "repeater",
         vec![neighbor(&[1, 1], "one", 10), neighbor(&[2, 2], "two", 10)],
         Some(&[1]),
         true,
@@ -257,7 +257,7 @@ fn a_following_page_appends_and_a_repeated_neighbor_updates_in_place() {
     store
         .save_peer_repeater_page(
             OWNER.into(),
-            "router".into(),
+            "repeater".into(),
             vec![
                 neighbor(&[3, 3], "three", 20),
                 neighbor(&[1, 1], "one again", 20),
@@ -268,7 +268,7 @@ fn a_following_page_appends_and_a_repeated_neighbor_updates_in_place() {
             20,
         )
         .unwrap();
-    let held = listing(&store, "router").unwrap();
+    let held = listing(&store, "repeater").unwrap();
     assert_eq!(names(&held), ["one again", "two", "three"]);
     assert_eq!(held.entries[0].reported_at_ms, 20);
     assert_eq!(held.entries[1].reported_at_ms, 10);
@@ -282,26 +282,26 @@ fn a_following_page_appends_and_a_repeated_neighbor_updates_in_place() {
     save_page(
         &store,
         OWNER,
-        "router",
+        "repeater",
         vec![neighbor(&[4, 4], "four", 30)],
         None,
         true,
         30,
     )
     .unwrap();
-    assert_eq!(names(&listing(&store, "router").unwrap()), ["four"]);
+    assert_eq!(names(&listing(&store, "repeater").unwrap()), ["four"]);
 }
 
 #[test]
 fn a_page_appends_after_the_highest_position_held() {
     let (_directory, store) = open();
-    let node = router(&store, OWNER, "router");
-    save_page(&store, OWNER, "router", vec![], Some(&[1]), true, 1).unwrap();
+    let node = repeater(&store, OWNER, "repeater");
+    save_page(&store, OWNER, "repeater", vec![], Some(&[1]), true, 1).unwrap();
     entry(&store, node, &[9, 9], 7);
     save_page(
         &store,
         OWNER,
-        "router",
+        "repeater",
         vec![neighbor(&[1, 1], "next", 2)],
         None,
         false,
@@ -325,32 +325,32 @@ fn listings_belong_to_their_identity() {
     store
         .insert_identity("bob".into(), "bob-public".into(), 1)
         .unwrap();
-    router(&store, OWNER, "router");
-    router(&store, "bob", "router");
+    repeater(&store, OWNER, "repeater");
+    repeater(&store, "bob", "repeater");
     save_page(
         &store,
         "bob",
-        "router",
+        "repeater",
         vec![neighbor(&[1, 1], "bob's", 1)],
         None,
         true,
         1,
     )
     .unwrap();
-    assert_eq!(listing(&store, "router"), None);
+    assert_eq!(listing(&store, "repeater"), None);
     save_page(
         &store,
         OWNER,
-        "router",
+        "repeater",
         vec![neighbor(&[2, 2], "mine", 2)],
         None,
         true,
         2,
     )
     .unwrap();
-    assert_eq!(names(&listing(&store, "router").unwrap()), ["mine"]);
+    assert_eq!(names(&listing(&store, "repeater").unwrap()), ["mine"]);
     let bobs = store
-        .peer_repeater_listing("bob".into(), "router".into())
+        .peer_repeater_listing("bob".into(), "repeater".into())
         .unwrap()
         .unwrap();
     assert_eq!(names(&bobs), ["bob's"]);
@@ -359,13 +359,13 @@ fn listings_belong_to_their_identity() {
 #[test]
 fn a_page_is_stored_as_the_swift_store_stores_it() {
     let (_directory, store) = open();
-    router(&store, OWNER, "router");
+    repeater(&store, OWNER, "repeater");
     let mut bare = neighbor(&[2, 2], "bare", 5);
     bare.region_codes = vec![];
     save_page(
         &store,
         OWNER,
-        "router",
+        "repeater",
         vec![neighbor(&[1, 1], "coded", 5), bare],
         Some(&[]),
         true,
@@ -403,11 +403,11 @@ fn a_page_is_stored_as_the_swift_store_stores_it() {
 #[test]
 fn an_entry_with_no_hint_refuses_the_whole_page() {
     let (_directory, store) = open();
-    router(&store, OWNER, "router");
+    repeater(&store, OWNER, "repeater");
     save_page(
         &store,
         OWNER,
-        "router",
+        "repeater",
         vec![neighbor(&[1, 1], "kept", 1)],
         Some(&[1]),
         true,
@@ -418,7 +418,7 @@ fn an_entry_with_no_hint_refuses_the_whole_page() {
         save_page(
             &store,
             OWNER,
-            "router",
+            "repeater",
             vec![neighbor(&[2, 2], "new", 2), neighbor(&[], "hintless", 2)],
             None,
             true,
@@ -426,26 +426,26 @@ fn an_entry_with_no_hint_refuses_the_whole_page() {
         ),
         Err(MobileStoreError::Failed { .. })
     ));
-    let held = listing(&store, "router").unwrap();
+    let held = listing(&store, "repeater").unwrap();
     assert_eq!(names(&held), ["kept"]);
     assert_eq!((held.next_cursor, held.as_of_ms), (Some(vec![1]), 1));
 }
 
 #[test]
-fn deleting_the_router_takes_its_listing() {
+fn deleting_the_repeater_takes_its_listing() {
     let (_directory, store) = open();
-    router(&store, OWNER, "router");
+    repeater(&store, OWNER, "repeater");
     save_page(
         &store,
         OWNER,
-        "router",
+        "repeater",
         vec![neighbor(&[1, 1], "A", 1)],
         None,
         true,
         1,
     )
     .unwrap();
-    assert!(store.delete_peer(OWNER.into(), "router".into()).unwrap());
+    assert!(store.delete_peer(OWNER.into(), "repeater".into()).unwrap());
     let connection = store.connection();
     for table in ["node_peer_repeaters", "node_peer_repeater_entry"] {
         let rows: i64 = connection

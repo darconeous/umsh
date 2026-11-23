@@ -112,10 +112,10 @@ repeats   = {anonymous=<int> progress_at=<int> repeaters=[{hint=<bytes> text=<st
 - `reaction.failed`: outbound, and its delivery state is `failed` or
   `undelivered`.
 - `quote.state`: `present` or `deleted`; `body` is `""` when deleted.
-- `repeats.repeaters[].text`: the rendered router-hint text, or, when it
+- `repeats.repeaters[].text`: the rendered repeater-hint text, or, when it
   has none, the bytes as lowercase hex (Swift's fallback).
 - `repeats.repeaters[].peer`: the matched peer's canonical address
-  (`RouterHintNaming.match` over the state's peers).
+  (`RepeaterHintNaming.match` over the state's peers).
 
 ### Repeater lines
 

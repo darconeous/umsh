@@ -491,7 +491,7 @@ macro_rules! impl_configuring_common {
 
             /// Add a source-route option from a repeater-hint slice, one hint
             /// per repeater in send order.
-            pub fn source_route(mut self, hints: &[crate::RouterHint]) -> Self {
+            pub fn source_route(mut self, hints: &[crate::RepeaterHint]) -> Self {
                 let mut encoded = [0u8; 30];
                 let needed = hints.len() * 2;
                 if needed > encoded.len() {

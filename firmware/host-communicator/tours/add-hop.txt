@@ -1,6 +1,6 @@
 # Add hop in the route editor: this device's own list with the peer
 # pinned to Finish here, a hop chosen and the next asked along the route,
-# Known repeaters, and typing that narrows the rows or reads router hints.
+# Known repeaters, and typing that narrows the rows or reads repeater hints.
 backspace
 turn 1
 press

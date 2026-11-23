@@ -9,7 +9,7 @@
 //! The ask is a zero-hop broadcast with no flood budget: repeaters never
 //! carry it, so it reaches exactly the nodes that can hear this radio.
 //! Reaching further is what `--via` is for—it steers the question
-//! through the routers on the way to a node this tool already knows how
+//! through the repeaters on the way to a node this tool already knows how
 //! to reach, and the answers come home along the trace the question
 //! accumulated.
 
@@ -20,7 +20,7 @@ use std::time::Duration;
 use anyhow::{Result, anyhow, bail};
 use tokio::time::Instant;
 
-use umsh::core::{PayloadType, PublicKey, RouterHint};
+use umsh::core::{PayloadType, PublicKey, RepeaterHint};
 use umsh::crypto::software::SoftwareIdentity;
 use umsh::mac::{CachedRoute, SendOptions};
 use umsh::node::mac_command::IdentityRequestBuilder;
@@ -75,7 +75,7 @@ pub struct DiscoverArgs {
 
     /// Ask from this node's vantage rather than from here.
     ///
-    /// The question is source-routed through the routers on the way to
+    /// The question is source-routed through the repeaters on the way to
     /// it, so what answers is what can hear *that* node. Needs a
     /// remembered source route—`routes` lists what there is.
     #[arg(long, value_name = "KEY")]
@@ -246,7 +246,7 @@ async fn explore(
 async fn ask(
     stack: &NodeStack<'_>,
     args: &DiscoverArgs,
-    vantage: Option<&[RouterHint]>,
+    vantage: Option<&[RepeaterHint]>,
 ) -> Result<u32> {
     let mut bytes = [0u8; 4];
     stack.handle.fill_random(&mut bytes).await;
@@ -318,22 +318,22 @@ fn request_frame(args: &DiscoverArgs, nonce: u32) -> Result<Vec<u8>> {
     Ok(frame[..length].to_vec())
 }
 
-/// The router hints that steer a question through `peer` to whatever is
+/// The repeater hints that steer a question through `peer` to whatever is
 /// around it.
-fn steer_through(routes: &RouteCache, peer: &PublicKey) -> Result<Vec<RouterHint>> {
+fn steer_through(routes: &RouteCache, peer: &PublicKey) -> Result<Vec<RepeaterHint>> {
     let Some(record) = routes.get(peer) else {
         bail!("no remembered route to {peer}; reach it once—`ping {peer}`—and try again");
     };
     match &record.route {
         CachedRoute::Source(hints) => Ok(hints.to_vec()),
-        // A direct neighbor is reached with no routers in between, so
+        // A direct neighbor is reached with no repeaters in between, so
         // there is nothing to steer through: the question would go out
         // exactly as it does without --via.
         CachedRoute::Direct => bail!(
             "{peer} is a direct neighbor, so asking from its vantage is asking from here; drop --via"
         ),
         CachedRoute::Flood { .. } => bail!(
-            "only a flood route to {peer} is remembered ({}); a vantage needs the routers named",
+            "only a flood route to {peer} is remembered ({}); a vantage needs the repeaters named",
             routes::describe(&record.route)
         ),
     }
@@ -598,21 +598,21 @@ mod tests {
     }
 
     #[test]
-    fn a_vantage_needs_the_routers_named() {
+    fn a_vantage_needs_the_repeaters_named() {
         let mut routes = RouteCache::default();
         let peer = PublicKey([0x11; 32]);
         // Nothing remembered at all.
         assert!(steer_through(&routes, &peer).is_err());
 
-        // A direct neighbor has no routers in between.
+        // A direct neighbor has no repeaters in between.
         routes.record(&peer, CachedRoute::Direct);
         assert!(steer_through(&routes, &peer).is_err());
 
-        // A flood route names no routers either.
+        // A flood route names no repeaters either.
         routes.record(&peer, CachedRoute::flood(5, &[]).unwrap());
         assert!(steer_through(&routes, &peer).is_err());
 
-        let hints = [RouterHint([0xa1, 0xb2]), RouterHint([0xc3, 0xd4])];
+        let hints = [RepeaterHint([0xa1, 0xb2]), RepeaterHint([0xc3, 0xd4])];
         routes.record(&peer, CachedRoute::source(&hints).unwrap());
         assert_eq!(steer_through(&routes, &peer).unwrap(), hints);
     }

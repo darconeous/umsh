@@ -7,7 +7,7 @@
 //! read apart into the caller's buffer.
 
 use heapless::{String, Vec};
-use umsh_core::{ChannelTag, PublicKey, RouterHint};
+use umsh_core::{ChannelTag, PublicKey, RepeaterHint};
 use umsh_text::engine::{CompletionStatus, DeliveryState, Direction, Presence};
 use umsh_text::{ConversationKey, MessageType, REASSEMBLED_BODY_MAX, SenderScope};
 
@@ -28,7 +28,7 @@ pub const BODY_MAX: usize = REASSEMBLED_BODY_MAX;
 /// one carrying a name, a location, and a timestamp.
 pub const IDENTITY_MAX: usize = 128;
 
-/// The most router hints a learned route keeps.
+/// The most repeater hints a learned route keeps.
 pub const ROUTE_MAX: usize = 16;
 
 /// `text` as a [`Name`], cut between grapheme clusters.
@@ -341,9 +341,9 @@ pub struct PeerRecord {
     /// what someone else said of it.
     pub linked: bool,
     pub last_heard: Option<u32>,
-    /// The learned route back, nearest router first, or `None` without
+    /// The learned route back, nearest repeater first, or `None` without
     /// one. An empty route is a direct link.
-    pub route: Option<Vec<RouterHint, ROUTE_MAX>>,
+    pub route: Option<Vec<RepeaterHint, ROUTE_MAX>>,
     /// It prefers forward secrecy.
     pub forward_secrecy: bool,
     /// Saved, rather than only heard. Only saved peers stay for good.
@@ -377,7 +377,7 @@ pub enum PeerChange<'a> {
         fill: bool,
     },
     /// A route back was learned, or the old one is no good.
-    Route(Option<&'a [RouterHint]>),
+    Route(Option<&'a [RepeaterHint]>),
     /// Keep it for good. A peer not yet known is kept as saved. `name`
     /// is what it was seen called, kept as someone else's word for it.
     Save {

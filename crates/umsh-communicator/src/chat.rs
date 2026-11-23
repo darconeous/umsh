@@ -230,8 +230,8 @@ pub(crate) struct Chats<S> {
     changing: routes::Changing,
     /// Sessions with forward secrecy, asked for or held, by peer.
     secrecy: BTreeMap<[u8; 32], peers::Session>,
-    /// What routers report hearing, by router.
-    routers: BTreeMap<[u8; 32], neighbors::Router>,
+    /// What repeaters report hearing, by repeater.
+    repeaters: BTreeMap<[u8; 32], neighbors::Repeater>,
     /// The nonce of the last Peer Repeaters Request.
     nonce: u16,
     /// What the chats ask of the device node besides sending frames.
@@ -280,7 +280,7 @@ impl<S: ChatStore> Chats<S> {
             reading: BTreeSet::new(),
             changing: routes::Changing::new(),
             secrecy: BTreeMap::new(),
-            routers: BTreeMap::new(),
+            repeaters: BTreeMap::new(),
             nonce: 0,
             commands: VecDeque::new(),
             saved: Vec::new(),

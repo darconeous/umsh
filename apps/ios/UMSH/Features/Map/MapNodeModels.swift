@@ -3,8 +3,8 @@ import Foundation
 
 /// What a pin on the map stands for.
 ///
-/// A node's own claim is keyed by its row; a position a router reported for
-/// one of its neighbors is keyed by the hint the router gave, since that may
+/// A node's own claim is keyed by its row; a position a repeater reported for
+/// one of its neighbors is keyed by the hint the repeater gave, since that may
 /// be all anyone knows about it.
 enum MapNodeID: Hashable {
     case peer(Int64)
@@ -20,13 +20,13 @@ enum MapNodeID: Hashable {
 struct MapNode: Identifiable, Hashable {
     let id: MapNodeID
     /// The node this pin is, when this phone knows it: the node whose own
-    /// identity placed it, or a known node a router placed. `nil` for a
+    /// identity placed it, or a known node a repeater placed. `nil` for a
     /// neighbor known only by a hint, which has no page to open.
     let peer: PeerSummary?
     let displayName: String
     let hint: MeshNodeHint
     let isFavorite: Bool
-    /// The router whose neighbor listing placed this pin. `nil` when the
+    /// The repeater whose neighbor listing placed this pin. `nil` when the
     /// node placed itself.
     let reportedBy: PeerSummary?
     let latitude: Double
@@ -36,24 +36,24 @@ struct MapNode: Identifiable, Hashable {
     /// reported.
     let cellMeters: Double?
     /// When the claim was made: the identity bundle's own timestamp for a
-    /// node's own position, the router's answer for a reported one. Not the
+    /// node's own position, the repeater's answer for a reported one. Not the
     /// same question as `lastHeard`, which is when the node was last on the
     /// air at all.
     let reportedAt: Date?
     /// When the node was last heard—by this phone for its own pins, by the
-    /// reporting router for reported ones.
+    /// reporting repeater for reported ones.
     let lastHeard: Date?
-    /// What the recency filter measures: `lastHeard`, except that a router
+    /// What the recency filter measures: `lastHeard`, except that a repeater
     /// that gave no figure at least had the node in its table when it
     /// answered. `nil` when nothing places the node on the air at all—a
-    /// node only ever imported, or one the router last heard "long ago".
+    /// node only ever imported, or one the repeater last heard "long ago".
     let heardAsOf: Date?
-    /// What the node says it can do, for the capability filter. A router
+    /// What the node says it can do, for the capability filter. A repeater
     /// lists only repeaters, so a reported neighbor is one.
     let capabilities: MeshNodeCapabilities
     /// Whether the claims may be attributed to this node at all. A location
     /// that nothing authenticated is one any nearby transmitter could have
-    /// written. A router's report is authenticated to the router, and the
+    /// written. A repeater's report is authenticated to the repeater, and the
     /// pin says so by its styling rather than by a warning.
     let isAttributable: Bool
 
@@ -65,7 +65,7 @@ struct MapNode: Identifiable, Hashable {
     /// hexagon.
     var avatarShape: PeerAvatarShape { peer?.avatarShape ?? .hexagon }
 
-    /// Whether this pin is what a router said rather than what the node said.
+    /// Whether this pin is what a repeater said rather than what the node said.
     var isReported: Bool { reportedBy != nil }
 
     /// Cells this coarse cover a city or more. Drawing a marker alone at that
@@ -260,7 +260,7 @@ extension MapNode {
     }
 
     /// Every node that has somewhere to be drawn, filters aside: nodes that
-    /// placed themselves, then neighbors routers placed that no node has
+    /// placed themselves, then neighbors repeaters placed that no node has
     /// placed already. Filtering is a second step (``passes``), so the
     /// unfiltered set is also what tells an empty mesh from an over-narrow
     /// filter—one derivation, with nothing to drift from it.
@@ -300,14 +300,14 @@ extension MapNode {
         return nodes.sorted { sortKey($0.id) < sortKey($1.id) }
     }
 
-    /// Pins for neighbors routers have placed. One pin per hint, from the
+    /// Pins for neighbors repeaters have placed. One pin per hint, from the
     /// freshest report—which, when it carries no position, means none: the
-    /// router heard the node say less than it once did.
+    /// repeater heard the node say less than it once did.
     ///
     /// None, either, for a neighbor this phone has heard speak for itself
-    /// since the router answered. A router's position is a copy of what the
+    /// since the repeater answered. A repeater's position is a copy of what the
     /// node advertised; the node's own later advertisement is newer than
-    /// anything the router could have known, and one that names no position
+    /// anything the repeater could have known, and one that names no position
     /// is not overruled by an older copy that does. Likewise none for a node
     /// with its own position, or for the companion radio, which is the self
     /// marker already.

@@ -173,7 +173,7 @@ The metadata is not optional: a send carries at least `TX_KIND` and
 Option | Name                  | Value                                         | Absent
 -------|-----------------------|-----------------------------------------------|--------
 1      | `TX_OPT_FLOOD_HOPS`   | UINT8, 0–15                                   | The device's default flood budget
-2      | `TX_OPT_SOURCE_ROUTE` | 1–15 two-octet router hints, next repeater first | The route the device has learned for the destination, or a flood
+2      | `TX_OPT_SOURCE_ROUTE` | 1–15 two-octet repeater hints, next repeater first | The route the device has learned for the destination, or a flood
 3      | `TX_OPT_TX_POWER`     | INT8, as `TX_POWER` in [`STR_PHY_RAW`](ulcp-transport.md#str-radio-raw) | The device identity's transmit power
 
 `TX_OPT_FLOOD_HOPS`
@@ -264,7 +264,7 @@ Option | Name           | Value
 -------|----------------|------
 1      | `RX_OPT_RSSI`  | UINT8, as `RX_RSSI` in [`STR_PHY_RAW`](ulcp-transport.md#str-radio-raw)
 2      | `RX_OPT_SNR`   | INT16, centibels, as `RX_SNR` in `STR_PHY_RAW`
-3      | `RX_OPT_TRACE` | The two-octet router hints of a complete [trace](packet-options.md#trace-option-7), nearest repeater first
+3      | `RX_OPT_TRACE` | The two-octet repeater hints of a complete [trace](packet-options.md#trace-option-7), nearest repeater first
 
 A link ignores an option it does not recognize. A reply is built from
 what was received: `RX_SRC` (a key) becomes `TX_PEER`, `RX_CHANNEL`

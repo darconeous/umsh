@@ -39,7 +39,7 @@ data class DeliveryCaption(
         data class SentVia(val lead: RepeaterName, val others: Int) : Repeat
     }
 
-    /** A repeater as a caption names it: a known node's name, else its router hint. */
+    /** A repeater as a caption names it: a known node's name, else its repeater hint. */
     sealed interface RepeaterName {
         data class Named(val name: String) : RepeaterName
         data class Hint(val text: String) : RepeaterName
