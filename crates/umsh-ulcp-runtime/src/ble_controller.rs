@@ -24,8 +24,10 @@ pub fn accesses_device_name(request: AttClient<'_>, name_handle: u16) -> bool {
     match request {
         AttReq::Read { handle } | AttReq::ReadBlob { handle, .. } => handle == name_handle,
         AttReq::ReadMultiple { handles } => handles
-            .chunks_exact(2)
-            .any(|h| u16::from_le_bytes([h[0], h[1]]) == name_handle),
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .any(|&h| u16::from_le_bytes(h) == name_handle),
         AttReq::ReadByType {
             start,
             end,

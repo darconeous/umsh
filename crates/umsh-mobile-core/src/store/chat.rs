@@ -813,8 +813,10 @@ pub(super) fn pack_route_hints(hints: &[Vec<u8>]) -> Option<Vec<u8>> {
 pub(super) fn split_hints(packed: Option<&[u8]>) -> Vec<Vec<u8>> {
     packed
         .unwrap_or_default()
-        .chunks_exact(2)
-        .map(<[u8]>::to_vec)
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|hint| hint.to_vec())
         .collect()
 }
 

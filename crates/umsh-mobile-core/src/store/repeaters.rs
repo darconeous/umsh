@@ -273,8 +273,10 @@ fn blob_or_null(value: Option<Vec<u8>>) -> Option<Vec<u8>> {
 fn region_codes(packed: Option<Vec<u8>>) -> Vec<Vec<u8>> {
     packed
         .unwrap_or_default()
-        .chunks_exact(2)
-        .map(<[u8]>::to_vec)
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|code| code.to_vec())
         .collect()
 }
 

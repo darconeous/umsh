@@ -195,8 +195,10 @@ fn stored_route(row: &rusqlite::Row<'_>) -> rusqlite::Result<MobileStoredManualR
 /// a hint could be and is left out.
 fn unpack_hints(packed: &[u8]) -> Vec<Vec<u8>> {
     packed
-        .chunks_exact(HINT_WIDTH)
-        .map(<[u8]>::to_vec)
+        .as_chunks::<HINT_WIDTH>()
+        .0
+        .iter()
+        .map(|hint| hint.to_vec())
         .collect()
 }
 
