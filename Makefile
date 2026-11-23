@@ -769,7 +769,13 @@ android-notification-ask-test:
 # emulator's name for this machine's loopback); `umshctl --tcp
 # 127.0.0.1:21839` is the other node. The config and the bridge's identity
 # live in build/android-bridge; the identity is made once and kept.
+#
+# The bridge also joins the default IP multicast group, so an emulator someone
+# is using meets the real mesh: whatever it sends there may be carried onto
+# the air by another bridge. Automated runs (tests, agents) keep off the LAN
+# with an empty ANDROID_BRIDGE_LAN=.
 ANDROID_BRIDGE_DIR := build/android-bridge
+ANDROID_BRIDGE_LAN ?= 1
 
 android-bridge: android-bridge-config
 	cd $(ANDROID_BRIDGE_DIR) && cargo run -q -p umsh-bridge -- run -c config.toml
@@ -793,6 +799,10 @@ android-bridge-config:
 		'listen = "127.0.0.1:21839"' \
 		'max_frames_per_minute = 600' \
 		> $(ANDROID_BRIDGE_DIR)/config.toml
+	@if [ -n "$(ANDROID_BRIDGE_LAN)" ]; then \
+		printf '%s\n' '[server.lan]' >> $(ANDROID_BRIDGE_DIR)/config.toml; \
+		echo "android-bridge: joining the LAN's IP multicast group (ANDROID_BRIDGE_LAN= keeps off it)"; \
+	fi
 
 # A companion radio's Bluetooth side for the emulator (tools/ble-test-peripheral,
 # a packaged Python project run through `uv`, like tools/regiondb-build): a

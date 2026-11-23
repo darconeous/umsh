@@ -31,7 +31,8 @@ costs of migration before considering implementing it.
   - `regiondb-build`—the region-database compiler. **Python, not Rust**
   - `ble-test-peripheral`—a companion radio's BLE side for the Android emulator: a Bumble
     GATT peripheral on the emulator's virtual Bluetooth, bridged to a `umsh-bridge` host
-    interface (`make android-ble-peripheral`); its codecs are checked against committed
+    interface (`make android-ble-peripheral`; its bridge joins the LAN's IP multicast
+    group by default, so automated runs must pass `ANDROID_BRIDGE_LAN=`); its codecs are checked against committed
     vectors from the Rust ones (`make ble-test-vectors`)
   - `regiondb-build` and `ble-test-peripheral` are the repo's two packaged Python projects
     (`pyproject.toml` + `uv.lock`, run through `uv`); `scripts/` stays stdlib-only because

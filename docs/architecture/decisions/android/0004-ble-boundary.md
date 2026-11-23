@@ -102,7 +102,8 @@ system message string is shown.
   real device session (`MobileVirtualRadio` with its PHY off) behind
   `FakeRadioPeripheral`.
 - Emulator: `tools/ble-test-peripheral` (Bumble, `make android-ble-peripheral`)
-  on the emulators' shared netsim. On API 31 and 36: scan with the scan
+  on the emulators' shared netsim. Its bridge joins the LAN's IP multicast
+  group by default, for interactive use; test runs pass `ANDROID_BRIDGE_LAN=`. On API 31 and 36: scan with the scan
   response and manufacturer data, Just Works and passkey LESC bonds, ATT_MTU
   255, encrypted CCCD, segmented frames both ways, attach and claim, a DM to
   `umshctl` and back, Bluetooth off and on, and bond loss.

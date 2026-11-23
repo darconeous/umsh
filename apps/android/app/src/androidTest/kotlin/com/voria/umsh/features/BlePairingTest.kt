@@ -39,8 +39,8 @@ import org.junit.rules.ExternalResource
  * the pairing dialog (a passkey when one is given), attached and claimed.
  *
  * Gated off CI: it runs only with `-e ble pairing`, against the Bumble test
- * peripheral in its pairing window (`make android-ble-peripheral`, factory
- * reset first). `-e passkey 123456` answers a passkey radio. The radio is
+ * peripheral in its pairing window (`make android-ble-peripheral
+ * ANDROID_BRIDGE_LAN=`, off the LAN; factory reset first). `-e passkey 123456` answers a passkey radio. The radio is
  * forgotten after, so the run can be repeated.
  */
 class BlePairingTest {
