@@ -519,7 +519,7 @@ P1.01 is the button both reviewed implementations name
 control.
 
 - **Hold PWR (P1.01) ~1.5 s** → 3× white-LED (LED_A/P0.15)
-  acknowledgement → System OFF (verified 2026-07-23: USB drops and stays
+  acknowledgment → System OFF (verified 2026-07-23: USB drops and stays
   down). Power-off is **PWR-only**; holding USR does nothing.
 - **Any press of PWR while the device is in System OFF enters the stock
   bootloader's DFU mode—always** (confirmed 2026-07-27 on an enclosed

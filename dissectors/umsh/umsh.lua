@@ -140,7 +140,7 @@ f.dec_src      = ProtoField.bytes  ("umsh.dec_src",           "Decrypted SRC")
 f.ack_req_frame = ProtoField.framenum("umsh.ack.request_frame", "Acknowledges packet in frame",
                                        base.NONE, frametype.ACK)
 -- Public ack_mic correlated the ack to a request, but a configured key proved
--- the keyed tag wrong: a forensic link only, not a valid acknowledgement.
+-- the keyed tag wrong: a forensic link only, not a valid acknowledgment.
 f.ack_correlate_frame = ProtoField.framenum("umsh.ack.correlate_frame",
                                        "Correlates with packet in frame (unverified)",
                                        base.NONE, frametype.NONE)
@@ -989,7 +989,7 @@ local function dissect_uack(buf, pinfo, tree, off, fcf_byte, static_opts)
   if origin then
     -- If a key recovered the request's V, verify the keyed tag. A public
     -- ack_mic match establishes only correlation; when a configured key proves
-    -- the tag wrong the frame is NOT a valid acknowledgement, so we downgrade
+    -- the tag wrong the frame is NOT a valid acknowledgment, so we downgrade
     -- to a "correlates with" forensic link and suppress the ack/back-reference.
     local verified = nil
     if origin.ack_v and crypto then
@@ -1008,7 +1008,7 @@ local function dissect_uack(buf, pinfo, tree, off, fcf_byte, static_opts)
       string.format("%.6f seconds", rsp_time)):set_text(
       string.format("ACK Response Time: %.3f ms", rsp_time * 1000))
     if verified == false then
-      -- Correlation only: link the frames but claim no acknowledgement.
+      -- Correlation only: link the frames but claim no acknowledgment.
       tree:add(f.ack_correlate_frame, buf(off, 4), origin.frame)
       pinfo.cols.info = "UMSH UACK (correlates with #" .. origin.frame .. ", TAG MISMATCH)"
     else

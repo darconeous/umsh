@@ -78,14 +78,14 @@ If `delta` is zero or exceeds the forward window, the packet is rejected. This m
 
 Implementations that need to tolerate out-of-order delivery may also define a **backward window**—a small range of counter values *behind* the highest accepted counter within which late-arriving packets are still considered. The suggested default backward window is **8**. When a packet's counter falls within the backward window, the receiver checks a small cache of recently accepted packets, keyed by frame counter and MIC (similar to the approach used for [duplicate suppression](repeater-operation.md#duplicate-suppression) in repeaters): if the packet is already present, it is a replay and is rejected; if not, the packet is accepted and added to the cache.
 
-A sender SHOULD NOT have more acknowledgement-requested packets awaiting acknowledgement from one peer than the suggested backward window, so that a retransmission of the earliest still falls inside the receiver's window when nothing else was sent in between. A retransmission that the sender's other traffic pushed further behind is recovered by [counter resynchronization](#counter-resynchronization).
+A sender SHOULD NOT have more acknowledgment-requested packets awaiting acknowledgment from one peer than the suggested backward window, so that a retransmission of the earliest still falls inside the receiver's window when nothing else was sent in between. A retransmission that the sender's other traffic pushed further behind is recovered by [counter resynchronization](#counter-resynchronization).
 
 Regardless of window sizes, a packet must not be accepted if it is more than **5 minutes** out of order—that is, if the highest accepted counter was last advanced more than 5 minutes ago and the received counter is behind it. MIC cache entries only need to be retained for the duration of this time bound. Additionally, the first packet accepted from a given node (or after a [counter resynchronization](#counter-resynchronization)) establishes that node's counter baseline—packets with earlier counter values must be rejected, even if they arrive within the backward window.
 
-##### Duplicate Acknowledgement Window {#duplicate-acknowledgement-window}
+##### Duplicate Acknowledgment Window {#duplicate-acknowledgment-window}
 
 Rejecting a packet as a duplicate does not prohibit retransmitting its MAC
-acknowledgement. An authenticated packet that requests an acknowledgement and
+acknowledgment. An authenticated packet that requests an acknowledgment and
 whose MIC identifies it as a previously received packet **MAY** be acknowledged
 again if its frame counter is no more than **8** counts behind the highest
 accepted counter from that sender, inclusive. Equivalently:
@@ -96,27 +96,27 @@ ack_distance = (last_accepted_counter - received_counter) mod 2^32
 
 The duplicate may be acknowledged only when `ack_distance <= 8`. A receiver
 **MUST NOT** acknowledge a replay farther behind the stored counter. Re-sending
-the acknowledgement is idempotent and allows a sender to recover when the
-original acknowledgement was lost; it does not accept the packet as new and
+the acknowledgment is idempotent and allows a sender to recover when the
+original acknowledgment was lost; it does not accept the packet as new and
 **MUST NOT** advance or otherwise modify the stored replay baseline. A receiver
 may suppress duplicate delivery itself. In a split implementation, such as a
 companion radio and host MAC, it may instead pass the authenticated duplicate to
 the host, which is then responsible for suppressing duplicate application
 delivery.
 
-Eligibility is not obligation: re-acknowledgement SHOULD be paced. Flood
+Eligibility is not obligation: re-acknowledgment SHOULD be paced. Flood
 routing delivers one transmission as several copies, and a copy of a
-transmission whose acknowledgement was already sent proves nothing was lost. A
+transmission whose acknowledgment was already sent proves nothing was lost. A
 receiver SHOULD NOT acknowledge the same packet more than once per
 [forwarding-confirmation
 window](repeater-operation.md#forwarding-confirmation), measured from its most
-recent acknowledgement of that packet: copies arriving inside the window share
-the acknowledgement already sent, while a sender that lost its acknowledgement
+recent acknowledgment of that packet: copies arriving inside the window share
+the acknowledgment already sent, while a sender that lost its acknowledgment
 cannot retransmit before its own confirmation window has lapsed.
 
-A duplicate that carries the [Route Retry option](packet-options.md#route-retry-option-6), of a packet already acknowledged and arriving after this window, shows that the acknowledgement was lost on its way back. Its re-acknowledgement SHOULD NOT follow the route the lost one took ([Lost Acknowledgments](repeater-operation.md#lost-acknowledgments)). Any other late duplicate may have crossed an acknowledgement still in transit and says nothing about the route.
+A duplicate that carries the [Route Retry option](packet-options.md#route-retry-option-6), of a packet already acknowledged and arriving after this window, shows that the acknowledgment was lost on its way back. Its re-acknowledgment SHOULD NOT follow the route the lost one took ([Lost Acknowledgments](repeater-operation.md#lost-acknowledgments)). Any other late duplicate may have crossed an acknowledgment still in transit and says nothing about the route.
 
-Payload acceptance does not begin the acknowledgement pacing window. A destination may accept an overheard source-routed copy while hints remain, withholding its ACK until the route is consumed. The first eligible copy may then be acknowledged immediately. A duplicate remains the same accepted packet: acknowledging it does not renew its replay-retention interval or deliver the payload again.
+Payload acceptance does not begin the acknowledgment pacing window. A destination may accept an overheard source-routed copy while hints remain, withholding its ACK until the route is consumed. The first eligible copy may then be acknowledged immediately. A duplicate remains the same accepted packet: acknowledging it does not renew its replay-retention interval or deliver the payload again.
 
 ##### Signed-Frame Counters {#signed-frame-counters}
 
@@ -159,17 +159,17 @@ On first contact with a new peer, the received frame counter is accepted at face
 
 An authenticated packet from a known peer whose frame counter falls outside the window, or in an unspent slot of the backward window past the 5-minute bound, means the two nodes disagree about that counter, whatever the gap—for example, because the peer rebooted and lost its persisted counter, or because a retransmission fell behind the backward window. A packet whose counter the backward window records as spent is a replay at any age, and one the receiver still recognizes by its counter and MIC as one it accepted is only a late copy; neither prompts anything. For any other, the receiver MAY re-establish a baseline with one of the two exchanges below. It SHOULD send at most one such probe to a peer every **5 seconds**, and a [Verify Frame](mac-commands.md#verify-frame-12) or [Frame Verified](mac-commands.md#frame-verified-13) never prompts one.
 
-When the packet requested an acknowledgement, the receiver—the requester—holds it without acknowledging it and sends Verify Frame to the peer, naming the packet in an [Ack MIC option](packet-options.md#ack-mic-option-8). The peer—the responder—proceeds as follows:
+When the packet requested an acknowledgment, the receiver—the requester—holds it without acknowledging it and sends Verify Frame to the peer, naming the packet in an [Ack MIC option](packet-options.md#ack-mic-option-8). The peer—the responder—proceeds as follows:
 
-1. It matches the option against the acknowledgement-requested packets it sent to the requester that are still awaiting acknowledgement. If none matches, it ignores the Verify Frame.
-2. It stops retransmitting the matched packet and answers with Frame Verified, which requests an acknowledgement.
+1. It matches the option against the acknowledgment-requested packets it sent to the requester that are still awaiting acknowledgment. If none matches, it ignores the Verify Frame.
+2. It stops retransmitting the matched packet and answers with Frame Verified, which requests an acknowledgment.
 3. When Frame Verified is acknowledged, it treats the matched packet as acknowledged. If Frame Verified is never acknowledged, the matched packet has failed.
 
 The responder processes a Verify Frame whose own counter falls outside its window for the requester, since the match with an outstanding packet already shows the request is fresh. When Frame Verified is acknowledged, it adopts that counter as the requester's new baseline. A Verify Frame whose counter falls within the window is subject to the ordinary replay rules.
 
-When a Frame Verified arrives echoing the nonce of a Verify Frame for a packet the requester still holds, the requester adopts its frame counter as the peer's new baseline, whatever the value. It then delivers the held packet and acknowledges Frame Verified; that acknowledgement stands for the held packet too, which is not acknowledged separately. A requester that no longer holds the packet discards Frame Verified without acknowledging it, so the responder reports the packet as failed. The requester MUST choose nonces so that a Frame Verified recorded from an earlier exchange cannot match a later one. A requester cannot tell a held packet from one it accepted earlier and no longer recognizes, so a packet whose acknowledgement was lost can be delivered a second time this way.
+When a Frame Verified arrives echoing the nonce of a Verify Frame for a packet the requester still holds, the requester adopts its frame counter as the peer's new baseline, whatever the value. It then delivers the held packet and acknowledges Frame Verified; that acknowledgment stands for the held packet too, which is not acknowledged separately. A requester that no longer holds the packet discards Frame Verified without acknowledging it, so the responder reports the packet as failed. The requester MUST choose nonces so that a Frame Verified recorded from an earlier exchange cannot match a later one. A requester cannot tell a held packet from one it accepted earlier and no longer recognizes, so a packet whose acknowledgment was lost can be delivered a second time this way.
 
-When the packet did not request an acknowledgement, the peer has nothing outstanding to match, so the receiver MAY instead send an [Echo Request](mac-commands.md#echo-request-4) carrying a nonce. An Echo Response echoing it establishes the response's frame counter as the peer's new baseline, unless a packet the receiver accepted from the peer after sending the probe has changed the peer's highest accepted counter: the window is then already in step, and the response is dropped without moving it. The packet that prompted the probe is dropped.
+When the packet did not request an acknowledgment, the peer has nothing outstanding to match, so the receiver MAY instead send an [Echo Request](mac-commands.md#echo-request-4) carrying a nonce. An Echo Response echoing it establishes the response's frame counter as the peer's new baseline, unless a packet the receiver accepted from the peer after sending the probe has changed the peer's highest accepted counter: the window is then already in step, and the response is dropped without moving it. The packet that prompted the probe is dropped.
 
 When that packet is itself an Echo Request, the receiver answers it with an Echo Response before sending its own probe, and only when it sends the probe, so the answer shares the probe's rate limit. Two nodes each outside the other's window would otherwise refuse each other's probes indefinitely. The Echo Request is accepted no further: it is not delivered, and it moves no baseline.
 
@@ -400,7 +400,7 @@ The AAD is unambiguous because the packet format is self-describing from left to
 
 Dynamic options and the flood hop count are excluded from the AAD because they may be modified by repeaters during forwarding. The FCF's flood-hops-present (`H`) bit is part of that budget rather than of the packet's identity, and is cleared before the byte enters the AAD: a sender abandoning a source route re-floods a packet that is already sealed, which adds `FHOPS` where the original had none. Masking the bit does not weaken the binding. Flipping it on the wire shifts every field the parser reads after it, so the fields that follow enter the AAD as different values and the MIC check still fails.
 
-A [MAC Ack](packet-types.md#mac-ack-packet) has no DST, CHANNEL, SRC, or SECINFO field, so its AAD is the FCF, static options, and terminator alone (see [Ack Tag Construction](#ack-tag-construction)). For an ack, masking `H` is what lets a re-sent acknowledgement, which may differ from the first only in its flood budget, carry the same tag.
+A [MAC Ack](packet-types.md#mac-ack-packet) has no DST, CHANNEL, SRC, or SECINFO field, so its AAD is the FCF, static options, and terminator alone (see [Ack Tag Construction](#ack-tag-construction)). For an ack, masking `H` is what lets a re-sent acknowledgment, which may differ from the first only in its flood budget, carry the same tag.
 
 #### Static Option Encoding in AAD
 
@@ -419,7 +419,7 @@ Using 2-byte fields for both `number` and `length` ensures that option numbers a
 
 ### Ack Tag Construction
 
-When a packet type requests an acknowledgement (UNAR or BUAR), the acknowledgement carries two 4-byte fields: an **ack MIC** for correlation and an **ack tag** for authentication.
+When a packet type requests an acknowledgment (UNAR or BUAR), the acknowledgment carries two 4-byte fields: an **ack MIC** for correlation and an **ack tag** for authentication.
 
 The **ack MIC** is simply the first 4 bytes of the original packet's on-wire MIC:
 
@@ -427,9 +427,9 @@ The **ack MIC** is simply the first 4 bytes of the original packet's on-wire MIC
 ack_mic = first_4_bytes( on_wire_MIC )
 ```
 
-It is public—any node that received the original packet, including forwarding repeaters, can compute it. Its purpose is correlation: it lets the original sender match the ack to the outstanding request it belongs to, and lets a repeater that forwarded the original packet recognize the ack as its acknowledgement (enabling passive-ack optimizations). It is not an authenticator.
+It is public—any node that received the original packet, including forwarding repeaters, can compute it. Its purpose is correlation: it lets the original sender match the ack to the outstanding request it belongs to, and lets a repeater that forwarded the original packet recognize the ack as its acknowledgment (enabling passive-ack optimizations). It is not an authenticator.
 
-The **ack tag** is the MIC of the acknowledgement itself. Only the original sender and the final destination can produce it, and it covers the acknowledgement's static options as well as the packet it answers:
+The **ack tag** is the MIC of the acknowledgment itself. Only the original sender and the final destination can produce it, and it covers the acknowledgment's static options as well as the packet it answers:
 
 ```text
 ack_tag = truncate_to_4( S2V( K_mic, S1 = AAD_ack, S2 = V, S3 = ack_mic ) )
@@ -439,15 +439,15 @@ Where:
 
 - `K_mic` is the MIC key that sealed the original packet—the pairwise key for unicast (see [HKDF Inputs for Unicast](#hkdf-inputs-for-unicast)), or the combined blind unicast key for blind unicast (see [Blind Unicast Payload Keys](#blind-unicast-payload-keys))
 - `V` is the original packet's full 16-byte S2V output, before truncation to its on-wire MIC length
-- `AAD_ack` is the acknowledgement's [associated data](#associated-data): its FCF with the `H` bit cleared, followed by its static options and the `FF FF` terminator
+- `AAD_ack` is the acknowledgment's [associated data](#associated-data): its FCF with the `H` bit cleared, followed by its static options and the `FF FF` terminator
 
-The three components take the shape of any other packet's MIC: associated data first, `V` where a nonce would sit, and `ack_mic` as the payload. The component count and the acknowledgement's own FCF keep the result distinct from every packet MIC computed under the same key. Dynamic options and the flood hop count stay outside `AAD_ack`, so forwarding does not disturb the tag.
+The three components take the shape of any other packet's MIC: associated data first, `V` where a nonce would sit, and `ack_mic` as the payload. The component count and the acknowledgment's own FCF keep the result distinct from every packet MIC computed under the same key. Dynamic options and the flood hop count stay outside `AAD_ack`, so forwarding does not disturb the tag.
 
-Binding `V` ties the tag to one exchange in one direction. Both peers hold the same pairwise keys, but an acknowledgement of a packet one peer sent cannot pass for one answering a packet the other sent. `V` need not be secret for this; a packet sent with a 16-byte MIC carries all of it.
+Binding `V` ties the tag to one exchange in one direction. Both peers hold the same pairwise keys, but an acknowledgment of a packet one peer sent cannot pass for one answering a packet the other sent. `V` need not be secret for this; a packet sent with a 16-byte MIC carries all of it.
 
 The standalone [MAC Ack](packet-types.md#mac-ack-packet) carries both fields (`ack_mic` followed by `ack_tag`, 8 bytes total). The [Ack MIC option](packet-options.md#ack-mic-option-8) carries only `ack_mic`, because the packet carrying the option is itself authenticated to the original sender and therefore needs no separate keyed tag.
 
-The `ack_mic` is a prefix of the original packet's on-wire MIC, so it was already visible to anyone who received that packet. Producing the `ack_tag` requires `K_mic`, so an observer who intercepts the original packet can neither forge a standalone ack nor alter the static options of a genuine one. With a 4-byte tag, a blind forgery succeeds with probability `2^-32` per attempt, and only while the original packet still awaits acknowledgement: no offline check exists, each guess costs a transmission, and a failed guess draws no response. A successful forgery would cause the sender to treat an undelivered packet as delivered and suppress retransmission, or to act on options the destination never sent—a reliability denial-of-service confined to one exchange, not a confidentiality break. A weaker variant needs no forged tag at all: an observer who saw the original packet can send its public `ack_mic`, which is all a repeater can read. Repeaters therefore treat an [overheard acknowledgment](repeater-operation.md#ack-cancellation) as a hint that makes a pending forward give way to a busy channel, never as grounds to remove it. Such a forgery costs the attacker a transmission and the sender at most one retry.
+The `ack_mic` is a prefix of the original packet's on-wire MIC, so it was already visible to anyone who received that packet. Producing the `ack_tag` requires `K_mic`, so an observer who intercepts the original packet can neither forge a standalone ack nor alter the static options of a genuine one. With a 4-byte tag, a blind forgery succeeds with probability `2^-32` per attempt, and only while the original packet still awaits acknowledgment: no offline check exists, each guess costs a transmission, and a failed guess draws no response. A successful forgery would cause the sender to treat an undelivered packet as delivered and suppress retransmission, or to act on options the destination never sent—a reliability denial-of-service confined to one exchange, not a confidentiality break. A weaker variant needs no forged tag at all: an observer who saw the original packet can send its public `ack_mic`, which is all a repeater can read. Repeaters therefore treat an [overheard acknowledgment](repeater-operation.md#ack-cancellation) as a hint that makes a pending forward give way to a busy channel, never as grounds to remove it. Such a forgery costs the attacker a transmission and the sender at most one retry.
 
 The correlation exposed by `ack_mic` is deliberate. To an observer who already received the original packet, it confirms that the packet was delivered and links the ack to that packet. Because the MAC ack carries no destination hint, it adds no explicit endpoint identifier of its own—which removes the direct sender-identity leak a destination hint would introduce. This is not a guarantee of unlinkability: a determined adversary may still correlate an ack with its endpoints through timing, RF fingerprinting, return-path analysis, or by tying the `ack_mic` back to an original packet that itself exposed endpoint hints. For blind unicast, whose forward frame reveals no endpoint identity to a non-channel observer, omitting the destination hint keeps that concealment from being undone by the ack.
 
@@ -585,7 +585,7 @@ A PFS session ends when any of the following occur:
 - The agreed session duration expires.
 - Either party sends an [End PFS Session](mac-commands.md#end-pfs-session-8) command.
 - Either device reboots.
-- Three consecutive frames a node sends under the session with an acknowledgement requested go unacknowledged, and nothing from the peer under the session arrives in between. The node ends the session and sends End PFS Session.
+- Three consecutive frames a node sends under the session with an acknowledgment requested go unacknowledged, and nothing from the peer under the session arrives in between. The node ends the session and sends End PFS Session.
 
 A node sends End PFS Session under its long-term keys once it holds no session with the recipient, so a node that has lost a session, by rebooting or otherwise, can still send one. The recipient ends the session it holds with the sender only if the End's frame counter comes after, in the modular comparison of [Replay Detection](#replay-detection), the counter of the sender's half of that session's handshake: the request the recipient answered, or the response it accepted. An End that does not was sent before that session began—delayed, or replayed after the recipient lost its receive window for the sender—and is ignored. A request still waiting for its response is not ended by End PFS Session. An End received under the session's own ephemeral addresses ends that session.
 

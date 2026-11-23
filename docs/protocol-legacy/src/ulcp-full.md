@@ -33,7 +33,7 @@ host is asleep or disconnected:
 * **Key provisioning**—the host installs channel keys and pairwise peer
   keys so the device can recognize traffic for the host's identity, including
   blind unicast, and authenticate it.
-* **Acknowledgement delegation**—for peers whose pairwise keys are
+* **Acknowledgment delegation**—for peers whose pairwise keys are
   provisioned, the device can send MAC acks on the host's behalf while the host
   is away.
 * **Saved state**—the device can snapshot its configuration to non-volatile
@@ -128,7 +128,7 @@ State that belongs to the currently configured tethered host identity:
 
 * `PROP_HOST_KEY` itself
 * the host's channel keys and peer keys
-* the receive filter table and acknowledgement-delegation policy
+* the receive filter table and acknowledgment-delegation policy
 * the inbound queue: its configuration and its contents
 
 **The host domain is volatile across a power cycle, and only across a
@@ -231,7 +231,7 @@ that.
 
 On detach, the device discards session state, keeps operating with the
 current device- and host-domain state, and begins detached operation:
-accepted frames are queued rather than delivered, and acknowledgement
+accepted frames are queued rather than delivered, and acknowledgment
 delegation (if enabled) becomes active.
 
 ## Saved State {#saved-state}
@@ -261,7 +261,7 @@ acknowledging on the host's behalf.
   operation accordingly *before* processing any host command: the RF
   configuration is applied and the PHY is re-enabled if it was enabled
   when saved, so a repeater is forwarding before anything else happens.
-  Host-domain behavior—filtering, queueing, acknowledgement delegation—
+  Host-domain behavior—filtering, queueing, acknowledgment delegation—
   does *not* resume, because there is no host domain until a host provides
   one. If no snapshot exists, all properties take their documented
   post-reset values.
@@ -301,7 +301,7 @@ Two consequences deserve emphasis:
 * **Queue contents and replay baselines are not saved.** Frames queued
   before a power loss are gone afterward, even if they were acknowledged
   on the host's behalf—the sender believes them delivered. Likewise the
-  per-peer frame-counter baselines used by acknowledgement delegation
+  per-peer frame-counter baselines used by acknowledgment delegation
   restart (see [Counter Resynchronization](security.md#counter-resynchronization)).
   These share the host domain's lifetime, which is why re-provisioning
   after a power cycle is a resynchronization point rather than an
@@ -722,7 +722,7 @@ closed:
   A whole-table `CMD_PROP_SET` whose value contains any invalid item fails
   without applying any of it.
 * Whole-table replacement is atomic: no observer of device behavior (frame
-  filtering, acknowledgement decisions) sees a mixture of the old and new
+  filtering, acknowledgment decisions) sees a mixture of the old and new
   contents.
 * Operations that include durable writes—`CMD_SAVE`, `CMD_CLEAR`,
   installing or generating the device identity, and setting
@@ -772,7 +772,7 @@ Id  | Mnemonic                      | Commands                 | Description
 97  | `PROP_HOST_CHANNEL_KEYS`      | Get, Set, Insert, Remove | Host channel keys
 98  | `PROP_HOST_PEER_KEYS`         | Get, Set, Insert, Remove | Host pairwise peer keys
 99  | `PROP_HOST_RX_FILTERS`        | Get, Set, Insert, Remove | Host receive filter table
-100 | `PROP_HOST_AUTO_ACK`          | Get, Set                 | Acknowledgement delegation enable
+100 | `PROP_HOST_AUTO_ACK`          | Get, Set                 | Acknowledgment delegation enable
 101 | `PROP_HOST_RX_QUEUE_COUNT`    | Get                      | Frames currently queued
 102 | `PROP_HOST_RX_QUEUE_CAPACITY` | Get, Set                 | Queue capacity in frames
 103 | `PROP_HOST_RX_QUEUE_DROPPED`  | Get                      | Frames dropped from the queue
@@ -1258,7 +1258,7 @@ purposes:
   [Blind Unicast Processing](packet-types.md#blind-unicast-processing)) and
   to form the combined
   [blind unicast payload keys](security.md#blind-unicast-payload-keys) used
-  for authentication and acknowledgement.
+  for authentication and acknowledgment.
 
 Channel keys are group-membership credentials, not host private keys, so
 provisioning them is consistent with the
@@ -1348,7 +1348,7 @@ filters derived from `PROP_HOST_KEY` and `PROP_HOST_CHANNEL_KEYS`.
 * Value Type: BOOL
 * Post-Reset Value: 0 (false)
 
-When true, the device sends MAC acknowledgements on behalf of the host
+When true, the device sends MAC acknowledgments on behalf of the host
 identity for qualifying frames received while the host is detached, as
 specified in (#ack-delegation). When false, the device never transmits on the
 host identity's behalf.
@@ -1429,7 +1429,7 @@ peer. The device therefore records the leading 4 trailer bytes of each frame
 it transmits on the host's behalf—for a MAC Ack, its `ack_mic`—and
 implicitly accepts any received frame whose trailer opens with a recorded
 value. For a MAC Ack the host sent, this matches the ack being carried
-onward; for any other frame, it matches both the returning acknowledgement
+onward; for any other frame, it matches both the returning acknowledgment
 and the frame being carried onward. The host's forwarding-confirmation
 machinery must overhear every onward copy, acks included, to stop
 retransmitting. These records evict lazily, so multiple echoes of one send—
@@ -1502,7 +1502,7 @@ additional queue slot; it is coalesced with the existing entry. A
 frame is the same logical packet (same MIC and frame counter) and
 coalesces with it. Coalescing a duplicate is separate from acknowledging
 it—a coalesced duplicate may still have its ack retransmitted under the
-duplicate-acknowledgement window (see (#ack-delegation)). For frames the
+duplicate-acknowledgment window (see (#ack-delegation)). For frames the
 device cannot authenticate (no provisioned keys), no protocol-defined
 duplicate detection applies and each received frame occupies its own
 entry.
@@ -1531,7 +1531,7 @@ field boundary; absent fields are treated as zero. A live delivery with
 nothing to flag MAY therefore omit these fields entirely, which keeps the
 encoding byte-compatible with the minimal protocol.
 
-## Acknowledgement Delegation {#ack-delegation}
+## Acknowledgment Delegation {#ack-delegation}
 
 With `PROP_HOST_AUTO_ACK` enabled, the device acknowledges qualifying inbound
 frames so that senders' retransmission logic is satisfied while the host is
@@ -1539,7 +1539,7 @@ away. The device **MUST** transmit a MAC ack for a received frame if and only
 if all of the following hold:
 
 1. `PROP_HOST_AUTO_ACK` is true and no host is attached.
-2. The frame's packet type requests acknowledgement: `UNAR`, or `BUAR`
+2. The frame's packet type requests acknowledgment: `UNAR`, or `BUAR`
    where the device also holds the frame's channel key.
 3. The frame is addressed to the host identity: its (possibly decrypted)
    destination hint matches `PROP_HOST_KEY`, and its source resolves to
@@ -1564,8 +1564,8 @@ if all of the following hold:
 **Duplicates.** An authenticated frame that replay detection identifies as
 a previously accepted frame—typically a retransmission whose original
 ack was lost—is not queued again, but the device **MAY** retransmit its
-acknowledgement under the core
-[duplicate-acknowledgement window](security.md#duplicate-acknowledgement-window):
+acknowledgment under the core
+[duplicate-acknowledgment window](security.md#duplicate-acknowledgment-window):
 only when the frame authenticates and its counter is no more than 8 behind
 the peer's baseline, and without advancing or otherwise modifying the
 replay baseline. Re-acknowledging a duplicate is independent of queue
@@ -1594,7 +1594,7 @@ failure is documented in (#saved-state). Implementations that persist the
 queue provide durable custody, but hosts and application protocols
 **MUST NOT** rely on it.
 
-The acknowledgement is an ordinary
+The acknowledgment is an ordinary
 [MAC Ack packet](packet-types.md#mac-ack-packet): the `ack MIC` is the
 first 4 bytes of the acknowledged frame's MIC and the 4-byte `ack tag` is
 computed as specified in
@@ -1702,7 +1702,7 @@ Code | Name                | Requires          | Grants
 32   | `CAP_HOST_FILTER`   | —                 | `PROP_HOST_KEY`, `PROP_MAC_PROMISCUOUS`, `PROP_HOST_RX_FILTERS`, and the receive-filtering behavior
 33   | `CAP_HOST_RX_QUEUE` | `CAP_HOST_FILTER` | The inbound queue, its properties, `CMD_QUEUE_DRAIN`, and the buffered-frame metadata
 34   | `CAP_HOST_KEYS`     | `CAP_HOST_FILTER` | `PROP_HOST_CHANNEL_KEYS` and `PROP_HOST_PEER_KEYS`
-35   | `CAP_HOST_AUTO_ACK` | `CAP_HOST_KEYS`, `CAP_HOST_RX_QUEUE` | `PROP_HOST_AUTO_ACK` and acknowledgement delegation
+35   | `CAP_HOST_AUTO_ACK` | `CAP_HOST_KEYS`, `CAP_HOST_RX_QUEUE` | `PROP_HOST_AUTO_ACK` and acknowledgment delegation
 36   | `CAP_SAVE`          | —                 | `CMD_SAVE`, `CMD_RESTORE`, `PROP_SAVED`, and boot-time restoration of saved state
 37   | `CAP_DEV_IDENTITY`  | —                 | The device identity: `PROP_DEV_KEY`, `PROP_DEV_PRIVATE_KEY`, `PROP_DEV_CHANNEL_KEYS`, `PROP_DEV_PEERS`
 38   | `CAP_DEV_NAME`      | —                 | `PROP_DEV_NAME`

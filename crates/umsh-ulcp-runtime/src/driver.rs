@@ -2497,7 +2497,7 @@ where
             Some(Effect::FactoryReset) => {
                 // Hand off to the platform, which erases every
                 // persistent journal and reboots. This never
-                // returns; no acknowledgement is sent because the
+                // returns; no acknowledgment is sent because the
                 // reset drops the link. Any frames the session
                 // already staged were flushed above.
                 env.trace(format_args!("CMD_FACTORY_RESET: wiping all state + reboot"));
@@ -3039,7 +3039,7 @@ where
             }
             Either4::Second(RxFrame { data, info }) => {
                 // While detached this may stage a delegated MAC
-                // acknowledgement (Effect::StartTransmit).
+                // acknowledgment (Effect::StartTransmit).
                 let rx_info = match info.origin {
                     RxOrigin::Air => {
                         RadioRxInfo::measured(info.rssi, info.snr.as_centibels(), info.lqi)

@@ -8,7 +8,7 @@
 //!   hands the oldest waiting one to whichever link receives (the attached
 //!   host if it listens, otherwise the device's own interface) as a
 //!   `CMD_STR_RECV`. The MAC asks [`admits`] before it acknowledges a
-//!   claimed message, so an acknowledgement means the device kept it.
+//!   claimed message, so an acknowledgment means the device kept it.
 //! - **Sending.** The driver hands each staged send to [`SENDS`], and
 //!   [`node_msg_loop`] gives it to the node and reports its outcome back to
 //!   the driver as [`InEvent::NodeMsgResult`].
@@ -298,7 +298,7 @@ pub fn publish_claims(types: impl IntoIterator<Item = u8>) {
     });
 }
 
-/// The MAC's admission predicate: whether an acknowledgement-requesting
+/// The MAC's admission predicate: whether an acknowledgment-requesting
 /// message of `payload_type` may be accepted and acknowledged. Only a
 /// claimed type with no room is refused; everything else is the device's
 /// own business, and its pushback is not this one.
@@ -355,7 +355,7 @@ pub fn tap(packet: &ReceivedPacketRef<'_>) {
         channel,
         sender_auth: packet.sender_authenticated(),
         // The tap sees only what was accepted for this node, so a request
-        // for an acknowledgement was answered.
+        // for an acknowledgment was answered.
         acked: packet.ack_requested(),
         rssi_dbm: packet.rssi(),
         snr_cb: packet.snr().map(|snr| snr.as_centibels()),
@@ -501,7 +501,7 @@ async fn start<CS: CounterStore + 'static>(
 }
 
 /// `PROP_NODE_MSG_MTU`: the longest payload a send of every kind takes
-/// with nothing asked of it but an acknowledgement where one is allowed.
+/// with nothing asked of it but an acknowledgment where one is allowed.
 async fn mtu<CS: CounterStore + 'static>(node: &DeviceNode<CS>) -> u16 {
     // A stranger and a channel the device need not hold: what is measured
     // is the frame, which is the same for every peer and channel.
@@ -545,7 +545,7 @@ pub async fn node_msg_loop<CS: CounterStore + 'static, M: RawMutex + 'static>(
     input: &'static InputChannel<M>,
 ) {
     input.send(InEvent::NodeMsgMtu(mtu(&node).await)).await;
-    // Sends on the air or waiting for their acknowledgement.
+    // Sends on the air or waiting for their acknowledgment.
     let mut in_flight: heapless::Vec<(u16, bool, SendProgressTicket), NODE_MSG_SENDS> =
         heapless::Vec::new();
     // When to have the driver try a full link again.

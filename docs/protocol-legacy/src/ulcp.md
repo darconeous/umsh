@@ -289,7 +289,7 @@ a power cut still configured and still forwarding with nobody attached.
 
 ### [Tethered Host Services](ulcp-host.md)
 
-Receive filtering, inbound queueing, key provisioning, and acknowledgement
+Receive filtering, inbound queueing, key provisioning, and acknowledgment
 delegation: the work a device does on behalf of the host identity it is
 serving.
 
@@ -345,7 +345,7 @@ commands.
 
 UMSH application payloads sent and received by the device's own node on
 a link's behalf. The device encrypts, routes, retries, and collects
-acknowledgements under its device identity, and delivers the payload
+acknowledgments under its device identity, and delivers the payload
 types the link has claimed. It is how a sensor or a small
 microcontroller wired to the device takes part in the mesh without
 running UMSH itself.
@@ -372,7 +372,7 @@ A companion radio is especially useful when the host processor should remain
 asleep most of the time. The architecture supports:
 
 - the device remaining awake while the host sleeps
-- filtering, acknowledgement, and queueing happening on the device side
+- filtering, acknowledgment, and queueing happening on the device side
 - host wakeup only when relevant traffic arrives
 - reconnect and drain of queued frames without losing radio continuity
 
@@ -539,7 +539,7 @@ host keeps authority over long-term identity, while the device contributes:
 
 - always-on physical connectivity
 - receive filtering and low-power wake support
-- inbound buffering and delegated acknowledgement for provisioned peers
+- inbound buffering and delegated acknowledgment for provisioned peers
 - optional narrowly scoped offline assistance
 
 That split preserves UMSH's cryptographic model while still making small,

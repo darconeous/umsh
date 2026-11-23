@@ -587,7 +587,7 @@ mod tests {
     }
 
     #[test]
-    fn interrupted_name_acknowledgement_retains_pending_refresh() {
+    fn interrupted_name_acknowledgment_retains_pending_refresh() {
         let mut old = sample();
         old.observe_device_name([1; 32]);
         old.observe_device_name([2; 32]);

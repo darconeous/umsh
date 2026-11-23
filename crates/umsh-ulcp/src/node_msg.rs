@@ -27,7 +27,7 @@ pub const MAX_FLOOD_HOPS: u8 = MAX_ANNOUNCE_FLOOD_HOPS;
 
 /// `TX_FLAGS` bits.
 pub mod tx_flag {
-    /// Request an acknowledgement. Unicast and blind unicast only.
+    /// Request an acknowledgment. Unicast and blind unicast only.
     pub const ACK: u8 = 0x01;
     /// Carry the device's full public key as the source.
     pub const FULL_SOURCE: u8 = 0x02;
@@ -159,7 +159,7 @@ const fn valid_route(hints: &[u8]) -> bool {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SendMeta<'a> {
     pub kind: Kind,
-    /// Request an acknowledgement.
+    /// Request an acknowledgment.
     pub ack: bool,
     /// Carry the full public key as the source.
     pub full_source: bool,

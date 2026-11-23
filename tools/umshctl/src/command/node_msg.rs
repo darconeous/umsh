@@ -3,7 +3,7 @@
 //!
 //! Unlike `send` and `listen`, which make this tool a node of its own,
 //! these speak as the device: its identity, its peers and channels, its
-//! acknowledgements. Which payload types reach a listener is the device's
+//! acknowledgments. Which payload types reach a listener is the device's
 //! `node-msg-types` property, set with `set`/`get` like any other.
 
 use std::time::Duration;
@@ -53,7 +53,7 @@ pub struct SendArgs {
     #[arg(value_name = "TEXT", required_unless_present = "payload")]
     pub text: Vec<String>,
 
-    /// Send without asking for an acknowledgement.
+    /// Send without asking for an acknowledgment.
     #[arg(long)]
     pub no_ack: bool,
 
@@ -146,7 +146,7 @@ async fn send(app: &mut App, args: SendArgs) -> Result<()> {
             Ok(())
         }
         Err(UlcpError::Status(Status::NO_ACK)) => {
-            bail!("sent, but no acknowledgement arrived")
+            bail!("sent, but no acknowledgment arrived")
         }
         Err(error) => Err(anyhow!(error)),
     }

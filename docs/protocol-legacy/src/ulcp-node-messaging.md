@@ -3,7 +3,7 @@
 Node messaging lets a local link exchange UMSH application payloads
 through the device's own node. The link hands the device a payload and a
 destination, and the device encrypts it, routes it, retries it, and
-collects its acknowledgement under the
+collects its acknowledgment under the
 [device identity](ulcp-device.md#device-identity). In the other
 direction, the device hands the link the decrypted payloads of the types
 the link has claimed.
@@ -156,8 +156,8 @@ The metadata is not optional: a send carries at least `TX_KIND` and
 
 `TX_FLAGS`:
 
-* `TX_FLAG_ACK` Bit 0: request an acknowledgement. Valid only for a
-  unicast or blind unicast: UMSH has no acknowledgement for a broadcast
+* `TX_FLAG_ACK` Bit 0: request an acknowledgment. Valid only for a
+  unicast or blind unicast: UMSH has no acknowledgment for a broadcast
   or multicast frame.
 * `TX_FLAG_FULL_SOURCE` Bit 1: carry the device's full 32-byte public key
   as the source rather than its hint.
@@ -213,14 +213,14 @@ ask:
 
 A send with a non-zero TID is answered with one `CMD_PROP_IS` of
 `PROP_LAST_STATUS` carrying its TID, once the device knows the outcome.
-That is after the acknowledgement arrives or the device stops waiting for
+That is after the acknowledgment arrives or the device stops waiting for
 it, for an acknowledged send, and after the frame is on the air
 otherwise. A send with TID 0 is not answered.
 
 Status                     | Meaning
 ---------------------------|--------
-`STATUS_OK`                | Acknowledged; or, when no acknowledgement was asked for, on the air
-`STATUS_NO_ACK`            | On the air, and no acknowledgement arrived before the device stopped waiting
+`STATUS_OK`                | Acknowledged; or, when no acknowledgment was asked for, on the air
+`STATUS_NO_ACK`            | On the air, and no acknowledgment arrived before the device stopped waiting
 `STATUS_CCA_FAILURE`       | Never on the air: the channel stayed busy
 `STATUS_DUTY_LIMIT`        | Never on the air: it would have exceeded the [duty-cycle limit](ulcp-radio.md#prop-phy-duty-limit)
 `STATUS_BUSY`              | The device has no room for another send in progress; send again later
@@ -293,7 +293,7 @@ link takes them. How many it holds is up to the device.
 
 * **A full buffer never displaces an acknowledged message.** When the
   buffer has no room, the device declines a new message that requests an
-  acknowledgement: it neither acknowledges nor keeps it (see
+  acknowledgment: it neither acknowledges nor keeps it (see
   [Packet Processing](packet-processing.md)). Its sender retransmits,
   and the message is accepted once there is room.
 * An unacknowledged message may be displaced by a newer one, or
@@ -303,7 +303,7 @@ link takes them. How many it holds is up to the device.
   control: not reading, on BLE, USB, or a socket; withholding XON, on a
   [UART](ulcp-core.md#uart-flow-control).
 
-The acknowledgement a sender receives therefore means that the device
+The acknowledgment a sender receives therefore means that the device
 has the message and room for it, not that a link has read it. There is
 no delivery confirmation beyond that.
 

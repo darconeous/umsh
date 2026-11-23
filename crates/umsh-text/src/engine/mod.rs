@@ -654,7 +654,7 @@ struct InFlightFrame {
     /// Archive coordinates, used to coalesce resend requests that arrive
     /// around this frame's own transmission.
     archive: Option<ArchiveKey>,
-    /// Whether an acknowledgement will ever follow. Only a unicast to a
+    /// Whether an acknowledgment will ever follow. Only a unicast to a
     /// peer earns one; a multicast is answered by nobody, so `Sent` is the
     /// last word its transport will ever say about it and the frame has to
     /// retire there or it retires never.

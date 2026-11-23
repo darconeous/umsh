@@ -376,7 +376,7 @@ pub struct Statistics {
     pub forwarded: Option<u32>,
     /// Forwards the forwarding policy declined.
     pub forward_dropped: Option<u32>,
-    /// Forwards dropped once their acknowledgement was heard.
+    /// Forwards dropped once their acknowledgment was heard.
     pub forward_cancelled: Option<u32>,
     pub meshcore_seen: Option<u32>,
     pub meshcore_routed: Option<u32>,

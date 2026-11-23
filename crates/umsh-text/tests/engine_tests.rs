@@ -4213,7 +4213,7 @@ fn resend_request_for_recently_transmitted_frame_is_coalesced() {
 ///
 /// The in-flight guard above is meant to last as long as the frame is
 /// genuinely queued on our own radio. A multicast gets one report and no
-/// acknowledgement ever, so a frame that only retires on `Acked` stays in
+/// acknowledgment ever, so a frame that only retires on `Acked` stays in
 /// flight for good and this node refuses every resend request for it—the
 /// one thing a group member has no other way to recover from.
 #[test]

@@ -140,7 +140,7 @@ create a second codec or put text rules directly into `umsh-mobile-core`.
 - Explicit crash and restart behavior for per-conversation, per-sender sequence
   IDs,
   reassembly, resend service, and duplicate suppression.
-- Honest delivery state: radio acknowledgement is not presented as proof that
+- Honest delivery state: radio acknowledgment is not presented as proof that
   a human received or read a message.
 - Preserve the MAC boundary. Text fragmentation and repair remain application
   protocol behavior; the MAC still carries opaque, single-frame payloads.
@@ -726,7 +726,7 @@ volatile. After restart, losing them results in bounded missed repair rather
 than unsafe wire behavior.
 
 The current companion `CMD_QUEUE_DRAIN` is destructive as frames are streamed;
-it has no per-entry host commit. `RX_FLAG_ACKED` reports a MAC acknowledgement
+it has no per-entry host commit. `RX_FLAG_ACKED` reports a MAC acknowledgment
 already sent by the radio and is unrelated to database persistence. Therefore
 the chat engine promises idempotent ingestion, not lossless crash recovery in
 the middle of a queue drain. Stronger peek/commit custody would require a

@@ -421,7 +421,7 @@ async fn announce_gatt_change(
             match store.acknowledge_device_name(&bond, revision).await {
                 Ok(acknowledged) => acknowledged,
                 Err(()) => {
-                    debug_log(format_args!("gap name-refresh acknowledgement FAILED"));
+                    debug_log(format_args!("gap name-refresh acknowledgment FAILED"));
                     false
                 }
             }

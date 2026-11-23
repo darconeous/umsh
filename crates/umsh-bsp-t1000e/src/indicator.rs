@@ -47,7 +47,7 @@ static LED_BLANKED: AtomicBool = AtomicBool::new(false);
 
 /// Wakes the LED task when [`blank_requested`] changes. Separate from
 /// [`INDICATOR_CHANGED`] because this one is latency-critical: the
-/// sampler waits on the acknowledgement before it starts integrating.
+/// sampler waits on the acknowledgment before it starts integrating.
 pub static LED_BLANK_CHANGED: Signal<ThreadModeRawMutex, ()> = Signal::new();
 
 /// Raised by the LED task once it has actually driven the LED off.

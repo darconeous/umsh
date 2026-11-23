@@ -495,7 +495,7 @@ impl Worker {
         Ok(())
     }
 
-    /// Delegated acknowledgement, where the radio offers it with host keys.
+    /// Delegated acknowledgment, where the radio offers it with host keys.
     async fn auto_ack(&self, radio: &Radio) -> Result<(), MobileRadioError> {
         if radio.sync.host_channel_count.is_none()
             || !radio.sync.supports_delegated_ack

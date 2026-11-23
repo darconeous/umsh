@@ -405,7 +405,7 @@ fn a_forward_abandoned_on_a_busy_channel_stops_suppressing_its_packet() {
 }
 
 #[test]
-fn forwards_leave_room_in_the_queue_for_acknowledgements() {
+fn forwards_leave_room_in_the_queue_for_acknowledgments() {
     let mut mac = make_repeater_mac();
     let mut filler = 0u8;
     while mac

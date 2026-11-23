@@ -637,7 +637,7 @@ local function dissect_mac_command(payload, subtree, tvb, ctx, pinfo)
     -- Verify Frame / Frame Verified (security.md, Counter Resynchronization):
     -- a 4-byte nonce. The Verify Frame names the frame it asks about in an
     -- Ack MIC option; the Frame Verified must ask to be acknowledged, since
-    -- its acknowledgement is the verified frame's too.
+    -- its acknowledgment is the verified frame's too.
     if rest >= 4 then
       subtree:add(f.mac_nonce, tvb(1, 4))
       detail = string.format("nonce 0x%02X%02X%02X%02X",
@@ -654,7 +654,7 @@ local function dissect_mac_command(payload, subtree, tvb, ctx, pinfo)
     end
     if cmd == 13 and ctx and ctx.flag and (ctx.pkt_type == 2 or ctx.pkt_type == 6) then
       ctx.flag(subtree, tvb(0, 1),
-        "Frame Verified must request an acknowledgement")
+        "Frame Verified must request an acknowledgment")
     end
 
   elseif cmd == 6 or cmd == 7 then

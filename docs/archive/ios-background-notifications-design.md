@@ -126,7 +126,7 @@ zero polls instead of four per second, and ping/chat latency improves
   so the buffer is an optimization, not a correctness requirement.
 - Wrap the wake-triggered work (pump → SQLite apply → notification post →
   batch ack) in a `beginBackgroundTask` assertion so a suspension race
-  cannot cut the pipeline between persistence and acknowledgement. The
+  cannot cut the pipeline between persistence and acknowledgment. The
   facade's replay-until-acked contract makes the worst case a duplicate
   apply, which the store already tolerates, but the assertion keeps the
   common case clean.
@@ -201,7 +201,7 @@ Policy and content:
   is claimed only while a BLE connection or pending reconnect exists.
 - Diagnostics (not headline UI) get a line for the suspension caveat:
   timer-driven protocol actions (repair, resends) run when the phone next
-  wakes; peers may see slower acknowledgements from a sleeping phone.
+  wakes; peers may see slower acknowledgments from a sleeping phone.
 - No change to the send model: sending still requires the app foreground
   with a connected radio; there is still no outbox.
 

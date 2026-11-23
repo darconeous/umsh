@@ -4236,12 +4236,12 @@ where
 
     /// Send a node message: the device sends `data` (payload type first)
     /// as its own identity, as `meta` asks, and answers once the outcome
-    /// is known—after the acknowledgement, or after the device stops
+    /// is known—after the acknowledgment, or after the device stops
     /// waiting for one. `timeout` bounds the wait, which for an
     /// acknowledged send spans the device's retries.
     ///
     /// Any status but `STATUS_OK` is [`UlcpError::Status`]:
-    /// `STATUS_NO_ACK` when no acknowledgement came. A send too long for
+    /// `STATUS_NO_ACK` when no acknowledgment came. A send too long for
     /// any device to take is `STATUS_INVALID_ARGUMENT` without being
     /// sent: a frame over the limit would cost the session, not the send.
     pub async fn node_msg_send(

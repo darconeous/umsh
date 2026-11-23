@@ -50,7 +50,7 @@ pub const FIRST_COPY_CACHE_TTL_MS: u64 = 60 * 60 * 1000;
 /// lifetime from its channel timing ([`DuplicateCache::set_ack_ttl_ms`]).
 ///
 /// An ack's entry only has to outlive the copies of one exchange: late
-/// flood copies and a routed ack's single retry. A re-acknowledgement that
+/// flood copies and a routed ack's single retry. A re-acknowledgment that
 /// answers a Route Retry carries the option itself, so it is a different
 /// key and is carried whatever this lifetime is.
 pub const ACK_DUP_CACHE_TTL_MS: u64 = 10 * 1000;

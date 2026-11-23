@@ -2593,7 +2593,7 @@ async fn wired_write_text(tx: &mut WiredTx, parts: &[&[u8]]) -> bool {
 /// A UART bridge cannot tell when a host goes away, so the wired
 /// attachment persists from the first valid frame. A board nobody
 /// serials into stays detached and operates autonomously (queueing and
-/// delegated acknowledgement). Displacement by a BLE attach is observed
+/// delegated acknowledgment). Displacement by a BLE attach is observed
 /// as a foreign `SESSION_GEN` bump, which re-arms the lazy attach, so a
 /// displaced serial host reclaims the session with its next frame.
 #[cfg(not(feature = "wired-usb-serial-jtag"))]

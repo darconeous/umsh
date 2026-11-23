@@ -49,7 +49,7 @@ Unless explicitly configured otherwise, the only payload types allowed for broad
 
 A response to a unicast request is carried the same way the request was: a request that arrived as [blind unicast](packet-types.md#blind-unicast-packet) on a channel is answered as blind unicast on that same channel, and a request that arrived as plain [unicast](packet-types.md#unicast-packet) is answered as plain unicast. This holds for every request and response the protocol defines—MAC commands, node identity, node management—and applies whether the response comes from the MAC layer or from an application above it.
 
-Blind unicast conceals both endpoints from observers who lack the channel key. A response sent off the channel names the parties the request took care to hide, so it would undo that concealment for the exchange as a whole. A [MAC acknowledgement](packet-types.md#mac-ack-packet) is not a response and remains channel-less; it carries no destination hint and so names neither party.
+Blind unicast conceals both endpoints from observers who lack the channel key. A response sent off the channel names the parties the request took care to hide, so it would undo that concealment for the exchange as a whole. A [MAC acknowledgment](packet-types.md#mac-ack-packet) is not a response and remains channel-less; it carries no destination hint and so names neither party.
 
 A node answering a multicast or broadcast request is not bound by this rule, since such a request has no pairwise carriage to mirror. What a node may answer with is left to each command's own definition.
 

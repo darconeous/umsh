@@ -258,7 +258,7 @@ pub mod prop {
     pub const HOST_PEER_KEYS: u32 = 98;
     /// Host receive filter table (`PROP_HOST_RX_FILTERS`).
     pub const HOST_RX_FILTERS: u32 = 99;
-    /// Acknowledgement-delegation enable (`PROP_HOST_AUTO_ACK`).
+    /// Acknowledgment-delegation enable (`PROP_HOST_AUTO_ACK`).
     pub const HOST_AUTO_ACK: u32 = 100;
     /// Frames currently queued (`PROP_HOST_RX_QUEUE_COUNT`).
     pub const HOST_RX_QUEUE_COUNT: u32 = 101;
@@ -329,7 +329,7 @@ pub mod prop {
     /// and traffic addressed to this device are also excluded. Requires
     /// `CAP_STATS` and `CAP_REPEATER`.
     pub const STAT_FORWARD_DROPPED: u32 = 4839;
-    /// Overheard acknowledgements that cut a queued repeat's channel-access
+    /// Overheard acknowledgments that cut a queued repeat's channel-access
     /// budget (`PROP_STAT_FORWARD_CANCELLED`)—`UINT32_LE`. Requires
     /// `CAP_STATS` and `CAP_REPEATER`.
     pub const STAT_FORWARD_CANCELLED: u32 = 4840;

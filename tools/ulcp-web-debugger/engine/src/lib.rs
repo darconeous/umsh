@@ -914,7 +914,7 @@ const PROPERTY_SPECS: &[PropertySpec] = &[
     spec(
         prop::HOST_AUTO_ACK,
         "Host",
-        "Delegate acknowledgements to the device",
+        "Delegate acknowledgments to the device",
         true,
         true,
         "boolean",
