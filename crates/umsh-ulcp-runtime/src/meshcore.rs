@@ -366,10 +366,7 @@ pub async fn forwarder_loop(
                 &frame.data,
                 heard(info.origin, info.rssi, info.snr),
                 Instant::now().as_millis(),
-                &mut Env {
-                    duty,
-                    rng: &mut **rng,
-                },
+                &mut Env { duty, rng },
             );
             let header = frame.data.first().copied().unwrap_or(0);
             count(stats, verdict, header);

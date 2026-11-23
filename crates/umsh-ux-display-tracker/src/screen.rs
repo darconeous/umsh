@@ -1252,11 +1252,7 @@ where
     if overflows && matches!(layout.overflow, Overflow::ScrollBar) {
         room = room.saturating_sub(scroll_bar_width(layout));
     }
-    let columns = if advance == 0 {
-        0
-    } else {
-        (room / advance) as usize
-    };
+    let columns = room.checked_div(advance).unwrap_or(0) as usize;
 
     let mut line: String<LINE> = String::new();
     for (offset, i) in (start..count).take(visible).enumerate() {
