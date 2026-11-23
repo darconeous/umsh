@@ -307,7 +307,6 @@ fn payloads(seeds: &Seeds) {
     }
     seeds.write("umsh_payloads", "location", &[2, 0x12, 0x34, 0x56, 0x78]);
     seeds.write("umsh_payloads", "meet-hello", &[3, 1, 0, 3, 10]);
-    seeds.write("umsh_payloads", "chat", &[4, 0]);
 
     let key = encode_key();
     seeds.write("uri_base58", "key", key.as_bytes());

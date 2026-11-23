@@ -79,8 +79,7 @@ pub enum DuplicateTreatment {
 /// Profile contract selecting which message types and extension options a
 /// deployment recognizes.
 ///
-/// Profiles are static implementations; `umsh-chat-room` implements the room
-/// profiles on top of this contract.
+/// Profiles are static implementations.
 pub trait TextProfile {
     /// Whether a non-control message type is recognized as displayable
     /// content in this profile.
