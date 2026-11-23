@@ -28,7 +28,7 @@
 	release-artifacts release-stage release-publish release-mirror \
 	ios-mobile-core ios-archive ios-upload \
 	android-mobile-core android-debug android-release android-test \
-	android-install android-connected-test android-notification-ask-test android-bridge android-bridge-config \
+	android-install android-avd android-emulator android-connected-test android-notification-ask-test android-bridge android-bridge-config \
 	android-ble-peripheral ble-test-peripheral-check ble-test-vectors \
 	build-simulator-communicator run-simulator-communicator \
 	run-simulator-communicator-demo simulator-communicator-tours \
@@ -716,6 +716,18 @@ ios-upload:
 # pinned as `ndk` in apps/android/gradle/libs.versions.toml (sdkmanager
 # "ndk;<version>"), cargo-ndk, and the `aarch64-linux-android` and
 # `x86_64-linux-android` Rust targets.
+#
+# With no ANDROID_HOME or JAVA_HOME in the environment, Homebrew's locations
+# are used when present.
+
+ANDROID_HOME ?= $(wildcard /opt/homebrew/share/android-commandlinetools)
+JAVA_HOME ?= $(wildcard /opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home)
+ifneq ($(ANDROID_HOME),)
+export ANDROID_HOME
+endif
+ifneq ($(JAVA_HOME),)
+export JAVA_HOME
+endif
 
 GRADLE := apps/android/gradlew -p apps/android
 
@@ -733,6 +745,19 @@ android-release:
 # checks' own tests.
 android-test:
 	$(GRADLE) testDebugUnitTest :lint-rules:test
+
+# The emulators: umsh-api31 (Android 12's small default screen) and
+# umsh-api36 (a Pixel 7), drawn by the Mac's GPU and taking its keyboard.
+# `android-avd` makes any that are missing and sets each up;
+# `android-emulator` starts one with a window (ANDROID_AVD, umsh-api36 by
+# default) and keeps its screen on.
+ANDROID_AVD ?= umsh-api36
+
+android-avd:
+	scripts/android/avd.sh create
+
+android-emulator: android-avd
+	scripts/android/avd.sh start $(ANDROID_AVD)
 
 # Installs the debug build on every connected device or emulator; set
 # ANDROID_SERIAL to pick one.
