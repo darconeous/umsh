@@ -218,7 +218,7 @@ VECTORS = [
           "AA BB CC DD"),       # MIC
     ),
     (
-        # A reply that piggy-backs the acknowledgement as option 8 rather
+        # A reply that piggy-backs the acknowledgment as option 8 rather
         # than sending a separate MAC ack. It should name the frame above.
         "Unicast carrying a piggy-backed Ack MIC option",
         h("D0", SRC_A, "6C 28 FD",

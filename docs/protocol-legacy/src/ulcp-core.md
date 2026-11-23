@@ -815,7 +815,7 @@ closed:
   A whole-table `CMD_PROP_SET` whose value contains any invalid item fails
   without applying any of it.
 * Whole-table replacement is atomic: no observer of device behavior (frame
-  filtering, acknowledgement decisions) sees a mixture of the old and new
+  filtering, acknowledgment decisions) sees a mixture of the old and new
   contents.
 * Operations that include durable writes—`CMD_SAVE`, `CMD_CLEAR`,
   installing or generating the device identity, and setting
@@ -1068,7 +1068,7 @@ State that belongs to the currently configured tethered host identity:
 
 * `PROP_HOST_KEY` itself
 * the host's channel keys and peer keys
-* the receive filter table and acknowledgement-delegation policy
+* the receive filter table and acknowledgment-delegation policy
 * the inbound queue: its configuration and its contents
 
 **The host domain is volatile across a power cycle, and only across a
@@ -1131,7 +1131,7 @@ How attach and detach are detected is defined by the transport binding:
 * **Bare UART**—the transport has no attach event. A device with no way
   to detect host presence MAY treat the host as permanently attached, in
   which case it never enters detached operation and offline assistance
-  ([Inbound Queueing](ulcp-host.md#inbound-queueing), [Acknowledgement Delegation](ulcp-host.md#ack-delegation)) is unavailable on that
+  ([Inbound Queueing](ulcp-host.md#inbound-queueing), [Acknowledgment Delegation](ulcp-host.md#ack-delegation)) is unavailable on that
   transport. Either way, the link has a session from the moment the
   device starts (see [Sessions](#sessions)).
 
@@ -1194,7 +1194,7 @@ A host that starts a new session runs this procedure again once
 
 On detach, the device discards session state, keeps operating with the
 current device- and host-domain state, and begins detached operation:
-accepted frames are queued rather than delivered, and acknowledgement
+accepted frames are queued rather than delivered, and acknowledgment
 delegation (if enabled) becomes active.
 
 ### Sessions {#sessions}
@@ -1239,7 +1239,7 @@ back for long:
 
 * A live `CMD_STR_RECV` the transport cannot take at once **MAY** be
   discarded. It is lost as though on the air, and a sender that asked for
-  an acknowledgement retransmits. The device counts it in
+  an acknowledgment retransmits. The device counts it in
   [`PROP_STAT_HOST_RX_DROPPED`](ulcp-radio.md#prop-stat-host-rx-dropped).
 * Any other frame for the link **MAY** be discarded once the link has
   refused output for 5 seconds, and from then on until it takes output
@@ -1659,7 +1659,7 @@ Id | Name
 
 `STATUS_NO_ACK`
 : A [node message](ulcp-node-messaging.md#str-node-msg) that requested an
-  acknowledgement was sent, and none arrived before the device stopped
+  acknowledgment was sent, and none arrived before the device stopped
   waiting for it. The message may or may not have reached its
   destination.
 

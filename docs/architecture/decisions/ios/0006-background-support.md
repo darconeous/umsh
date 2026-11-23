@@ -7,7 +7,7 @@
 
 Implement foreground BLE attachment first. Do not describe the app or radio as
 always connected. CoreBluetooth restoration, notification delivery, radio-side
-buffering, delegated acknowledgement, and offline assistance are separately
+buffering, delegated acknowledgment, and offline assistance are separately
 capability-gated and may be presented only after physical-device measurement.
 
 Measure foreground, suspended, terminated, rebooted, Bluetooth-disabled, and

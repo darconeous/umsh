@@ -252,7 +252,7 @@ impl HostRelay {
                         self.now_ms(),
                     );
                     // Delivering a frame can make the session transmit—
-                    // an acknowledgement it was asked to send on the
+                    // an acknowledgment it was asked to send on the
                     // host's behalf, say.
                     self.drain_transmissions(&mut device);
                 }

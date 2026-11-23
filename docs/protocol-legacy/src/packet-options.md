@@ -127,22 +127,22 @@ This distinction allows forwarding-related metadata (source routes, traces, stat
 
 **Receiver.**
 - A complete trace, with signal or hints only, is a complete path. It is used for routes and hop counts; a hints-only trace lacks only the per-hop signal, and the receiver still measures the final link's signal itself.
-- A truncated trace reports the most recent hops but is not a complete path. Nothing builds a route from it: [route learning](beacons.md#route-learning), acknowledgement return routes, and source routes built from observed hints all require a complete trace.
+- A truncated trace reports the most recent hops but is not a complete path. Nothing builds a route from it: [route learning](beacons.md#route-learning), acknowledgment return routes, and source routes built from observed hints all require a complete trace.
 - The hop count of a packet with a truncated trace is `FHOPS_ACC + 1` if the packet carries no Source Route option, and unknown if it carries one.
 
 ### Ack MIC (option 8)
 
-This option is a piggy-backed acknowledgement: a packet carrying it acknowledges the packet whose `ack_mic` it names, exactly as a MAC ack for that packet would. A destination that answers an ack-requested packet with a unicast or blind unicast of its own MAY include the option in the answer, whether or not it also sends the standalone MAC ack. The original sender takes whichever of the two arrives first as the acknowledgement; the other then matches no outstanding packet and is discarded.
+This option is a piggy-backed acknowledgment: a packet carrying it acknowledges the packet whose `ack_mic` it names, exactly as a MAC ack for that packet would. A destination that answers an ack-requested packet with a unicast or blind unicast of its own MAY include the option in the answer, whether or not it also sends the standalone MAC ack. The original sender takes whichever of the two arrives first as the acknowledgment; the other then matches no outstanding packet and is discarded.
 
 - Type: 4-byte ack MIC—the first 4 bytes of the acknowledged packet's on-wire MIC (see [Ack Tag Construction](security.md#ack-tag-construction)).
 
-The option carries only the correlation handle, not a keyed ack tag: the packet carrying the option is itself authenticated to the original sender, so its own MIC already proves the acknowledgement is genuine. The `ack_mic` value simply identifies which outstanding request the reply acknowledges. The original sender accepts the option only on a packet authenticated as coming from the destination of the packet it names.
+The option carries only the correlation handle, not a keyed ack tag: the packet carrying the option is itself authenticated to the original sender, so its own MIC already proves the acknowledgment is genuine. The `ack_mic` value simply identifies which outstanding request the reply acknowledges. The original sender accepts the option only on a packet authenticated as coming from the destination of the packet it names.
 
 The option is a courtesy to the original sender. A sender that cannot fit it into a frame omits it.
 
 Because the option sits in the plaintext options block, forwarders read it under the same terms as a standalone MAC ack, including as an [overheard acknowledgment](repeater-operation.md#ack-cancellation).
 
-On a [Verify Frame](mac-commands.md#verify-frame-12) the option names the packet to be verified instead of acknowledging it: the sender holds that packet but has not accepted it, so the original sender MUST NOT treat the option as an acknowledgement (see [Counter Resynchronization](security.md#counter-resynchronization)). Forwarders still treat it as an [overheard acknowledgment](repeater-operation.md#ack-cancellation), since the named packet has reached its destination.
+On a [Verify Frame](mac-commands.md#verify-frame-12) the option names the packet to be verified instead of acknowledging it: the sender holds that packet but has not accepted it, so the original sender MUST NOT treat the option as an acknowledgment (see [Counter Resynchronization](security.md#counter-resynchronization)). Forwarders still treat it as an [overheard acknowledgment](repeater-operation.md#ack-cancellation), since the named packet has reached its destination.
 
 ### Minimum SNR (option 9)
 - Type: signed 1-byte integer, in dB

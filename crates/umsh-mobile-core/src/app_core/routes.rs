@@ -17,7 +17,7 @@ use crate::store::MobileStoredManualRouteRecord;
 const USABLE_ACCURACY_METERS: f64 = 100.0;
 
 /// How far the phone must have gone from where a path was set for one
-/// acknowledgement by flood to make the learned path worth offering.
+/// acknowledgment by flood to make the learned path worth offering.
 const MOVED_METERS: f64 = 200.0;
 
 /// The mean Earth radius, in meters.
@@ -36,7 +36,7 @@ pub struct MobileAppRouteRecord {
     /// How long a held path is held for yet; `None` when nothing is held.
     pub hold_remaining_ms: Option<u64>,
     pub hold_flood_hops: Option<u8>,
-    /// Acknowledgements that came back by flood while a path was held.
+    /// Acknowledgments that came back by flood while a path was held.
     pub fallback_acks: u8,
     /// How long ago the route was last acknowledged.
     pub confirmed_age_ms: Option<u64>,
@@ -203,7 +203,7 @@ pub(super) fn has_moved(
         ) >= MOVED_METERS
 }
 
-/// The offer rule. Two acknowledgements by flood offer the learned path;
+/// The offer rule. Two acknowledgments by flood offer the learned path;
 /// one does once the phone has moved from where the path was set.
 pub(super) fn learned_path_decision(
     record: &MobileStoredManualRouteRecord,

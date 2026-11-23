@@ -58,7 +58,7 @@ Code | Name                | Requires                             | Grants
 32   | `CAP_HOST_FILTER`   | —                                    | `PROP_HOST_KEY`, `PROP_MAC_PROMISCUOUS`, `PROP_HOST_RX_FILTERS`, and the receive-filtering behavior
 33   | `CAP_HOST_RX_QUEUE` | `CAP_HOST_FILTER`                    | The inbound queue, its properties, `CMD_QUEUE_DRAIN`, the buffered-frame metadata, and the mute tables
 34   | `CAP_HOST_KEYS`     | `CAP_HOST_FILTER`                    | `PROP_HOST_CHANNEL_KEYS` and `PROP_HOST_PEER_KEYS`
-35   | `CAP_HOST_AUTO_ACK` | `CAP_HOST_KEYS`, `CAP_HOST_RX_QUEUE` | `PROP_HOST_AUTO_ACK` and acknowledgement delegation
+35   | `CAP_HOST_AUTO_ACK` | `CAP_HOST_KEYS`, `CAP_HOST_RX_QUEUE` | `PROP_HOST_AUTO_ACK` and acknowledgment delegation
 48   | `CAP_MAC_BACKHAUL`  | `CAP_DEV_IDENTITY`                   | `PROP_MAC_BACKHAUL` and the point-to-point link to the device's node
 
 A device advertising none of these is a transparent radio: it delivers
@@ -132,7 +132,7 @@ Id  | Mnemonic                      | Commands                 | Description
 97  | `PROP_HOST_CHANNEL_KEYS`      | Get, Set, Insert, Remove | Host channel keys
 98  | `PROP_HOST_PEER_KEYS`         | Get, Set, Insert, Remove | Host pairwise peer keys
 99  | `PROP_HOST_RX_FILTERS`        | Get, Set, Insert, Remove | Host receive filter table
-100 | `PROP_HOST_AUTO_ACK`          | Get, Set                 | Acknowledgement delegation enable
+100 | `PROP_HOST_AUTO_ACK`          | Get, Set                 | Acknowledgment delegation enable
 101 | `PROP_HOST_RX_QUEUE_COUNT`    | Get                      | Frames currently queued
 102 | `PROP_HOST_RX_QUEUE_CAPACITY` | Get, Set                 | Queue capacity in frames
 103 | `PROP_HOST_RX_QUEUE_DROPPED`  | Get                      | Frames dropped from the queue
@@ -246,7 +246,7 @@ purposes:
   [Blind Unicast Processing](packet-types.md#blind-unicast-processing)) and
   to form the combined
   [blind unicast payload keys](security.md#blind-unicast-payload-keys) used
-  for authentication and acknowledgement.
+  for authentication and acknowledgment.
 
 Channel keys are group-membership credentials, not host private keys, so
 provisioning them is consistent with the
@@ -286,14 +286,14 @@ private key.
 As an exception to the usual `CMD_PROP_INSERT` duplicate rule, inserting an
 entry whose `PEER_PUBLIC_KEY` matches an existing entry replaces that
 entry. Replacement updates only the stored key material: the peer's replay
-baseline (see [Acknowledgement Delegation](ulcp-host.md#ack-delegation)) and any frames already queued from that
+baseline (see [Acknowledgment Delegation](ulcp-host.md#ack-delegation)) and any frames already queued from that
 peer are unaffected, since both are keyed by the peer's identity rather
 than by the key values. An entry is reported as its peer public key
 alone: `K_ENC` and `K_MIC` are never read back.
 
 Provisioned peer keys let the device authenticate inbound unicast and blind
 unicast from those specific peers and acknowledge it on the host's behalf
-(see [Acknowledgement Delegation](ulcp-host.md#ack-delegation)). They grant no capability regarding any other peer,
+(see [Acknowledgment Delegation](ulcp-host.md#ack-delegation)). They grant no capability regarding any other peer,
 and do not allow the device to establish new pairwise relationships.
 
 ### PROP 99: `PROP_HOST_RX_FILTERS` {#prop-host-rx-filters}
@@ -336,9 +336,9 @@ filters derived from `PROP_HOST_KEY` and `PROP_HOST_CHANNEL_KEYS`.
 * Value Type: BOOL
 * Post-Reset Value: 0 (false)
 
-When true, the device sends MAC acknowledgements on behalf of the host
+When true, the device sends MAC acknowledgments on behalf of the host
 identity for qualifying frames received while the host is detached, as
-specified in [Acknowledgement Delegation](ulcp-host.md#ack-delegation). When false, the device never transmits on the
+specified in [Acknowledgment Delegation](ulcp-host.md#ack-delegation). When false, the device never transmits on the
 host identity's behalf.
 
 ### PROP 101: `PROP_HOST_RX_QUEUE_COUNT` {#prop-host-rx-queue-count}
@@ -497,7 +497,7 @@ peer. The device therefore records the leading 4 trailer bytes of each frame
 it transmits on the host's behalf—for a MAC Ack, its `ack_mic`—and
 implicitly accepts any received frame whose trailer opens with a recorded
 value. For a MAC Ack the host sent, this matches the ack being carried
-onward; for any other frame, it matches both the returning acknowledgement
+onward; for any other frame, it matches both the returning acknowledgment
 and the frame being carried onward. The host's forwarding-confirmation
 machinery must overhear every onward copy, acks included, to stop
 retransmitting. These records evict lazily, so multiple echoes of one send—
@@ -512,7 +512,7 @@ detached, a broadcast is queued only when an explicit filter selects it
 (e.g., a `FILTER_PKT_TYPE` entry with value 0), so ambient broadcast
 traffic cannot displace queued unicast frames.
 
-Directed traffic that asks for no acknowledgement follows the same shape.
+Directed traffic that asks for no acknowledgment follows the same shape.
 A `UNIC` or `BUNI` frame accepted only by an implicit filter is delivered
 live but **MUST NOT** be queued; queueing it requires an explicit
 `FILTER_PKT_TYPE` entry selecting that packet type. Its sender is not
@@ -558,7 +558,7 @@ accepted frames are placed in a FIFO inbound queue instead of being
 discarded. Each queue entry records the frame, its receive metadata (RSSI,
 LQI, SNR), the time of reception, whether the device authenticated it, and
 whether the device acknowledged it (see
-[Acknowledgement Delegation](ulcp-host.md#ack-delegation)).
+[Acknowledgment Delegation](ulcp-host.md#ack-delegation)).
 
 When the host is **attached**, accepted frames are delivered live over
 `STR_PHY_RAW` as they always are. Attaching does not flush
@@ -625,12 +625,12 @@ additional queue slot; it is coalesced with the existing entry. A
 frame is the same logical packet (same MIC and frame counter) and
 coalesces with it. Coalescing a duplicate is separate from acknowledging
 it—a coalesced duplicate may still have its ack retransmitted under the
-duplicate-acknowledgement window (see [Acknowledgement Delegation](ulcp-host.md#ack-delegation)). For frames the
+duplicate-acknowledgment window (see [Acknowledgment Delegation](ulcp-host.md#ack-delegation)). For frames the
 device cannot authenticate (no provisioned keys), no protocol-defined
 duplicate detection applies and each received frame occupies its own
 entry.
 
-## Acknowledgement Delegation {#ack-delegation}
+## Acknowledgment Delegation {#ack-delegation}
 
 With `PROP_HOST_AUTO_ACK` enabled, the device acknowledges qualifying inbound
 frames so that senders' retransmission logic is satisfied while the host is
@@ -638,7 +638,7 @@ away. The device **MUST** transmit a MAC ack for a received frame if and only
 if all of the following hold:
 
 1. `PROP_HOST_AUTO_ACK` is true and no host is attached.
-2. The frame's packet type requests acknowledgement: `UNAR`, or `BUAR`
+2. The frame's packet type requests acknowledgment: `UNAR`, or `BUAR`
    where the device also holds the frame's channel key.
 3. The frame is addressed to the host identity: its (possibly decrypted)
    destination hint matches `PROP_HOST_KEY`, and its source resolves to
@@ -669,8 +669,8 @@ Delegated ACKs follow the [return-path guidance](beacons.md#scoping-flood-hops-t
 **Duplicates.** An authenticated frame that replay detection identifies as
 a previously accepted frame—typically a retransmission whose original
 ack was lost—is not queued again, but while the original entry is still
-queued the device **MAY** retransmit its acknowledgement under the core
-[duplicate-acknowledgement window](security.md#duplicate-acknowledgement-window):
+queued the device **MAY** retransmit its acknowledgment under the core
+[duplicate-acknowledgment window](security.md#duplicate-acknowledgment-window):
 only when the frame authenticates and its counter is no more than 8 behind
 the peer's baseline, and without advancing or otherwise modifying the
 replay baseline. Re-acknowledging a duplicate is independent of queue
@@ -700,7 +700,7 @@ failure is documented in [Saved State](ulcp-saved-state.md#saved-state). Impleme
 queue provide durable custody, but hosts and application protocols
 **MUST NOT** rely on it.
 
-The acknowledgement is an ordinary
+The acknowledgment is an ordinary
 [MAC Ack packet](packet-types.md#mac-ack-packet): the `ack MIC` is the
 first 4 bytes of the acknowledged frame's MIC and the 4-byte `ack tag` is
 computed as specified in
@@ -779,7 +779,7 @@ A device stands down when either of the following occurs:
   holds only held entries (see [Inbound Queueing](#inbound-queueing)).
 
 Once it has stood down, the device can authenticate nothing for the host:
-every frame it accepts is unauthenticated, so it earns no acknowledgement
+every frame it accepts is unauthenticated, so it earns no acknowledgment
 and no receipt cue for a single arrival, and it cannot displace a held
 entry.
 

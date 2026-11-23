@@ -9031,7 +9031,7 @@ mod tests {
 
     /// A group message crosses two real sessions over a shared channel key.
     ///
-    /// Multicast has no acknowledgement, so the sender's terminal state is
+    /// Multicast has no acknowledgment, so the sender's terminal state is
     /// `Sent`; the receiver attributes the message to a claimed hint and,
     /// because group sends carry the full source, resolves that hint to a
     /// real address it can name.
@@ -10821,7 +10821,7 @@ mod tests {
         }
 
         // Every fragment reached the air off the original send. Had the
-        // sender stalled waiting for an acknowledgement that a multicast
+        // sender stalled waiting for an acknowledgment that a multicast
         // never produces, the message could only have completed through
         // Bob asking for the rest—so a repair here would mean the
         // transmit path is ack-gated even though the transcript recovered.

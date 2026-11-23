@@ -251,12 +251,12 @@ receive, capture, reconnect, and inspect the companion frame exchange. What is
 working today is the **minimal** companion-radio protocol plus the independently
 persisted BLE pairing PIN and `PROP_DEV_NAME`. It remains a raw radio pipe: the
 host owns the UMSH MAC and must be attached to receive traffic or generate MAC
-acknowledgements.
+acknowledgments.
 
 The normative target for the next development is
 [Full Companion Radio Protocol](protocol-legacy/src/ulcp-full.md). The full
 protocol keeps the host as MAC owner but adds filtering, detached inbound
-queueing, delegated acknowledgements, key provisioning, a device identity, and
+queueing, delegated acknowledgments, key provisioning, a device identity, and
 explicit saved-state snapshots. These features are not implemented merely by
 having a reliable BLE bearer.
 
@@ -365,7 +365,7 @@ tests, and host-replacement rollback tests all pass.
 #### 4. `CAP_HOST_RX_QUEUE`
 
 Add a fixed-capacity circular RAM queue containing the radio frame, receive
-metadata, receive timestamp, and whether delegated acknowledgement succeeded.
+metadata, receive timestamp, and whether delegated acknowledgment succeeded.
 While attached, accepted traffic is delivered live. While detached, accepted
 traffic is queued. Implement the queue count/capacity/dropped properties,
 buffered `RX_FLAGS`/`RX_AGE`, and `CMD_QUEUE_DRAIN`.
@@ -401,7 +401,7 @@ transport and are never returned: gets and mutation notifications use digest
 forms. The session dispatch API therefore needs explicit transport-security
 context rather than inferring safety from BLE-specific globals.
 
-For detached acknowledgement delegation, reuse the core UMSH packet crypto,
+For detached acknowledgment delegation, reuse the core UMSH packet crypto,
 MAC-ACK construction, and standard replay window. Advance a peer baseline only
 after the frame is stored. A duplicate may be re-ACKed only when it authenticates
 and falls within the core eight-counter window, without changing the baseline
@@ -663,7 +663,7 @@ Two structural changes landed alongside the feature:
   `options_range.start`; short-MIC unicast and blind round-trip
   regression tests added.
 
-The auto-ACK implementation follows spec §Acknowledgement Delegation
+The auto-ACK implementation follows spec §Acknowledgment Delegation
 exactly: while detached, an accepted frame is evaluated on a scratch
 copy (the queue always holds original wire bytes)—UNAR authenticates
 with the provisioned pairwise keys; BUAR requires the channel key to
@@ -692,7 +692,7 @@ success (with exact ack-tag verification), wrong keys, corrupted MIC,
 first-contact baselines, ambiguous vs full-key source resolution,
 duplicates inside and outside the re-ack window, attached suppression,
 auto-ack-off and duty-refusal paths, `RX_FLAG_ACKED` in drained
-metadata, and unstorable-frame non-acknowledgement. The full workspace
+metadata, and unstorable-frame non-acknowledgment. The full workspace
 suite passes and both boards build. `CAP_HOST_AUTO_ACK` is advertised—
 the full-protocol capability set is now
 FILTER/RX_QUEUE/KEYS/AUTO_ACK.
@@ -963,7 +963,7 @@ green (`ulcp_hw_validate rf-peer` drives the T-Echo as the
 transmitting peer while the T-1000E operates detached; `phase-e`
 verifies the drain):
 
-* **Delegated acknowledgement on the air**—a sealed,
+* **Delegated acknowledgment on the air**—a sealed,
   ack-requesting unicast from the provisioned peer was queued by the
   detached T-1000E and answered with a MAC ack observed on the T-Echo
   (12 bytes, −20 dBm across the desk).

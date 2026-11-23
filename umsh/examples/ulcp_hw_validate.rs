@@ -371,7 +371,7 @@ async fn recv_frame<L: FrameLink>(
     }
 }
 
-/// Wait for a MAC acknowledgement on the air, skipping unrelated
+/// Wait for a MAC acknowledgment on the air, skipping unrelated
 /// receptions.
 async fn expect_air_ack<L: FrameLink>(
     radio: &mut UlcpDevice<L>,
@@ -509,7 +509,7 @@ async fn rf_peer(
     tokio::time::sleep(Duration::from_millis(400)).await;
     println!("peer warmed up (post-TX RX re-arm exercised)");
 
-    // 1. A relevant, acknowledgement-requesting frame: the detached
+    // 1. A relevant, acknowledgment-requesting frame: the detached
     //    T-1000E must queue it and ack on the host's behalf.
     let relevant = sealed_unicast(base, true, &pairwise(), [0xC4, 0xC4, 0xC4]);
     transmit(&mut radio, &relevant).await?;

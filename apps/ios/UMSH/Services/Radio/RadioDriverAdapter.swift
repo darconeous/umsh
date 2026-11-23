@@ -417,7 +417,7 @@ extension RadioProvisioningSummary {
             capabilityCount: Int(sync.capabilityCount),
             hasHostFiltering: sync.hasHostFiltering,
             supportsOfflineQueue: sync.supportsOfflineQueue,
-            supportsDelegatedAcknowledgements: sync.supportsDelegatedAck,
+            supportsDelegatedAcknowledgments: sync.supportsDelegatedAck,
             supportsDeviceName: sync.supportsDeviceName,
             supportsLoRa: sync.supportsLora,
             supportsDutyCycleLimit: sync.supportsDutyCycleLimit,
@@ -436,7 +436,7 @@ extension RadioProvisioningSummary {
             filterCount: sync.filterCount.map(Int.init),
             hostChannelCount: sync.hostChannelCount.map(Int.init),
             hostPeerCount: sync.hostPeerCount.map(Int.init),
-            autoAcknowledgementEnabled: sync.autoAck,
+            autoAcknowledgmentEnabled: sync.autoAck,
             supportsDeviceIdentity: sync.supportsDeviceIdentity,
             devPeerAddresses: sync.devPeerKeys.map { keys in
                 keys.compactMap {

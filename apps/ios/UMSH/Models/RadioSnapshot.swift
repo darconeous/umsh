@@ -77,7 +77,7 @@ struct RadioSnapshot: Equatable, Sendable {
             capabilityCount: 8,
             hasHostFiltering: true,
             supportsOfflineQueue: true,
-            supportsDelegatedAcknowledgements: false,
+            supportsDelegatedAcknowledgments: false,
             supportsDeviceName: true,
             supportsLoRa: true,
             supportsDutyCycleLimit: true,
@@ -96,7 +96,7 @@ struct RadioSnapshot: Equatable, Sendable {
             filterCount: 2,
             hostChannelCount: 1,
             hostPeerCount: 3,
-            autoAcknowledgementEnabled: false,
+            autoAcknowledgmentEnabled: false,
             supportsDeviceIdentity: true,
             devPeerAddresses: [],
             supportsTime: true,
@@ -462,7 +462,7 @@ struct RadioProvisioningSummary: Equatable, Sendable {
     let capabilityCount: Int
     let hasHostFiltering: Bool
     let supportsOfflineQueue: Bool
-    let supportsDelegatedAcknowledgements: Bool
+    let supportsDelegatedAcknowledgments: Bool
     let supportsDeviceName: Bool
     let supportsLoRa: Bool
     let supportsDutyCycleLimit: Bool
@@ -482,7 +482,7 @@ struct RadioProvisioningSummary: Equatable, Sendable {
     let filterCount: Int?
     var hostChannelCount: Int?
     var hostPeerCount: Int?
-    var autoAcknowledgementEnabled: Bool?
+    var autoAcknowledgmentEnabled: Bool?
     /// Whether the radio has a device identity domain of its own
     /// (`CAP_DEV_IDENTITY`), including a peer list.
     var supportsDeviceIdentity: Bool = false

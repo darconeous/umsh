@@ -9,7 +9,7 @@
 //!
 //! The flagship test executes the increment-9 hardware script
 //! in-process: provision → save → power-cycle → autonomous detached
-//! operation with delegated acknowledgement → reattach → ownership
+//! operation with delegated acknowledgment → reattach → ownership
 //! verification → drain.
 
 #![cfg(feature = "tokio-support")]
@@ -520,7 +520,7 @@ fn desired_provisioning() -> HostProvisioning {
     }
 }
 
-/// A sealed, acknowledgement-requesting unicast frame from the
+/// A sealed, acknowledgment-requesting unicast frame from the
 /// provisioned peer to the host, as it would arrive over the air.
 fn sealed_unicast(counter: u32) -> Vec<u8> {
     let mut buf = [0u8; 96];
@@ -1485,7 +1485,7 @@ async fn a_network_is_stored_chosen_read_back_and_forgotten() {
             .unwrap()
             .credential
             .is_empty(),
-        "the acknowledgement stops at the SSID"
+        "the acknowledgment stops at the SSID"
     );
 
     assert_eq!(

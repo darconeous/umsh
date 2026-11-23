@@ -78,7 +78,7 @@ listens for: the bridge satisfies
 without transmitting anything for the purpose.
 
 Everything the node transmits reaches its host, so everything the node
-transmits crosses: its repeats, its beacons, its acknowledgements, and
+transmits crosses: its repeats, its beacons, its acknowledgments, and
 its own application traffic. That is the node participating in the mesh
 the bridge has joined it to.
 
@@ -428,9 +428,9 @@ narrows the reach of every deployment behind the bridge at once. A clamp
 of 0 stops bridged floods at the egress segment while leaving traffic
 addressed to the participants' own nodes unaffected.
 
-## Acknowledgements Across a Bridge
+## Acknowledgments Across a Bridge
 
-Acknowledgements cross as ordinary traffic. A destination's
+Acknowledgments cross as ordinary traffic. A destination's
 [MAC ack](packet-types.md#mac-ack-packet) is transmitted by its node,
 reaches that node's attached host, crosses the tunnel, and is forwarded
 back toward the originator by the repeaters along the way—two hops for
@@ -438,7 +438,7 @@ the crossing, as for anything else.
 
 The round trip therefore costs four flood hops of the sender's budget:
 two out and two back. A sender whose budget does not cover the round trip
-receives no acknowledgement even though the packet arrived. Where an
+receives no acknowledgment even though the packet arrived. Where an
 [exit clamp](#exit-clamp) is configured, the returning ack is clamped
 too, and
 [route failure recovery](repeater-operation.md#route-failure-recovery)
@@ -455,7 +455,7 @@ trace routable—or be sent along a known source route.
 
 - **Budget for two hops.** Traffic expected to cross a bridge needs a
   flood budget that covers the crossing at both ends, and twice that if
-  an acknowledgement is expected back.
+  an acknowledgment is expected back.
 - **Co-located clients.** Two clients whose radios share a segment cause
   every copied frame to be handed to that segment twice. Their nodes'
   duplicate caches keep it from being transmitted twice, but the tunnel

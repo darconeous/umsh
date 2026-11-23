@@ -221,7 +221,7 @@ No command-specific payload. Like the handshake, this command travels between th
 
 ## No-Op (9)
 
-Asks nothing of the destination. Sent in a packet that requests an acknowledgement, it tests reachability and measures round-trip latency: the MAC ack is the answer, and the packet is retransmitted and its route recovered like any other acknowledgement-requested packet. As a reachability test it gets its [Route Retry](repeater-operation.md#route-failure-recovery) whether or not the sender has heard from the destination recently.
+Asks nothing of the destination. Sent in a packet that requests an acknowledgment, it tests reachability and measures round-trip latency: the MAC ack is the answer, and the packet is retransmitted and its route recovered like any other acknowledgment-requested packet. As a reachability test it gets its [Route Retry](repeater-operation.md#route-failure-recovery) whether or not the sender has heard from the destination recently.
 
 No command-specific payload. A sender MAY follow the command identifier with filler bytes to give the packet the size it wants to test.
 
@@ -289,7 +289,7 @@ Asks the destination to vouch for a packet it sent to the requester whose frame 
 |---|---:|---|
 | Nonce | 4 bytes | Chosen by the requester; the responder echoes it in Frame Verified |
 
-The packet carrying the command MUST include an [Ack MIC option](packet-options.md#ack-mic-option-8) naming the packet to verify, and does not request an acknowledgement. A responder ignores a Verify Frame without the option.
+The packet carrying the command MUST include an [Ack MIC option](packet-options.md#ack-mic-option-8) naming the packet to verify, and does not request an acknowledgment. A responder ignores a Verify Frame without the option.
 
 ## Frame Verified (13)
 
@@ -299,4 +299,4 @@ Answers a Verify Frame naming a packet the responder sent and is still waiting t
 |---|---:|---|
 | Nonce | 4 bytes | Copied from the Verify Frame |
 
-The packet carrying the command MUST request an acknowledgement. Its acknowledgement acknowledges the verified packet as well.
+The packet carrying the command MUST request an acknowledgment. Its acknowledgment acknowledges the verified packet as well.

@@ -1,5 +1,5 @@
 // UmshRadio: node messaging through a UMSH radio. The radio encrypts,
-// routes, retries, and collects acknowledgements under its own identity;
+// routes, retries, and collects acknowledgments under its own identity;
 // the sketch hands it payloads and destinations, and receives the payloads
 // of the types it claims.
 
@@ -107,11 +107,11 @@ private:
 // checked here that the radio checks itself.
 struct UmshSendOptions {
   UmshSendOptions();
-  // What send() uses when given no options: an acknowledgement for a
+  // What send() uses when given no options: an acknowledgment for a
   // destination that can give one, and nothing else.
   static UmshSendOptions defaultsFor(const UmshDest& dest);
 
-  // Ask for an acknowledgement: unicast and blind unicast only.
+  // Ask for an acknowledgment: unicast and blind unicast only.
   bool ack;
   // Carry the radio's whole key as the source, not its hint.
   bool fullSource;

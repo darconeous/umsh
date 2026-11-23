@@ -2,7 +2,7 @@
 
 A sketch wired to a UMSH radio's serial port sends and receives mesh
 messages through the radio's own node. The radio encrypts, routes,
-retries, and collects acknowledgements under its device identity; the
+retries, and collects acknowledgments under its device identity; the
 sketch hands it payloads and destinations, and receives the payloads of
 the types it claims ([ULCP Node Messaging](../../docs/protocol-legacy/src/ulcp-node-messaging.md)).
 
@@ -114,7 +114,7 @@ delivering what arrives meanwhile, and is refused inside a callback.
 
 Destinations are `UmshDest::peer(key)`, `channel(id)`, `blind(id, key)`,
 `broadcast()`, and `replyTo(message)`. A unicast asks for an
-acknowledgement unless `UmshSendOptions` says otherwise; the options carry
+acknowledgment unless `UmshSendOptions` says otherwise; the options carry
 everything else the protocol offers (full source key, signature, flood
 hops, source route, transmit power).
 

@@ -315,7 +315,7 @@ pub struct SessionConfig {
     /// Orientation-qualified display wake; enabled by default when supported.
     pub display_motion_wake: bool,
     /// Whether the device may hold messages for its tethered host: the
-    /// inbound queue, the host's keys, and delegated acknowledgement. When
+    /// inbound queue, the host's keys, and delegated acknowledgment. When
     /// set, `CAP_HOST_RX_QUEUE`, `CAP_HOST_KEYS`, and `CAP_HOST_AUTO_ACK`
     /// are advertised. When unset, the device is a filtering radio only
     /// (`CAP_HOST_FILTER`): the properties behind those three are unknown,
@@ -774,7 +774,7 @@ pub struct NodeMsgRequest {
     /// Quoted back in [`Session::on_node_msg_result`].
     pub id: u16,
     pub kind: umsh_ulcp::node_msg::Kind,
-    /// Request an acknowledgement.
+    /// Request an acknowledgment.
     pub ack: bool,
     /// Carry the full public key as the source.
     pub full_source: bool,
@@ -881,7 +881,7 @@ struct PendingTx {
     nocca: bool,
 }
 
-/// A delegated MAC acknowledgement ready to transmit.
+/// A delegated MAC acknowledgment ready to transmit.
 struct AckPlan {
     /// The acknowledged frame's full S2V output, V. The ack carries no
     /// destination hint—it is correlated by `V[..4]`, and its tag is bound
@@ -1099,7 +1099,7 @@ impl AckPlan {
 }
 
 /// Outcome of evaluating a detached received frame against the
-/// provisioned keys (spec §Inbound Queueing, §Acknowledgement
+/// provisioned keys (spec §Inbound Queueing, §Acknowledgment
 /// Delegation).
 enum SecureRx {
     /// Not authenticated (no keys, ambiguous source, bad MIC, or a
@@ -1107,7 +1107,7 @@ enum SecureRx {
     /// hints only over-accept and the host MAC remains authoritative.
     Plain,
     /// Authenticated and new. `ack` is present when the frame requests
-    /// acknowledgement (never for multicast); `identity` keys later
+    /// acknowledgment (never for multicast); `identity` keys later
     /// duplicate coalescing and deferred ack marking; `cue` says the
     /// frame carries a message the operator reads, in a conversation
     /// the host has not muted; `silent` says it is a test message no one
@@ -1120,7 +1120,7 @@ enum SecureRx {
     },
     /// Authenticated duplicate of a previously accepted frame: it is
     /// coalesced rather than queued again. `ack` is present when the
-    /// idempotent re-acknowledgement window permits retransmitting its
+    /// idempotent re-acknowledgment window permits retransmitting its
     /// ack; `identity` locates the original entry so a confirmed re-ack
     /// can mark it.
     Duplicate {
@@ -2058,7 +2058,7 @@ impl PeerKeyTable {
 
     /// Resolve a received source address to a provisioned peer index:
     /// by full public key when present, otherwise by **unique** 3-byte
-    /// prefix match (spec §Acknowledgement Delegation; an ambiguous
+    /// prefix match (spec §Acknowledgment Delegation; an ambiguous
     /// hint does not resolve).
     fn resolve_source(&self, source: &SourceAddrRef, frame: &[u8]) -> Option<usize> {
         match source {
@@ -2701,7 +2701,7 @@ impl HostDomain {
     ///
     /// What the implicit filters admit is the second. They exist to
     /// recognize traffic the device can take custody of, and custody is
-    /// what an acknowledgement request asks for: a sender that wanted one
+    /// what an acknowledgment request asks for: a sender that wanted one
     /// retries until it arrives, which is the retrying this queue exists
     /// to stop. Traffic nobody asked to have confirmed is opportunistic—
     /// a broadcast addressed to every node at once, an echo or identity
@@ -3974,7 +3974,7 @@ struct Held {
 pub struct Session<A: AesProvider, S: Sha256Provider, const TX: usize = 1> {
     config: SessionConfig,
     /// Protocol crypto (channel-identifier derivation now; packet
-    /// authentication and delegated acknowledgement with
+    /// authentication and delegated acknowledgment with
     /// `CAP_HOST_AUTO_ACK`).
     engine: CryptoEngine<A, S>,
     /// The well-known channels' keys: `EMERGENCY`'s test messages are
@@ -4941,7 +4941,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
 
     /// The host detached at `now_ms`. Session state is discarded; the
     /// device and host domains keep operating detached: accepted frames
-    /// are queued instead of delivered (delegated acknowledgement arrives
+    /// are queued instead of delivered (delegated acknowledgment arrives
     /// with `CAP_HOST_AUTO_ACK`), until the device stands down
     /// [`HOST_LEASE_MS`] from now.
     ///
@@ -5703,7 +5703,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// (promiscuous mode bypasses filtering for live delivery only);
     /// while detached, accepted frames are placed in the inbound queue,
     /// authenticated duplicates coalesce, and a qualifying frame may
-    /// produce a delegated-acknowledgement transmit effect. Ignored
+    /// produce a delegated-acknowledgment transmit effect. Ignored
     /// while the PHY is disabled or the frame exceeds the MTU (an
     /// unstorable frame is never acknowledged).
     pub fn on_radio_rx(
@@ -6106,7 +6106,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             ReplayVerdict::Replay => {
                 // Same logical packet (Route Retry forms included: same
                 // MIC and counter): coalesce, and re-ack only within
-                // the idempotent duplicate-acknowledgement window—and
+                // the idempotent duplicate-acknowledgment window—and
                 // at most once per holdoff, so flood copies of one
                 // transmission share a single ack. The holdoff stands in
                 // for the MAC's forwarding-confirmation window,
@@ -6175,7 +6175,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         }
     }
 
-    /// Transmit a delegated MAC acknowledgement through the ordinary
+    /// Transmit a delegated MAC acknowledgment through the ordinary
     /// serialized radio path, subject to `PROP_HOST_AUTO_ACK`, the
     /// single-transmit radio path, and the duty limiter. Returns the
     /// transmit effect, or `None` when any gate refuses (the frame then
@@ -17361,7 +17361,7 @@ mod tests {
 
         // The implicit host-hint filter matches both forms, and both are
         // delivered live. Only the one whose sender is waiting on an
-        // acknowledgement is worth holding: the other is an echo or
+        // acknowledgment is worth holding: the other is an echo or
         // identity reply answering a question that has timed out by the
         // time a drain runs.
         receive_detached(&mut session, &unicast_to([0xC4, 0xC4, 0xC4]), 0);
@@ -17804,7 +17804,7 @@ mod tests {
         item
     }
 
-    /// Detached session provisioned for delegated acknowledgement:
+    /// Detached session provisioned for delegated acknowledgment:
     /// host key, one peer, auto-ACK on, PHY enabled.
     fn auto_ack_session() -> TestSession {
         let mut session = test_session();
@@ -17860,7 +17860,7 @@ mod tests {
         sealed_blind(counter, channel_key, true)
     }
 
-    /// The same frame with no acknowledgement asked for.
+    /// The same frame with no acknowledgment asked for.
     fn sealed_blind_unicast(counter: u32, channel_key: &[u8; 32]) -> Vec<u8> {
         sealed_blind(counter, channel_key, false)
     }
@@ -21353,7 +21353,7 @@ mod tests {
     }
 
     /// A detached device holding channel and peer keys, with delegated
-    /// acknowledgement on.
+    /// acknowledgment on.
     fn custody_session() -> TestSession {
         let mut session = test_session();
         enable(&mut session);

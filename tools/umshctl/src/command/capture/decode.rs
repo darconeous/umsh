@@ -421,7 +421,7 @@ fn summary_line(packet: &[u8], header: &PacketHeader, color: bool) -> String {
     chips.join("  ")
 }
 
-/// Render the source address: a hint, a full key, or an acknowledgement that
+/// Render the source address: a hint, a full key, or an acknowledgment that
 /// it is sealed.
 fn source_text(packet: &[u8], header: &PacketHeader) -> Option<String> {
     match header.source {

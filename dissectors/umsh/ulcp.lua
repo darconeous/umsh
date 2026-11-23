@@ -326,7 +326,7 @@ f.node_kind = ProtoField.uint8(
   "umsh.ulcp.node_msg.kind", "Kind", base.DEC, NODE_MSG_KINDS)
 f.node_tx_flags = ProtoField.uint8("umsh.ulcp.node_msg.tx_flags", "TX Flags", base.HEX)
 f.node_tx_flag_ack = ProtoField.bool(
-  "umsh.ulcp.node_msg.tx_flags.ack", "Acknowledgement requested", 8, nil, 0x01)
+  "umsh.ulcp.node_msg.tx_flags.ack", "Acknowledgment requested", 8, nil, 0x01)
 f.node_tx_flag_full_source = ProtoField.bool(
   "umsh.ulcp.node_msg.tx_flags.full_source", "Full source", 8, nil, 0x02)
 f.node_tx_flag_signed = ProtoField.bool(

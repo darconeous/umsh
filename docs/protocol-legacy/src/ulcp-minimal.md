@@ -27,7 +27,7 @@ to configure and use a LoRa radio. All other concerns are left out to make it
 easier to implement this initial step. The
 [full protocol](ulcp-full.md) is a strict superset
 of this document, adding receive filtering, inbound queueing, key
-provisioning, and acknowledgement delegation.
+provisioning, and acknowledgment delegation.
 
 In this document, the **device** is the side that owns the transceiver and
 the **host** is the side that attaches to it over the local link (see

@@ -77,7 +77,7 @@ if it is a repeater.
   operation accordingly *before* processing any host command: the RF
   configuration is applied and the PHY is re-enabled if it was enabled
   when saved, so a repeater is forwarding before anything else happens.
-  Host-domain behavior—filtering, queueing, acknowledgement delegation—
+  Host-domain behavior—filtering, queueing, acknowledgment delegation—
   does *not* resume, because there is no host domain until a host provides
   one. If no snapshot exists, all properties take their documented
   post-reset values.
@@ -119,7 +119,7 @@ Two consequences deserve emphasis:
 * **Queue contents and replay baselines are not saved.** Frames queued
   before a power loss are gone afterward, even if they were acknowledged
   on the host's behalf—the sender believes them delivered. Likewise the
-  per-peer frame-counter baselines used by acknowledgement delegation
+  per-peer frame-counter baselines used by acknowledgment delegation
   restart (see [Counter Resynchronization](security.md#counter-resynchronization)).
   These share the host domain's lifetime, which is why re-provisioning
   after a power cycle is a resynchronization point rather than an

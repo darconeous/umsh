@@ -401,7 +401,7 @@ Every UX pattern the other UMSH boards rely on is unavailable:
 - no hold-to-power-off,
 - no press-to-wake from System OFF,
 - no hold-at-boot force-pairing ceremony (the T-1000E / Solar Node gesture),
-- no single-button menu or acknowledgement input.
+- no single-button menu or acknowledgment input.
 
 A UMSH build for this board must therefore be **headless**: configuration and
 control come over USB-CDC (ULCP) or BLE, and any "power off" is either a reboot

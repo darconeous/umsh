@@ -2827,7 +2827,7 @@ mod firmware {
                 match store.acknowledge_device_name(&bond, revision).await {
                     Ok(acknowledged) => acknowledged,
                     Err(()) => {
-                        debug_log(format_args!("gap name-refresh acknowledgement FAILED"));
+                        debug_log(format_args!("gap name-refresh acknowledgment FAILED"));
                         false
                     }
                 }
@@ -4006,7 +4006,7 @@ mod firmware {
                         }
                     }
                     // embassy-nrf's write waits for the previous packet's
-                    // EPDATA acknowledgement before loading the next DMA.
+                    // EPDATA acknowledgment before loading the next DMA.
                     // A final ZLP fences the response's final packet without
                     // modifying dependencies or adding bytes to the ULCP frame.
                     tx.write_packet(&[]).await.is_ok()
@@ -5841,7 +5841,7 @@ mod firmware {
                 Either::Second(()) => {
                     // Hold accepted: acknowledge on LED_A and wait for the
                     // blinks to finish before tearing the board down, or the
-                    // teardown would cut the acknowledgement it just asked
+                    // teardown would cut the acknowledgment it just asked
                     // for. Bounded, so a wedged indicator cannot block
                     // powering off.
                     ATTENTION_LED.signal(LedSequence::PowerOff);
@@ -7705,7 +7705,7 @@ mod firmware {
         }
 
         // Dedicated power button (enclosure "PWR", P1.01) + System OFF
-        // teardown. LED_A (P0.15, white) is the power-off acknowledgement
+        // teardown. LED_A (P0.15, white) is the power-off acknowledgment
         // blinker, claimed early because the force-pairing ceremony also
         // blinks it; the heartbeat keeps LED_B (P0.19). P1.01 is the physical
         // power button (MeshCore's PIN_USER_BTN); P1.07 (enclosure "USR") is

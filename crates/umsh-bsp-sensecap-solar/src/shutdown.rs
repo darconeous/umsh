@@ -3,7 +3,7 @@
 //! Unlike the single-button boards (which overload one button into a full
 //! gesture FSM), this board has a **dedicated power button** (P1.01,
 //! active-low—MeshCore's `PIN_USER_BTN`). The power *policy*—hold-to-off
-//! with a blink acknowledgement—lives in the firmware's power-button task;
+//! with a blink acknowledgment—lives in the firmware's power-button task;
 //! this module only performs the System OFF teardown once
 //! [`SHUTDOWN_SIGNAL`](crate::power::SHUTDOWN_SIGNAL) fires:
 //!

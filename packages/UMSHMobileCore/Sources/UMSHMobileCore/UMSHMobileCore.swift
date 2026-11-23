@@ -11526,7 +11526,7 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
     func setAlert(state: UlcpAlertState) throws  -> UlcpSessionUpdateRecord
 
     /**
-     * Turn the radio's delegated acknowledgement (`PROP_HOST_AUTO_ACK`)
+     * Turn the radio's delegated acknowledgment (`PROP_HOST_AUTO_ACK`)
      * on or off—whether it acks queued unicast on this host's behalf
      * while the host is away, using the peer keys provisioned above.
      *
@@ -12355,7 +12355,7 @@ open func setAlert(state: UlcpAlertState)throws  -> UlcpSessionUpdateRecord  {
 }
 
     /**
-     * Turn the radio's delegated acknowledgement (`PROP_HOST_AUTO_ACK`)
+     * Turn the radio's delegated acknowledgment (`PROP_HOST_AUTO_ACK`)
      * on or off—whether it acks queued unicast on this host's behalf
      * while the host is away, using the peer keys provisioned above.
      *
@@ -15948,7 +15948,7 @@ public struct MobileAppRouteRecord: Equatable, Hashable {
     public var holdRemainingMs: UInt64?
     public var holdFloodHops: UInt8?
     /**
-     * Acknowledgements that came back by flood while a path was held.
+     * Acknowledgments that came back by flood while a path was held.
      */
     public var fallbackAcks: UInt8
     /**
@@ -15976,7 +15976,7 @@ public struct MobileAppRouteRecord: Equatable, Hashable {
          * How long a held path is held for yet; `None` when nothing is held.
          */holdRemainingMs: UInt64?, holdFloodHops: UInt8?,
         /**
-         * Acknowledgements that came back by flood while a path was held.
+         * Acknowledgments that came back by flood while a path was held.
          */fallbackAcks: UInt8,
         /**
          * How long ago the route was last acknowledged.

@@ -1,14 +1,14 @@
 //! Replay detection for secure traffic, as specified in the protocol's
-//! Security chapter (§Replay Detection, §Duplicate Acknowledgement
+//! Security chapter (§Replay Detection, §Duplicate Acknowledgment
 //! Window).
 //!
 //! A [`ReplayWindow`] tracks one sender's frame counters at a final
 //! destination: a monotonic baseline, a small backward bitmap for
 //! out-of-order delivery, and a bounded cache of recently accepted MICs
 //! used both to reject backward-window replays and to recognize
-//! duplicates eligible for an idempotent re-acknowledgement. It is used
+//! duplicates eligible for an idempotent re-acknowledgment. It is used
 //! by the host MAC per peer and per identity, and by the device
-//! per provisioned host peer for detached acknowledgement delegation.
+//! per provisioned host peer for detached acknowledgment delegation.
 //!
 //! Counters compare modulo 2^32, so a sender's counter may wrap.
 

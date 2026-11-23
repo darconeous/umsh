@@ -13098,7 +13098,7 @@ fn service_pending_ack_timeouts_reroutes_failed_source_route_once() {
 }
 
 /// Send a flooded, ack-requested unicast and report how long the MAC will wait
-/// for the acknowledgement.
+/// for the acknowledgment.
 fn forwarded_ack_window_for_flood_hops(flood_hops: u8) -> u64 {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
@@ -13137,7 +13137,7 @@ fn forwarded_ack_window_for_flood_hops(flood_hops: u8) -> u64 {
 }
 
 /// The retry ladder only measures the first hop, which is the only one this
-/// node can watch. The rest of the wait is distance: an acknowledgement from
+/// node can watch. The rest of the wait is distance: an acknowledgment from
 /// four hops away has eight forwarding delays to cross before it arrives, and
 /// charging for them is what stops a delivery that actually worked from being
 /// reported as a timeout.

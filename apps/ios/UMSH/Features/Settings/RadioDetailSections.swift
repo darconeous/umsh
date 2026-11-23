@@ -84,8 +84,8 @@ struct RadioProvisioningSections: View {
                 if let droppedFrames = provisioning.droppedFrames {
                     LabeledContent("Dropped frames", value: "\(droppedFrames)")
                 }
-                if let autoAck = provisioning.autoAcknowledgementEnabled {
-                    LabeledContent("Delegated acknowledgements", value: autoAck ? "Enabled" : "Disabled")
+                if let autoAck = provisioning.autoAcknowledgmentEnabled {
+                    LabeledContent("Delegated acknowledgments", value: autoAck ? "Enabled" : "Disabled")
                 }
             }
         }

@@ -46,7 +46,7 @@ function firmwarePattern() {
 }
 
 /** A SerialLink stand-in that records writes and acknowledges each one.
- *  `silentAfter` is how many acknowledgements to give before going quiet,
+ *  `silentAfter` is how many acknowledgments to give before going quiet,
  *  the way a real bootloader refuses a package it will not take. */
 class FakeLink {
   constructor({ ackFor = (n) => n % 8, replyChunks = null, silentAfter = Infinity } = {}) {
@@ -108,9 +108,9 @@ test("progress is reported per data packet and ends at the image size", async ()
   ]);
 });
 
-test("a broken acknowledgement after the init packet reads as a rejected package", async () => {
+test("a broken acknowledgment after the init packet reads as a rejected package", async () => {
   // The bootloader turns down a package it will not take by dropping out of
-  // the acknowledgement sequence rather than sending an error code.
+  // the acknowledgment sequence rather than sending an error code.
   const link = new FakeLink({ ackFor: (n) => (n === 2 ? 5 : n % 8) });
 
   await assert.rejects(

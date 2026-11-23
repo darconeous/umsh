@@ -2103,7 +2103,7 @@ impl MobileUlcpSession {
         }
     }
 
-    /// Turn the radio's delegated acknowledgement (`PROP_HOST_AUTO_ACK`)
+    /// Turn the radio's delegated acknowledgment (`PROP_HOST_AUTO_ACK`)
     /// on or off—whether it acks queued unicast on this host's behalf
     /// while the host is away, using the peer keys provisioned above.
     ///
@@ -2814,14 +2814,14 @@ impl MobileUlcpSession {
             ExpectedResponse::HostAutoAck => {
                 if response.property_id == prop::LAST_STATUS {
                     operation_error = state.refusal(
-                        "set delegated acknowledgement".to_owned(),
+                        "set delegated acknowledgment".to_owned(),
                         &response,
                         Some(prop::HOST_AUTO_ACK),
                     );
                 } else if response.property_id != prop::HOST_AUTO_ACK
                     || response.command != Cmd::PropIs as u8
                 {
-                    state.note_mismatch("set delegated acknowledgement".to_owned(), &response);
+                    state.note_mismatch("set delegated acknowledgment".to_owned(), &response);
                     state.reread(prop::HOST_AUTO_ACK);
                 } else {
                     state

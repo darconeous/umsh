@@ -24,7 +24,7 @@ A release candidate is complete when a user can:
 4. import, inspect, save, and share public peer identities using canonical
    UMSH addresses and URIs;
 5. discover peers through a bounded, honestly described observation session;
-6. exchange direct text messages with accurate send and acknowledgement state;
+6. exchange direct text messages with accurate send and acknowledgment state;
 7. create, join, share, and converse in multicast channels;
 8. inspect a peer, set a local mnemonic alias, ping it, and manage a PFS
    session;
@@ -389,7 +389,7 @@ receiving requires a live BLE link, and battery cost is higher on both sides.
 Full-protocol radios add filtering and offline assistance as negotiated
 capabilities. When they are present, prefer provisioning the host key and
 channel keys/filters over promiscuous reception, and describe radio buffering
-or delegated acknowledgement only as measured. No feature may silently require
+or delegated acknowledgment only as measured. No feature may silently require
 these capability groups; anything that depends on them must be gated and
 labeled by the advertised capabilities.
 
@@ -438,7 +438,7 @@ them.
 Prototype CoreBluetooth restoration and radio buffering on real devices early.
 Document measured behavior for foreground, suspended, terminated, rebooted,
 and radio-out-of-range states. The product should describe capabilities such as
-radio buffering or delegated acknowledgement individually; it must not expose
+radio buffering or delegated acknowledgment individually; it must not expose
 an unsupported **Always connected** promise. On a minimal-protocol radio there
 is no radio-side buffering at all; disconnected time is honestly offline.
 
@@ -575,7 +575,7 @@ create a contact, transcript bubble, urgent notification, or trusted metadata.
 6. `RadioConnection` sends only transmit-ready companion commands/frames and
    reports local transport and radio results.
 7. Once submitted, the active send may remain in the MAC's bounded scheduling,
-   contention, fragmentation, acknowledgement, and retransmission machinery.
+   contention, fragmentation, acknowledgment, and retransmission machinery.
    These operations are part of the send that started immediately; they are
    not an application outbox or a promise to begin transmitting minutes later.
 8. The logical item advances through Preparing, Sending, Sent over radio,
@@ -588,7 +588,7 @@ create a contact, transcript bubble, urgent notification, or trusted metadata.
    explains when the radio is expected to become eligible; if the radio
    nevertheless returns `STATUS_DUTY_LIMIT`, the attempt becomes Failed with
    that reason and an earliest known retry time.
-9. A direct acknowledgement or room echo correlates to the existing optimistic
+9. A direct acknowledgment or room echo correlates to the existing optimistic
    item rather than creating a duplicate. Awaiting that evidence after Sent
    over radio is not queueing. If the active send ends without the expected
    evidence, including because the radio disconnects, **Delivery unconfirmed**
@@ -710,7 +710,7 @@ must not change the avatar fill or place a badge over the hint characters.
   classification;
 - Message Requests for unknown authenticated senders;
 - direct transcript, drafts, immediate send with manual retry, fragmentation,
-  reply/reaction/edit, and honest acknowledgement state;
+  reply/reaction/edit, and honest acknowledgment state;
 - Peer Detail, QR/share, ping, and PFS lifecycle; and
 - system-managed companion-radio peers, protected from ordinary removal while
   their radio remains saved; and
@@ -798,7 +798,7 @@ Deliver one complete path before broadening the UI:
 
 ```text
 scan peer → preview identity → save/message → transcript → compose →
-prepare in Rust → send through radio → receive acknowledgement →
+prepare in Rust → send through radio → receive acknowledgment →
 Delivered to node → inspect Peer Detail
 ```
 
@@ -895,7 +895,7 @@ external power, poor BLE conditions, and LoRa loss/duplication/reordering.
 
 For each release, test against Rust/firmware versions at the supported minimum,
 current, and capability-mismatch boundaries. Capture evidence for direct
-acknowledgements, channel transmission without receipts, room echoes, replay
+acknowledgments, channel transmission without receipts, room echoes, replay
 rejection, PFS reboot termination, radio takeover, and inbound queue recovery.
 
 ## Design and review cadence

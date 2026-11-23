@@ -300,7 +300,7 @@ export class NrfDfu {
     const expected = (this.#lastAck + 1) % 8;
     if (this.#lastAck !== -1 && ack !== expected) {
       // The bootloader answers a package it will not accept by breaking the
-      // acknowledgement sequence rather than by reporting an error code.
+      // acknowledgment sequence rather than by reporting an error code.
       throw new DfuRejectedError(
         what === "init"
           ? "the radio refused this firmware—it looks like it was built for a different board. Nothing was written."

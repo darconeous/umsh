@@ -41,7 +41,7 @@ When the sender knows a path to the destination, it can include a **source-route
 
 Source routes are learned from the **Trace option**: when a packet carries one, each forwarding repeater prepends a record of itself, on routed hops as well as flooded ones. The recipient can cache the router hints of a complete trace as a source route for future replies. This means path discovery is not a separate operation—it falls out of normal packet exchange.
 
-Knowing the path forward is not the same as the destination knowing the path back. A source-routed packet arrives with its hints consumed, so nothing on it describes the return direction, and a destination with no cached route composes a reply that no repeater may carry. A sender therefore includes a Trace option whenever the destination may not hold a working path back; the routed hops record themselves, and the reply or acknowledgement has a path home. See [When to Include a Trace](beacons.md#when-to-include-a-trace).
+Knowing the path forward is not the same as the destination knowing the path back. A source-routed packet arrives with its hints consumed, so nothing on it describes the return direction, and a destination with no cached route composes a reply that no repeater may carry. A sender therefore includes a Trace option whenever the destination may not hold a working path back; the routed hops record themselves, and the reply or acknowledgment has a path home. See [When to Include a Trace](beacons.md#when-to-include-a-trace).
 
 See [Packet Options § Source Route](packet-options.md#source-route-option-3), [Packet Options § Trace](packet-options.md#trace-option-7), and [Beacons & Path Discovery § Route Learning](beacons.md#route-learning).
 

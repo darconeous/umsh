@@ -1713,7 +1713,7 @@ check("an ack-requested frame verified is not flagged", #fv.violations, 0)
 local fv_unacked = dissect_payload("02 0D 0A0B0C0D", 2)
 check("a frame verified that asks for no ack is flagged",
       fv_unacked.violations[1] and
-        fv_unacked.violations[1]:find("must request an acknowledgement", 1, true) ~= nil,
+        fv_unacked.violations[1]:find("must request an acknowledgment", 1, true) ~= nil,
       true)
 
 local vf_multicast = dissect_payload("02 0C 0A0B0C0D", 4, "11223344")

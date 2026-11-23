@@ -101,7 +101,7 @@ pub(crate) const MAX_COUNTER_HOLDS: u8 = 30;
 /// How many of a `tx`-slot transmit queue's slots forwards may occupy.
 ///
 /// A quarter is kept back, so a repeater busy with other people's traffic
-/// keeps room for its acknowledgements, its retransmissions, and its own
+/// keeps room for its acknowledgments, its retransmissions, and its own
 /// sends. The reserve scales with the queue: a fixed count sized for a deep
 /// queue would leave a shallow one almost nothing to forward with.
 pub(crate) const fn forward_slots(tx: usize) -> usize {
@@ -1314,7 +1314,7 @@ pub struct MacCounters {
     /// Receptions this repeater would have forwarded, refused because
     /// forwards already held their share of the transmit queue.
     pub forward_queue_full: u32,
-    /// Immediate acknowledgements that found no room in the transmit queue.
+    /// Immediate acknowledgments that found no room in the transmit queue.
     pub ack_enqueue_failed: u32,
     /// Tracked sends whose frame left the queue without ever completing a
     /// transmission, retired as abandoned instead of holding their slot
@@ -3599,7 +3599,7 @@ impl<
     /// Forwards withdrawn because enough other repeaters were heard
     /// carrying the packet keep their key: the packet got through, and
     /// later copies of it are not worth the airtime. An overheard
-    /// acknowledgement withdraws nothing: it only shortens the forward's
+    /// acknowledgment withdraws nothing: it only shortens the forward's
     /// channel-access budget, and a forward it gives up releases its key
     /// here like any other.
     ///
@@ -6173,7 +6173,7 @@ impl<
 
     /// Track a non-ACK send that travels through repeaters.
     ///
-    /// Such a send has no acknowledgement coming, but it is not therefore
+    /// Such a send has no acknowledgment coming, but it is not therefore
     /// unverifiable: hearing the next hop carry the frame onward says it was
     /// received, and hearing nothing says the one transmission may have been
     /// the only chance it got. The receipt is the coordinator's own—the
@@ -6707,7 +6707,7 @@ impl<
         AckOccasion::LostReply
     }
 
-    /// Record acknowledgement only after a frame was actually queued.
+    /// Record acknowledgment only after a frame was actually queued.
     ///
     /// An [`AckOccasion::Repeat`] keeps the route's slack whatever its
     /// evidence says: no ack has reached the sender yet. An
@@ -8617,7 +8617,7 @@ impl<
         };
 
         // Forwards never take the whole queue: the rest is kept for this
-        // node's acknowledgements, retransmissions and own sends, which a
+        // node's acknowledgments, retransmissions and own sends, which a
         // burst of other people's traffic would otherwise crowd out.
         if self
             .tx_queue
@@ -9838,7 +9838,7 @@ impl<
     ///
     /// A MAC ack's entry lives for a confirmation timeout and one frame
     /// time: long enough to absorb a routed ack's single retry and the late
-    /// flood copies of one exchange. A re-acknowledgement answering a Route
+    /// flood copies of one exchange. A re-acknowledgment answering a Route
     /// Retry carries the option, so it is a different identity and is
     /// carried however soon it follows.
     fn insert_forwarding_identity(&mut self, key: DupCacheKey, now_ms: u64) {
