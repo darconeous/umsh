@@ -214,6 +214,11 @@ pub mod keys {
     pub const CHANNEL_LEAVE: FocusKey = FocusKey(0x2900_0004);
     pub const LEAVE_CONFIRM: FocusKey = FocusKey(0x2900_0005);
     pub const LEAVE_CANCEL: FocusKey = FocusKey(0x2900_0006);
+    /// Clear messages, on a peer's, member's, or channel's screen, and its
+    /// confirmation.
+    pub const CLEAR_MESSAGES: FocusKey = FocusKey(0x3100_0000);
+    pub const CLEAR_CONFIRM: FocusKey = FocusKey(0x3100_0001);
+    pub const CLEAR_CANCEL: FocusKey = FocusKey(0x3100_0002);
     /// The Device list's categories.
     pub const IDENTITY: FocusKey = FocusKey(DEVICE);
     pub const CHANNELS: FocusKey = FocusKey(DEVICE | 1);
@@ -647,6 +652,15 @@ impl Unsent {
     }
 }
 
+/// What a peer's, member's, or channel's screen is asking to confirm.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ask {
+    /// Forgetting the peer, or leaving the channel.
+    Remove,
+    /// Clearing the messages of its chat.
+    Clear,
+}
+
 /// Where the member screen was opened from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MemberFrom {
@@ -783,6 +797,8 @@ pub enum Screen {
         member: Member,
         /// Their identity has been asked for.
         requested: bool,
+        /// Clear messages is asking to be confirmed.
+        confirm: Option<Ask>,
         focus: FocusState,
     },
     /// A saved peer.
@@ -791,8 +807,8 @@ pub enum Screen {
         detail: PeerDetail,
         /// What they are called here, edited in place.
         alias: JoinName,
-        /// Forget is asking to be confirmed.
-        confirm: bool,
+        /// Forget, or Clear messages, asking to be confirmed.
+        confirm: Option<Ask>,
         /// Their identity has been asked for.
         requested: bool,
         focus: FocusState,
@@ -836,8 +852,8 @@ pub enum Screen {
         chat: ChatId,
         /// What it is called here, edited in place.
         name: JoinName,
-        /// Leave is asking to be confirmed.
-        confirm: bool,
+        /// Leave, or Clear messages, asking to be confirmed.
+        confirm: Option<Ask>,
         focus: FocusState,
     },
     /// One of the screens under Device.
@@ -1233,6 +1249,27 @@ impl Screen {
         }
     }
 
+    /// The row that removes what a peer's or channel's screen shows:
+    /// Forget, or Leave.
+    fn removal_key(&self) -> Option<FocusKey> {
+        match self {
+            Self::Peer { .. } => Some(keys::PEER_FORGET),
+            Self::Channel { .. } => Some(keys::CHANNEL_LEAVE),
+            _ => None,
+        }
+    }
+
+    /// What a peer's, member's, or channel's screen is asking to confirm,
+    /// and its focus.
+    fn ask_mut(&mut self) -> Option<(&mut Option<Ask>, &mut FocusState)> {
+        match self {
+            Self::Peer { confirm, focus, .. }
+            | Self::Member { confirm, focus, .. }
+            | Self::Channel { confirm, focus, .. } => Some((confirm, focus)),
+            _ => None,
+        }
+    }
+
     #[must_use]
     pub fn focus(&self) -> &FocusState {
         match self {
@@ -1611,6 +1648,7 @@ impl State {
             from: MemberFrom::Known,
             member,
             requested: false,
+            confirm: None,
             focus: FocusState::requesting(keys::MESSAGE_MEMBER),
         });
     }
@@ -1921,7 +1959,7 @@ impl State {
             peer,
             detail,
             alias,
-            confirm: false,
+            confirm: None,
             requested: false,
             focus: FocusState::requesting(keys::PEER_MESSAGE),
         });
@@ -2426,17 +2464,94 @@ impl State {
 
     /// Asks to confirm forgetting the saved peer shown, Cancel focused.
     pub fn ask_forget(&mut self) {
-        if let Some(Screen::Peer { confirm, focus, .. }) = self.screens.last_mut() {
-            *confirm = true;
-            focus.request(keys::FORGET_CANCEL);
+        self.ask(Ask::Remove, keys::FORGET_CANCEL);
+    }
+
+    /// Asks the peer's, member's, or channel's screen shown to confirm
+    /// `asked`, with `key` focused.
+    fn ask(&mut self, asked: Ask, key: FocusKey) {
+        if let Some((confirm, focus)) = self.screens.last_mut().and_then(Screen::ask_mut) {
+            *confirm = Some(asked);
+            focus.request(key);
         }
     }
 
-    /// Keeps the saved peer shown after all.
-    pub fn cancel_forget(&mut self) {
-        if let Some(Screen::Peer { confirm, focus, .. }) = self.screens.last_mut() {
-            *confirm = false;
-            focus.request(keys::PEER_FORGET);
+    /// Keeps what the peer's, member's, or channel's screen shown was
+    /// asking to confirm, back on the row that asked.
+    pub fn cancel_ask(&mut self) {
+        let Some(screen) = self.screens.last_mut() else {
+            return;
+        };
+        let remove = screen.removal_key();
+        if let Some((confirm, focus)) = screen.ask_mut() {
+            let key = match confirm.take() {
+                Some(Ask::Clear) => keys::CLEAR_MESSAGES,
+                Some(Ask::Remove) => match remove {
+                    Some(key) => key,
+                    None => return,
+                },
+                None => return,
+            };
+            focus.request(key);
+        }
+    }
+
+    /// The chat whose messages the peer's, member's, or channel's screen
+    /// shown would clear: the channel's own, or the direct chat with the
+    /// peer. A member shown from a channel message clears nothing there.
+    #[must_use]
+    pub fn shown_chat(&self) -> Option<ChatId> {
+        match self.screens.last()? {
+            Screen::Channel { chat, .. } => Some(*chat),
+            Screen::Peer { detail, .. } => self.node.find_direct_chat(&detail.address),
+            Screen::Member {
+                from: MemberFrom::Chat(chat),
+                ..
+            } => Some(*chat),
+            Screen::Member {
+                from: MemberFrom::Known,
+                member,
+                ..
+            } => self.node.find_direct_chat(member.address.as_deref()?),
+            _ => None,
+        }
+    }
+
+    /// How many messages there are to clear on the screen shown.
+    #[must_use]
+    pub fn shown_messages(&self) -> usize {
+        self.shown_chat()
+            .map_or(0, |chat| self.node.message_count(chat))
+    }
+
+    /// Asks to confirm clearing the messages of the chat shown, Cancel
+    /// focused.
+    pub fn ask_clear_messages(&mut self) {
+        self.ask(Ask::Clear, keys::CLEAR_CANCEL);
+    }
+
+    /// Clears the messages of the chat shown, confirmed. Its row goes, so
+    /// focus moves to its neighbor: the removal below it, or on a member's
+    /// screen, where it is last, the row above it.
+    pub fn clear_messages(&mut self) {
+        let chat = self.shown_chat();
+        let Some(screen) = self.screens.last_mut() else {
+            return;
+        };
+        let next = match &*screen {
+            Screen::Member { member, .. } if member.forwards => keys::MEMBER_NEIGHBORS,
+            Screen::Member { member, .. } if !member.saved => keys::SAVE_PEER,
+            Screen::Member { .. } => keys::MESSAGE_MEMBER,
+            other => other.removal_key().unwrap_or(keys::CLEAR_MESSAGES),
+        };
+        if let Some((confirm, focus)) = screen.ask_mut() {
+            *confirm = None;
+            focus.request(next);
+        }
+        if let Some(chat) = chat {
+            self.node.clear_chat(chat);
+            self.forget_shown(chat);
+            self.refresh_chat(chat);
         }
     }
 
@@ -3360,6 +3475,7 @@ impl State {
                 from: MemberFrom::Chat(chat),
                 member,
                 requested: false,
+                confirm: None,
                 focus: FocusState::requesting(focus),
             });
         }
@@ -3417,7 +3533,7 @@ impl State {
         _ = self.screens.push(Screen::Channel {
             chat,
             name,
-            confirm: false,
+            confirm: None,
             focus: FocusState::requesting(keys::CHANNEL_MESSAGE),
         });
     }
@@ -3504,18 +3620,7 @@ impl State {
 
     /// Asks to confirm leaving the channel shown, Cancel focused.
     pub fn ask_leave(&mut self) {
-        if let Some(Screen::Channel { confirm, focus, .. }) = self.screens.last_mut() {
-            *confirm = true;
-            focus.request(keys::LEAVE_CANCEL);
-        }
-    }
-
-    /// Stays in the channel shown after all.
-    pub fn cancel_leave(&mut self) {
-        if let Some(Screen::Channel { confirm, focus, .. }) = self.screens.last_mut() {
-            *confirm = false;
-            focus.request(keys::CHANNEL_LEAVE);
-        }
+        self.ask(Ask::Remove, keys::LEAVE_CANCEL);
     }
 
     /// Leaves the channel shown, confirmed. Its screens go with its chat.
@@ -4562,6 +4667,7 @@ impl State {
             from: MemberFrom::Message(message),
             member,
             requested: false,
+            confirm: None,
             focus: FocusState::requesting(focus),
         });
     }

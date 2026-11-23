@@ -2074,6 +2074,9 @@ pub trait Node {
     /// named `name` and drawn as `avatar`. `None` when there is no room for it.
     fn direct_chat(&self, address: &str, name: &str, avatar: &AvatarStyle) -> Option<ChatSummary>;
 
+    /// The direct chat with the peer at `address`, if there is one.
+    fn find_direct_chat(&self, address: &str) -> Option<ChatId>;
+
     /// What `text`, typed as an address or a peer invitation, names so far.
     fn inspect_peer(&self, text: &str) -> PeerEntry;
 
@@ -2222,6 +2225,13 @@ pub trait Node {
     /// saved, and their next message starts a new chat. The chat goes as
     /// [`NodeEvent::ChatRemoved`].
     fn delete_chat(&self, chat: ChatId);
+
+    /// Removes the messages in `chat`, direct or channel, keeping the chat
+    /// and its draft. The change comes as [`NodeEvent::ChatChanged`].
+    fn clear_chat(&self, chat: ChatId);
+
+    /// How many messages `chat` holds.
+    fn message_count(&self, chat: ChatId) -> usize;
 
     /// Calls `chat` `name` here, or by its peer's or channel's own name
     /// when `None`. The change comes as [`NodeEvent::ChatChanged`].
@@ -3055,6 +3065,34 @@ impl State {
         }
     }
 
+    /// Lets go of what was shown of `chat`'s messages, which the node no
+    /// longer has: what arrived there, its banner, and what its
+    /// conversation had open over one.
+    pub(crate) fn forget_shown(&mut self, chat: ChatId) {
+        self.arrived.retain(|a| a.chat != chat);
+        if self
+            .banner
+            .is_some_and(|b| b.notice == Notice::Message(chat))
+        {
+            self.banner = None;
+        }
+        for screen in &mut self.screens {
+            if let Screen::Conversation {
+                chat: shown,
+                actions,
+                reply,
+                unsent,
+                ..
+            } = screen
+                && *shown == chat
+            {
+                *actions = None;
+                *reply = None;
+                *unsent = None;
+            }
+        }
+    }
+
     /// Lets go of `chat`, which the node no longer has: its row, what was
     /// shown of it, and its conversation, which returns to the list.
     fn remove_chat(&mut self, chat: ChatId) {
@@ -3068,7 +3106,7 @@ impl State {
             .filter(|c| matches!(c.kind, ChatKind::Channel { .. }))
             .position(|c| c.id == chat);
         self.chats.remove(index);
-        self.arrived.retain(|a| a.chat != chat);
+        self.forget_shown(chat);
         // Its own screens go, back to the one they were opened from.
         if let Some(at) = self.screens.iter().position(|s| s.about(chat)) {
             self.screens.truncate(at.max(1));
@@ -3088,12 +3126,6 @@ impl State {
                     .map_or(keys::ADD_CHANNEL, |&c| keys::chat(c));
                 focus.request(next);
             }
-        }
-        if self
-            .banner
-            .is_some_and(|b| b.notice == Notice::Message(chat))
-        {
-            self.banner = None;
         }
         if self.conversation.as_ref().is_some_and(|c| c.chat == chat) {
             self.leave_chats();

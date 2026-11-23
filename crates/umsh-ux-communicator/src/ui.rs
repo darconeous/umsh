@@ -170,10 +170,13 @@ fn screens(state: &State) -> impl View<Rgb565, State> + use<> {
                 from,
                 member,
                 requested,
+                confirm,
                 ..
             } => member::view(m,
                 member,
                 *requested,
+                state.shown_messages(),
+                *confirm,
                 match from {
                     MemberFrom::Message(_) => Some(
                         state
@@ -220,7 +223,10 @@ fn peer_or_channel(state: &State) -> impl View<Rgb565, State> + use<> {
             ..
         } => state
             .peer(*peer)
-            .map(|summary| peer::view(m, &summary, detail, alias, *confirm, *requested)),
+            .map(|summary| {
+                let messages = state.shown_messages();
+                peer::view(m, &summary, detail, alias, messages, *confirm, *requested)
+            }),
         Screen::ShareContact { peer, .. } => state
             .peer(*peer)
             .map(|summary| share_contact::view(state, &summary.name)),
@@ -257,7 +263,8 @@ fn channel_screen(state: &State) -> Option<impl View<Rgb565, State> + use<>> {
             }
         )
         .then(|| state.test_message_alerts());
-        channel::view(state.metrics(), summary, name, tests, *confirm)
+        let messages = state.node.message_count(*chat);
+        channel::view(state.metrics(), summary, name, tests, messages, *confirm)
     })
 }
 

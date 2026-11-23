@@ -320,6 +320,9 @@ pub enum ChatChange<'a> {
     /// Keep, replace, or clear the draft. A draft longer than
     /// [`BODY_MAX`] is cut to fit.
     Draft(Option<&'a str>),
+    /// Remove the chat's messages. The chat, its draft, and its
+    /// checkpoint stay.
+    Clear,
     /// Remove the chat and its messages. Its checkpoint stays.
     Delete,
 }

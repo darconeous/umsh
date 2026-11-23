@@ -105,6 +105,10 @@ channel messages included, and nothing the peer advertises replaces it.
 While an alias hides a different name, **Advertised name** shows that one.
 Emptied, the alias goes, and the peer's own name is back.
 
+**Clear messages**, on a peer's page, saved or not, while their chat holds
+any, empties that chat on this device, once confirmed. The chat and its draft
+stay.
+
 | | |
 |---|---|
 | ![Contact in a chat](../hardware/mockups/tlora-pager-native/43-contact-in-a-chat.png) | ![Contact opened](../hardware/mockups/tlora-pager-native/44-contact-opened.png) |
@@ -289,6 +293,7 @@ chat's opens **Show peer**):
 - **Test Messages**, on `EMERGENCY` alone, decides whether its test messages
   (those starting `TEST:`) alert at all. Off, they wake nothing, sound
   nothing, and count as read.
+- **Clear messages**, confirmed, empties its chat on this device.
 - **Leave**, last and confirmed, lets go of its key and its chat. Rejoining a
   private channel takes a new invitation.
 

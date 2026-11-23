@@ -11,7 +11,7 @@ use heapless::String;
 use super::conversation::header;
 use crate::board::Metrics;
 use crate::model::{LEVELS, State};
-use crate::nav::keys;
+use crate::nav::{Ask, keys};
 use crate::{font, icon, theme};
 
 const INSET: u32 = 12;
@@ -487,6 +487,65 @@ pub(super) fn choice(
         )
     })
     .focus_key(key)
+}
+
+/// How a peer's or channel's screen removes what it shows: its label, the
+/// keys of its confirmation's choices, and what it does.
+#[derive(Clone, Copy)]
+pub(super) struct Removal {
+    pub label: &'static str,
+    pub confirm: FocusKey,
+    pub cancel: FocusKey,
+    pub act: fn(&mut State),
+}
+
+/// The confirmation a peer's, member's, or channel's screen asks for, as
+/// wide as `width`: `removal`, of what is called `name`, where the screen
+/// has one, or clearing `messages`; then Cancel, which is focused.
+// Kept out of line, as `row` is, against the Xtensa back end's failure.
+#[inline(never)]
+pub(super) fn ask_card(
+    m: &'static Metrics,
+    asked: Ask,
+    removal: Option<Removal>,
+    name: &str,
+    messages: usize,
+    width: u32,
+) -> impl View<Rgb565, State> + use<> {
+    let mut text: String<48> = String::new();
+    let (key, cancel, act) = match (asked, removal) {
+        (Ask::Remove, Some(removal)) => {
+            _ = core::fmt::write(&mut text, format_args!("{} {name}", removal.label));
+            (removal.confirm, removal.cancel, removal.act)
+        }
+        (Ask::Clear, _) | (Ask::Remove, None) => {
+            let noun = if messages == 1 { "message" } else { "messages" };
+            _ = core::fmt::write(&mut text, format_args!("Clear {messages} {noun}"));
+            (
+                keys::CLEAR_CONFIRM,
+                keys::CLEAR_CANCEL,
+                State::clear_messages as fn(&mut State),
+            )
+        }
+    };
+    card(
+        m,
+        VStack::new((
+            choice(m, text, key, act, theme::RED, None),
+            choice(
+                m,
+                String::try_from("Cancel").unwrap_or_default(),
+                cancel,
+                State::cancel_ask,
+                theme::TEXT,
+                None,
+            ),
+        ))
+        .with_spacing(0),
+        width,
+        HorizontalAlignment::Center,
+        State::cancel_ask,
+    )
 }
 
 /// A card's choice, as [`choice`] draws it.

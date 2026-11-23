@@ -12,10 +12,10 @@ use heapless::String;
 
 use super::join::edited_name;
 use super::member::detail_head;
-use super::setting::{End, card, choice, readout, row};
+use super::setting::{End, Removal, ask_card, readout, row};
 use crate::board::Metrics;
 use crate::model::{PeerDetail, PeerSummary, State, hops_text};
-use crate::nav::{JoinName, keys};
+use crate::nav::{Ask, JoinName, keys};
 use crate::{font, theme};
 
 const ROW: u32 = 34;
@@ -30,7 +30,8 @@ pub fn view(
     summary: &PeerSummary,
     detail: &PeerDetail,
     alias: &JoinName,
-    confirm: bool,
+    messages: usize,
+    confirm: Option<Ask>,
     requested: bool,
 ) -> impl View<Rgb565, State> + use<> {
     // What the peer calls itself, when an alias here hides it.
@@ -145,15 +146,29 @@ pub fn view(
                 false,
                 ROW,
             ),
-            row(
-                m,
-                "Forget",
-                keys::PEER_FORGET,
-                State::ask_forget,
-                End::Nothing,
-                true,
-                ROW,
-            ),
+            VStack::new((
+                (messages > 0).then(|| {
+                    row(
+                        m,
+                        "Clear messages",
+                        keys::CLEAR_MESSAGES,
+                        State::ask_clear_messages,
+                        End::Nothing,
+                        true,
+                        ROW,
+                    )
+                }),
+                row(
+                    m,
+                    "Forget",
+                    keys::PEER_FORGET,
+                    State::ask_forget,
+                    End::Nothing,
+                    true,
+                    ROW,
+                ),
+            ))
+            .with_spacing(0),
         ))
         .with_spacing(0),
     )
@@ -166,47 +181,20 @@ pub fn view(
         }
         _ => KeyResponse::Ignored,
     })
-    .popover(confirm.then_some(name).as_ref(), move |name| {
-        confirmation(m, name)
+    .popover(confirm.as_ref(), move |&asked| {
+        ask_card(m, asked, Some(FORGET), &name, messages, CONFIRM_WIDTH)
     })
     // A tap outside is Cancel.
     .on_blur(|s: &mut State| {
-        s.cancel_forget();
+        s.cancel_ask();
         Dismissal::Dismiss
     })
 }
 
-/// Forget, confirmed, or Cancel, which is focused.
-// Kept out of line, as `setting::row` is and for the same back-end failure,
-// here on `State::forget_peer`'s address once `root_view` took the setup
-// screens.
-#[inline(never)]
-fn confirmation(m: &'static Metrics, name: &String<32>) -> impl View<Rgb565, State> + use<> {
-    let mut forget: String<48> = String::new();
-    _ = core::fmt::write(&mut forget, format_args!("Forget {name}"));
-    card(
-        m,
-        VStack::new((
-            choice(
-                m,
-                forget,
-                keys::FORGET_CONFIRM,
-                State::forget_peer,
-                theme::RED,
-                None,
-            ),
-            choice(
-                m,
-                String::try_from("Cancel").unwrap_or_default(),
-                keys::FORGET_CANCEL,
-                State::cancel_forget,
-                theme::TEXT,
-                None,
-            ),
-        ))
-        .with_spacing(0),
-        CONFIRM_WIDTH,
-        HorizontalAlignment::Center,
-        State::cancel_forget,
-    )
-}
+/// Forgetting, as its confirmation offers it.
+const FORGET: Removal = Removal {
+    label: "Forget",
+    confirm: keys::FORGET_CONFIRM,
+    cancel: keys::FORGET_CANCEL,
+    act: State::forget_peer,
+};

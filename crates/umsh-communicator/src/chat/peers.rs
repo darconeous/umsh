@@ -689,6 +689,18 @@ impl<S: ChatStore> Chats<S> {
 
     // ─── Finding peers ───────────────────────────────────────────────
 
+    /// The direct chat with the node at `address_text`, if there is one.
+    pub fn find_direct_chat(
+        &self,
+        address_text: &str,
+    ) -> Option<umsh_ux_communicator::model::ChatId> {
+        let key = PublicKey(base58::decode(address_text.as_bytes()).ok()?);
+        let chat = self
+            .store
+            .chat_for(&ConversationKey::Direct { peer: key })?;
+        Some(chat.0)
+    }
+
     /// The direct chat with the node at `address`, made if there is none.
     /// A new chat is called `name` when nothing else names the node.
     pub fn direct_chat(
