@@ -5,6 +5,8 @@ mod amateur_radio;
 mod bearer;
 #[cfg(feature = "software-crypto")]
 mod colliding_channels;
+#[cfg(feature = "software-crypto")]
+mod emergency_priority;
 mod forward_confirmation;
 #[cfg(feature = "payload-admission")]
 mod payload_admission;
@@ -9025,6 +9027,29 @@ fn receive_one_repeater_flood_forwards_with_delay_and_decrements_hops() {
 
     let header = PacketHeader::parse(forwarded.frame.as_slice()).unwrap();
     assert_eq!(header.flood_hops.unwrap(), FloodHops::new(3, 3).unwrap());
+}
+
+/// An `EMERGENCY` forward goes ahead of every other forward and of the
+/// node's own traffic, and behind an immediate ACK.
+#[test]
+fn an_emergency_forward_is_served_after_acks_and_before_the_rest() {
+    let mut queue = TxQueue::<8, 16>::new();
+    let application = queue
+        .enqueue(TxPriority::Application, &[1], None, None)
+        .unwrap();
+    let forward = queue
+        .enqueue(TxPriority::Forward, &[2], None, None)
+        .unwrap();
+    let emergency = queue
+        .enqueue(TxPriority::EmergencyForward, &[3], None, None)
+        .unwrap();
+    let ack = queue
+        .enqueue(TxPriority::ImmediateAck, &[4], None, None)
+        .unwrap();
+
+    let order: std::vec::Vec<u32> =
+        core::iter::from_fn(|| queue.pop_ready(0).map(|entry| entry.sequence)).collect();
+    assert_eq!(order, [ack, emergency, forward, application]);
 }
 
 #[test]
