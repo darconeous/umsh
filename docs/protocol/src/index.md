@@ -31,10 +31,9 @@ forwarding. **Source** names the chapters of the legacy specification
 | [0017](uep-0017.md) | Amateur Radio Operation | Standards | Experimental | 0003 0005 0007 0012 0013 | Operating modes, Licensed-Only discard of received encrypted packets, forwarding authority and the Station Callsign edit, Operator Callsign and Station Callsign (options 4/15) | `amateur-radio`, `packet-options` |
 | [0018](uep-0018.md) | Adaptive Forwarding | Standards | Experimental | 0011 0012 0013 0014 0015 | Forwarding where no other forwarder is heard: routed and flood hops, the beside and group rules, the contention offset and confirmation timeout, which overheard copies count against a pending forward, the engaged hold, the battery rule, states, identity | `repeater-operation`, `channel-access` |
 | [0019](uep-0019.md) | URI Formats | Standards | Experimental | 0003 0004 0008 0011 0014 | Node, group, and `coap-umsh` URIs: syntax and percent-encoding, the node URI and its identity bundle, named-group and group-key URIs and their parameters, the CoAP URI | `uri-formats`, `multicast-channels` |
-| 0020 | Text Messages | Standards | Planned | 0007 0008 0019 | Message type, sender handle, Message Sequence (message ID and fragments), sequence reset, regarding, editing, colors, padding, message body, group invitations, test messages | `app-text-messages` |
-| 0021 | Message Repair | Standards | Planned | 0020 | Ordering, gaps, automatic repair, resend requests, message unavailable, group resend | `app-text-messages` |
-| 0022 | Default Groups | Standards | Planned | 0008 0020 0021 | `public` and `EMERGENCY` | `multicast-channels` |
-| 0023 | Contact Exchange | Standards | Planned | 0004 0005 0007 0011 0019 | Session keys, Meet payloads, code and color, exchange, nearby, transmit power, linking a name to a key, security considerations | `app-meet`, `security-considerations` |
+| [0020](uep-0020.md) | Text Messages | Standards | Experimental | 0003 0005 0007 0008 0019 | Payload and conversations, the options and the display rules that keep a message readable, message types, replies and reactions, sender handle, Message Sequence (message ID and fragments), sequence reset, regarding, editing, colors, padding, message body, group invitations, test messages, message repair (ordering and gaps, the resend request, Group Resend, responding, Message Unavailable, automatic repair and its limits, group repair) | `app-text-messages` |
+| [0021](uep-0021.md) | Default Groups | Standards | Experimental | 0005 0007 0008 0020 | `public` and `EMERGENCY`: recognition by key, default membership, the 10-hop flood limit, group unicast only for repair, `public`'s source rule, `EMERGENCY`'s encryption, source, and signature rules, forwarding priority, emergency use, test messages, security considerations | `multicast-channels` |
+| 0022 | Contact Exchange | Standards | Planned | 0004 0005 0007 0011 0019 | Session keys, Meet payloads, code and color, exchange, nearby, transmit power, linking a name to a key, security considerations | `app-meet`, `security-considerations` |
 
 ## Proposals {#proposals}
 
@@ -71,7 +70,7 @@ number when written. Until then, a requirement on one is shown by its title.
 | ULCP: GNSS | Standards | 0010 0011, ULCP: Time and Time Zone | GNSS properties (88–93), identity updates, time trust (4868–4870) | `ulcp-device` |
 | ULCP: Environmental Sensors | Standards | ULCP: Core | `PROP_ILLUMINANCE`, `PROP_TEMPERATURES`, `PROP_TEMPERATURE_NAMES` | `ulcp-device` |
 | ULCP: Locate Alert | Standards | ULCP: Core | `PROP_ALERT` | `ulcp-device` |
-| ULCP: Communicator Peripherals | Standards | 0022, ULCP: Core, ULCP: Tethered Host Services | Display brightness, timeout, and motion wake; keyboard light and aids; directional control; sound; setup complete, `PROP_TEST_MESSAGE_ALERTS` | `ulcp-device` |
+| ULCP: Communicator Peripherals | Standards | 0021, ULCP: Core, ULCP: Tethered Host Services | Display brightness, timeout, and motion wake; keyboard light and aids; directional control; sound; setup complete, `PROP_TEST_MESSAGE_ALERTS` | `ulcp-device` |
 | Threat Model and Design Rationale | Informational | — | What UMSH protects against and what it does not, metadata exposure, cryptographic design rationale, group-specific considerations | `security-considerations` |
 | Repeater Profile | Profile | Listed UEPs | The UEPs a repeater implements | — |
 | ULCP: Device Profile | Profile | Listed UEPs | The minimum a device implements to be a ULCP device | `ulcp-conformance` |
@@ -95,9 +94,10 @@ once its UEP is:
 | [Capability Bits](registries/capability-bits.md) | 0011 |
 | [Identity Options](registries/identity-options.md) | 0011 |
 | [Identity Request Options](registries/identity-request-options.md) | 0011 |
-| Text Message Options | 0020 |
+| [Text Message Types](registries/text-message-types.md) | 0020 |
+| [Text Message Options](registries/text-message-options.md) | 0020 |
 | Chat Room Actions | Chat Rooms |
-| Contact Exchange Messages | 0023 |
+| Contact Exchange Messages | 0022 |
 | Identity Export Sections | Identity Export Format |
 | Node Management Options | Node Management |
 | ULCP Commands | ULCP: Core |
@@ -166,8 +166,8 @@ These moves resolve them:
 3. Acknowledgment pacing moves from `security` into UEP-0013, which defines
    the forwarding-confirmation window pacing is measured against, and how a
    re-acknowledgment is routed after a Route Retry into UEP-0016.
-4. The `public` and `EMERGENCY` groups move into UEP-0022, after the text
-   message UEPs their rules cite.
+4. The `public` and `EMERGENCY` groups move into UEP-0021, after the text
+   message UEP their rules cite.
 5. The flood contention window moves from `channel-access` into UEP-0014,
    the give-way rule into UEP-0013, and `T_frame` into UEP-0012.
 6. `repeater-operation`'s statements about IP multicast groups and bridges move
@@ -235,15 +235,12 @@ These moves resolve them:
     into UEP-0018, each as an addition to a named stage. Route failure
     recovery and lost acknowledgments move from `repeater-operation` into
     UEP-0016, since they rest on a sender's route state.
-26. The Message Sequence and Sequence Reset options move from the repair
-    material into UEP-0020, since replies and edits cite the message ID they
-    define. UEP-0021 keeps repair.
-27. The ULCP properties of the planned feature UEPs move to ULCP proposals:
+26. The ULCP properties of the planned feature UEPs move to ULCP proposals:
     repeater control to ULCP: Repeater Control, announcing to ULCP:
     Announcing, and `PROP_TEST_MESSAGE_ALERTS` to ULCP: Communicator
     Peripherals. A UEP numbered after ULCP: Core defines its ULCP interface
     itself.
-28. `node-identity`'s location format moves into UEP-0010, since GNSS
+27. `node-identity`'s location format moves into UEP-0010, since GNSS
     reporting and location sharing use it apart from any identity. UEP-0011
     keeps the Location identity option, which refers to it.
 

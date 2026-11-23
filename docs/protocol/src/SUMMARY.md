@@ -26,10 +26,9 @@
 - [UEP-0017: Amateur Radio Operation](uep-0017.md)
 - [UEP-0018: Adaptive Forwarding](uep-0018.md)
 - [UEP-0019: URI Formats](uep-0019.md)
-- [UEP-0020: Text Messages]()
-- [UEP-0021: Message Repair]()
-- [UEP-0022: Default Groups]()
-- [UEP-0023: Contact Exchange]()
+- [UEP-0020: Text Messages](uep-0020.md)
+- [UEP-0021: Default Groups](uep-0021.md)
+- [UEP-0022: Contact Exchange]()
 
 # Proposals
 
@@ -76,6 +75,8 @@
 - [Capability Bits](registries/capability-bits.md)
 - [Identity Options](registries/identity-options.md)
 - [Identity Request Options](registries/identity-request-options.md)
+- [Text Message Types](registries/text-message-types.md)
+- [Text Message Options](registries/text-message-options.md)
 
 # Guide
 

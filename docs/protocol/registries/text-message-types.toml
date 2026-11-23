@@ -1,0 +1,30 @@
+title = "Text Message Types"
+created-by = 20
+anchor = "registry-considerations"
+min = 0
+max = 255
+policy = "Values 0 to 255, allocated by a standards UEP."
+
+[[value]]
+value = 0
+name = "Basic Text"
+uep = 20
+anchor = "message-type"
+
+[[value]]
+value = 1
+name = "Status Text"
+uep = 20
+anchor = "message-type"
+
+[[value]]
+value = 2
+name = "Message Resend Request"
+uep = 20
+anchor = "resend-request"
+
+[[value]]
+value = 3
+name = "Message Unavailable"
+uep = 20
+anchor = "unavailable"

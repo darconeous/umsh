@@ -36,3 +36,4 @@ anchor = "encoding"
 value = 3
 name = "Text Message"
 uep = 20
+anchor = "payload"
