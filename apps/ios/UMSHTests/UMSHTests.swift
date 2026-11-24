@@ -783,3 +783,120 @@ struct TranscriptActionExpiryTests {
         #expect(window.nextActionExpiry == nil)
     }
 }
+
+/// The Join sheet's alias field (DP3-112): what is filled in for a held
+/// channel stays with that channel, and emptying it clears that channel's
+/// alias and no other.
+@Suite
+struct ChannelAliasDraftTests {
+    private func held(_ alias: String?) -> ChannelSummary {
+        ChannelSummary(
+            id: UUID(), kind: .named, canonicalName: "trail crew", name: "trail crew", alias: alias,
+            channelIDHex: "0000", tint: Data([0, 0, 0]), regionCode: nil, maxFloodHops: nil,
+            joinedPhone: true, notificationsEnabled: true, joinedAt: nil
+        )
+    }
+
+    @Test func aHeldChannelsAliasIsFilledInAndKeptAsIs() {
+        let hikers = held("Hikers")
+        var draft = ChannelAliasDraft()
+        draft.previewed(hikers)
+        #expect(draft.text == "Hikers")
+        let outcome = draft.outcome(for: hikers)
+        #expect(outcome.alias == "Hikers" && !outcome.clears)
+    }
+
+    @Test func emptyingTheFilledInAliasClearsItsChannel() {
+        let hikers = held("Hikers")
+        var draft = ChannelAliasDraft()
+        draft.previewed(hikers)
+        draft.type("  ")
+        let outcome = draft.outcome(for: hikers)
+        #expect(outcome.alias == nil && outcome.clears)
+        // Looking the same channel up again keeps the emptied field.
+        draft.previewed(hikers)
+        #expect(draft.outcome(for: hikers).clears)
+    }
+
+    @Test func aFilledInAliasNeverReachesAnotherChannel() {
+        let hikers = held("Hikers")
+        let bikers = held(nil)
+        var draft = ChannelAliasDraft()
+        draft.previewed(hikers)
+        draft.previewed(bikers)
+        #expect(draft.text.isEmpty)
+        let outcome = draft.outcome(for: bikers)
+        #expect(outcome.alias == nil && !outcome.clears)
+        // A channel the phone does not hold starts unnamed too.
+        draft.previewed(hikers)
+        draft.previewed(nil)
+        #expect(draft.text.isEmpty && draft.outcome(for: nil) == (nil, false))
+    }
+
+    @Test func anEmptiedFieldShowsTheNextChannelsOwnAlias() {
+        let hikers = held("Hikers")
+        let bikers = held("Bikers")
+        var draft = ChannelAliasDraft()
+        draft.previewed(hikers)
+        draft.type("")
+        draft.previewed(bikers)
+        #expect(draft.text == "Bikers" && !draft.outcome(for: bikers).clears)
+    }
+
+    @Test func aTypedAliasStaysAcrossLookups() {
+        let bikers = held("Bikers")
+        var draft = ChannelAliasDraft()
+        draft.type("Crew")
+        draft.previewed(held("Hikers"))
+        draft.previewed(bikers)
+        let outcome = draft.outcome(for: bikers)
+        #expect(outcome.alias == "Crew" && !outcome.clears)
+    }
+
+    @Test func aNewChannelWithAnEmptyFieldJoinsUnnamed() {
+        let draft = ChannelAliasDraft()
+        #expect(draft.outcome(for: nil) == (nil, false))
+    }
+}
+
+/// Join through the runtime to a started, radio-less core: emptying a held
+/// channel's filled-in alias and joining again clears it in the store.
+@Suite @MainActor
+struct ChannelJoinAliasRuntimeTests {
+    @Test func emptyingAHeldChannelsAliasClearsIt() async throws {
+        let fixture = try await StoreFixture()
+        defer { fixture.remove() }
+        let runtime = AppRuntime(
+            radioConnection: NoRadioConnection(),
+            opened: .success(try AppCoreHost.radioLess(over: fixture.store, vault: MemorySecretVault()))
+        )
+        runtime.localIdentity = fixture.identity
+        let core = try #require(runtime.core)
+        try await core.start(identity: MobileIdentity.unlock(secretKey: Data(repeating: 7, count: 32)))
+        do {
+            let join = try #require(runtime.channelActions(enterConversation: { _ in }).join)
+            var typed = ChannelAliasDraft()
+            typed.type("Hikers")
+            _ = try await typed.join("Ridge", existing: nil, openConversation: false, through: join)
+            let held = try #require(runtime.channels.first { $0.kind != .builtin })
+            #expect(held.alias == "Hikers")
+
+            // Joining again with the filled-in alias untouched keeps it.
+            var kept = ChannelAliasDraft()
+            kept.previewed(held)
+            _ = try await kept.join("Ridge", existing: held, openConversation: false, through: join)
+            #expect(runtime.channels.first { $0.id == held.id }?.alias == "Hikers")
+
+            var emptied = ChannelAliasDraft()
+            emptied.previewed(held)
+            emptied.type("")
+            _ = try await emptied.join("Ridge", existing: held, openConversation: false, through: join)
+            let cleared = try #require(runtime.channels.first { $0.id == held.id })
+            #expect(cleared.alias == nil && cleared.joinedPhone)
+        } catch {
+            await core.stop()
+            throw error
+        }
+        await core.stop()
+    }
+}

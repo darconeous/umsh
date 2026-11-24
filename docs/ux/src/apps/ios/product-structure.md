@@ -645,7 +645,8 @@ header—everything listed is joined, which the screen title already says. Each
 row shows the channel's badge, its title, a type label (**Built-in**,
 **Public**, **Private**), and the two-octet derived identifier in monospace. A
 muted channel carries a bell-slash glyph with a text equivalent for VoiceOver.
-Swiping a row offers to leave, confirmed.
+Swiping a row offers to leave, confirmed. `Public` and `EMERGENCY` come first,
+in that order; every other channel follows, oldest first.
 
 The list is the phone's membership alone. The companion radio's own channels
 are managed apart from it and never appear here.
@@ -654,9 +655,10 @@ Leaving a channel removes its messages from this phone. A channel joined by
 name can be joined again by its name; a private channel's key is deleted, so
 joining it again needs a new invitation.
 
-`public` and `EMERGENCY` are joined on first run with notifications off. They
+`Public` and `EMERGENCY` are joined on first run with notifications off. They
 are the channels a new user is expected to be reachable on, but neither should
-announce itself before the user has a reason to care.
+announce itself before the user has a reason to care. A channel the user joins
+or creates starts with notifications on.
 
 Either may be left, and the key survives so re-joining needs no
 invitation—but a channel the user has left never appears in this list again.

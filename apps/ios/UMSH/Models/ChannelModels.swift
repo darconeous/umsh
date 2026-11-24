@@ -209,9 +209,10 @@ struct ChannelActions {
     /// Resolve a pasted URI or a typed public name without committing.
     var preview: ((String) async -> Result<ChannelPreview, MeshEngineError>)? = nil
     /// Join by the text a preview was read from, or update the alias when
-    /// the key is already held. With `openConversation`, the channel's
+    /// the key is already held. A `nil` alias keeps a held channel's alias
+    /// unless `clearAlias`. With `openConversation`, the channel's
     /// conversation opens too, and its address is returned.
-    var join: ((_ input: String, _ alias: String?, _ openConversation: Bool) async throws -> String?)? = nil
+    var join: ((_ input: String, _ alias: String?, _ clearAlias: Bool, _ openConversation: Bool) async throws -> String?)? = nil
     /// Re-join a channel whose row and key this phone still holds—a
     /// built-in the user left. No invitation is involved.
     var rejoin: ((ChannelSummary) async throws -> Void)? = nil

@@ -26,11 +26,12 @@ import org.junit.Rule
 import org.junit.Test
 
 /**
- * Screenshots of `peer-page.svg` 5 (a page a link opened, with Close) and of
- * the undrawn link states (a bad link's and a channel link's import sheet, a
- * link in a message) for the build report, in the real app root over the
- * staged air. Off unless the run passes `-e shots <suffix>`; they land in
- * the app's external files, under `shots/`.
+ * Screenshots of `peer-page.svg` 5 (a page a link opened, with Close), of
+ * `add-peer.svg` 5 (a bad link's import sheet), and of the undrawn link
+ * states (a channel link's sheet, a link in a message) for the build
+ * report, in the real app root over the staged air. Off unless the run
+ * passes `-e shots <suffix>`; they land in the app's external files, under
+ * `shots/`.
  */
 class LinkShots {
     @get:Rule(order = 0) val fresh = FreshHostRule()
@@ -88,7 +89,7 @@ class LinkShots {
         shot("peer-page-5")
     }
 
-    /** Undrawn (§3.9 for links): a bad link's import sheet. */
+    /** `add-peer.svg` 5: a bad link's import sheet. */
     @Test
     fun linkSheets() {
         start()

@@ -87,8 +87,10 @@ class PeerPageViewModel(
     private val _route = MutableStateFlow<RouteState>(RouteState.Loading)
     val route: StateFlow<RouteState> = _route.asStateFlow()
 
-    private val _messageCount = MutableStateFlow(0L)
-    val messageCount: StateFlow<Long> = _messageCount.asStateFlow()
+    private val _messageCount = MutableStateFlow<Long?>(null)
+
+    /** The conversation's size; null until counted, and with no conversation. */
+    val messageCount: StateFlow<Long?> = _messageCount.asStateFlow()
 
     private val phoneFix = MutableStateFlow<PhoneFix?>(null)
 
@@ -144,13 +146,15 @@ class PeerPageViewModel(
                 runtime.routeRevisions.map { it[address] ?: 0L }.distinctUntilChanged(),
             ) { heard, running, revision -> Triple(heard, running, revision) }.collect { loadRoute() }
         }
-        // The conversation's size, read again as its transcript changes.
+        // The conversation's size, read again as its transcript changes, and
+        // when the core comes up, so a count that failed before is not kept.
         viewModelScope.launch {
             combine(
                 model.map { it?.conversation != null }.distinctUntilChanged(),
                 runtime.transcriptRevisions.map { it[address] ?: 0L }.distinctUntilChanged(),
-            ) { has, revision -> has to revision }.collect { (has, _) ->
-                _messageCount.value = if (has) count() else 0L
+                runtime.lifecycle.map { it is MobileAppLifecycle.Running }.distinctUntilChanged(),
+            ) { has, revision, running -> Triple(has, revision, running) }.collect { (has, _, _) ->
+                _messageCount.value = if (has) count() else null
             }
         }
         // Once, and only under a grant already given: a page never asks for
@@ -177,7 +181,7 @@ class PeerPageViewModel(
         }
     }
 
-    private suspend fun count(): Long = try {
+    private suspend fun count(): Long? = try {
         runtime.messageCount(address)
     } catch (error: CancellationException) {
         throw error

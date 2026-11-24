@@ -49,22 +49,22 @@ left out. The drawing stays the target.
 | 2 | [I. Bubbles, delivery, and the message menu](#i-bubbles-delivery-and-the-message-menu) | Approved 2026-11-18 |
 | 2 | [J. Replies and reactions](#j-replies-and-reactions) | Approved 2026-11-18 |
 | 2 | [K. Composer](#k-composer) | Approved 2026-11-18 |
-| 2 | [L. Conversation info](#l-conversation-info) | Approved 2026-11-18 |
+| 2 | [L. Conversation info](#l-conversation-info) | Approved 2026-11-18; changed and approved 2026-11-24 |
 | 2 | [M. Notifications](#m-notifications) | Approved 2026-11-18 |
 | 2 | [N. Conversations on tablets](#n-conversations-on-tablets) | Approved 2026-11-18 |
 | 3 | [O. Onboarding](#o-onboarding) | Approved 2026-11-18 |
 | 3 | [P. Adding a radio](#p-adding-a-radio) | Approved 2026-11-18 |
-| 3 | [Q. Permissions](#q-permissions) | Approved 2026-11-18 |
+| 3 | [Q. Permissions](#q-permissions) | Approved 2026-11-18; changed and approved 2026-11-24 |
 | 3 | [R. Your identity](#r-your-identity) | Approved 2026-11-18 |
 | 3 | [S. Manage space](#s-manage-space) | Approved 2026-11-18 |
 | 4 | [T. Peers list](#t-peers-list) | Approved 2026-11-18 |
-| 4 | [U. Peer page](#u-peer-page) | Approved 2026-11-18 |
+| 4 | [U. Peer page](#u-peer-page) | Approved 2026-11-18; changed and approved 2026-11-24 |
 | 4 | [V. Ping and Route](#v-ping-and-route) | Approved 2026-11-18 |
 | 4 | [W. Manual path](#w-manual-path) | Approved 2026-11-18 |
 | 4 | [X. Repeaters and Discover](#x-repeaters-and-discover) | Approved 2026-11-18 |
-| 4 | [Y. Add peer and import](#y-add-peer-and-import) | Approved 2026-11-18 |
+| 4 | [Y. Add peer and import](#y-add-peer-and-import) | Approved 2026-11-18; changed and approved 2026-11-24 |
 | 4 | [Z. Exchanging contacts](#z-exchanging-contacts) | Approved 2026-11-18 |
-| 4 | [AA. QR scanner](#aa-qr-scanner) | Approved 2026-11-18 |
+| 4 | [AA. QR scanner](#aa-qr-scanner) | Approved 2026-11-18; changed and approved 2026-11-24 |
 | 4 | [AB. Sharing](#ab-sharing) | Approved 2026-11-18 |
 | 4 | [AC. Channels](#ac-channels) | Approved 2026-11-18 |
 | 4 | [AN. New channel chat](#an-new-channel-chat) | Approved 2026-11-23 |
@@ -282,7 +282,9 @@ notes say so and [open decisions](open-decisions.md#conversations) explain why.
   [several regions on a channel](open-decisions.md#several-regions-on-a-channel),
   a deferred protocol change; until it lands the page is built without it.
 - **Clear all messages** erases only this phone's history and keeps the
-  conversation.
+  conversation. With nothing to clear it is dimmed, here and on the peer
+  page, and the peer page shows it whenever there is a conversation. It is
+  also dimmed until the messages are counted, a moment after the page opens.
 - A channel sender's avatar opens a member sheet with **Request identity**
   for someone not saved.
 
@@ -353,6 +355,9 @@ key storage. Where Android departs from it, the board's notes say so and
   device is set to this phone's position.
 - Refusing never blocks the rest of the app, and the same button opens
   system settings once Android stops asking.
+- The scanner's refused page also stands for camera access turned off on
+  the phone. Any other camera failure uses the same layout with **Camera
+  unavailable** and **Try again** (a note on board 3, not drawn).
 
 ## R. Your identity
 
@@ -461,6 +466,9 @@ departs from it, the board's notes say so and
   name, ending in **Save peer** or **Message**. An opened node link goes
   straight to the peer page; only a link that does not parse opens the
   preview, to say what is wrong with it.
+- That link opens Add peer as a sheet (board 5) over whatever was showing:
+  the field holds the link with what is wrong under it, and **Preview**
+  tries the corrected text. Dismissing it saves nothing.
 
 ## Z. Exchanging contacts
 
@@ -480,6 +488,9 @@ departs from it, the board's notes say so and
   Join channel fields.
 - Only `umsh:` codes are accepted; anything else is reported as **Not a UMSH
   code** while scanning continues.
+- Another app holding the camera for more than about 2 s puts **Camera in
+  use by another app** in the same pill over the dark viewfinder (a note on
+  board 2, not drawn); it goes when the camera opens.
 - A recognized code opens its preview as a bottom sheet over the screen the
   scan began on.
 

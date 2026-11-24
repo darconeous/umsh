@@ -62,7 +62,8 @@ the user leaves UMSH any other way (Home, Recents, another app, the screen
 turning off, a share target), the link's flow is over and Close returns to
 the shell. Beside the other app (split screen, a desktop window) that app is
 already in view, so Close and Back return to the shell and the task keeps
-its place.
+its place, rather than moving UMSH out of its split slot (decided
+2026-11-24; G-258 still to run).
 
 **The cost:** a link that arrives finishes whatever system activity sits
 above the app in its task: a permission dialog, the share chooser, or the
@@ -70,8 +71,8 @@ radio pairing confirmation. To make that safe, every permission ask reads an
 empty result (a dialog closed under the app) as dismissed, never as refused,
 and an interrupted pairing is redone by pairing again. The one automatic
 ask, for notifications, closed that way counts as not asked: it comes back
-the next time the app is resumed with a radio attached, not over the link's
-page.
+the next time the app is resumed with a radio attached, after it has been
+left, not over the link's page (decided 2026-11-24; G-259 still to run).
 
 ### The scanner
 
@@ -118,11 +119,21 @@ through state saved with the back stacks.
   The grant is checked again on every start, since one-time grants lapse.
 - The camera features are declared `required="false"`. With no camera, Scan
   and the fields' scan buttons are not offered.
-- A refused permission, or a critical camera error (camera access off in
-  quick settings, the camera disabled or gone), shows "Camera access is off
+- A refused permission, or camera access turned off (quick settings, or
+  disabled by policy: `ERROR_CAMERA_DISABLED`), shows "Camera access is off
   for UMSH" with Allow camera, which asks again or binds again.
-- A recoverable error (the camera in use elsewhere, too many cameras open)
-  keeps the camera bound and the viewfinder dark until CameraX reopens it.
+- Any other critical camera error, or no camera to bind, shows the same
+  layout with "Camera unavailable" and Try again, which binds again. Allow
+  camera would be untrue there: access is not what is wrong.
+- The camera in use elsewhere (`ERROR_CAMERA_IN_USE`,
+  `ERROR_MAX_CAMERAS_IN_USE`) keeps the camera bound and the viewfinder dark
+  until CameraX reopens it. Held for more than about 2 s, "Camera in use by
+  another app" shows in the pill's place. The wait is latched: CameraX's
+  retries pass through opening, which neither restarts it nor hides the
+  line; only the camera opening or failing ends it. The latch is saved, so a
+  rotation keeps a line already shown. A camera freed within the grace
+  period (the Camera app just closed) says nothing. Other recoverable errors
+  are part of opening.
 - The torch is offered only when the camera has a flash, and its request is
   applied again each time the camera opens.
 
@@ -185,7 +196,7 @@ absorbed others lists them in brackets. The rest of Phase 3's items are in
 | G-224 | On a device whose only camera faces front, the front camera is used and still decodes | A tablet with one camera | Decodes | Prefer any camera |
 | G-225 | Live TalkBack on the scanner reads the viewfinder's description, the pill once and politely, Close, and the torch with its state | TalkBack on the Pixel | As described | Fix semantics |
 | G-226 | The pill does not flicker with real camera blur at the 10-frame hysteresis | Move a non-UMSH code in and out of focus | Steady | Lengthen the hysteresis |
-| G-228 [G-229] | With another app holding the camera (just closed Camera app, or split screen), the viewfinder waits dark without the camera-off page and comes up by itself once the camera is free | Open Scan beside a camera app | Recovers by itself | Add a line for a long wait (undrawn) |
+| G-228 [G-229] | With another app holding the camera (just closed Camera app, or split screen), the viewfinder waits dark without the camera-off page and comes up by itself once the camera is free; just after closing the Camera app, no "Camera in use by another app" line flashes | Open Scan beside a camera app; open Scan right after closing Camera | Recovers by itself | Lengthen the grace period |
 | G-233 | A link arriving while the Sharesheet or a notification-permission dialog is up closes it; the notification ask reads as dismissed and is asked again later | Open a link with each up | As described | Adjust the asker |
 | G-234 | Live TalkBack offers a bubble's `umsh:` link in the links menu, and opening it lands on the page with focus on Close | TalkBack on a thread with a link | As described | Fix the link annotation |
 | G-235 | The predictive back gesture on a page another app's link opened shows the shell beneath, then the other app, with no lingering flash | Swipe back slowly and fully | As described | Disable the preview on that page |
@@ -202,3 +213,5 @@ absorbed others lists them in brackets. The rest of Phase 3's items are in
 | G-258 | In split screen and in a desktop window beside Chrome, Close and Back on a page a Chrome link opened return to UMSH's shell, and UMSH keeps its place beside Chrome | Open a link from Chrome side by side; Close; again with Back | Shell, split kept | Revisit the multi-window rule |
 | G-259 | On API 33+, a link arriving while the first notification ask is up closes it; the ask does not come back over the link's page, and comes back the next time the app is resumed with a radio attached | Attach a radio on a fresh install; open a link from Chrome while the dialog is up; leave and return | As described | Adjust the deferred ask |
 | G-260 | A cold start from a link makes a task whose root is that link: Back at the Conversations root finishes the activity, and Recents then reopens the shell without opening the link again, with the radio service unaffected | Open a link with the app not running; Back at the root; reopen from Recents | Shell, no replay | Fix the launched-from-history path |
+| G-262 | A camera held for a long time (a picture-in-picture video call) shows "Camera in use by another app" under the dark frame after about 2 s, steadily through CameraX's retries; ending the call brings the viewfinder up and the line goes | Start a video call, put it in picture-in-picture, open Scan; end the call | As described | Check the error codes the Pixel reports (logged as `camera error`) |
+| G-263 | A critical camera error other than camera access off (Do Not Disturb's camera block on some devices, a camera fault) shows "Camera unavailable" with Try again, never "Camera access is off for UMSH" | Hard to force; record any such code seen in the log | As described | Map that code |

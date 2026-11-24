@@ -28,7 +28,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
@@ -46,6 +45,7 @@ import com.voria.umsh.core.MobileWellKnownChannel
 import com.voria.umsh.core.wellKnownChannel
 import com.voria.umsh.designsystem.AvatarSize
 import com.voria.umsh.designsystem.ChannelBadge
+import com.voria.umsh.designsystem.ClearMessagesRow
 import com.voria.umsh.designsystem.ConfirmDialog
 import com.voria.umsh.designsystem.DetailPane
 import com.voria.umsh.designsystem.FailureDialog
@@ -122,8 +122,7 @@ fun ConversationInfoScreen(
                         // Blank until counted.
                         messageCount?.let { Text(integerText(it), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     }
-                    val count = messageCount ?: 0L
-                    ClearRow(enabled = count > 0) { clearing = true }
+                    ClearMessagesRow(messageCount, withIcon = true, tag = Tags.CONVERSATION_INFO_CLEAR) { clearing = true }
                     val statements = channelStatements(channel)
                     if (statements.isNotEmpty()) {
                         SectionHeader(stringResource(R.string.channel_how_it_works), Modifier.padding(top = 8.dp))
@@ -231,24 +230,7 @@ private fun ValueItem(label: Int, tag: String, value: @Composable () -> Unit) {
     )
 }
 
-/** Clear all messages, in red with its icon; dimmed with nothing to clear. */
-@Composable
-private fun ClearRow(enabled: Boolean, onClick: () -> Unit) {
-    val color = MaterialTheme.colorScheme.error
-    ListItem(
-        leadingContent = { Icon(painterResource(R.drawable.ic_delete), contentDescription = null, tint = color) },
-        headlineContent = { Text(stringResource(R.string.clear_all_messages), color = color) },
-        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-        modifier = Modifier
-            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
-            .alpha(if (enabled) 1f else DISABLED_ALPHA)
-            .testTag(Tags.CONVERSATION_INFO_CLEAR),
-    )
-}
-
 /** A count in the locale's digits. */
 @Composable
 private fun integerText(value: Long): String =
     NumberFormat.getIntegerInstance(LocalConfiguration.current.locales[0]).format(value)
-
-private const val DISABLED_ALPHA = 0.38f

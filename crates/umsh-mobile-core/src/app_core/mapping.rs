@@ -13,15 +13,15 @@ use super::records::{
     MobileAppRepeaterNeighborRecord, MobileAppTranscriptPageRecord, MobileRepeaterEvidence,
 };
 use crate::store::{
-    MobileApplicationRecords, MobileStoredChannelConversationRecord,
-    MobileStoredChatMessagePageRecord, MobileStoredChatMessageRecord,
+    MobileApplicationRecords, MobileStoredChannelConversationRecord, MobileStoredChannelKind,
+    MobileStoredChannelRecord, MobileStoredChatMessagePageRecord, MobileStoredChatMessageRecord,
     MobileStoredConversationPreviewRecord, MobileStoredDirectConversationRecord,
     MobileStoredNodeKind, MobileStoredNodeRecord, MobileStoredPeerRepeaterEntryRecord,
     MobileStoredPeerRepeaterListingRecord,
 };
 use crate::{
-    IdentitySignatureState, NodeIdentityRecord, RepeaterHintRecord, node_identity_record,
-    public_identity_record,
+    IdentitySignatureState, MobileWellKnownChannel, NodeIdentityRecord, RepeaterHintRecord,
+    node_identity_record, public_identity_record,
 };
 
 /// A peer, mapped; `None` when its address does not decode, which leaves
@@ -271,6 +271,21 @@ pub(super) struct Lists {
     pub neighbor_reports: Option<Vec<MobileAppNeighborReportRecord>>,
 }
 
+/// Where a channel sorts in the channel list: `Public`, then `EMERGENCY`,
+/// then every other channel. Only a built-in row ranks as a built-in.
+fn builtin_rank(channel: &MobileStoredChannelRecord) -> u8 {
+    if channel.kind != MobileStoredChannelKind::Builtin {
+        return 2;
+    }
+    match crate::well_known_channel(channel.canonical_name.clone()) {
+        Some(known) => match known.channel {
+            MobileWellKnownChannel::Public => 0,
+            MobileWellKnownChannel::Emergency => 1,
+        },
+        None => 2,
+    }
+}
+
 /// `certified` is whether the user agreed to `EMERGENCY`'s warning under
 /// this owner.
 pub(super) fn lists(
@@ -341,13 +356,15 @@ pub(super) fn lists(
             )
         })
         .collect();
-    let channels: Vec<MobileAppChannelRecord> = channels
+    let mut channels: Vec<MobileAppChannelRecord> = channels
         .into_iter()
         .map(|stored| MobileAppChannelRecord {
             conversation_address: addresses.get(stored.id.as_str()).map(|&a| a.to_owned()),
             stored,
         })
         .collect();
+    // Stable, so the store's oldest-first order holds within each rank.
+    channels.sort_by_key(|channel| builtin_rank(&channel.stored));
 
     // A left channel has no key to send with, so its conversation is not
     // listed.

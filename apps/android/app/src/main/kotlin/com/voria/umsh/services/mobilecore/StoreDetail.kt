@@ -37,7 +37,7 @@ sealed interface StoreDetail {
          * The schema this build's store creates and reads. Checked against a
          * fresh store by `StoreDetailTest`, so it moves with the core.
          */
-        const val SUPPORTED_SCHEMA_VERSION = 32L
+        const val SUPPORTED_SCHEMA_VERSION = 33L
 
         fun from(error: MobileStoreException, fileName: String): StoreDetail = when (error) {
             is MobileStoreException.OpenFailed -> OpenFailed(fileName, error.code)

@@ -265,8 +265,8 @@ app routes `onOpenURL`. Links are held until launch has loaded the store.
    are channels. Settings › Channels is selected, and Join channel opens over
    it with the link's preview.
 2. Any other `umsh:` link is looked up as a node.
-   1. A link that does not parse opens the import preview, which says what is
-      wrong with it.
+   1. A link that does not parse opens Add peer as a sheet over whatever was
+      showing (`add-peer.svg` 5), which says what is wrong with it.
    2. A link to this phone's own identity selects Settings at Your identity.
    3. Any other node opens its peer page as an app-level page above whatever
       was showing, without the import preview. Close and Back return to where

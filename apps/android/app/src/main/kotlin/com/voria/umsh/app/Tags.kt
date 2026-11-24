@@ -367,6 +367,8 @@ object Tags {
     const val SCANNER_PILL = "scanner_pill"
     const val SCANNER_CAMERA_OFF = "scanner_camera_off"
     const val SCANNER_ALLOW = "scanner_allow"
+    const val SCANNER_RETRY = "scanner_retry"
+    const val SCANNER_IN_USE = "scanner_in_use"
     const val SCANNER_TORCH = "scanner_torch"
     const val PEERS_SCAN = "peers_scan"
     const val CONVERSATIONS_SCAN = "conversations_scan"

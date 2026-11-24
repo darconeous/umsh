@@ -58,6 +58,7 @@ import com.voria.umsh.app.Tags
 import com.voria.umsh.app.runtimeViewModel
 import com.voria.umsh.designsystem.AvatarSize
 import com.voria.umsh.designsystem.CanonicalAddress
+import com.voria.umsh.designsystem.ClearMessagesRow
 import com.voria.umsh.designsystem.DetailPane
 import com.voria.umsh.designsystem.FailureDialog
 import com.voria.umsh.designsystem.PeerAvatar
@@ -239,8 +240,8 @@ fun PeerPageScreen(
                         SignatureWarning(advertised.signature)
                     }
 
-                    if (conversation != null && messageCount > 0) {
-                        DestructiveRow(R.string.clear_all_messages, Tags.PEER_CLEAR_MESSAGES) { clearing = true }
+                    if (conversation != null) {
+                        ClearMessagesRow(messageCount, withIcon = false, tag = Tags.PEER_CLEAR_MESSAGES) { clearing = true }
                     }
                     if (RemovalChoice.forPage(peer, conversation != null) != null) {
                         DestructiveRow(R.string.remove_peer, Tags.PEER_REMOVE) { removing = true }
@@ -290,16 +291,21 @@ fun PeerPageScreen(
             )
         }
     }
+    val count = messageCount
     if (clearing && peer != null) {
-        ClearMessagesDialog(
-            name = names.peer(peer),
-            count = messageCount,
-            onConfirm = {
-                clearing = false
-                viewModel.clearMessages()
-            },
-            onDismiss = { clearing = false },
-        )
+        when {
+            // Restored over a conversation already empty or gone: nothing to ask about.
+            shown?.conversation == null || count == 0L -> LaunchedEffect(Unit) { clearing = false }
+            count != null && count > 0L -> ClearMessagesDialog(
+                name = names.peer(peer),
+                count = count,
+                onConfirm = {
+                    clearing = false
+                    viewModel.clearMessages()
+                },
+                onDismiss = { clearing = false },
+            )
+        }
     }
     failure?.let { shownFailure ->
         val (title, body) = when (shownFailure) {

@@ -32,17 +32,29 @@ import java.util.concurrent.Executors
 
 /** Where the camera stands, as the scanner shows it. */
 sealed interface CameraStatus {
-    /** Binding, opening, or waiting for a camera held elsewhere: the viewfinder stays dark. */
+    /** Binding, opening, or between CameraX's own retries: the viewfinder stays dark. */
     data object Opening : CameraStatus
+
+    /**
+     * Held by another app (or too many cameras open): the viewfinder stays
+     * dark until CameraX opens the camera again by itself, once it is free.
+     */
+    data object InUse : CameraStatus
 
     /** Frames are coming; [hasFlash] offers the torch. */
     data class Open(val hasFlash: Boolean) : CameraStatus
 
     /**
-     * The camera cannot be used: turned off in quick settings, disabled,
-     * gone, or not bound at all. The scanner shows its unavailable state,
-     * not a black viewfinder. A camera only held elsewhere for now is
-     * [Opening] until CameraX opens it again.
+     * Camera access is off: turned off in quick settings or disabled by
+     * policy. The scanner shows the camera-off page with Allow camera,
+     * which binds again and so raises Android's own unblock dialog.
+     */
+    data object AccessOff : CameraStatus
+
+    /**
+     * The camera cannot be used for any other reason: a critical CameraX
+     * error other than [AccessOff], or no camera to bind at all. The
+     * scanner says so plainly and offers to try again.
      */
     data object Unavailable : CameraStatus
 }
@@ -152,11 +164,12 @@ object CameraXFrameSource : FrameSource {
             // Whether the camera is open now: it closes in the background,
             // and CameraX turns the torch off as it does.
             var opened by remember(bound) { mutableStateOf(false) }
-            // The camera's own state. A critical error (camera access off,
-            // the camera disabled or gone) is the unavailable state. A
-            // recoverable one (another app holding the camera, too many
-            // open) leaves the camera bound: CameraX opens it again by
-            // itself once it is free, so the page waits as it opens.
+            // The camera's own state. Camera access turned off is its own
+            // state, since only that one Allow camera can fix; any other
+            // critical error is the unavailable state. Another app holding
+            // the camera (or too many open) leaves it bound: CameraX opens
+            // it again by itself once it is free. Other recoverable errors
+            // are part of opening.
             DisposableEffect(bound, lifecycleOwner) {
                 val observer = Observer<CameraState> { state ->
                     val error = state.error
@@ -164,8 +177,11 @@ object CameraXFrameSource : FrameSource {
                     opened = state.type == CameraState.Type.OPEN
                     statusNow(
                         when {
+                            error?.code == CameraState.ERROR_CAMERA_DISABLED -> CameraStatus.AccessOff
                             error?.type == CameraState.ErrorType.CRITICAL -> CameraStatus.Unavailable
                             opened -> CameraStatus.Open(bound.cameraInfo.hasFlashUnit())
+                            error?.code == CameraState.ERROR_CAMERA_IN_USE ||
+                                error?.code == CameraState.ERROR_MAX_CAMERAS_IN_USE -> CameraStatus.InUse
                             else -> CameraStatus.Opening
                         },
                     )

@@ -447,7 +447,8 @@ pub struct MobileAppStateRecord {
     /// Store order. `None` in a conversations-only answer, which leaves
     /// whatever was last read in place.
     pub peers: Option<Vec<MobileAppPeerRecord>>,
-    /// Oldest first.
+    /// The built-in channels first, `Public` then `EMERGENCY`; every other
+    /// channel after them, oldest first.
     pub channels: Vec<MobileAppChannelRecord>,
     /// Most recent first. A conversation whose peer's address does not
     /// decode is left out.

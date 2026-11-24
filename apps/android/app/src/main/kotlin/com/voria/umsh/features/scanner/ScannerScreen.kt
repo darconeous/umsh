@@ -70,6 +70,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.voria.umsh.R
 import com.voria.umsh.app.LocalAppCoreHost
 import com.voria.umsh.app.Tags
+import kotlinx.coroutines.delay
+import kotlin.time.Duration.Companion.seconds
 
 /** The scanner's analysis, kept across a rotation: a code accepted once is never delivered twice. */
 class ScannerViewModel : ViewModel() {
@@ -82,8 +84,10 @@ class ScannerViewModel : ViewModel() {
  * when the camera has a flash. Only `umsh:` node codes close it
  * ([onScanned]); any other code is a pill that clears once the code leaves
  * the frame. The camera is asked for the first time the scanner opens; with
- * it refused, or the camera unavailable, the page says so, with Allow
- * camera. Always drawn dark, as a camera page is.
+ * it refused, or camera access off, the page says so, with Allow camera;
+ * a camera that fails otherwise is "Camera unavailable", with Try again. A
+ * camera another app holds past [IN_USE_GRACE] is a line in the pill's
+ * place. Always drawn dark, as a camera page is.
  */
 @Composable
 fun ScannerScreen(onClose: () -> Unit, onScanned: (String) -> Unit) {
@@ -119,28 +123,59 @@ fun ScannerScreen(onClose: () -> Unit, onScanned: (String) -> Unit) {
     // standing over a page it does not belong to.
     val open = (status as? CameraStatus.Open)?.takeIf { granted }
     LaunchedEffect(open != null) { if (open == null) analyzer.forgetRefusal() }
+    // Another app holding the camera is said only after a grace period, so a
+    // camera freed a moment later (the Camera app just closed) says nothing.
+    // Latched: CameraX's retries pass through Opening, which neither restarts
+    // the wait nor hides the line. Saved, so a rotation keeps a line already
+    // shown rather than waiting again.
+    var held by rememberSaveable { mutableStateOf(false) }
+    var heldShown by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(held) {
+        if (!held) {
+            heldShown = false
+        } else if (!heldShown) {
+            delay(IN_USE_GRACE)
+            heldShown = true
+        }
+    }
+    val report: (CameraStatus) -> Unit = {
+        status = it
+        held = stillHeld(held, it)
+    }
 
     Box(Modifier.fillMaxSize().background(Color.Black).testTag(Tags.SCANNER)) {
         when {
-            granted && status != CameraStatus.Unavailable -> {
+            granted && status != CameraStatus.Unavailable && status != CameraStatus.AccessOff -> {
                 val description = stringResource(R.string.scanner_viewfinder_description)
                 frames.Viewfinder(
                     torchOn = torchOn,
                     attempt = attempt,
                     onFrame = analyzer::analyze,
-                    onStatus = { status = it },
+                    onStatus = report,
                     modifier = Modifier.fillMaxSize().semantics { contentDescription = description }.testTag(Tags.SCANNER_VIEWFINDER),
                 )
                 ScanFrame()
             }
             // Android's dialog is over the page (board 2): nothing beneath it yet.
             !granted && asker.asking -> Unit
+            granted && status == CameraStatus.Unavailable -> CameraOff(
+                text = stringResource(R.string.scanner_camera_unavailable),
+                action = stringResource(R.string.scanner_try_again),
+                actionTag = Tags.SCANNER_RETRY,
+                onAction = {
+                    report(CameraStatus.Opening)
+                    attempt++
+                },
+            )
             else -> CameraOff(
-                onAllow = {
+                text = stringResource(R.string.scanner_camera_off),
+                action = stringResource(R.string.scanner_allow_camera),
+                actionTag = Tags.SCANNER_ALLOW,
+                onAction = {
                     if (granted) {
-                        // The camera was unavailable: try again, which raises
-                        // Android's own unblock dialog when camera access is off.
-                        status = CameraStatus.Opening
+                        // Camera access is off: bind again, which raises
+                        // Android's own unblock dialog.
+                        report(CameraStatus.Opening)
                         attempt++
                     } else {
                         asker.ask()
@@ -149,7 +184,8 @@ fun ScannerScreen(onClose: () -> Unit, onScanned: (String) -> Unit) {
             )
         }
         TopRow(onClose)
-        if (open != null && refusal != null) RefusalPill()
+        if (open != null && refusal != null) ScannerPill(stringResource(R.string.scanner_not_umsh), Tags.SCANNER_PILL)
+        if (granted && held && heldShown) ScannerPill(stringResource(R.string.scanner_camera_in_use), Tags.SCANNER_IN_USE)
         if (open?.hasFlash == true) {
             Torch(
                 on = torchOn,
@@ -210,10 +246,13 @@ private fun ScanFrame() {
     }
 }
 
-/** A code the scanner does not take (board 2), until it leaves the frame. Announced once, politely. */
+/**
+ * One line over the viewfinder, below the frame (board 2): a code the
+ * scanner does not take, or the camera held by another app. Announced
+ * once, politely.
+ */
 @Composable
-private fun RefusalPill() {
-    val text = stringResource(R.string.scanner_not_umsh)
+private fun ScannerPill(text: String, tag: String) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         // Just below the frame's lower edge.
         val below = minOf(maxWidth, maxHeight) * 0.35f + 32.dp
@@ -226,29 +265,32 @@ private fun RefusalPill() {
                 .offset(y = below)
                 .padding(horizontal = 24.dp)
                 .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }
-                .testTag(Tags.SCANNER_PILL),
+                .testTag(tag),
         ) {
             Text(text, style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
         }
     }
 }
 
-/** No camera to show (`permissions.svg` 3): why, and Allow camera. Close still leaves. */
+/**
+ * No camera to show (`permissions.svg` 3): why, and what can be done:
+ * Allow camera, or Try again for a camera that failed. Close still leaves.
+ */
 @Composable
-private fun CameraOff(onAllow: () -> Unit) {
+private fun CameraOff(text: String, action: String, actionTag: String, onAction: () -> Unit) {
     Column(
         Modifier.fillMaxSize().padding(24.dp).testTag(Tags.SCANNER_CAMERA_OFF),
         verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
-            stringResource(R.string.scanner_camera_off),
+            text,
             style = MaterialTheme.typography.bodyLarge,
             color = Color.White,
             textAlign = TextAlign.Center,
         )
-        Button(onClick = onAllow, modifier = Modifier.testTag(Tags.SCANNER_ALLOW)) {
-            Text(stringResource(R.string.scanner_allow_camera))
+        Button(onClick = onAction, modifier = Modifier.testTag(actionTag)) {
+            Text(action)
         }
     }
 }
@@ -286,4 +328,18 @@ private fun LightSystemBars() {
             controller.isAppearanceLightNavigationBars = navigation
         }
     }
+}
+
+/** How long another app may hold the camera before the scanner says so. */
+internal val IN_USE_GRACE = 2.seconds
+
+/**
+ * Whether the camera is still held elsewhere after [status]: in use sets
+ * it, and only the camera opening or failing clears it. Opening, which
+ * CameraX passes through on each retry while the camera is held, keeps it.
+ */
+internal fun stillHeld(held: Boolean, status: CameraStatus): Boolean = when (status) {
+    CameraStatus.InUse -> true
+    CameraStatus.Opening -> held
+    is CameraStatus.Open, CameraStatus.AccessOff, CameraStatus.Unavailable -> false
 }

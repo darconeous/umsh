@@ -26,7 +26,7 @@ struct ChannelJoinView: View {
     @State private var problem: String?
     @State private var isInspecting = false
     @State private var isJoining = false
-    @State private var alias = ""
+    @State private var alias = ChannelAliasDraft()
     @State private var revealsKey = false
     @State private var failure: FailureNotice?
 
@@ -144,7 +144,10 @@ struct ChannelJoinView: View {
     private func detailsSection(_ resolved: ChannelPreview) -> some View {
         Section {
             LabeledContent("Alias") {
-                TextField(resolved.preview.displayName ?? "Optional", text: $alias)
+                TextField(
+                    resolved.preview.displayName ?? "Optional",
+                    text: Binding(get: { alias.text }, set: { alias.type($0) })
+                )
                     .multilineTextAlignment(.trailing)
             }
         } header: {
@@ -176,11 +179,7 @@ struct ChannelJoinView: View {
         case let .success(value):
             resolved = value
             problem = nil
-            if alias.isEmpty {
-                // Prefilled with what the channel already calls itself, so
-                // the field reads as an override rather than a blank demand.
-                alias = value.existing?.alias ?? ""
-            }
+            alias.previewed(value.existing)
         case let .failure(error):
             resolved = nil
             problem = message(for: error)
@@ -188,18 +187,19 @@ struct ChannelJoinView: View {
     }
 
     /// Join what was looked up, by the text it was looked up from. An empty
-    /// alias keeps whatever the channel already has.
+    /// alias leaves a new channel unnamed and clears a held one's alias.
     private func join(_ resolved: ChannelPreview) async {
         guard let join = actions.join else { return }
         isJoining = true
         defer { isJoining = false }
-        let trimmedAlias = alias.trimmingCharacters(in: .whitespacesAndNewlines)
+        let draft = alias
         var address: String?
         let didJoin = await $failure.attempt(Self.notJoinedTitle) {
-            address = try await join(
+            address = try await draft.join(
                 resolved.input,
-                trimmedAlias.isEmpty ? nil : trimmedAlias,
-                onJoined != nil
+                existing: resolved.existing,
+                openConversation: onJoined != nil,
+                through: join
             )
         }
         guard didJoin else { return }
@@ -249,6 +249,57 @@ struct ChannelJoinView: View {
 
     private func hex(_ data: Data) -> String {
         data.map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+/// The alias field's draft beside a preview. A held channel's own alias is
+/// filled in when a lookup first shows that channel; filled in rather than
+/// typed, it goes when a different channel is looked up, so it never lands
+/// on another channel. Emptying the field clears the alias of the held
+/// channel the lookup showed.
+struct ChannelAliasDraft: Equatable {
+    private(set) var text = ""
+    /// Whether the user typed the text, rather than it being filled in.
+    private var typed = false
+    /// The held channel the last lookup showed, nil for one not held.
+    private var shownFor: UUID?
+
+    /// The user typed in the field.
+    mutating func type(_ alias: String) {
+        text = alias
+        typed = true
+    }
+
+    /// A lookup succeeded, showing `existing` when the phone holds it.
+    mutating func previewed(_ existing: ChannelSummary?) {
+        guard existing?.id != shownFor else { return }
+        if !typed { text = "" }
+        shownFor = existing?.id
+        if text.isEmpty, let own = existing?.alias {
+            text = own
+            typed = false
+        }
+    }
+
+    /// What Join sends for `existing`, the channel the last lookup showed:
+    /// the trimmed alias, or nil; and whether to clear the alias it holds.
+    func outcome(for existing: ChannelSummary?) -> (alias: String?, clears: Bool) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let named = trimmed.isEmpty ? nil : trimmed
+        return (named, named == nil && existing?.alias != nil)
+    }
+
+    /// Join `input` through `join` with what the field holds for
+    /// `existing`, the held channel the last lookup showed.
+    @MainActor
+    func join(
+        _ input: String,
+        existing: ChannelSummary?,
+        openConversation: Bool,
+        through join: (_ input: String, _ alias: String?, _ clearAlias: Bool, _ openConversation: Bool) async throws -> String?
+    ) async throws -> String? {
+        let outcome = outcome(for: existing)
+        return try await join(input, outcome.alias, outcome.clears, openConversation)
     }
 }
 

@@ -35,15 +35,15 @@ import com.voria.umsh.features.channels.ChannelKeyText
 /**
  * The import preview for an opened link that names no node
  * (product-structure, "Deep links" 2.1): a sheet over whatever was showing,
- * with the link in Add peer's field and what is wrong with it under it, as
- * Add peer reports a bad link (`add-peer.svg` 2). The link can be corrected
- * there; Preview then opens the import preview proper (boards 3–4), with
- * the same rules as Add peer. [link] is the link's text, and null when no
- * sheet shows, and [opening] which opening of it this is: the same link
- * opened again starts over, from the link and what is wrong with it;
- * [onExit] takes a page, a conversation or Your identity, and [onChannel]
- * a link corrected into a channel's; dismissing
- * ([onDismiss]) returns to what was showing, nothing stored.
+ * with the link in Add peer's field and what is wrong with it under it
+ * (`add-peer.svg` 5). The link can be corrected there; Preview then opens
+ * the import preview proper (boards 3–4), with the same rules as Add peer.
+ * [link] is the link's text, and null when no sheet shows, and [opening]
+ * which opening of it this is: the same link opened again starts over,
+ * from the link and what is wrong with it; [onExit] takes a page, a
+ * conversation or Your identity, and [onChannel] a link corrected into a
+ * channel's; dismissing ([onDismiss]) returns to what was showing, nothing
+ * stored.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

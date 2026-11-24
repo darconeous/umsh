@@ -303,7 +303,7 @@ it guarded was never built.
 
 ### Phase 3: peers, routes, contact exchange, channels
 
-Every hardware guess from the Phase 3 plan (G-136 to G-152) and its build reports (G-153 to G-260), deduplicated
+Every hardware guess from the Phase 3 plan (G-136 to G-152) and its build reports (G-153 to G-263), deduplicated
 as above. Two build reports reused numbers already taken; their items are renumbered G-249 to G-255. The links,
 sharing and scanner items are in [ADR 0007](0007-links-and-scanner.md). Radios as above, plus an iPhone running
 UMSH for the cross-platform items.
@@ -389,6 +389,7 @@ UMSH for the cross-platform items.
 | G-247 | Clear all messages on a busy channel erases only this phone's copy; later messages land in the same conversation | Clear, then receive | As described | — |
 | G-248 | A thumb tap just beside a member's avatar opens their sheet, and a tap on the bubble beside it still reaches the bubble | Tap around the avatar | As described | Widen the gutter |
 | G-255 | Swiping down or pressing Back during the channel sheet's join does nothing until the join ends; then the conversation opens | Try it | As described | — |
+| G-261 | A channel joined or created on the phone notifies, including for messages the radio queued while the phone was away, and the radio gives its receipt cue for them; Public and EMERGENCY stay muted on both | Join a channel, put the phone out of range, send to it and to Public from another node, come back | The radio cues for the joined channel only; the phone notifies for it only | — (core policy) |
 
 #### M. TalkBack, layout and the release build
 

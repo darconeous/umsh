@@ -3,6 +3,7 @@ package com.voria.umsh.features
 import android.Manifest
 import android.content.ClipboardManager
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.SemanticsActions
@@ -10,9 +11,11 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -39,11 +42,14 @@ import com.voria.umsh.designsystem.LocalWindowOverride
 import com.voria.umsh.designsystem.UmshTheme
 import com.voria.umsh.features.scanner.CameraPresence
 import com.voria.umsh.features.scanner.CameraStatus
+import com.voria.umsh.features.scanner.IN_USE_GRACE
 import com.voria.umsh.features.scanner.LocalCameraPresence
 import com.voria.umsh.features.scanner.LocalFrameSource
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.concurrent.thread
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -86,8 +92,8 @@ class ScannerTest {
         runtime
     }
 
-    private fun show(runtime: AppRuntime, hasCamera: Boolean = true) {
-        compose.setContent {
+    private fun show(runtime: AppRuntime, hasCamera: Boolean = true, restoration: StateRestorationTester? = null) {
+        val content: @Composable () -> Unit = {
             UmshTheme(fallbackScheme = true) {
                 CompositionLocalProvider(
                     LocalAppRuntime provides runtime,
@@ -102,6 +108,7 @@ class ScannerTest {
                 }
             }
         }
+        if (restoration != null) restoration.setContent(content) else compose.setContent(content)
         waitForTag(Tags.CONVERSATIONS_ROOT)
     }
 
@@ -124,6 +131,20 @@ class ScannerTest {
     /** The pill is one node for TalkBack: its text is merged into it. */
     private fun pill(): String = compose.onNodeWithTag(Tags.SCANNER_PILL).fetchSemanticsNode().config
         .getOrNull(SemanticsProperties.Text)?.joinToString("") { it.text }.orEmpty()
+
+    /** The held-camera line, one node like the pill. */
+    private fun inUseLine(): String = compose.onNodeWithTag(Tags.SCANNER_IN_USE).fetchSemanticsNode().config
+        .getOrNull(SemanticsProperties.Text)?.joinToString("") { it.text }.orEmpty()
+
+    /** [tag] does not appear at any point for [millis]. */
+    private fun assertNeverShown(tag: String, millis: Long) {
+        val until = System.currentTimeMillis() + millis
+        while (System.currentTimeMillis() < until) {
+            compose.waitForIdle()
+            assertTrue("$tag appeared", !present(tag))
+            Thread.sleep(50)
+        }
+    }
 
     private fun peersTab() {
         compose.onAllNodesWithTag(Tags.NAV_PEERS)[0].performClick()
@@ -287,7 +308,7 @@ class ScannerTest {
         assertTrue(present(Tags.SCANNER_VIEWFINDER))
         camera.status.value = null
         waitForTag(Tags.SCANNER_PILL)
-        camera.status.value = CameraStatus.Unavailable
+        camera.status.value = CameraStatus.AccessOff
         waitForTag(Tags.SCANNER_CAMERA_OFF)
         compose.onNodeWithTag(Tags.SCANNER_PILL).assertDoesNotExist()
         camera.show(null)
@@ -360,23 +381,128 @@ class ScannerTest {
     }
 
     /**
-     * The camera unavailable (camera access off in quick settings, the
-     * camera disabled): the page says so, not a black viewfinder, and Allow
-     * camera binds again.
+     * Camera access off (quick settings, or disabled by policy): the page
+     * says so, not a black viewfinder, and Allow camera binds again.
      */
     @Test
-    fun anUnavailableCameraSaysSoAndAllowTriesAgain() {
+    fun cameraAccessOffSaysSoAndAllowTriesAgain() {
+        show(runtime())
+        scanFrom(Tags.CONVERSATIONS_SCAN)
+        val first = camera.binds.get()
+        camera.status.value = CameraStatus.AccessOff
+        waitForTag(Tags.SCANNER_CAMERA_OFF)
+        assertTrue(compose.onAllNodesWithText(string(R.string.scanner_camera_off)).fetchSemanticsNodes().isNotEmpty())
+        compose.onNodeWithTag(Tags.SCANNER_VIEWFINDER).assertDoesNotExist()
+        compose.onNodeWithTag(Tags.SCANNER_TORCH).assertDoesNotExist()
+        compose.onNodeWithTag(Tags.SCANNER_RETRY).assertDoesNotExist()
+        camera.status.value = null
+        compose.onNodeWithTag(Tags.SCANNER_ALLOW).performClick()
+        waitForTag(Tags.SCANNER_VIEWFINDER)
+        assertTrue(camera.binds.get() > first)
+    }
+
+    /**
+     * Any other critical camera error (or no camera to bind): board 3's
+     * layout with a plain "Camera unavailable", no Allow camera, since
+     * access is not what is wrong, and Try again binds again.
+     */
+    @Test
+    fun anotherCameraFailureSaysUnavailableAndTriesAgain() {
         show(runtime())
         scanFrom(Tags.CONVERSATIONS_SCAN)
         val first = camera.binds.get()
         camera.status.value = CameraStatus.Unavailable
         waitForTag(Tags.SCANNER_CAMERA_OFF)
+        assertTrue(compose.onAllNodesWithText(string(R.string.scanner_camera_unavailable)).fetchSemanticsNodes().isNotEmpty())
+        assertTrue(compose.onAllNodesWithText(string(R.string.scanner_camera_off)).fetchSemanticsNodes().isEmpty())
+        compose.onNodeWithTag(Tags.SCANNER_ALLOW).assertDoesNotExist()
         compose.onNodeWithTag(Tags.SCANNER_VIEWFINDER).assertDoesNotExist()
-        compose.onNodeWithTag(Tags.SCANNER_TORCH).assertDoesNotExist()
         camera.status.value = null
-        compose.onNodeWithTag(Tags.SCANNER_ALLOW).performClick()
+        compose.onNodeWithTag(Tags.SCANNER_RETRY).performClick()
         waitForTag(Tags.SCANNER_VIEWFINDER)
         assertTrue(camera.binds.get() > first)
+    }
+
+    /**
+     * Another app holding the camera past the grace period: the dark
+     * viewfinder stays, with one line in the pill's place, and no torch
+     * and no camera-off page. The line goes once the camera opens.
+     */
+    @Test
+    fun aCameraHeldElsewhereSaysSoAndWaits() {
+        show(runtime())
+        scanFrom(Tags.CONVERSATIONS_SCAN)
+        camera.status.value = CameraStatus.InUse
+        waitForTag(Tags.SCANNER_IN_USE)
+        assertEquals(string(R.string.scanner_camera_in_use), inUseLine())
+        assertTrue(present(Tags.SCANNER_VIEWFINDER))
+        compose.onNodeWithTag(Tags.SCANNER_CAMERA_OFF).assertDoesNotExist()
+        compose.onNodeWithTag(Tags.SCANNER_TORCH).assertDoesNotExist()
+        camera.status.value = null
+        waitGone(Tags.SCANNER_IN_USE)
+        waitForTag(Tags.SCANNER_TORCH)
+    }
+
+    /** A camera freed within the grace period (the Camera app just closed) says nothing. */
+    @Test
+    fun aBriefHoldSaysNothing() {
+        show(runtime())
+        scanFrom(Tags.CONVERSATIONS_SCAN)
+        camera.status.value = CameraStatus.InUse
+        Thread.sleep(IN_USE_GRACE.inWholeMilliseconds / 4)
+        camera.status.value = null
+        waitForTag(Tags.SCANNER_TORCH)
+        assertNeverShown(Tags.SCANNER_IN_USE, IN_USE_GRACE.inWholeMilliseconds + SETTLE_MS)
+    }
+
+    /** A line already shown stays through a rotation, with no second wait. */
+    @Test
+    fun aShownLineStaysThroughARotation() {
+        val restoration = StateRestorationTester(compose)
+        show(runtime(), restoration = restoration)
+        scanFrom(Tags.CONVERSATIONS_SCAN)
+        camera.status.value = CameraStatus.InUse
+        waitForTag(Tags.SCANNER_IN_USE)
+        restoration.emulateSavedInstanceStateRestore()
+        compose.waitForIdle()
+        assertTrue(present(Tags.SCANNER_IN_USE))
+        camera.status.value = null
+        waitGone(Tags.SCANNER_IN_USE)
+    }
+
+    /**
+     * CameraX retries while the camera is held, passing through opening
+     * each time: the wait is not restarted, the line appears on time, and
+     * once shown it does not blink. It goes when the camera opens.
+     */
+    @Test
+    fun retriesWhileHeldStillShowTheLine() {
+        show(runtime())
+        scanFrom(Tags.CONVERSATIONS_SCAN)
+        val retries = AtomicBoolean(true)
+        val retrying = thread {
+            while (retries.get()) {
+                camera.status.value = CameraStatus.InUse
+                Thread.sleep(RETRY_MS)
+                camera.status.value = CameraStatus.Opening
+                Thread.sleep(RETRY_MS)
+            }
+        }
+        try {
+            // Retries every 2 × RETRY_MS, well inside the grace period: a wait restarted by each would never end.
+            compose.waitUntil(IN_USE_GRACE.inWholeMilliseconds + TIMEOUT / 4) { present(Tags.SCANNER_IN_USE) }
+            val until = System.currentTimeMillis() + 4 * RETRY_MS
+            while (System.currentTimeMillis() < until) {
+                compose.waitForIdle()
+                assertTrue(present(Tags.SCANNER_IN_USE))
+                Thread.sleep(RETRY_MS / 4)
+            }
+        } finally {
+            retries.set(false)
+            retrying.join()
+        }
+        camera.status.value = null
+        waitGone(Tags.SCANNER_IN_USE)
     }
 
     /** §3.10: the viewfinder is described, the torch has a state, the pill is polite (above). */
@@ -393,6 +519,13 @@ class ScannerTest {
         compose.waitUntil(TIMEOUT) { torchState() == string(R.string.scanner_torch_on) }
         val close = compose.onNodeWithTag(Tags.SCANNER_CLOSE).fetchSemanticsNode().config
         assertEquals(listOf(string(R.string.action_close)), close.getOrNull(SemanticsProperties.ContentDescription))
+        // A camera held elsewhere: its line is one polite node, read once.
+        camera.status.value = CameraStatus.InUse
+        waitForTag(Tags.SCANNER_IN_USE)
+        assertEquals(string(R.string.scanner_camera_in_use), inUseLine())
+        assertEquals(LiveRegionMode.Polite, compose.onNodeWithTag(Tags.SCANNER_IN_USE).fetchSemanticsNode().config.getOrNull(SemanticsProperties.LiveRegion))
+        camera.status.value = null
+        waitGone(Tags.SCANNER_IN_USE)
     }
 
     /** Without a camera there is nothing to scan with: no Scan on either root or in Add peer's field (§3.9). */
@@ -470,5 +603,8 @@ class ScannerTest {
     private companion object {
         const val TIMEOUT = 30_000L
         const val SETTLE_MS = 600L
+
+        /** Half of one CameraX retry cycle while the camera is held, as the tests fake it. */
+        const val RETRY_MS = 300L
     }
 }

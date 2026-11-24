@@ -274,6 +274,54 @@ fn a_first_build_database_keeps_its_records_under_its_address() {
     assert_eq!(violations, 0);
 }
 
+/// The app ranks the built-ins by kind and canonical name, so a migrated
+/// built-in row must keep both.
+#[test]
+fn a_swift_store_s_built_in_channels_stay_built_in() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = path_in(&directory);
+    {
+        // The channel table's first version, as the Swift store seeded it.
+        let connection = swift_store_at(&path, 15);
+        connection
+            .execute_batch(
+                "INSERT INTO local_identity (id, public_address, created_at_ms)
+                    VALUES ('me-public', 'me-public', 1);
+                INSERT INTO channel (id, owner_identity_id, kind, canonical_name, name,
+                    channel_id_hex, tint, key_digest, joined_phone, created_at_ms)
+                VALUES
+                    ('11111111-2222-3333-4444-000000000001', 'me-public', 'builtin', 'public', 'Public', '0001', x'01', 'd1', 1, 5),
+                    ('11111111-2222-3333-4444-000000000002', 'me-public', 'builtin', 'emergency', 'EMERGENCY', '0002', x'02', 'd2', 1, 5);",
+            )
+            .unwrap();
+    }
+    let store = MobileAppStore::open(path).unwrap();
+    let channels = store.channels("me-public".into()).unwrap();
+    let built_in: Vec<_> = channels
+        .iter()
+        .map(|channel| {
+            (
+                channel.kind,
+                crate::well_known_channel(channel.canonical_name.clone())
+                    .map(|known| known.channel),
+            )
+        })
+        .collect();
+    assert_eq!(
+        built_in,
+        [
+            (
+                MobileStoredChannelKind::Builtin,
+                Some(crate::MobileWellKnownChannel::Public)
+            ),
+            (
+                MobileStoredChannelKind::Builtin,
+                Some(crate::MobileWellKnownChannel::Emergency)
+            ),
+        ]
+    );
+}
+
 #[test]
 fn a_store_without_a_legacy_slot_is_untouched_by_the_re_key() {
     let directory = tempfile::tempdir().unwrap();

@@ -13,6 +13,7 @@ import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
@@ -173,6 +174,10 @@ class PeersTest {
         row(address).performClick()
         waitForTag(Tags.PEER_PAGE)
     }
+
+    /** Whether Clear all messages is enabled; null while it is not on the page. */
+    private fun clearEnabled(): Boolean? = compose.onAllNodesWithTag(Tags.PEER_CLEAR_MESSAGES).fetchSemanticsNodes().firstOrNull()
+        ?.let { !it.config.contains(SemanticsProperties.Disabled) }
 
     private fun pageControl(tag: String): SemanticsNodeInteraction =
         compose.onNodeWithTag(tag).performScrollTo()
@@ -453,15 +458,50 @@ class PeersTest {
 
         val count = runBlocking { runtime.messageCount(maya.address) }
         assertTrue(count > 0)
+        // Counted, with messages: enabled.
+        waitFor { clearEnabled() == true }
         pageControl(Tags.PEER_CLEAR_MESSAGES).performClick()
         waitForTag(Tags.CONFIRM_DIALOG)
         val confirm = context.resources.getQuantityString(R.plurals.clear_messages_confirm, count.toInt(), count.toInt())
         assertTrue(nodeText(Tags.CONFIRM_ACTION).toString(), confirm in nodeText(Tags.CONFIRM_ACTION))
         compose.onNodeWithTag(Tags.CONFIRM_ACTION).performClick()
         waitFor { runBlocking { runtime.messageCount(maya.address) } == 0L }
-        waitGone(Tags.PEER_CLEAR_MESSAGES)
+        // Nothing left to clear: the row stays, dimmed and not clickable, as on Conversation info.
+        waitFor { clearEnabled() == false }
+        pageControl(Tags.PEER_CLEAR_MESSAGES).assertIsNotEnabled().performClick()
+        compose.waitForIdle()
+        compose.onNodeWithTag(Tags.CONFIRM_DIALOG).assertDoesNotExist()
         // The conversation stays.
         assertTrue(runtime.appState.value!!.directConversations.any { it.peer.address == maya.address })
+    }
+
+    /** The confirmation closes by itself once the messages are cleared elsewhere: nothing is left to ask about. */
+    @Test
+    fun clearingElsewhereClosesTheAsk() {
+        val runtime = runtime()
+        show(runtime)
+        openPeers()
+        val maya = peer(runtime, "Maya Ortiz")
+        openPage(maya.address)
+        waitFor { clearEnabled() == true }
+        pageControl(Tags.PEER_CLEAR_MESSAGES).performClick()
+        waitForTag(Tags.CONFIRM_DIALOG)
+        runBlocking { runtime.clearMessages(maya.address).await() }
+        waitGone(Tags.CONFIRM_DIALOG)
+        waitFor { clearEnabled() == false }
+    }
+
+    /** Without a conversation there is nothing to clear: no Clear all messages row at all. */
+    @Test
+    fun noConversationNoClearRow() {
+        val runtime = runtime()
+        show(runtime)
+        openPeers()
+        val tallac = peer(runtime, "Tallac Ridge")
+        assertTrue(runtime.appState.value!!.directConversations.none { it.peer.address == tallac.address })
+        openPage(tallac.address)
+        pageControl(Tags.PEER_REMOVE)
+        compose.onNodeWithTag(Tags.PEER_CLEAR_MESSAGES).assertDoesNotExist()
     }
 
     /**

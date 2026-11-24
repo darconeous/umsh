@@ -194,7 +194,9 @@ impl Worker {
                 max_flood_hops: preview.max_flood_hops,
                 joined_phone: true,
                 joined_device: false,
-                notifications_enabled: false,
+                // A channel the user joined or created notifies; only the
+                // built-ins start muted.
+                notifications_enabled: true,
                 joined_at_ms: Some(now_ms),
             },
             digest.to_owned(),

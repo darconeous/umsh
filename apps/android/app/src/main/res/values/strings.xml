@@ -1901,10 +1901,16 @@
     <string name="scanner_viewfinder_description">Camera viewfinder. Hold a UMSH code inside the frame.</string>
     <!-- Pill over the QR scanner's picture: the code in the frame is not a UMSH code; the scanner keeps running. -->
     <string name="scanner_not_umsh">Not a UMSH code</string>
-    <!-- QR scanner without a camera picture: the camera permission is refused, or the camera cannot be used now. -->
+    <!-- QR scanner without a camera picture: the camera permission is refused, or camera access is turned off on the phone. -->
     <string name="scanner_camera_off">Camera access is off for UMSH</string>
     <!-- Button under "Camera access is off for UMSH": asks for the camera again, or opens the app's settings. -->
     <string name="scanner_allow_camera">Allow camera</string>
+    <!-- QR scanner without a camera picture: the camera failed for a reason other than access being off. -->
+    <string name="scanner_camera_unavailable">Camera unavailable</string>
+    <!-- Button under "Camera unavailable": tries to open the camera again. -->
+    <string name="scanner_try_again">Try again</string>
+    <!-- Pill over the QR scanner's dark picture: another app is holding the camera; the scanner opens it by itself once it is free. -->
+    <string name="scanner_camera_in_use">Camera in use by another app</string>
     <!-- TalkBack: the QR scanner's flashlight button. -->
     <string name="scanner_torch">Flashlight</string>
     <!-- TalkBack state of the QR scanner's flashlight button. -->

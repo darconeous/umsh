@@ -16103,7 +16103,8 @@ public struct MobileAppStateRecord: Equatable, Hashable {
      */
     public var peers: [MobileAppPeerRecord]?
     /**
-     * Oldest first.
+     * The built-in channels first, `Public` then `EMERGENCY`; every other
+     * channel after them, oldest first.
      */
     public var channels: [MobileAppChannelRecord]
     /**
@@ -16132,7 +16133,8 @@ public struct MobileAppStateRecord: Equatable, Hashable {
          * whatever was last read in place.
          */peers: [MobileAppPeerRecord]?,
         /**
-         * Oldest first.
+         * The built-in channels first, `Public` then `EMERGENCY`; every other
+         * channel after them, oldest first.
          */channels: [MobileAppChannelRecord],
         /**
          * Most recent first. A conversation whose peer's address does not

@@ -46,7 +46,12 @@ async fn start_brings_the_identity_up_with_its_built_in_channels() {
         .collect();
     builtin.sort();
     assert_eq!(builtin, ["emergency", "public"]);
-    assert!(channels.iter().all(|channel| channel.joined_phone));
+    assert!(
+        channels
+            .iter()
+            .all(|channel| channel.joined_phone && !channel.notifications_enabled),
+        "both start joined and muted"
+    );
     assert_eq!(core.vault.accounts().len(), 2, "each key in the vault");
     // The public conversation is there to open.
     let state = core.core.state(true).unwrap();

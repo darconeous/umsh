@@ -135,7 +135,7 @@ async fn a_join_stores_the_key_and_the_row_and_registers_the_channel() {
     assert_eq!(row.canonical_name.as_deref(), Some("ridge crew"));
     assert_eq!(row.name.as_deref(), Some("Ridge Crew"));
     assert_eq!(row.alias.as_deref(), Some("Crew"));
-    assert!(row.joined_phone && !row.notifications_enabled);
+    assert!(row.joined_phone && row.notifications_enabled);
     assert_eq!(row.joined_at_ms, Some(NOW_MS));
     assert!(changes(&core).channels_changed);
     let address = crate::channel_conversation_address(key).unwrap();
@@ -291,7 +291,7 @@ async fn a_private_channel_is_made_with_a_key_no_answer_carries() {
     assert_eq!(row.kind, MobileStoredChannelKind::PrivateKey);
     assert_eq!(row.name.as_deref(), Some("Ops"));
     assert_eq!(row.alias, None);
-    assert!(row.joined_phone);
+    assert!(row.joined_phone && row.notifications_enabled);
     use crate::secret_vault::SecretVault as _;
     let key = core.vault.load(id.clone()).unwrap().unwrap();
     assert_eq!(key.len(), 32);
@@ -456,6 +456,94 @@ async fn a_built_in_channel_stays_to_be_joined_again() {
     core.core.rejoin_channel(public).await.unwrap();
     let changes_now = changes(&core);
     assert!(changes_now.channels_changed && !changes_now.conversations_changed);
+}
+
+#[tokio::test]
+async fn joining_a_held_channel_again_keeps_its_notification_choice() {
+    let (core, owner) = running().await;
+    let emergency = channel_id_named(&core, &owner, "emergency");
+    let muted = |core: &Core| {
+        !core
+            .store
+            .channel_by_id(&owner, &emergency)
+            .unwrap()
+            .unwrap()
+            .notifications_enabled
+    };
+    core.core.leave_channel(emergency.clone()).await.unwrap();
+    core.core.rejoin_channel(emergency.clone()).await.unwrap();
+    assert!(muted(&core), "a rejoined built-in stays muted");
+    core.core.leave_channel(emergency.clone()).await.unwrap();
+    let joined = core
+        .core
+        .join_channel("EMERGENCY".into(), None, false)
+        .await
+        .unwrap();
+    assert_eq!(joined.channel_id, emergency);
+    assert!(muted(&core), "joined by name, it is the held row");
+
+    core.core
+        .set_channel_notifications(emergency.clone(), true)
+        .await
+        .unwrap();
+    core.core.leave_channel(emergency.clone()).await.unwrap();
+    core.core.rejoin_channel(emergency.clone()).await.unwrap();
+    assert!(!muted(&core), "the user's choice survives a rejoin");
+}
+
+#[tokio::test]
+async fn the_built_in_channels_list_first_then_the_rest_oldest_first() {
+    let (core, owner) = running().await;
+    let public = channel_id_named(&core, &owner, "public");
+    let emergency = channel_id_named(&core, &owner, "emergency");
+    // Store order alone would put EMERGENCY before Public.
+    rusqlite::Connection::open(core.directory.path().join("app.sqlite"))
+        .unwrap()
+        .execute(
+            "UPDATE channel SET created_at_ms = ? WHERE id = ?",
+            rusqlite::params![NOW_MS + 5, public],
+        )
+        .unwrap();
+    // Older than both, and one named like a built-in without being one.
+    let older = |id: &str, name: &str, canonical: &str, created_at_ms: i64| {
+        let key = crate::inspect_channel_name(name.into()).unwrap().key;
+        core.store
+            .insert_channel(
+                crate::store::MobileStoredChannelRecord {
+                    id: id.to_owned(),
+                    owner_identity_id: owner.clone(),
+                    kind: MobileStoredChannelKind::Named,
+                    canonical_name: Some(canonical.into()),
+                    name: Some(name.into()),
+                    alias: None,
+                    channel_id_hex: "0000".into(),
+                    tint: vec![0, 0, 0],
+                    region_code: None,
+                    max_flood_hops: None,
+                    joined_phone: true,
+                    joined_device: false,
+                    notifications_enabled: true,
+                    joined_at_ms: None,
+                },
+                crate::channel_key_digest(key),
+                created_at_ms,
+            )
+            .unwrap();
+    };
+    let crew = "00000000-0000-4000-8000-0000000000C1";
+    let decoy = "00000000-0000-4000-8000-0000000000C2";
+    older(crew, "Ridge Crew", "ridge crew", NOW_MS - 1_000);
+    older(decoy, "Decoy", "emergency", NOW_MS - 2_000);
+
+    let order: Vec<String> = core
+        .core
+        .state(false)
+        .unwrap()
+        .channels
+        .into_iter()
+        .map(|channel| channel.stored.id)
+        .collect();
+    assert_eq!(order, [public, emergency, decoy.into(), crew.into()]);
 }
 
 #[tokio::test]

@@ -46,15 +46,27 @@ extension AppRuntime {
 
     /// Join by the text a preview was read from, which the core reads again:
     /// a key the phone already holds keeps its routing and takes the alias,
-    /// one it does not is stored and registered. With `openConversation`
-    /// the channel's conversation opens too, and its address is returned.
+    /// one it does not is stored and registered. A `nil` alias keeps a held
+    /// channel's alias unless `clearAlias`; a clear that fails is logged and
+    /// the join still stands. With `openConversation` the channel's
+    /// conversation opens too, and its address is returned.
     private func joinChannel(
         input: String,
         alias: String?,
+        clearAlias: Bool,
         openConversation: Bool
     ) async throws -> String? {
-        try await run {
-            try await $0.joinChannel(input: input, alias: alias, openConversation: openConversation)
+        let logger = Self.logger
+        return try await run { core in
+            let joined = try await core.joinChannel(input: input, alias: alias, openConversation: openConversation)
+            if clearAlias, alias == nil {
+                do {
+                    try await core.setChannelAlias(id: joined.channelId, alias: nil)
+                } catch {
+                    logger.warning("channel alias not cleared: \(String(describing: error), privacy: .public)")
+                }
+            }
+            return joined
         }.conversationAddress
     }
 

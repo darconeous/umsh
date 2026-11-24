@@ -216,5 +216,7 @@ separate delete action removes local conversation data.
 Notifications should prioritize human messages and actionable sensor events.
 Routine beacons, route changes, and radio diagnostics do not generate user
 notifications by default. Channel and room notifications can be muted
-independently. Urgent presentation is reserved for explicit user policy and
-must not be inferred merely from the `EMERGENCY` channel name.
+independently. A channel the user joins or creates notifies by default; the
+built-in `Public` and `EMERGENCY` channels start muted. Urgent presentation is
+reserved for explicit user policy and must not be inferred merely from the
+`EMERGENCY` channel name.
