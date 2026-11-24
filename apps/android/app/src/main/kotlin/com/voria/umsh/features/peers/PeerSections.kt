@@ -52,6 +52,8 @@ data class PeerSections(
      * empty state (`peers-list.svg` 6), as iOS draws it.
      */
     val nothingKnown: Boolean,
+    /** Nodes are known but none is saved: a line says where heard ones are, as iOS does. */
+    val noneSaved: Boolean,
 ) {
     val isEmpty: Boolean get() = favorites.isEmpty() && saved.isEmpty() && radios.isEmpty()
 
@@ -69,6 +71,7 @@ data class PeerSections(
                 saved = arranged.filter { !it.isCompanionRadio && !it.isFavorite },
                 radios = arranged.filter { it.isCompanionRadio },
                 nothingKnown = state.peers.isEmpty(),
+                noneSaved = state.peers.isNotEmpty() && state.peers.none { it.isSaved && !it.isCompanionRadio },
             )
         }
     }

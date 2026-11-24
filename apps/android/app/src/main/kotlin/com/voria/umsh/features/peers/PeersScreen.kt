@@ -169,6 +169,16 @@ fun PeersScreen(reselects: Int, selected: String?, onOpen: (String) -> Unit, onD
                     ) {
                         section(R.string.peers_section_favorites, Tags.PEERS_FAVORITES, shown.sections.favorites, names, selected, now, rowActions)
                         section(R.string.peers_section_saved, Tags.PEERS_SAVED, shown.sections.saved, names, selected, now, rowActions)
+                        if (shown.sections.noneSaved) {
+                            item(key = "none_saved") {
+                                Text(
+                                    stringResource(R.string.peers_none_saved),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(16.dp).testTag(Tags.PEERS_NONE_SAVED),
+                                )
+                            }
+                        }
                         section(R.string.peers_section_companion_radio, Tags.PEERS_RADIO, shown.sections.radios, names, selected, now, rowActions)
                         item(key = "discover") { DiscoverRow(onDiscover) }
                     }

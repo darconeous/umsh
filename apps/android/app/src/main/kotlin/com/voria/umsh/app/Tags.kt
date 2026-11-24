@@ -147,6 +147,7 @@ object Tags {
     const val PEERS_SEARCH_SAVED = "peers_search_saved"
     const val PEERS_SEARCH_DISCOVERED = "peers_search_discovered"
     const val PEERS_SEARCH_NOTHING = "peers_search_nothing"
+    const val PEERS_NONE_SAVED = "peers_none_saved"
     const val PEERS_SORT = "peers_sort"
     const val PEER_MENU = "peer_menu"
     const val PEER_MENU_FAVORITE = "peer_menu_favorite"

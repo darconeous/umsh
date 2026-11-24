@@ -1252,6 +1252,7 @@
     <!-- Peers list with no nodes at all: body. -->
     <string name="peers_empty_body">Import a peer to get started, or listen for nodes announcing themselves nearby.</string>
     <!-- Footer under search's Discovered nodes. -->
+    <string name="peers_none_saved">No saved nodes. Nodes heard over the air appear in search until you save them.</string>
     <string name="peers_search_discovered_footer">Heard over the air but not saved.</string>
     <!-- Peers search found nothing. -->
     <string name="peers_search_nothing">No nodes match this search.</string>

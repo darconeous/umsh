@@ -173,7 +173,11 @@ private fun StopRow(
                         else -> hintLine to null
                     }
                 }
-                RailStop.Peer -> names.peer(peer) to null
+                // A node with no name goes by its hint, as its page's title does.
+                RailStop.Peer -> (
+                    DisplayNames.given(peer)
+                        ?: if (peer.isCompanionRadio) names.companionRadio else isolated(peer.hint.text)
+                    ) to null
             }
             Text(title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
             subtitle?.let {

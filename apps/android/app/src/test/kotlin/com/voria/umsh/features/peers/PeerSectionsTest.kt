@@ -59,10 +59,14 @@ class PeerSectionsTest {
         val heard = PeerSections.of(state(listOf(fern)), arrangement())
         assertTrue(heard.isEmpty)
         assertFalse(heard.nothingKnown)
+        assertTrue(heard.noneSaved)
         // A filter that empties the sections is not the empty state.
         val filtered = PeerSections.of(state(listOf(kestrel)), arrangement(filter = PeerFilter.Sensors))
         assertTrue(filtered.isEmpty)
         assertFalse(filtered.nothingKnown)
+        // Saved nodes hidden by a filter are not "no saved nodes".
+        assertFalse(filtered.noneSaved)
+        assertFalse(PeerSections.of(state(emptyList()), arrangement()).noneSaved)
     }
 
     @Test
