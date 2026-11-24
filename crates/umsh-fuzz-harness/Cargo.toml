@@ -10,7 +10,6 @@ publish = false
 [dependencies]
 hamaddr.workspace = true
 umsh-bridge-client = { path = "../umsh-bridge-client" }
-umsh-chat-room = { path = "../umsh-chat-room" }
 umsh-core = { path = "../umsh-core" }
 umsh-crypto = { path = "../umsh-crypto", features = ["software-crypto"] }
 umsh-hal = { path = "../umsh-hal" }

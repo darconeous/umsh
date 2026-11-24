@@ -724,6 +724,10 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
         self.with_chats(|chats, _, _, events| chats.direct_chat(address, name, events))
     }
 
+    fn find_direct_chat(&self, address: &str) -> Option<ChatId> {
+        self.chats.borrow().find_direct_chat(address)
+    }
+
     fn inspect_peer(&self, text: &str) -> PeerEntry {
         self.chats.borrow().inspect_peer(text)
     }
@@ -860,6 +864,14 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
 
     fn delete_chat(&self, chat: ChatId) {
         self.with_chats(|chats, _, _, events| chats.delete_chat(chat, events));
+    }
+
+    fn clear_chat(&self, chat: ChatId) {
+        self.with_chats(|chats, _, _, events| chats.clear_chat(chat, events));
+    }
+
+    fn message_count(&self, chat: ChatId) -> usize {
+        self.chats.borrow().message_count(chat)
     }
 
     fn rename_chat(&self, chat: ChatId, name: Option<&str>) {

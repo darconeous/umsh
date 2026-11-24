@@ -7,15 +7,13 @@ use buoyant::focus::BoundaryBehavior;
 use buoyant::view::popover::Dismissal;
 use buoyant::view::prelude::*;
 use embedded_graphics::pixelcolor::Rgb565;
-use heapless::String;
 
 use super::join::edited_name;
 use super::member::detail_head;
-use super::setting::{End, card, choice, row};
+use super::setting::{End, Removal, ask_card, row};
 use crate::board::Metrics;
 use crate::model::{ChannelAccess, ChatKind, ChatSummary, State};
-use crate::nav::{JoinName, keys};
-use crate::theme;
+use crate::nav::{Ask, JoinName, keys};
 
 const ROW: u32 = 36;
 /// The confirmation's width.
@@ -35,7 +33,8 @@ pub fn view(
     summary: &ChatSummary,
     name: &JoinName,
     test_messages: Option<bool>,
-    confirm: bool,
+    messages: usize,
+    confirm: Option<Ask>,
 ) -> impl View<Rgb565, State> + use<> {
     let about = match summary.kind {
         ChatKind::Channel { access } => kind(access),
@@ -92,6 +91,17 @@ pub fn view(
                     ROW,
                 )
             }),
+            (messages > 0).then(|| {
+                row(
+                    m,
+                    "Clear messages",
+                    keys::CLEAR_MESSAGES,
+                    State::ask_clear_messages,
+                    End::Nothing,
+                    true,
+                    ROW,
+                )
+            }),
             row(
                 m,
                 "Leave",
@@ -113,45 +123,20 @@ pub fn view(
         }
         _ => KeyResponse::Ignored,
     })
-    .popover(confirm.then_some(called).as_ref(), move |name| {
-        confirmation(m, name)
+    .popover(confirm.as_ref(), move |&asked| {
+        ask_card(m, asked, Some(LEAVE), &called, messages, CONFIRM_WIDTH)
     })
     // A tap outside is Cancel.
     .on_blur(|s: &mut State| {
-        s.cancel_leave();
+        s.cancel_ask();
         Dismissal::Dismiss
     })
 }
 
-/// Leave, confirmed, or Cancel, which is focused.
-// Out of line, as `setting::row` is, against the Xtensa back end's failure.
-#[inline(never)]
-fn confirmation(m: &'static Metrics, name: &String<32>) -> impl View<Rgb565, State> + use<> {
-    let mut leave: String<48> = String::new();
-    _ = core::fmt::write(&mut leave, format_args!("Leave {name}"));
-    card(
-        m,
-        VStack::new((
-            choice(
-                m,
-                leave,
-                keys::LEAVE_CONFIRM,
-                State::leave_channel,
-                theme::RED,
-                None,
-            ),
-            choice(
-                m,
-                String::try_from("Cancel").unwrap_or_default(),
-                keys::LEAVE_CANCEL,
-                State::cancel_leave,
-                theme::TEXT,
-                None,
-            ),
-        ))
-        .with_spacing(0),
-        CONFIRM_WIDTH,
-        HorizontalAlignment::Center,
-        State::cancel_leave,
-    )
-}
+/// Leaving, as its confirmation offers it.
+const LEAVE: Removal = Removal {
+    label: "Leave",
+    confirm: keys::LEAVE_CONFIRM,
+    cancel: keys::LEAVE_CANCEL,
+    act: State::leave_channel,
+};

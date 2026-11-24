@@ -444,9 +444,9 @@ fn send_options(request: &NodeMsgRequest) -> Result<SendOptions, Status> {
     }
     if !request.source_route.is_empty() {
         let mut route = heapless::Vec::new();
-        for hint in request.source_route.chunks_exact(REPEATER_HINT_LEN) {
+        for &hint in request.source_route.as_chunks::<REPEATER_HINT_LEN>().0 {
             route
-                .push(RepeaterHint([hint[0], hint[1]]))
+                .push(RepeaterHint(hint))
                 .map_err(|_| Status::INVALID_ARGUMENT)?;
         }
         options.source_route = Some(route);

@@ -4457,7 +4457,6 @@ dependencies = [
  "rand_core 0.6.4",
  "tokio",
  "tokio-serial",
- "umsh-chat-room",
  "umsh-cli",
  "umsh-core",
  "umsh-crypto",
@@ -4658,13 +4657,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "umsh-chat-room"
-version = "0.1.0"
-dependencies = [
- "umsh-core",
-]
-
-[[package]]
 name = "umsh-cli"
 version = "0.1.0"
 dependencies = [
@@ -4776,7 +4768,6 @@ version = "0.1.0"
 dependencies = [
  "hamaddr",
  "umsh-bridge-client",
- "umsh-chat-room",
  "umsh-core",
  "umsh-crypto",
  "umsh-hal",

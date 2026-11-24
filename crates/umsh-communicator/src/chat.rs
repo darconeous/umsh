@@ -1646,6 +1646,29 @@ impl<S: ChatStore> Chats<S> {
         }
     }
 
+    /// Removes the messages in `chat`, direct or channel, keeping the chat
+    /// and where its conversation stands.
+    pub fn clear_chat(&mut self, chat: model::ChatId, events: &mut dyn FnMut(NodeEvent)) {
+        if self
+            .store
+            .update_chat(ChatId(chat), ChatChange::Clear)
+            .is_err()
+        {
+            return;
+        }
+        let store = &self.store;
+        let kept = |id: &MessageId| matches!(store.message(*id), Ok(Some(_)));
+        self.retrying.retain(kept);
+        self.heard.retain(|id, _| kept(id));
+        self.rows.replace(None);
+        events(NodeEvent::ChatChanged(chat));
+    }
+
+    /// The number of messages kept in `chat`.
+    pub fn message_count(&self, chat: model::ChatId) -> usize {
+        self.store.message_count(ChatId(chat))
+    }
+
     /// Calls `chat` `name` here, or by its peer's or channel's own name
     /// when `None`.
     pub fn rename_chat(

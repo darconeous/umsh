@@ -576,7 +576,18 @@ impl<D: Durable> MemoryStore<D> {
     // ─── Archives ────────────────────────────────────────────────────
 
     fn delete_archives(&mut self, conversation: ConversationCode, message_id: u8) {
-        let range = (conversation, message_id, 0)..=(conversation, message_id, u8::MAX);
+        self.delete_archives_in(conversation, message_id..=message_id);
+    }
+
+    /// Delete the resend material of `conversation`'s messages whose wire
+    /// IDs are in `message_ids`.
+    fn delete_archives_in(
+        &mut self,
+        conversation: ConversationCode,
+        message_ids: core::ops::RangeInclusive<u8>,
+    ) {
+        let range =
+            (conversation, *message_ids.start(), 0)..=(conversation, *message_ids.end(), u8::MAX);
         let keys: Vec<ArchiveCode> = self
             .disk
             .archives
@@ -646,6 +657,21 @@ impl<D: Durable> MemoryStore<D> {
 
     /// Remove a chat and its messages.
     fn remove_chat(&mut self, chat: u32) {
+        self.clear_chat(chat);
+        if let Some(entry) = self.disk.chats.remove(&chat) {
+            self.dirty.mark(RecordKey::Chat(chat));
+            self.index.remove_chat(chat, &entry);
+        }
+    }
+
+    /// Remove a chat's messages, keeping the chat, and all its resend
+    /// material: what was sent to edit, react, or delete is kept under wire
+    /// IDs of its own, which no message record holds.
+    fn clear_chat(&mut self, chat: u32) {
+        if let Some(entry) = self.disk.chats.get(&chat) {
+            let conversation = ConversationCode::from(&entry.record.conversation);
+            self.delete_archives_in(conversation, 0..=u8::MAX);
+        }
         let messages: Vec<u32> = self
             .index
             .chat_messages
@@ -656,10 +682,6 @@ impl<D: Durable> MemoryStore<D> {
             .collect();
         for id in messages {
             self.remove_message(id);
-        }
-        if let Some(entry) = self.disk.chats.remove(&chat) {
-            self.dirty.mark(RecordKey::Chat(chat));
-            self.index.remove_chat(chat, &entry);
         }
     }
 
@@ -1454,6 +1476,9 @@ impl<D: Durable> ChatStore for MemoryStore<D> {
             self.settle()?;
             return Ok(chat);
         }
+        if let ChatChange::Clear = change {
+            self.clear_chat(chat.0);
+        }
         let Some(entry) = self.disk.chats.get_mut(&chat.0) else {
             return Err(StoreError::NotFound);
         };
@@ -1461,7 +1486,7 @@ impl<D: Durable> ChatStore for MemoryStore<D> {
         match change {
             ChatChange::Rename(name) => entry.record.name = name.map(record::name),
             ChatChange::Mute(muted) => entry.record.muted = muted,
-            ChatChange::Read => entry.record.unread = 0,
+            ChatChange::Read | ChatChange::Clear => entry.record.unread = 0,
             ChatChange::Draft(draft) => {
                 entry.draft = draft
                     .filter(|draft| !draft.is_empty())
@@ -2211,6 +2236,11 @@ mod tests {
     }
 
     #[test]
+    fn encoded_clear() {
+        conformance::clear(&mut Encoded);
+    }
+
+    #[test]
     fn encoded_peers() {
         conformance::peers(&mut Encoded);
     }
@@ -2686,6 +2716,11 @@ mod tests {
     #[test]
     fn chats() {
         conformance::chats(&mut Memory);
+    }
+
+    #[test]
+    fn clear() {
+        conformance::clear(&mut Memory);
     }
 
     #[test]

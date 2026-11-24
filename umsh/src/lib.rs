@@ -31,8 +31,6 @@
 //! [`node::ReceivedPacketRef`], and higher-level helpers live above that boundary rather than
 //! inside the node core.
 
-#[cfg(feature = "chat-rooms")]
-pub use umsh_chat_room as chat_room;
 pub use umsh_core as core;
 pub use umsh_crypto as crypto;
 pub use umsh_hal as hal;

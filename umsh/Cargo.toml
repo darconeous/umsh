@@ -7,9 +7,8 @@ repository.workspace = true
 documentation = "https://darconeous.github.io/umsh/docs/rust/umsh/"
 
 [features]
-default = ["std", "software-crypto", "chat-rooms"]
-chat-rooms = ["dep:umsh-chat-room"]
-std = ["umsh-uri/std", "umsh-chat-room?/std", "umsh-core/std", "umsh-crypto/std", "umsh-hal/std", "umsh-mac/std", "umsh-node-mgmt/std", "umsh-node/std", "umsh-text/std"]
+default = ["std", "software-crypto"]
+std = ["umsh-uri/std", "umsh-core/std", "umsh-crypto/std", "umsh-hal/std", "umsh-mac/std", "umsh-node-mgmt/std", "umsh-node/std", "umsh-text/std"]
 unsafe-advanced = ["umsh-mac/unsafe-advanced", "umsh-node/unsafe-advanced"]
 software-crypto = ["umsh-crypto/software-crypto", "umsh-mac/software-crypto", "umsh-node/software-crypto", "umsh-text/software-crypto"]
 tokio-support = ["std", "software-crypto", "dep:rand", "dep:tokio", "dep:umsh-lan-bearer"]
@@ -25,7 +24,6 @@ embedded-hal-async.workspace = true
 hamaddr.workspace = true
 heapless.workspace = true
 rand_core.workspace = true
-umsh-chat-room = { path = "../crates/umsh-chat-room", default-features = false, optional = true }
 umsh-ulcp = { path = "../crates/umsh-ulcp" }
 umsh-core = { path = "../crates/umsh-core", default-features = false, features = ["region-codec"] }
 umsh-crypto = { path = "../crates/umsh-crypto", default-features = false }

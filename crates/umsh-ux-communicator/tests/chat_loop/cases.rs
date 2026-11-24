@@ -640,6 +640,96 @@ fn leaving_a_channel_from_its_menu_asks_first() {
     assert_eq!(app.state().chat(TRAIL_CREW), None);
 }
 
+#[test]
+fn clearing_a_channels_messages_asks_first_and_keeps_the_chat() {
+    let mut app = app!();
+    turn_to(&mut app, keys::chat(TRAIL_CREW));
+    hold(&mut app);
+    run(&mut app, &[Input::Press]);
+    assert!(matches!(app.state().screen(), Screen::Channel { chat, .. } if *chat == TRAIL_CREW));
+    let messages = app.state().node.message_count(TRAIL_CREW);
+    assert!(messages > 0);
+    turn_to(&mut app, keys::CLEAR_MESSAGES);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(focus(app.state()), Some(keys::CLEAR_CANCEL));
+    // Cancel keeps them.
+    run(&mut app, &[Input::Press]);
+    assert_eq!(focus(app.state()), Some(keys::CLEAR_MESSAGES));
+    assert_eq!(app.state().node.message_count(TRAIL_CREW), messages);
+
+    run(&mut app, &[Input::Press]);
+    turn_to(&mut app, keys::CLEAR_CONFIRM);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(app.state().node.message_count(TRAIL_CREW), 0);
+    assert!(matches!(app.state().screen(), Screen::Channel { chat, .. } if *chat == TRAIL_CREW));
+    // The row is gone; the next one is focused.
+    assert_eq!(focus(app.state()), Some(keys::CHANNEL_LEAVE));
+    let summary = app.state().chat(TRAIL_CREW).expect("the chat stays");
+    assert!(summary.preview.is_empty());
+    assert!(!summary.unread);
+}
+
+#[test]
+fn clearing_a_saved_peers_messages_keeps_the_peer_and_the_chat() {
+    let mut app = app!();
+    turn_to(&mut app, keys::chat(PAT));
+    hold(&mut app);
+    run(&mut app, &[Input::Press]);
+    assert!(matches!(app.state().screen(), Screen::Peer { .. }));
+    let messages = app.state().node.message_count(PAT);
+    assert!(messages > 0);
+    turn_to(&mut app, keys::CLEAR_MESSAGES);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(focus(app.state()), Some(keys::CLEAR_CANCEL));
+    // Backspace is Cancel.
+    run(&mut app, &[Input::Backspace]);
+    assert_eq!(focus(app.state()), Some(keys::CLEAR_MESSAGES));
+    assert_eq!(app.state().node.message_count(PAT), messages);
+
+    run(&mut app, &[Input::Press]);
+    turn_to(&mut app, keys::CLEAR_CONFIRM);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(app.state().node.message_count(PAT), 0);
+    assert!(matches!(app.state().screen(), Screen::Peer { .. }));
+    assert_eq!(focus(app.state()), Some(keys::PEER_FORGET));
+    assert!(app.state().chat(PAT).expect("the chat stays").preview.is_empty());
+}
+
+#[test]
+fn clearing_an_unsaved_peers_messages_focuses_the_row_above() {
+    let mut app = app!();
+    assert_eq!(focus(app.state()), Some(keys::chat(RIDGE)));
+    hold(&mut app);
+    run(&mut app, &[Input::Press]);
+    let (member, _) = shown_member(app.state());
+    assert!(!member.saved && !member.forwards);
+    assert!(app.state().node.message_count(RIDGE) > 0);
+    turn_to(&mut app, keys::CLEAR_MESSAGES);
+    run(&mut app, &[Input::Press]);
+    turn_to(&mut app, keys::CLEAR_CONFIRM);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(app.state().node.message_count(RIDGE), 0);
+    // Clear is last; Save peer was above it.
+    assert_eq!(focus(app.state()), Some(keys::SAVE_PEER));
+    let summary = app.state().chat(RIDGE).expect("the chat stays");
+    assert!(summary.preview.is_empty());
+    assert_eq!(draft(app.state(), RIDGE), RIDGE_DRAFT);
+}
+
+#[test]
+fn a_channel_member_offers_no_clear() {
+    let mut app = app!();
+    view_member(&mut app, 1);
+    assert!(matches!(
+        app.state().screen(),
+        Screen::Member {
+            from: MemberFrom::Message(_),
+            ..
+        }
+    ));
+    assert_eq!(app.state().shown_messages(), 0);
+}
+
 fn actions(state: &State) -> Option<u32> {
     match state.screen() {
         Screen::Conversation { actions, .. } => *actions,

@@ -925,6 +925,8 @@ pub struct Store {
     long: Cell<bool>,
     /// How many of the long history's oldest messages have been let go.
     evicted: Cell<usize>,
+    /// The chats whose own messages have been cleared.
+    cleared: RefCell<Vec<ChatId, CHATS>>,
     /// Where the rows of the chat last read by row start among its
     /// messages, with how many it held then.
     row_starts: RefCell<Option<(ChatId, usize, Vec<u16, POSITIONS>)>>,
@@ -1213,6 +1215,7 @@ impl Store {
             kept: RefCell::new(Vec::new()),
             long: Cell::new(false),
             evicted: Cell::new(0),
+            cleared: RefCell::new(Vec::new()),
             row_starts: RefCell::new(None),
             arrived: Cell::new(0),
             mine: RefCell::new(Vec::new()),
@@ -2368,7 +2371,9 @@ impl Store {
 
     /// How many of its own messages `chat` holds, before those kept since.
     fn own_count(&self, chat: ChatId) -> usize {
-        if self.is_long(chat) {
+        if self.cleared.borrow().contains(&chat) {
+            0
+        } else if self.is_long(chat) {
             LONG_COUNT - self.evicted.get()
         } else {
             messages(chat).len()
@@ -2927,6 +2932,22 @@ impl Node for Store {
         }
     }
 
+    fn find_direct_chat(&self, address: &str) -> Option<ChatId> {
+        if let Some(chat) = PEERS
+            .iter()
+            .find(|peer| peer.address == address)
+            .and_then(|peer| peer.chat)
+        {
+            return Some(chat);
+        }
+        if address == RIDGE {
+            return Some(1);
+        }
+        let direct = self.direct.borrow();
+        let index = direct.iter().position(|a| a == address)?;
+        Some(FIRST_DIRECT + index as ChatId)
+    }
+
     fn direct_chat(&self, address: &str, name: &str, avatar: &AvatarStyle) -> Option<ChatSummary> {
         // A saved peer the fixture already has a chat with.
         if let Some(chat) = PEERS
@@ -3444,6 +3465,27 @@ impl Node for Store {
         drop(rows);
         self.kept.borrow_mut().retain(|(kept, _)| *kept != chat);
         self.queue(NodeEvent::ChatRemoved(chat));
+    }
+
+    fn clear_chat(&self, chat: ChatId) {
+        let mut rows = self.chat_rows();
+        let Some(row) = rows.iter_mut().find(|row| row.id == chat) else {
+            return;
+        };
+        row.unread = false;
+        drop(rows);
+        let mut cleared = self.cleared.borrow_mut();
+        if !cleared.contains(&chat) {
+            _ = cleared.push(chat);
+        }
+        drop(cleared);
+        self.kept.borrow_mut().retain(|(kept, _)| *kept != chat);
+        self.row_starts.replace(None);
+        self.queue(NodeEvent::ChatChanged(chat));
+    }
+
+    fn message_count(&self, chat: ChatId) -> usize {
+        self.count(chat)
     }
 
     fn rename_chat(&self, chat: ChatId, name: Option<&str>) {

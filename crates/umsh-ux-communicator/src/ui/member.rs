@@ -6,19 +6,23 @@
 use buoyant::event::{Key, KeyResponse};
 use buoyant::focus::BoundaryBehavior;
 use buoyant::view::Lazy;
+use buoyant::view::popover::Dismissal;
 use buoyant::view::prelude::*;
 use embedded_graphics::pixelcolor::Rgb565;
 use heapless::String;
 
 use super::conversation::header;
 use super::details::row;
+use super::setting::ask_card;
 use super::{label, line};
 use crate::avatar::AvatarStyle;
 use crate::board::Metrics;
 use crate::model::{Member, State};
-use crate::nav::keys;
+use crate::nav::{Ask, keys};
 use crate::{font, icon, theme};
 
+/// The confirmation's width.
+const CONFIRM_WIDTH: u32 = 300;
 /// The head's height, and its avatar's size and place.
 const HEAD: u32 = 62;
 /// The address line under the head.
@@ -46,6 +50,8 @@ pub fn view(
     m: &'static Metrics,
     member: &Member,
     requested: bool,
+    messages: usize,
+    confirm: Option<Ask>,
     channel: Option<&str>,
 ) -> impl View<Rgb565, State> + use<> {
     let known = member.address.is_some();
@@ -101,6 +107,16 @@ pub fn view(
                         End::Chevron,
                     )
                 }),
+                (known && messages > 0).then(|| {
+                    colored_action(
+                        m,
+                        "Clear messages",
+                        keys::CLEAR_MESSAGES,
+                        State::ask_clear_messages,
+                        End::Nothing,
+                        theme::RED,
+                    )
+                }),
                 // Once known, the address under the head shows the hint.
                 (!known).then(|| row(m, "Hint", &member.hint, false)),
                 (!known).then(|| row(m, "Address", "Not yet known", true)),
@@ -116,6 +132,14 @@ pub fn view(
             KeyResponse::Handled
         }
         _ => KeyResponse::Ignored,
+    })
+    .popover(confirm.as_ref(), move |&asked| {
+        ask_card(m, asked, None, "", messages, CONFIRM_WIDTH)
+    })
+    // A tap outside is Cancel.
+    .on_blur(|s: &mut State| {
+        s.cancel_ask();
+        Dismissal::Dismiss
     })
 }
 
@@ -211,11 +235,24 @@ pub(super) fn action(
     act: fn(&mut State),
     end: End,
 ) -> impl View<Rgb565, State> + use<> {
+    colored_action(m, text, key, act, end, theme::TEXT)
+}
+
+/// An action row whose name is drawn in `color`.
+fn colored_action(
+    m: &'static Metrics,
+    text: &'static str,
+    key: buoyant::focus::FocusKey,
+    act: fn(&mut State),
+    end: End,
+    color: Rgb565,
+) -> impl View<Rgb565, State> + use<> {
     Button::new(act, move |button: ButtonState| {
         Lazy::new(
             ActionLook {
                 text,
                 end,
+                color,
                 focused: button.is_focused(),
                 m,
             },
@@ -230,6 +267,7 @@ pub(super) fn action(
 struct ActionLook {
     text: &'static str,
     end: End,
+    color: Rgb565,
     focused: bool,
     m: &'static Metrics,
 }
@@ -245,7 +283,7 @@ fn action_row(look: &ActionLook) -> impl View<Rgb565, ()> + use<> {
     };
     action_look(
         HStack::new((
-            line(look.text, face, m.body, theme::TEXT),
+            line(look.text, face, m.body, look.color),
             Spacer::default(),
             match look.end {
                 End::Value(value) => Some(line(

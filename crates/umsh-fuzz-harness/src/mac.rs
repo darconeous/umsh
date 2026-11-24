@@ -761,10 +761,14 @@ impl<const PEERS: usize, const HOLDS: usize> Harness<PEERS, HOLDS> {
 
     /// An honest peer the script could not forge for still gets service:
     /// its frame is delivered once, acknowledged, and refused as a replay.
+    /// A Licensed-Only node discards every encrypted packet, so the canary
+    /// sends it what its own peers would: an authenticated plaintext frame.
     fn check_canary(&mut self) {
         let cast = cast();
         let payload = [PayloadType::Empty as u8, 0xCA, 0x4E];
-        let frame = sealed_ack_requested(&cast.canary, cast, 1, &payload)
+        let encrypted =
+            self.mac.operating_policy().amateur_radio_mode != AmateurRadioMode::LicensedOnly;
+        let frame = sealed_ack_requested(&cast.canary, cast, 1, encrypted, &payload)
             .expect("the canary's frame builds");
         let before = self.log.received.len();
         let aired = self.mac.radio().tx.len();
@@ -948,18 +952,19 @@ fn sealed_ack_requested(
     party: &fixup::Party,
     cast: &Cast,
     counter: u32,
+    encrypted: bool,
     payload: &[u8],
 ) -> Option<Vec<u8>> {
     let mut buf = [0u8; FRAME];
-    let packet = PacketBuilder::new(&mut buf)
+    let mut builder = PacketBuilder::new(&mut buf)
         .unicast(cast.local_key.hint())
         .source_hint(party.identity.hint())
         .frame_counter(counter)
-        .encrypted()
-        .ack_requested()
-        .payload(payload)
-        .build()
-        .ok()?;
+        .ack_requested();
+    if encrypted {
+        builder = builder.encrypted();
+    }
+    let packet = builder.payload(payload).build().ok()?;
     seal(packet.as_bytes().to_vec(), party)
 }
 

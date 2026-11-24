@@ -1,6 +1,5 @@
 //! The application payloads behind a frame's payload type.
 
-use umsh_core::options::OptionDecoder;
 use umsh_node::NodeIdentityPayload;
 use umsh_node::location::NodeLocation;
 use umsh_node::mac_command::{
@@ -77,29 +76,14 @@ fn meet(input: &[u8]) {
     }
 }
 
-fn chat_room(input: &[u8]) {
-    if let Ok(action) = umsh_chat_room::parse(input) {
-        let mut out = [0u8; 1024];
-        if let Ok(len) = umsh_chat_room::encode(&action, &mut out) {
-            assert_eq!(umsh_chat_room::parse(&out[..len]).ok(), Some(action));
-        }
-    }
-    // A login is options after its action byte, in the encoding core owns.
-    if let Some((_, options)) = input.split_first() {
-        let mut decoder = OptionDecoder::new(options);
-        while let Some(Ok(_)) = decoder.next() {}
-    }
-}
-
 pub fn run(data: &[u8]) {
     let Some((&kind, input)) = data.split_first() else {
         return;
     };
-    match kind % 5 {
+    match kind % 4 {
         0 => mac_command(input),
         1 => identity(input),
         2 => location(input),
-        3 => meet(input),
-        _ => chat_room(input),
+        _ => meet(input),
     }
 }

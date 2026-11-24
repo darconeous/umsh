@@ -57,6 +57,7 @@ pub fn run<H: Harness>(harness: &mut H) {
     reactions(harness);
     edits_and_deletes(harness);
     chats(harness);
+    clear(harness);
     peers(harness);
     channels(harness);
     buffers(harness);
@@ -1111,6 +1112,7 @@ pub fn chats<H: Harness>(harness: &mut H) {
     store.update_chat(group_chat, ChatChange::Delete).unwrap();
     assert_eq!(store.chat_for(&group()), None);
     assert_eq!(store.messages(group_chat, None).count(), 0);
+    assert!((0..=u8::MAX).all(|wire| archived(&store, group(), wire).is_none()));
     assert_eq!(store.checkpoint(&group()), Some(checkpoint));
     assert_eq!(
         store.update_chat(group_chat, ChatChange::Read),
@@ -1122,6 +1124,73 @@ pub fn chats<H: Harness>(harness: &mut H) {
         again > opened,
         "a chat's identifier is never given out again"
     );
+}
+
+/// Clearing a chat removes its messages and their resend material, and
+/// keeps the chat, its place, its draft, and its checkpoint.
+pub fn clear<H: Harness>(harness: &mut H) {
+    let mut store = harness.fresh();
+    let mut rig = Rig::new();
+    let (handle, said) = rig.say(&mut store, direct(), "see you at 5");
+    // An edit is archived under a wire ID of its own.
+    rig.send(
+        &mut store,
+        direct(),
+        ComposeIntent::Edit {
+            original: ComposeRef::Handle(handle),
+            body: "see you at 6",
+        },
+    );
+    rig.hear_text(&mut store, direct(), "on my way");
+    rig.say(&mut store, group(), "hello, all");
+    let direct_chat = store.chat_for(&direct()).unwrap();
+    let group_chat = store.chat_for(&group()).unwrap();
+    let wire = record(&store, said).wire_id.unwrap();
+    assert!(archived(&store, direct(), wire).is_some());
+    let archives = |store: &H::Store, conversation| {
+        (0..=u8::MAX)
+            .filter(|&wire| archived(store, conversation, wire).is_some())
+            .count()
+    };
+    assert!(archives(&store, direct()) > 1);
+    let group_archives = archives(&store, group());
+    assert!(group_archives > 0);
+    store
+        .update_chat(direct_chat, ChatChange::Draft(Some("about tomorrow")))
+        .unwrap();
+    let order =
+        |store: &H::Store| -> Vec<ChatId> { store.chats().map(|chat| chat.unwrap().id).collect() };
+    let before = order(&store);
+    let checkpoint = store.checkpoint(&direct()).unwrap();
+    assert_eq!(store.unread_chats(), 1);
+
+    assert_eq!(
+        store.update_chat(direct_chat, ChatChange::Clear),
+        Ok(direct_chat)
+    );
+    assert_eq!(store.message_count(direct_chat), 0);
+    assert_eq!(store.messages(direct_chat, None).count(), 0);
+    assert_eq!(store.message(said), Ok(None));
+    assert_eq!(archives(&store, direct()), 0);
+    assert_eq!(archives(&store, group()), group_archives);
+    assert_eq!(store.chat_for(&direct()), Some(direct_chat));
+    assert_eq!(order(&store), before);
+    assert_eq!(store.unread_chats(), 0);
+    assert_eq!(store.checkpoint(&direct()), Some(checkpoint));
+    let mut buf = [0u8; 64];
+    assert_eq!(
+        store.draft(direct_chat, &mut buf).unwrap(),
+        Some("about tomorrow")
+    );
+    assert_eq!(bodies(&store, group_chat), ["hello, all"]);
+
+    let cleared = snapshot(&store);
+    harness.power_on(&mut store);
+    assert_eq!(snapshot(&store), cleared);
+
+    rig.say(&mut store, direct(), "back again");
+    assert_eq!(store.chat_for(&direct()), Some(direct_chat));
+    assert_eq!(bodies(&store, direct_chat), ["back again"]);
 }
 
 /// Peers are heard, saved, routed, and forgotten; Find keeps the 32 most
