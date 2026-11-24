@@ -226,6 +226,7 @@ final class VirtualRadioConnection: RadioDriverAdapter, RadioConnection, UlcpFra
                 radio = try MobileVirtualRadio.start(
                     stateDir: stateDirectory.path,
                     enablePhy: true,
+                    reach: .lan,
                     listener: VirtualRadioListener()
                 )
             } catch {

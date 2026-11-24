@@ -12566,13 +12566,14 @@ open class MobileVirtualRadio: MobileVirtualRadioProtocol, @unchecked Sendable {
      * The socket is placed where only processes entitled to the radio
      * can reach it, and is removed when the radio stops.
      */
-public static func serve(stateDir: String, socketPath: String, enablePhy: Bool, listener: MobileVirtualRadioListener)throws  -> MobileVirtualRadio  {
+public static func serve(stateDir: String, socketPath: String, enablePhy: Bool, reach: MobileVirtualRadioReach, listener: MobileVirtualRadioListener)throws  -> MobileVirtualRadio  {
     return try  FfiConverterTypeMobileVirtualRadio_lift(try rustCallWithError(FfiConverterTypeMobileVirtualRadioError_lift) {
         uniffiCallStatus in
     uniffi_umsh_mobile_core_fn_constructor_mobilevirtualradio_serve(
         FfiConverterString.lower(stateDir),
         FfiConverterString.lower(socketPath),
         FfiConverterBool.lower(enablePhy),
+        FfiConverterTypeMobileVirtualRadioReach_lower(reach),
         FfiConverterTypeMobileVirtualRadioListener_lower(listener),uniffiCallStatus
     )
 })
@@ -12583,16 +12584,18 @@ public static func serve(stateDir: String, socketPath: String, enablePhy: Bool, 
      * `state_dir`, for a host in this process.
      *
      * With `enable_phy`, the device comes up listening whatever it saved:
-     * starting it is choosing the LAN. Without, its saved state decides,
-     * so a host that turned the PHY off and saved keeps it off across
-     * restarts.
+     * starting it is choosing the network. Without, its saved state
+     * decides, so a host that turned the PHY off and saved keeps it off
+     * across restarts. Either way, `reach` decides who hears it: a host
+     * that attaches may turn the PHY on.
      */
-public static func start(stateDir: String, enablePhy: Bool, listener: MobileVirtualRadioListener)throws  -> MobileVirtualRadio  {
+public static func start(stateDir: String, enablePhy: Bool, reach: MobileVirtualRadioReach, listener: MobileVirtualRadioListener)throws  -> MobileVirtualRadio  {
     return try  FfiConverterTypeMobileVirtualRadio_lift(try rustCallWithError(FfiConverterTypeMobileVirtualRadioError_lift) {
         uniffiCallStatus in
     uniffi_umsh_mobile_core_fn_constructor_mobilevirtualradio_start(
         FfiConverterString.lower(stateDir),
         FfiConverterBool.lower(enablePhy),
+        FfiConverterTypeMobileVirtualRadioReach_lower(reach),
         FfiConverterTypeMobileVirtualRadioListener_lower(listener),uniffiCallStatus
     )
 })
@@ -40448,6 +40451,85 @@ public func FfiConverterTypeMobileVirtualRadioError_lower(_ value: MobileVirtual
 
 
 /**
+ * Who hears the virtual radio's group.
+ *
+ * Every start names one, so nothing joins the LAN by default: a LAN may
+ * have a bridge that carries whatever reaches the group onto the air.
+ */
+
+public enum MobileVirtualRadioReach: Equatable, Hashable {
+
+    /**
+     * The group on the network the host routes it through.
+     */
+    case lan
+    /**
+     * The group on this host's loopback interface: only its own
+     * participants hear it. For tests.
+     */
+    case thisHost
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileVirtualRadioReach: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileVirtualRadioReach: FfiConverterRustBuffer {
+    typealias SwiftType = MobileVirtualRadioReach
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileVirtualRadioReach {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .lan
+
+        case 2: return .thisHost
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileVirtualRadioReach, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .lan:
+            writeInt(&buf, Int32(1))
+
+
+        case .thisHost:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileVirtualRadioReach_lift(_ buf: RustBuffer) throws -> MobileVirtualRadioReach {
+    return try FfiConverterTypeMobileVirtualRadioReach.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileVirtualRadioReach_lower(_ value: MobileVirtualRadioReach) -> RustBuffer {
+    return FfiConverterTypeMobileVirtualRadioReach.lower(value)
+}
+
+
+
+/**
  * A channel the protocol fixes rules for (`multicast-channels.md`
  * §Default Channels).
  */
@@ -49392,10 +49474,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_constructor_mobileulcpsession_new() != 48651) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_constructor_mobilevirtualradio_serve() != 4768) {
+    if (uniffi_umsh_mobile_core_checksum_constructor_mobilevirtualradio_serve() != 52965) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_constructor_mobilevirtualradio_start() != 51525) {
+    if (uniffi_umsh_mobile_core_checksum_constructor_mobilevirtualradio_start() != 27601) {
         return InitializationResult.apiChecksumMismatch
     }
 
