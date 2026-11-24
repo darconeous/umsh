@@ -6,6 +6,7 @@ import android.os.ParcelFileDescriptor
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -13,6 +14,8 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import com.voria.umsh.app.FreshHostRule
 import com.voria.umsh.app.HostState
 import com.voria.umsh.app.MainActivity
@@ -65,13 +68,34 @@ class NotificationAskTest {
         ParcelFileDescriptor.AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand(command))
             .use { it.readBytes().decodeToString() }
 
+    /** Android's dialog has the focus. */
+    private fun dialogUp() = shell("dumpsys window").lineSequence().any { "mCurrentFocus" in it && "GrantPermissions" in it }
+
     /** Android's dialog, once it has the focus (a Back before that reaches the app), dismissed with Back. */
     private fun dismissDialog() {
-        compose.waitUntil(TIMEOUT) { shell("dumpsys window").lineSequence().any { "mCurrentFocus" in it && "GrantPermissions" in it } }
+        compose.waitUntil(TIMEOUT) { dialogUp() }
         shell("input keyevent KEYCODE_BACK")
     }
 
     private fun asked() = runBlocking { preferences.notificationsAsked() }
+
+    /**
+     * The app's activity is the one resumed, by the system's own record: a
+     * link delivered by `am start` arrives as a new intent, after which the
+     * scenario ignores the activity's lifecycle (its intent no longer matches).
+     */
+    /** The app's activity has stopped (Home pauses it first; only a stop is leaving). */
+    private fun stopped(): Boolean {
+        var stopped = false
+        instrumentation.runOnMainSync {
+            val monitor = ActivityLifecycleMonitorRegistry.getInstance()
+            stopped = monitor.getActivitiesInStage(Stage.STOPPED).any { it is MainActivity }
+        }
+        return stopped
+    }
+
+    private fun resumed(): Boolean = shell("dumpsys activity activities").lines()
+        .any { it.trimStart().startsWith("ResumedActivity:") && it.contains("${context.packageName}/.app.MainActivity") }
 
     private fun blocked() = runBlocking { preferences.notificationsBlocked.first() }
 
@@ -108,6 +132,45 @@ class NotificationAskTest {
         again.waitFor(Lifecycle.State.RESUMED)
         assertFalse(blocked())
         again.close()
+    }
+
+    /**
+     * D7's cost: a link arriving while the first ask is up closes Android's
+     * dialog unanswered. That is no answer: the ask is not used up, and not
+     * blocked, and it does not come back over the link's page, only once the
+     * app has been left and is back with a radio attached.
+     */
+    @Test
+    fun aLinkClosingTheAskLeavesItForLater() {
+        assumeTrue(Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+        assumeFalse("POST_NOTIFICATIONS is granted: revoke it before the run", NotificationPermission.granted(context))
+        launch()
+        attached()
+        compose.waitUntil(TIMEOUT) { asked() }
+        compose.waitUntil(TIMEOUT) { dialogUp() }
+        shell("am start -a android.intent.action.VIEW -d umsh:gs:hike-club ${context.packageName}")
+        compose.waitUntil(TIMEOUT) { !asked() }
+        compose.waitUntil(TIMEOUT) { resumed() }
+        compose.waitUntil(TIMEOUT) { compose.onAllNodesWithTag(Tags.CHANNEL_JOIN, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
+        assertFalse(blocked())
+        // Not again over the link's page.
+        Thread.sleep(SETTLE_MS)
+        assertTrue(resumed())
+        assertFalse(asked())
+
+        // Left and back, with the radio still attached: asked again.
+        shell("input keyevent KEYCODE_HOME")
+        compose.waitUntil(TIMEOUT) { stopped() }
+        shell("am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n ${context.packageName}/.app.MainActivity")
+        compose.waitUntil(TIMEOUT) { asked() }
+        dismissDialog()
+        compose.waitUntil(TIMEOUT) { resumed() }
+        assertFalse(blocked())
+        // Finished directly: the scenario no longer follows the activity, and would wait on it.
+        instrumentation.runOnMainSync {
+            ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).filterIsInstance<MainActivity>().forEach { it.finish() }
+        }
+        compose.waitUntil(TIMEOUT) { !resumed() }
     }
 
     /**

@@ -76,9 +76,9 @@ import com.voria.umsh.designsystem.userIsolated
 
 /**
  * A conversation (`threads.svg`): Back, its avatar and title (a direct
- * thread's opens the peer's page; a channel's waits for Conversation
- * info, D14), the transcript
- * newest at the bottom, and the composer, which owns the bottom edge and
+ * thread's opens the peer's page; a channel's, its Conversation info), the
+ * transcript newest at the bottom, with a channel sender's avatar opening
+ * their member sheet, and the composer, which owns the bottom edge and
  * rides above the keyboard. The bar hides under it on a phone; beside the
  * list [onBack] is null, since there is no Back there.
  *
@@ -95,12 +95,16 @@ fun ThreadScreen(
     /** Close the thread: `EMERGENCY`'s warning turned down before a send. */
     onLeave: () -> Unit,
     onOpenDetails: (MessageRef) -> Unit,
-    /** A direct thread's title: the peer's page, by its address. */
+    /** A direct thread's title, or a saved member's header: the peer's page, by its address. */
     onOpenPeer: (String) -> Unit,
+    /** A channel thread's title: its Conversation info (`conversation-info.svg`). */
+    onOpenInfo: () -> Unit = {},
     /** The composer's Connect radio with a radio held: its page. */
     onOpenRadio: () -> Unit,
     /** The composer's Connect radio with none set up: Choose a radio (D20). */
     onChooseRadio: () -> Unit,
+    /** A `umsh:` link in a message, tapped: opened as another app's link is. */
+    onOpenLink: (String) -> Unit = {},
 ) {
     val runtime = LocalAppRuntime.current
     val viewModel = runtimeViewModel { ThreadViewModel(it, key.address) }
@@ -136,6 +140,8 @@ fun ThreadScreen(
     val deleting by viewModel.deleting.collectAsStateWithLifecycle()
     val original by viewModel.original.collectAsStateWithLifecycle()
     val asking by viewModel.asking.collectAsStateWithLifecycle()
+    val memberRef by viewModel.member.collectAsStateWithLifecycle()
+    val memberRequested by viewModel.memberRequested.collectAsStateWithLifecycle()
     val focusRequester = remember { FocusRequester() }
     val copier = rememberCopier()
     val currentLeave by rememberUpdatedState(onLeave)
@@ -159,7 +165,9 @@ fun ThreadScreen(
             }
         }
     }
-    val handlers = remember(viewModel, onItem) {
+    val currentOpenLink by rememberUpdatedState(onOpenLink)
+    val isChannel = conversation is ChannelConversationSummary
+    val handlers = remember(viewModel, onItem, isChannel) {
         MessageHandlers(
             onOpenQuote = viewModel::openQuote,
             onMenu = viewModel::openMenu,
@@ -168,6 +176,8 @@ fun ThreadScreen(
             onChip = viewModel::tapChip,
             onGap = viewModel::requestMissing,
             onMenuItem = onItem,
+            onOpenLink = { currentOpenLink(it) },
+            onMember = if (isChannel) viewModel::openMember else null,
         )
     }
 
@@ -184,19 +194,19 @@ fun ThreadScreen(
                 UmshTopAppBar(
                     title = {
                         conversation?.let { shown ->
-                            val peerAddress = (shown as? DirectConversationSummary)?.peer?.address
-                            val openLabel = stringResource(R.string.open_peer_page)
+                            val peerLabel = stringResource(R.string.open_peer_page)
+                            val infoLabel = stringResource(R.string.conversation_info_open)
+                            val (openLabel, open) = when (shown) {
+                                is DirectConversationSummary -> peerLabel to { onOpenPeer(shown.peer.address) }
+                                is ChannelConversationSummary -> infoLabel to onOpenInfo
+                            }
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                modifier = if (peerAddress != null) {
-                                    Modifier
-                                        .clip(MaterialTheme.shapes.small)
-                                        .clickable(onClickLabel = openLabel) { onOpenPeer(peerAddress) }
-                                        .testTag(Tags.THREAD_TITLE)
-                                } else {
-                                    Modifier.testTag(Tags.THREAD_TITLE)
-                                },
+                                modifier = Modifier
+                                    .clip(MaterialTheme.shapes.small)
+                                    .clickable(onClickLabel = openLabel, onClick = open)
+                                    .testTag(Tags.THREAD_TITLE),
                             ) {
                                 val avatar = when (shown) {
                                     is DirectConversationSummary -> RowAvatar.Peer(shown.peer)
@@ -281,6 +291,20 @@ fun ThreadScreen(
         )
     }
     original?.let { OriginalDialog(it, onDismiss = viewModel::dismissOriginal) }
+    // Read again from the window each time it changes: an identity reply fills the sheet in while it is open.
+    val shownMember = memberRef?.let { ref -> context?.let { ChannelMember.of(ref, transcript.window.messages, it) } }
+    shownMember?.let { member ->
+        MemberSheet(
+            member = member,
+            requested = memberRequested,
+            onRequestIdentity = viewModel::requestMemberIdentity,
+            onOpenPeer = { address ->
+                viewModel.closeMember()
+                onOpenPeer(address)
+            },
+            onDismiss = viewModel::closeMember,
+        )
+    }
     alert?.let { ThreadAlertDialog(it, onDismiss = viewModel::dismissAlert) }
     // A held path that keeps missing its acks while the flood is answered (`manual-path.svg` 7).
     if (current && conversation is DirectConversationSummary) LearnedPathPrompt(key.address)

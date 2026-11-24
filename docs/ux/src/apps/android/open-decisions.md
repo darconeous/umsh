@@ -99,8 +99,9 @@ destinations as usual.
 
 **Recommendation:** **Scan** (`qr_code_scanner`) is a top app bar action on the
 Conversations and Peers roots, beside Search. Both open the same app-level
-scanner, which hands a recognized code to the import preview as a bottom sheet
-over the screen the scan started from. When iOS gets an in-app scanner it takes
+scanner, which hands a recognized code back to the screen the scan started
+from, handled there as typed text (an unsaved node's in the import preview, as
+a bottom sheet; see product-structure, "QR scanner"). When iOS gets an in-app scanner it takes
 the same place, in the same two toolbars.
 
 ### Settings on tablets opens a page
@@ -343,10 +344,11 @@ iOS edits a channel's region and hop limit on the channel page, under Local
 Details, beside its alias. The conversation page has neither.
 
 **Recommendation:** a Routing section on the channel conversation page, right
-after Notifications, because it governs what this phone sends there. The
-channel page in batch 4 shows the same two settings, since there is one record
-per channel. Notifications already appears on both pages this way. iOS adds
-the section to its conversation page as well.
+after Notifications, because it governs what this phone sends there. This is
+the only place routing is edited: the channel page in batch 4 holds the
+channel's details, alias, sharing and leaving, and no routing. iOS adds the
+section to its conversation page as well. The section waits on
+[several regions on a channel](#several-regions-on-a-channel).
 
 Regions are input chips plus an **Add region** chip that opens a dialog. The
 dialog takes the same text as iOS and the repeater settings: a short code, an
@@ -802,27 +804,44 @@ it with chosen kinds of detail left out. Neither app keeps one today.
 ### Several regions on a channel
 
 A channel today holds at most one region, and in practice none reaches the
-air: iOS saves a channel's region, but the core's channel registration carries
+air: a channel's region is stored, but the core's channel registration carries
 only the hop limit, so no channel send is tagged. Supporting any number of
-regions, including none, takes these changes. None changes the wire format,
-because the Region Code option (11) already repeats, and a repeater forwards
-when any listed region matches.
+regions, including none, is decided and deferred (2026-11-21). It gates the
+Routing section of the channel conversation page on both apps; until it
+lands, Android builds that page without the section.
 
-1. **Channel URIs** (`uri-formats.md`): `r` may repeat, one parameter per
-   region. Repetition is used instead of a list separator because a region
-   name may contain any character.
+It is a protocol change and gets its own review when picked up:
+
+- **Region Code (option 11) carries a list.** Its value becomes one or more
+  2-byte region codes (n × 2 bytes), and a sender puts all its regions in one
+  option. The first region costs 3 bytes (option header and code), each
+  further one 2.
+- **To settle then:** whether a receiver still accepts repeated option-11
+  entries (receiver tolerance suggests reading every entry, from one option or
+  several); an odd-length value (dropped with accounting); a sender's maximum
+  count; and the repeater rules, which stay as they are (never rewrite an
+  existing code; never add one to a packet that has any).
+- **Affected:** `packet-options.md`, the routing chapters where they speak of
+  several options, the MAC's encoder and every region matcher (repeaters
+  included), the Wireshark dissector, and the firmware.
+
+Then, in order:
+
+1. **The spec change** above.
 2. **MAC send options** (`umsh-mac` `SendOptions`): `region_code` becomes a
-   list, written as one Region Code option per entry. A repeater's own region
-   insertion stays single, as the spec requires.
+   list, written into one Region Code option, with the matchers to read it.
 3. **Mobile core:** a channel's registration carries its region list beside
    its hop limit, and every send in the channel applies both.
-4. **iOS:** the channel's `regionCode` becomes a list. Its Region text field
-   becomes the chip editor described above. A stored single region becomes a
-   one-item list.
+4. **Store:** a channel's regions become a list, a step on the store's
+   migration ladder. A stored single region becomes a one-item list.
+5. **Channel URIs** (`uri-formats.md`): one `r` parameter whose regions are
+   separated by `:`. A `:` inside a region name needs an escape that survives
+   percent-decoding (for example a doubled `::`, since a region name is never
+   empty), settled when the work starts.
+6. **Both apps:** the Routing section's chip editor described above.
 
-**Cost:** each region adds 3 bytes to every message sent in the channel: one
-byte of option header and the 2-byte code. **Recommendation:** no fixed limit
-on the number of regions. The fragmentation estimate, when it is designed,
+**Recommendation:** no fixed limit on the number of regions beyond the
+sender maximum the spec sets. The fragmentation estimate, when it is designed,
 counts these bytes like any other.
 
 ## Reconciling the shared chapters

@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.voria.umsh.app.AppRuntime
 import com.voria.umsh.core.MobileAppLifecycle
 import com.voria.umsh.designsystem.ListEnvironment
+import com.voria.umsh.features.channels.ChannelLists
 import com.voria.umsh.models.AppStateSnapshot
 import com.voria.umsh.models.ChannelSummary
 import com.voria.umsh.models.PeerSummary
@@ -115,6 +116,23 @@ class ConversationsViewModel(private val runtime: AppRuntime, environment: ListE
         _newChatShown.value = shown
     }
 
+    private val _channelChatShown = MutableStateFlow(false)
+
+    /** New channel chat's sheet is open: kept across a rotation, not after process death. */
+    val channelChatShown: StateFlow<Boolean> = _channelChatShown.asStateFlow()
+
+    fun showChannelChat(shown: Boolean) {
+        _channelChatShown.value = shown
+        if (shown) _newChatShown.value = false
+    }
+
+    /** New channel chat's rows: joined channels with no conversation, by title (`new-channel-chat.svg`). */
+    val chooserChannels: StateFlow<List<ChannelSummary>> =
+        combine(runtime.appState, this.environment) { state, env ->
+            ChannelLists.withoutConversation(state?.channels.orEmpty())
+                .sortedWith(compareBy<ChannelSummary, String>(env.collation) { env.names.channel(it) }.thenBy { it.id })
+        }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), emptyList())
+
     fun setSearching(open: Boolean) {
         _searching.value = open
         if (!open) _query.value = ""
@@ -150,6 +168,7 @@ class ConversationsViewModel(private val runtime: AppRuntime, environment: ListE
 
     private fun opened(address: String) {
         setSearching(false)
+        _channelChatShown.value = false
         _opened.trySend(address)
     }
 

@@ -16,12 +16,12 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.voria.umsh.BuildConfig
+import com.voria.umsh.features.channels.ChannelKeyText
 import com.voria.umsh.services.mobilecore.AppLog
 import com.voria.umsh.services.notifications.NotificationPermission
 import com.voria.umsh.services.permissions.PermissionAsking
 import java.io.IOException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.launch
@@ -29,25 +29,38 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     private val host: AppCoreHost get() = (application as UmshApplication).coreHost
 
-    /** A page a notification or a shortcut asked to open; the shell takes it and clears it. */
-    private val openRequests = MutableStateFlow<OpenRequest?>(null)
+    /** Pages notifications, shortcuts and links asked to open; the shell takes each and clears it. */
+    private val openRequests = OpenRequests()
 
-    private val askNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+    private val askNotifications = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
         notificationAskPending = false
+        // The one permission asked for.
+        val granted = results.isNotEmpty() && results.values.all { it }
+        // Asked once, after a refusal Android still shows the dialog to
+        // Settings' Turn on, unless this refusal was its last. Back or a tap
+        // outside is not one: by the same rule as every other ask.
+        val blocked = PermissionAsking.blockedAfterAnswer(
+            results = results,
+            granted = granted,
+            dialogShown = notificationDialogShown,
+            rationaleBefore = notificationRationaleBefore,
+            rationaleAfter = ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.POST_NOTIFICATIONS),
+        )
+        if (blocked == null) {
+            // Closed unanswered, under the app (a link arriving, D7): not
+            // asked after all, so the next time the app is resumed with a
+            // radio attached asks again; not this time, over the link's page.
+            AppLog.i(TAG, "notifications: not answered")
+            notificationAskDeferred = true
+            lifecycleScope.launch { runCatching { host.preferences.setNotificationsAsked(false) } }
+            return@registerForActivityResult
+        }
         AppLog.i(TAG, "notifications: ${if (granted) "granted" else "refused"}")
         if (granted) {
             // A radio service started before this shows nothing until posted again.
             (application as UmshApplication).radioService.repostNotification()
             return@registerForActivityResult
         }
-        // Asked once, after a refusal Android still shows the dialog to
-        // Settings' Turn on, unless this refusal was its last. Back or a tap
-        // outside is not one: by the same rule as every other ask.
-        val blocked = PermissionAsking.blockedAfterRefusal(
-            dialogShown = notificationDialogShown,
-            rationaleBefore = notificationRationaleBefore,
-            rationaleAfter = ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.POST_NOTIFICATIONS),
-        )
         lifecycleScope.launch { runCatching { host.preferences.setNotificationsBlocked(blocked) } }
     }
 
@@ -55,6 +68,9 @@ class MainActivity : ComponentActivity() {
     private var notificationAskPending = false
     private var notificationRationaleBefore = false
     private var notificationDialogShown = false
+
+    /** An ask closed unanswered: none again until the app has been left and comes back. */
+    private var notificationAskDeferred = false
 
     @OptIn(ExperimentalCoroutinesApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -67,19 +83,29 @@ class MainActivity : ComponentActivity() {
             notificationAskPending = saved.getBoolean(STATE_ASK_PENDING)
             notificationRationaleBefore = saved.getBoolean(STATE_RATIONALE_BEFORE)
             notificationDialogShown = saved.getBoolean(STATE_DIALOG_SHOWN)
+            notificationAskDeferred = saved.getBoolean(STATE_ASK_DEFERRED)
+            // A link the shell had not opened yet (onboarding, or the store
+            // still loading) waits on across process death; one holding a
+            // private key only within this process (§3.8).
+            saved.getString(STATE_LINK)?.let(ChannelKeyText::open)?.let { link ->
+                val origin = saved.getString(STATE_LINK_ORIGIN)?.let(LinkOrigin::valueOf) ?: LinkOrigin.OtherApp
+                openRequests.offer(OpenRequest.Link(link, origin))
+            }
         }
         // The activity pausing while the ask is out is Android's dialog showing.
         lifecycle.addObserver(
             LifecycleEventObserver { _, event ->
                 if (event == Lifecycle.Event.ON_PAUSE && notificationAskPending) notificationDialogShown = true
+                if (event == Lifecycle.Event.ON_STOP && !isChangingConfigurations) notificationAskDeferred = false
             },
         )
         // Debug builds: `--ez umsh.staging true|false` picks the core, for
         // tests and screenshot runs. Only on a fresh launch: not a restore,
-        // and not a relaunch from Recents, which replays the first intent.
+        // and not a relaunch from Recents, which replays the first intent;
+        // never from a browser, whose page could set it.
         val fresh = savedInstanceState == null &&
             intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY == 0
-        val staging = if (BuildConfig.DEBUG && fresh && intent.hasExtra(EXTRA_STAGING)) {
+        val staging = if (BuildConfig.DEBUG && fresh && !LinkRoute.fromBrowser(intent.categories) && intent.hasExtra(EXTRA_STAGING)) {
             intent.getBooleanExtra(EXTRA_STAGING, false)
         } else {
             null
@@ -112,6 +138,11 @@ class MainActivity : ComponentActivity() {
         outState.putBoolean(STATE_ASK_PENDING, notificationAskPending)
         outState.putBoolean(STATE_RATIONALE_BEFORE, notificationRationaleBefore)
         outState.putBoolean(STATE_DIALOG_SHOWN, notificationDialogShown)
+        outState.putBoolean(STATE_ASK_DEFERRED, notificationAskDeferred)
+        openRequests.link?.let { link ->
+            outState.putString(STATE_LINK, ChannelKeyText.seal(link.uri))
+            outState.putString(STATE_LINK_ORIGIN, link.origin.name)
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -120,19 +151,37 @@ class MainActivity : ComponentActivity() {
         takeRequest(intent)
     }
 
-    /** Taken once: a recreation keeps the same intent, and must not open it again. Tests hand one in directly. */
+    /**
+     * Taken once: a recreation keeps the same intent, and must not open it
+     * again, so what is taken is cleared from it (a link is marked taken). A `umsh` view intent is a
+     * link ([LinkRoute]); a notification's tap carries its own scheme and
+     * its extras. Tests hand one in directly.
+     *
+     * The app's own extras are honored only on an intent that is not a
+     * link: a web page's link can carry any extras it likes, and must open
+     * nothing but its link ([LinkRoute.honorsAppExtras]).
+     */
     @VisibleForTesting
     internal fun takeRequest(intent: Intent) {
-        intent.getStringExtra(EXTRA_CONVERSATION)?.let { openRequests.value = OpenRequest.Conversation(it) }
-        intent.getStringExtra(EXTRA_PEER)?.let { openRequests.value = OpenRequest.Peer(it) }
-        if (intent.getBooleanExtra(EXTRA_RADIO_DETAIL, false)) openRequests.value = OpenRequest.RadioDetail
+        val link = LinkRoute.linkOf(intent.action, intent.scheme, intent.dataString)
+        // Marked taken rather than its data removed: the data is part of
+        // the intent's identity, which the system and tests match it by.
+        if (link != null && !intent.getBooleanExtra(EXTRA_LINK_TAKEN, false)) {
+            openRequests.offer(OpenRequest.Link(link, LinkOrigin.OtherApp))
+            intent.putExtra(EXTRA_LINK_TAKEN, true)
+        }
+        if (LinkRoute.honorsAppExtras(link, intent.categories)) {
+            intent.getStringExtra(EXTRA_CONVERSATION)?.let { openRequests.offer(OpenRequest.Conversation(it)) }
+            intent.getStringExtra(EXTRA_PEER)?.let { openRequests.offer(OpenRequest.Peer(it)) }
+            if (intent.getBooleanExtra(EXTRA_RADIO_DETAIL, false)) openRequests.offer(OpenRequest.RadioDetail)
+        }
         intent.removeExtra(EXTRA_CONVERSATION)
         intent.removeExtra(EXTRA_PEER)
         intent.removeExtra(EXTRA_RADIO_DETAIL)
     }
 
     private suspend fun askForNotificationsOnce() {
-        if (NotificationPermission.granted(this)) return
+        if (NotificationPermission.granted(this) || notificationAskDeferred) return
         val preferences = host.preferences
         try {
             if (preferences.notificationsAsked()) return
@@ -146,7 +195,7 @@ class MainActivity : ComponentActivity() {
         notificationAskPending = true
         notificationRationaleBefore = ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.POST_NOTIFICATIONS)
         notificationDialogShown = false
-        askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+        askNotifications.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
     }
 
     companion object {
@@ -165,6 +214,11 @@ class MainActivity : ComponentActivity() {
         private const val STATE_ASK_PENDING = "umsh.notifications.pending"
         private const val STATE_RATIONALE_BEFORE = "umsh.notifications.rationale"
         private const val STATE_DIALOG_SHOWN = "umsh.notifications.shown"
+        private const val STATE_ASK_DEFERRED = "umsh.notifications.deferred"
+        /** On a view intent whose link was taken ([takeRequest]). */
+        private const val EXTRA_LINK_TAKEN = "umsh.linkTaken"
+        private const val STATE_LINK = "umsh.link"
+        private const val STATE_LINK_ORIGIN = "umsh.link.origin"
 
         /**
          * Opens the app at [address]'s conversation: the existing activity,

@@ -95,6 +95,15 @@ fun identifierStringResource(
     return withIdentifiers(formatted, identifiers.toList(), monospace)
 }
 
+/**
+ * A string resource whose first argument is a word and whose second is an
+ * identifier, such as "Private · 9c41": the identifier isolated and spoken
+ * verbatim.
+ */
+@Composable
+fun wordAndIdentifierStringResource(@StringRes id: Int, word: String, identifier: String): AnnotatedString =
+    withIdentifiers(stringResource(id, word, "${MARK_OPEN}0$MARK_CLOSE"), listOf(identifier), monospace = false)
+
 /** [formatted] with each `MARK_OPEN i MARK_CLOSE` replaced by identifier `i`. Pure, for tests. */
 internal fun withIdentifiers(formatted: String, identifiers: List<String>, monospace: Boolean): AnnotatedString =
     buildAnnotatedString {

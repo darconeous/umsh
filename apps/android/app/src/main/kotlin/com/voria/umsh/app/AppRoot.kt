@@ -27,15 +27,14 @@ import com.voria.umsh.features.settings.IdentityLostScreen
 import com.voria.umsh.features.settings.IdentityUnavailableScreen
 import com.voria.umsh.services.preferences.OnboardingStep
 import java.util.UUID
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 
 /**
  * What the activity draws: the shell over the running core, or why there is
- * none. [openRequests]: pages notifications and shortcuts ask to open.
+ * none. [openRequests]: pages notifications, shortcuts and links ask to open.
  */
 @Composable
-fun AppRoot(host: AppCoreHost, openRequests: MutableStateFlow<OpenRequest?> = remember { MutableStateFlow(null) }) {
+fun AppRoot(host: AppCoreHost, openRequests: OpenRequests = remember { OpenRequests() }) {
     // Debug builds: the Developer switch draws with the fallback scheme,
     // for screenshot runs beside the drawings.
     val fallback by remember(host) {

@@ -155,8 +155,10 @@ failure keeps the words as the draft and says so.
 
 ## Unverified
 
-The Pixel checklist below is the full list of hardware guesses from Phase 2,
-copied from the Phase 2 verification report. None has been run on hardware.
+The Pixel checklist below is the full list of hardware guesses from Phases 2
+and 3, copied from their verification reports. Phase 3's items for links,
+sharing and the scanner are in [ADR 0007](0007-links-and-scanner.md). None
+has been run on hardware.
 
 
 Every hardware guess from the plan (§12, G-1 to G-30) and from the build reports (P2a–P2h, G-31 to G-111, plus
@@ -298,3 +300,102 @@ it guarded was never built.
 | G-132 | The release build (R8, resource-shrunk) runs: it has only been built and inspected, never launched | Install a release build signed for testing; first launch, pair, presence wake, shade Reply and Mark as read, board photos, Forget | All work | Add keep rules |
 | G-18 | StrongBox or TEE key protection (carried from Phase 1) | Your identity › Key protection | Security chip or Secure area | — |
 | G-30 | An iPhone and the Pixel exchange DMs, reactions, edits and deletes through radios | The plan's cross-platform check | All arrive | — |
+
+### Phase 3: peers, routes, contact exchange, channels
+
+Every hardware guess from the Phase 3 plan (G-136 to G-152) and its build reports (G-153 to G-260), deduplicated
+as above. Two build reports reused numbers already taken; their items are renumbered G-249 to G-255. The links,
+sharing and scanner items are in [ADR 0007](0007-links-and-scanner.md). Radios as above, plus an iPhone running
+UMSH for the cross-platform items.
+
+#### H. Peers, ping and route
+
+| # | Guess | Do | Expect | If wrong |
+|---|---|---|---|---|
+| G-139 [G-153, G-164] | Ping round trips and the 8 s Ping again fit real RF; a silent node ends in "No reply" after the MAC's wait (about 68 s staged, longer on air), and the waiting state and its elapsed count do not look stuck | Ping a T1000-E one hop and three hops away; ping one that is off | Replies in seconds; "No reply" after the wait | Tune the re-offer; reconsider the waiting copy |
+| G-140 [G-163] | Trace-signal legs from real repeaters line up with the rail (leg 1 is the phone's radio), with sensible dBm, SNR and bars on 2+ hop replies | Ping through two repeaters | Legs in order | Fix `PingPath` alignment or the thresholds |
+| G-144 [G-157] | Next time heard fires on a saved node's advertisement or forward with the screen off, and the tap opens the peer page or conversation per role; unicast from a node the radio holds no key for never reaches the phone | Arm, wait for a repeater's advert | One notice; the tap opens the right page | — |
+| G-146 [G-159] | Distance and bearing come from the phone's fix when location is granted, else the radio's or the advertised position, and the page never asks | Compare to a known node, with and without the grant | Sensible both ways | Fix `PeerDistance` |
+| G-158 | A heard notice tapped with the app killed opens the page or conversation within 5 s | Kill, then tap | Opens | Lengthen the wait for the row |
+| G-161 | Message details' Repeated-by over RF: named repeaters open their pages, unnamed hints spin a lookup | Receive a repeated message | As described | — |
+| G-162 | The first ping to a node never contacted may time out for want of keys | Ping a node just heard | Recorded | — (core) |
+| G-165 | Rotation and app switching keep the same ping; a reply that lands while the sheet is closed shows under Earlier | Rotate and switch during a ping | One ping | Fix the re-attach |
+| G-167 | A held path's hand-typed hop shows "Entered by hand"; a hop matching a saved repeater shows its name | Hold a path with both kinds | As described | — |
+| G-168 | Route's Last ack with no ack reads "Last ack, Unknown" | A route never acked | As described | — |
+| G-206a | With location granted, a peer page for a node with no position shows no location indicator | Open such a page | Nothing shown | — |
+| G-207 | A received DM routed through a saved repeater: Message details' Route names it, opens its page and shows the hint-ambiguity footer; an unknown hop offers a lookup | Receive a routed DM | As described | — |
+| G-208 | On API 31–32, copying the address on a peer page above Radio Detail, Route or Neighbors shows "Address copied" on that page at once | On a 31–32 phone | On the page | Fix the notice host |
+
+#### I. Neighbors and Discover
+
+| # | Guess | Do | Expect | If wrong |
+|---|---|---|---|---|
+| G-141 [G-169] | A real repeater answers Neighbors with paging, and Load more appends | Refresh a busy repeater | Pages append | — (core) |
+| G-142 [G-171] | Discover answers from real nodes arrive over the 0.5–30 s hold while the page is open; Ask is back at 40 s; a hint lookup during the cooldown still goes | Ask nearby; look up a hint during the cooldown | As described | — |
+| G-170 | A Peer Repeaters request nobody answers ends in "did not answer" after about 72 s (staged) | Ask a repeater that is off | The inline line | Tune the wait |
+| G-172 | Ask near this node reaches nodes near the target | Ask near a node three hops away | Answers from its area | — |
+| G-173 | Announce my identity is recorded by a node that never heard the phone | Announce; check the node | Recorded | — |
+| G-175 [G-178] | On API 31–32, Copy coordinates shows "Coordinates copied"; on 13+ only the system confirms | Long press a neighbor with a position | As described | — |
+| G-176 | Real neighbor tables: fading after 6 h, "heard long ago", quarter-dB SNR | Read a long-running repeater | As described | — |
+| G-177 | Clear discovered nodes removes only unsaved nodes and closes their pages | Clear with an unsaved page open | As described | — |
+| G-179 | After process death, Neighbors shows its stored listing, not "Not read" | Read, kill, return | Stored listing | Fix the stored read |
+| G-180 | Ask near: Ask is disabled while the route is read, and "Nearby—direct" shows first on a restore | Restore a Discover page | As described | — |
+
+#### J. Manual path and learned paths
+
+| # | Guess | Do | Expect | If wrong |
+|---|---|---|---|---|
+| G-145 [G-187] | The learned-path prompt appears after moving ≥ 200 m with a fix of ≤ 100 m accuracy; Use learned path takes effect on the next send, and Keep is not asked again | Walk with a held path | As described | — (core rule) |
+| G-149 [G-189] | Process death on a deep page (Route, the editor) restores the stack and the editor's draft | "Don't keep activities", or let the system reclaim | Restored | Adjust the savers |
+| G-154 | The position source gets a fix within 20 s indoors and out; with none, the learned-path check offers nothing | Indoors and out | As described | Lengthen the wait |
+| G-156 | With the Location switch off, saving a manual path and the learned-path check answer at once; with it on, a fix comes well inside 20 s | Both ways | As described | — |
+| G-182 | Drag reorder works on a real touchscreen | Reorder hops | Smooth | Tune the drag |
+| G-184 | Ping along path works on RF, and a path change mid-ping drops the stale result | Test a path, edit during the ping | As described | — |
+| G-185 | Neighbors for hop 1 comes from a real companion radio | Add hop 1 | The radio's neighbors | — |
+| G-186 | Neighbors through a multi-hop path reach the previous hop, and "Asked through" matches | Add hop 3 | As described | — |
+| G-188 | The editor's bar at Pixel 7 width and at 320 dp ("Manual pa…") | Look | Acceptable | Shorter title or two-line bar |
+| G-190 | The Base58 prefix keyboard is ASCII with no autocorrect | Enter a hint | As described | Fix the keyboard options |
+| G-191 | Edit path with the radio disconnected shows the reason, and seeds once the radio is back | Disconnect, edit | As described | — |
+| G-192 | With a held-path thread backgrounded, no location reads are made until the thread shows again | Watch the location indicator | None | Fix the trigger |
+| G-213 | A 1-day hold saved at 3:40 PM reads "Held until" with the next day's date on Route, as in the editor | Save one | Matches | — |
+
+#### K. Add peer and contact exchange
+
+| # | Guess | Do | Expect | If wrong |
+|---|---|---|---|---|
+| G-143 [G-198] | Contact exchange works phone to phone through two radios, Android with an iPhone, with nearness glyphs and the same code digits | Exchange with the iPhone | Both save each other | Report to the core (UEP-0022) |
+| G-155 [G-200] | Nearness comes from real Hello signal strength (the bridge always reports 3) | Walk away from the other phone | Arcs drop | — |
+| G-193 | Pasting a long `umsh:` link: the clipboard chip, no autocorrect, wrapping | Paste one | As described | — |
+| G-194 | A stranger's first direct message reaches the receiver on radios | Message a node that does not have this phone | Arrives, or recorded | — (core) |
+| G-195 | Adding and messaging across an Android phone and an iPhone with two radios | Swap links and message | Both ways | — |
+| G-196 | The import sheet with the keyboard up at Pixel and 320 dp widths; it cannot be swiped away while saving | Look; swipe while saving | As described | — |
+| G-199 | Being asked by a device not yet on Nearby | Have the other phone ask first | The ask sheet | — |
+| G-201 | The meet closes only when the process stops, and reopens with a new color | Background and return | As described | — |
+| G-203 | Swiping the ask sheet down declines; predictive back on the exchange page backs out for both phones | Do both | As described | — |
+| G-204 | The exchange survives a real rotation and a fold or unfold | Rotate and fold mid-exchange | Continues | — |
+| G-205 | On a foldable, "You" keeps the advertised outline across an unfold | Unfold on Add peer | Same outline | — |
+| G-206 | Radio Detail over Add peer drops the phone off the other device's Nearby, and Back shows it again under a new color | Open Radio Detail from Add peer | As described | — |
+
+#### L. Channels and Conversation info
+
+| # | Guess | Do | Expect | If wrong |
+|---|---|---|---|---|
+| G-147 [G-237] | Copying a private invitation on Android 13+ shows the system's copy overlay with its contents hidden | Copy an invitation | Hidden | — |
+| G-148 [G-238] | A channel joined on the phone carries traffic through a real companion radio both ways (host channel keys provisioned), and leaving stops it | Join, receive, send, leave | As described | Core policy |
+| G-242 | The table-full dialog appears on the 33rd channel with a real radio attached, and nothing reaches the radio for the refused one | Join 33 | As described | — |
+| G-243 | Request identity to a real member brings their identity back; the sheet fills in the address while open; on EMERGENCY the warning comes first | Ask a member | As described | — |
+| G-244 | A real member who sends without a name shows as "Member" and their hint, and fills in after Request identity | Receive from such a node | As described | — |
+| G-245 | Test messages on EMERGENCY notifies for a real "TEST:" message only when on; such messages never count as unread | Both settings | As described | — (core policy) |
+| G-247 | Clear all messages on a busy channel erases only this phone's copy; later messages land in the same conversation | Clear, then receive | As described | — |
+| G-248 | A thumb tap just beside a member's avatar opens their sheet, and a tap on the bubble beside it still reaches the bubble | Tap around the avatar | As described | Widen the gutter |
+| G-255 | Swiping down or pressing Back during the channel sheet's join does nothing until the join ends; then the conversation opens | Try it | As described | — |
+
+#### M. TalkBack, layout and the release build
+
+| # | Guess | Do | Expect | If wrong |
+|---|---|---|---|---|
+| G-150 [G-160, G-166, G-174, G-181, G-183, G-197, G-202, G-206c, G-211, G-212, G-240, G-246] | Live TalkBack reads Phase 3's screens as plan §3.10 says, which the AVDs could only check through the semantics tree: glance cells once; Ping's result announced once and legs as one sentence each; the Discover countdown silent and "You can ask again." once; the editor's hop stops, Then flood stepper and move actions (reorder by actions works); Save peer busy as "Saving, disabled"; Nearby glyphs by model and nearness, "Same code on the other screen?" announced, the code digit by digit; the sort chip as a button without a checkbox state; a Neighbors Refresh result announced; Channels, Join channel and the eye; the channel thread title as "Conversation info", the header as one button, and "Show member" offered on a member's messages | A TalkBack pass on the Pixel | As described | Fix semantics |
+| G-256 | Live TalkBack reads each extended FAB (New chat, Add peer, Add channel) once, by its label, as a button, and "Join a channel…" without its "+" (Material3 1.4.0 clears the label's own semantics, so the icon carries the label) | TalkBack on each FAB and on New channel chat | As described | Move the label back to the text |
+| G-206b | On a tablet or unfolded Pixel with predictive back: back from a page above details returns to details, from details to the thread, from the thread closes it beside the list, and the preview animates the pane | Pixel Tablet or Fold | As described | Navigation |
+| G-209 | With the keyboard up, the last Peers search result, the last Add hop row and both "two fit" candidates scroll into view, with no large gap above the keyboard | Each | As described | Fix the insets |
+| G-210 | A release-APK smoke run: a peer page restored after process death, Nearby, a manual path editor (R8 keep rules for navigation keys and `platforms.json`) | Install a release build signed for testing | All work | Add keep rules |

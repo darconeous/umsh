@@ -70,6 +70,24 @@ object PermissionAsking {
         !dialogShown -> true
         else -> rationaleBefore
     }
+
+    /**
+     * Whether Android has stopped asking, after a request's [results]; null
+     * when the request ended with no answer at all (an empty result: the
+     * dialog was closed under the app, as a link arriving does), which
+     * changes nothing, so the next ask still shows the dialog.
+     */
+    fun blockedAfterAnswer(
+        results: Map<String, Boolean>,
+        granted: Boolean,
+        dialogShown: Boolean,
+        rationaleBefore: Boolean,
+        rationaleAfter: Boolean,
+    ): Boolean? = when {
+        results.isEmpty() -> null
+        granted -> false
+        else -> blockedAfterRefusal(dialogShown, rationaleBefore, rationaleAfter)
+    }
 }
 
 /** Nearby devices: `BLUETOOTH_SCAN` and `BLUETOOTH_CONNECT`, one prompt. */
@@ -124,7 +142,16 @@ fun rememberPermissionAsker(
 }
 
 /** A permission set's ask, from [rememberAsker]. */
-class PermissionAsker internal constructor(private val run: (openSettingsWhenBlocked: Boolean) -> Unit) {
+class PermissionAsker internal constructor(
+    private val pending: () -> Boolean,
+    private val run: (openSettingsWhenBlocked: Boolean) -> Unit,
+) {
+    /**
+     * Android's dialog is up for a request this asker made, kept across a
+     * recreation. Read in composition, it is observed.
+     */
+    val asking: Boolean get() = pending()
+
     /** Android's dialog, or the app's settings page once Android stops showing it. */
     fun ask() = run(true)
 
@@ -173,19 +200,30 @@ fun rememberAsker(
     }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
         val all = satisfiedBy(results)
-        val nowBlocked = !all && PermissionAsking.blockedAfterRefusal(
+        val nowBlocked = PermissionAsking.blockedAfterAnswer(
+            results = results,
+            granted = all,
             dialogShown = dialogShown,
             rationaleBefore = rationaleBefore,
             rationaleAfter = activity?.let { showsRationale(it, permissions) } ?: false,
         )
         pending = false
-        AppLog.i(TAG, "$name: ${if (all) "granted" else if (nowBlocked) "refused, not asked again" else "refused"}")
-        scope.launch { runCatching { setBlocked(nowBlocked) } }
+        AppLog.i(
+            TAG,
+            "$name: " + when {
+                nowBlocked == null -> "dismissed"
+                all -> "granted"
+                nowBlocked -> "refused, not asked again"
+                else -> "refused"
+            },
+        )
+        if (nowBlocked != null) scope.launch { runCatching { setBlocked(nowBlocked) } }
         answeredNow()
         if (all) grantedNow()
     }
+    val pendingState = rememberUpdatedState(pending)
     return remember(context, activity, launcher) {
-        PermissionAsker { openSettingsWhenBlocked ->
+        PermissionAsker(pending = { pendingState.value }) { openSettingsWhenBlocked ->
             val rationale = activity?.let { showsRationale(it, permissions) } ?: false
             val decision = PermissionAsking.decide(
                 granted = grantCheck(context),

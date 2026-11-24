@@ -1,5 +1,6 @@
 package com.voria.umsh.features.conversations
 
+import androidx.annotation.VisibleForTesting
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.text.input.clearText
 import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
@@ -14,6 +15,7 @@ import com.voria.umsh.models.ChannelConversationSummary
 import com.voria.umsh.models.ChatMessage
 import com.voria.umsh.models.ConversationSummary
 import com.voria.umsh.models.MessageRef
+import com.voria.umsh.models.Octets
 import com.voria.umsh.models.ReactionKind
 import com.voria.umsh.models.ResendMode
 import com.voria.umsh.services.mobilecore.AppLog
@@ -35,6 +37,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -142,6 +145,16 @@ class ThreadViewModel(private val runtime: AppRuntime, val address: String) : Vi
 
     /** Gap placeholders being asked for, until the transcript says so itself. */
     val asking: StateFlow<Set<MessageRef>> = _asking.asStateFlow()
+
+    private val _member = MutableStateFlow<MemberRef?>(null)
+
+    /** The channel member whose sheet is open, from their avatar (`conversation-info.svg` 6). */
+    val member: StateFlow<MemberRef?> = _member.asStateFlow()
+
+    private val _memberRequested = MutableStateFlow(false)
+
+    /** Request identity went out from the sheet open now: it reads Identity requested. */
+    val memberRequested: StateFlow<Boolean> = _memberRequested.asStateFlow()
 
     private val leaves = Channel<Unit>(Channel.CONFLATED)
 
@@ -608,6 +621,66 @@ class ThreadViewModel(private val runtime: AppRuntime, val address: String) : Vi
             }
         }
     }
+
+    // region Members
+
+    /** [message]'s sender's sheet; nothing for a message that claims no hint. */
+    fun openMember(message: ChatMessage) {
+        val hint = message.senderHint ?: return
+        if (conversation.value !is ChannelConversationSummary || message.isOutbound) return
+        _memberRequested.value = false
+        _member.value = MemberRef(hint, message.senderNodeHint)
+    }
+
+    fun closeMember() {
+        _member.value = null
+        _memberRequested.value = false
+    }
+
+    /**
+     * Request identity, over the channel. On `EMERGENCY` it waits for the
+     * warning, which the sheet steps aside for, as on iOS. Once per
+     * opening of the sheet.
+     */
+    fun requestMemberIdentity() {
+        val ref = _member.value ?: return
+        if (_memberRequested.value) return
+        if (needsCertification()) {
+            closeMember()
+            afterCertified { memberIdentityCommand(ref.hint) }
+            return
+        }
+        _memberRequested.value = true
+        memberIdentityCommand(ref.hint)
+    }
+
+    private val _memberAsks = MutableStateFlow<List<SendOutcome?>>(emptyList())
+
+    /** Each ask handed to the runtime, in order: null until its outcome is in. */
+    @VisibleForTesting
+    internal val memberAsks: StateFlow<List<SendOutcome?>> = _memberAsks.asStateFlow()
+
+    private fun memberIdentityCommand(hint: Octets) {
+        val ask = _memberAsks.updateAndGet { it + null }.lastIndex
+        viewModelScope.launch {
+            val outcome = runtime.requestMemberIdentity(address, hint).await()
+            _memberAsks.update { asks -> asks.toMutableList().also { it[ask] = outcome } }
+            when (outcome) {
+                SendOutcome.Sent, is SendOutcome.Kept -> Unit
+                is SendOutcome.Refused -> {
+                    if (_member.value?.hint == hint) _memberRequested.value = false
+                    if (outcome.needsEmergencyAgreement) {
+                        closeMember()
+                        askAgain { memberIdentityCommand(hint) }
+                    } else {
+                        _alert.value = ThreadAlert.Failed(R.string.request_not_sent_title, outcome.error)
+                    }
+                }
+            }
+        }
+    }
+
+    // endregion
 
     fun dismissAlert() {
         _alert.value = null

@@ -55,7 +55,14 @@ internal class MessageHandlers(
     val onGap: (List<ChatMessage>) -> Unit,
     /** A menu item chosen without the menu: TalkBack's custom actions. */
     val onMenuItem: (ChatMessage, MenuItem) -> Unit,
-)
+    /** A `umsh:` link in a message's body, tapped. */
+    val onOpenLink: (String) -> Unit = {},
+    /** A channel sender's avatar, tapped: their member sheet. Null in a direct chat. */
+    val onMember: ((ChatMessage) -> Unit)? = null,
+) {
+    /** Whether [message]'s sender has a member sheet: received in a channel, with a hint. */
+    fun hasMember(message: ChatMessage): Boolean = onMember != null && !message.isOutbound && message.senderHint != null
+}
 
 /**
  * Long press opens the message's menu; TalkBack gets the same as a long
@@ -64,7 +71,14 @@ internal class MessageHandlers(
  */
 @Composable
 internal fun Modifier.messageGestures(message: ChatMessage, handlers: MessageHandlers): Modifier {
-    if (!MessageMenu.hasMenu(message)) return semantics(mergeDescendants = true) {}
+    // TalkBack reaches the sender's sheet from any of their messages, not only the run's last.
+    val memberLabel = stringResource(R.string.member_show)
+    val member = handlers.hasMember(message)
+    if (!MessageMenu.hasMenu(message)) {
+        return semantics(mergeDescendants = true) {
+            if (member) customActions = listOf(CustomAccessibilityAction(memberLabel) { handlers.onMember?.invoke(message); true })
+        }
+    }
     val haptics = LocalHapticFeedback.current
     val current by rememberUpdatedState(message)
     // Keyed on nothing: a new handlers object must not restart a press in progress.
@@ -93,6 +107,7 @@ internal fun Modifier.messageGestures(message: ChatMessage, handlers: MessageHan
                 items.forEachIndexed { index, item ->
                     add(CustomAccessibilityAction(labels[index]) { handlers.onMenuItem(current, item); true })
                 }
+                if (member) add(CustomAccessibilityAction(memberLabel) { handlers.onMember?.invoke(current); true })
             }
         }
 }

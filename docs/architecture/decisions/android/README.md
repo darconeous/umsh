@@ -12,3 +12,4 @@ and say where Android differs.
 | [0004—Bluetooth boundary](0004-ble-boundary.md) | Accepted; emulator-verified against a Bumble peripheral, Pixel and radios unverified |
 | [0005—CompanionDeviceManager](0005-companion-device-manager.md) | Accepted; emulator-verified on API 31 and 36, Pixel unverified |
 | [0006—Background link](0006-background.md) | Accepted; emulator-verified, power management unverified; carries the Pixel checklist |
+| [0007—Links and the QR scanner](0007-links-and-scanner.md) | Accepted; emulator-verified on API 31 and 36, Pixel unverified; carries its own Pixel items |

@@ -5,7 +5,6 @@ import androidx.lifecycle.viewModelScope
 import androidx.navigation3.runtime.NavKey
 import com.voria.umsh.features.peers.ExchangeHost
 import com.voria.umsh.features.peers.RuntimeExchangeHost
-import com.voria.umsh.models.AppStateSnapshot
 import com.voria.umsh.models.MeetExchange
 import com.voria.umsh.services.radio.BluetoothStatus
 import com.voria.umsh.services.radio.BoundRadio
@@ -22,10 +21,18 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /** The radio as the shell shows it; [known] false before the core has said what radio there is. */
 data class ShownRadio(val radio: RadioSnapshot?, val known: Boolean)
+
+/**
+ * An opened link for the import sheet: its text, where it came from (for
+ * the page it may lead to), and which opening it is, so the same link
+ * opened again starts the sheet over rather than keeping what was edited.
+ */
+data class LinkImport(val uri: String, val origin: LinkOrigin, val opening: Long)
 
 /** Where Add peer's exchange stands, for the pages the shell shows over Add peer. */
 sealed interface MeetStep {
@@ -87,15 +94,39 @@ class ShellViewModel(
         .map { state -> state?.conversations?.count { it.unreadCount > 0 } ?: 0 }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), 0)
 
-    /** The conversations stored, by address; null before the first read. */
-    val conversations: StateFlow<Set<String>?> = runtime.appState
-        .map(::addresses)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), addresses(runtime.appState.value))
+    private val _linkImport = MutableStateFlow<LinkImport?>(null)
 
-    /** Every stored peer, by address, saved or not; null before the first read. */
-    val peers: StateFlow<Set<String>?> = runtime.appState
-        .map(::peerAddresses)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), peerAddresses(runtime.appState.value))
+    /**
+     * An opened link that names no node (or a channel), shown in the import
+     * sheet with what is wrong with it. Kept across a rotation; after process
+     * death the sheet does not reopen.
+     */
+    val linkImport: StateFlow<LinkImport?> = _linkImport
+
+    private var openings = 0L
+
+    /** [uri], opened from [origin]: a new opening, even of the link already shown. */
+    fun showLinkImport(uri: String, origin: LinkOrigin) {
+        _linkImport.value = LinkImport(uri, origin, ++openings)
+    }
+
+    fun closeLinkImport() {
+        _linkImport.value = null
+    }
+
+    /** The app was left: the sheet's link no longer leads back out of it ([ShellState.appLeft]). */
+    fun appLeft() {
+        _linkImport.update { shown -> shown?.copy(origin = LinkOrigin.InApp) }
+    }
+
+    private val _linkFailure = MutableStateFlow<Throwable?>(null)
+
+    /** An opened link that could not be stored: the failure dialog's error. */
+    val linkFailure: StateFlow<Throwable?> = _linkFailure
+
+    fun linkFailed(error: Throwable?) {
+        _linkFailure.value = error
+    }
 
     private val meetPageShown = MutableStateFlow(false)
 
@@ -173,10 +204,6 @@ class ShellViewModel(
         exchange?.isUnderWay == true && !leaving -> MeetStep.UnderWay
         else -> MeetStep.None
     }
-
-    private fun addresses(state: AppStateSnapshot?): Set<String>? = state?.conversations?.mapTo(HashSet()) { it.address }
-
-    private fun peerAddresses(state: AppStateSnapshot?): Set<String>? = state?.peers?.mapTo(HashSet()) { it.address }
 
     private fun shownRadio(): ShownRadio {
         val known = runtime.radioKnown.value

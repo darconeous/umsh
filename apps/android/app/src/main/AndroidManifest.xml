@@ -52,6 +52,21 @@
         android:required="false" />
 
     <!--
+        The QR scanner. Asked for the first time the scanner opens; never at
+        launch. No camera is required: without one, Scan is not offered.
+    -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature
+        android:name="android.hardware.camera.any"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera.autofocus"
+        android:required="false" />
+
+    <!--
         Keeps the process running while the companion radio is connected,
         with its notification. A connected-device service also needs Nearby
         devices granted (Android 14 and later); the app checks before
@@ -77,14 +92,34 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Umsh">
 
+        <!--
+            One instance, in its own task (D7): a umsh: link opened from
+            another app comes here rather than starting a second copy over
+            the same core, and Close on the page it opens goes back to that
+            app. The cost: a link arriving finishes whatever system screen
+            sits above the app in its task (a permission dialog, the share
+            chooser, the radio pairing confirmation).
+        -->
         <activity
             android:name=".app.MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:theme="@style/Theme.Umsh.Starting"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!--
+                umsh: links (product-structure, "Deep links"): nodes and
+                channels. The scheme only; the app sorts them. Notification
+                taps carry umsh-notification, which this does not match.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="umsh" />
             </intent-filter>
         </activity>
 

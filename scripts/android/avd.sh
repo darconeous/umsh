@@ -50,6 +50,10 @@ create() {
         set_key "$config" hw.keyboard yes
         set_key "$config" hw.ramSize 4096M
         set_key "$config" hw.cpu.ncore 4
+        # The back camera is the emulator's virtual scene, so the QR scanner
+        # runs through the real camera pipeline: start the emulator with
+        # `-virtualscene-poster wall=<png>` to hang a code in the room.
+        set_key "$config" hw.camera.back virtualscene
         echo "$name ready"
     done
 }

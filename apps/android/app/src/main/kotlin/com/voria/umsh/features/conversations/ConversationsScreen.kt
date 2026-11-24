@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.ListItem
@@ -19,6 +20,7 @@ import androidx.compose.ui.semantics.Role
 import com.voria.umsh.designsystem.FAB_CLEARANCE
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -55,6 +57,11 @@ import com.voria.umsh.designsystem.EmptyState
 import com.voria.umsh.designsystem.FailureDialog
 import com.voria.umsh.designsystem.UmshScaffold
 import com.voria.umsh.designsystem.UmshTopAppBar
+import com.voria.umsh.features.channels.ChannelChatChooser
+import com.voria.umsh.features.peers.AddPeerExit
+import com.voria.umsh.features.scanner.ScanAction
+import com.voria.umsh.features.scanner.ScannedCode
+import com.voria.umsh.features.scanner.ScannedCodePreview
 import com.voria.umsh.designsystem.rememberListEnvironment
 import com.voria.umsh.designsystem.userIsolated
 
@@ -64,7 +71,10 @@ import com.voria.umsh.designsystem.userIsolated
  * the start, or the row's TalkBack action, asks before deleting a direct
  * conversation or leaving a channel's chat. New chat opens its sheet
  * (board 6), whose New message is Add peer above this list ([onNewMessage],
- * D11); New channel chat waits for channels. Scan waits for its page (D5).
+ * D11) and whose New channel chat opens its own sheet (`new-channel-chat.svg`).
+ * Scan opens the QR scanner ([onScan]; absent without a camera); a code
+ * it reads comes back as [scanned], previewed over the list
+ * ([onScannedExit] takes the way out).
  *
  * [current] is whether the shell has the list as a page shown, not only
  * behind a back preview: only then may search take focus. [selected] is
@@ -78,6 +88,11 @@ fun ConversationsScreen(
     onOpen: (String) -> Unit,
     onNewMessage: () -> Unit,
     reselects: Int,
+    /** New channel chat's Join a channel…: Join channel, whose join opens the conversation. */
+    onJoinChannel: () -> Unit = {},
+    onScan: (() -> Unit)? = null,
+    scanned: ScannedCode? = null,
+    onScannedExit: (AddPeerExit) -> Unit = {},
 ) {
     val runtime = LocalAppRuntime.current
     val environment = rememberListEnvironment()
@@ -97,6 +112,8 @@ fun ConversationsScreen(
     val list = rememberLazyListState()
     ScrollToTopOnReselect(reselects, list)
     val newChat by viewModel.newChatShown.collectAsStateWithLifecycle()
+    val channelChat by viewModel.channelChatShown.collectAsStateWithLifecycle()
+    val chooserChannels by viewModel.chooserChannels.collectAsStateWithLifecycle()
 
     Box(Modifier.fillMaxSize()) {
         UmshScaffold(
@@ -107,6 +124,7 @@ fun ConversationsScreen(
                         IconButton(onClick = { viewModel.setSearching(true) }, modifier = Modifier.testTag(Tags.CONVERSATIONS_SEARCH)) {
                             Icon(painterResource(R.drawable.ic_search), contentDescription = stringResource(R.string.action_search))
                         }
+                        onScan?.let { ScanAction(it, Modifier.testTag(Tags.CONVERSATIONS_SCAN)) }
                     },
                 )
             },
@@ -114,15 +132,19 @@ fun ConversationsScreen(
             floatingActionButton = {
                 // Board 2's own buttons stand in for it on the empty list.
                 if (content is ConversationsContent.Rows) {
-                    ExtendedFloatingActionButton(onClick = { viewModel.showNewChat(true) }, modifier = Modifier.testTag(Tags.CONVERSATIONS_NEW_CHAT)) {
-                        Text(stringResource(R.string.new_chat))
-                    }
+                    ExtendedFloatingActionButton(
+                        text = { Text(stringResource(R.string.new_chat)) },
+                        // Material hides an icon-and-label FAB's label from TalkBack; the icon speaks it.
+                        icon = { Icon(painterResource(R.drawable.ic_edit), contentDescription = stringResource(R.string.new_chat)) },
+                        onClick = { viewModel.showNewChat(true) },
+                        modifier = Modifier.testTag(Tags.CONVERSATIONS_NEW_CHAT),
+                    )
                 }
             },
         ) { padding ->
             when (val shown = content) {
                 ConversationsContent.Loading -> Loading(Modifier.padding(padding))
-                ConversationsContent.Empty -> Empty(Modifier.padding(padding), onNewMessage)
+                ConversationsContent.Empty -> Empty(Modifier.padding(padding), onNewMessage, onChannelChat = { viewModel.showChannelChat(true) })
                 is ConversationsContent.Rows -> LazyColumn(
                     state = list,
                     // The last row clears the New chat button.
@@ -174,9 +196,22 @@ fun ConversationsScreen(
                 viewModel.showNewChat(false)
                 onNewMessage()
             },
+            onChannelChat = { viewModel.showChannelChat(true) },
             onDismiss = { viewModel.showNewChat(false) },
         )
     }
+    if (channelChat) {
+        ChannelChatChooser(
+            chooserChannels,
+            onOpen = viewModel::open,
+            onJoin = {
+                viewModel.showChannelChat(false)
+                onJoinChannel()
+            },
+            onDismiss = { viewModel.showChannelChat(false) },
+        )
+    }
+    ScannedCodePreview(scanned, onScannedExit)
     pending?.let { removal -> RemovalDialog(removal, viewModel::confirmRemoval, viewModel::cancelRemoval) }
     failure?.let { shown ->
         val (title, body) = when (shown) {
@@ -227,9 +262,9 @@ private fun Loading(modifier: Modifier) {
     }
 }
 
-/** Board 2: New message; Channel chat arrives with channels. */
+/** Board 2: the two ways in, New message and Channel chat. */
 @Composable
-private fun Empty(modifier: Modifier, onNewMessage: () -> Unit) {
+private fun Empty(modifier: Modifier, onNewMessage: () -> Unit, onChannelChat: () -> Unit) {
     Column(
         modifier.fillMaxSize().padding(horizontal = 24.dp).testTag(Tags.CONVERSATIONS_EMPTY),
         verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
@@ -253,19 +288,30 @@ private fun Empty(modifier: Modifier, onNewMessage: () -> Unit) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
-        Button(onClick = onNewMessage, modifier = Modifier.padding(top = 4.dp).testTag(Tags.CONVERSATIONS_EMPTY_NEW_MESSAGE)) {
-            Text(stringResource(R.string.new_message))
+        // Flows onto a second row on a narrow screen or with large text, so a label never splits.
+        FlowRow(
+            Modifier.padding(top = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Button(onClick = onNewMessage, modifier = Modifier.testTag(Tags.CONVERSATIONS_EMPTY_NEW_MESSAGE)) {
+                Text(stringResource(R.string.new_message))
+            }
+            FilledTonalButton(onClick = onChannelChat, modifier = Modifier.testTag(Tags.CONVERSATIONS_EMPTY_CHANNEL_CHAT)) {
+                Text(stringResource(R.string.channel_chat))
+            }
         }
     }
 }
 
 /**
  * New chat (board 6): the ways into a conversation. New message finds or
- * adds a peer (Add peer); New channel chat arrives with channels.
+ * adds a peer (Add peer); New channel chat picks a joined channel, or
+ * joins one (`new-channel-chat.svg`), in a sheet that replaces this one.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun NewChatSheet(onNewMessage: () -> Unit, onDismiss: () -> Unit) {
+private fun NewChatSheet(onNewMessage: () -> Unit, onChannelChat: () -> Unit, onDismiss: () -> Unit) {
     ModalBottomSheet(onDismissRequest = onDismiss, modifier = Modifier.testTag(Tags.NEW_CHAT_SHEET)) {
         Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 16.dp)) {
             Text(
@@ -281,6 +327,15 @@ private fun NewChatSheet(onNewMessage: () -> Unit, onDismiss: () -> Unit) {
                     .clickable(role = Role.Button, onClick = onNewMessage)
                     .padding(horizontal = 8.dp)
                     .testTag(Tags.NEW_CHAT_MESSAGE),
+            )
+            ListItem(
+                headlineContent = { Text(stringResource(R.string.new_channel_chat)) },
+                supportingContent = { Text(stringResource(R.string.new_channel_chat_detail)) },
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                modifier = Modifier
+                    .clickable(role = Role.Button, onClick = onChannelChat)
+                    .padding(horizontal = 8.dp)
+                    .testTag(Tags.NEW_CHAT_CHANNEL),
             )
         }
     }

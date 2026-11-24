@@ -117,13 +117,13 @@ class AddPeerShots {
         shot("add-peer-4")
         closeSheet()
 
-        // The interim channel line (§3.9) and a failed signature, for the record.
+        // A failed signature, for the record, and a channel link's preview sheet (P3j).
         enter(ImportFixtures.tamperedLink(0x53))
         waitFor(Tags.IMPORT_SIGNATURE)
         shot("add-peer-4-invalid")
         closeSheet()
-        enter("umsh:gs:public")
-        waitFor(Tags.ADD_PEER_PROBLEM)
+        enter("umsh:gs:ridge-runners")
+        waitFor(Tags.CHANNEL_PREVIEW_NAME)
         shot("add-peer-2-channel")
     }
 
@@ -139,7 +139,7 @@ class AddPeerShots {
         compose.waitUntil(TIMEOUT) { !present(Tags.NEW_CHAT_SHEET) }
 
         runBlocking { for (conversation in runtime.appState.value!!.conversations) runtime.deleteConversation(conversation.address).await() }
-        waitFor(Tags.CONVERSATIONS_EMPTY_NEW_MESSAGE)
+        waitFor(Tags.CONVERSATIONS_EMPTY_CHANNEL_CHAT)
         shot("conversation-list-2")
     }
 

@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
@@ -38,14 +39,14 @@ import com.voria.umsh.features.radio.RadioDetailModel
 import com.voria.umsh.services.radio.RadioSnapshot
 
 /** The Settings rows that open a page beside the list. */
-enum class SettingsRow { YourIdentity, CompanionRadio, Notifications }
+enum class SettingsRow { YourIdentity, Channels, CompanionRadio, Notifications }
 
 /**
- * The Settings root (D4, D13): Identity › Your identity, Radios ›
- * Companion radio, This app › Notifications, and in debug builds the
- * Developer section. Channels and the other batch-5 rows arrive with their
- * pages. [selected] is the row whose
- * page is beside the list; null when nothing is beside it.
+ * The Settings root (D4, D13): Identity › Your identity and Channels,
+ * Radios › Companion radio, This app › Notifications, and in debug builds
+ * the Developer section. The other batch-5 rows arrive with their pages.
+ * [selected] is the row whose page is beside the list; null when nothing
+ * is beside it.
  */
 @Composable
 fun SettingsScreen(
@@ -56,12 +57,14 @@ fun SettingsScreen(
     onChooseRadio: () -> Unit,
     onOpenNotifications: () -> Unit,
     reselects: Int,
+    onOpenChannels: () -> Unit = {},
 ) {
     val runtime = LocalAppRuntime.current
     val host = LocalAppCoreHost.current
     val identity by runtime.identity.collectAsStateWithLifecycle()
     val radio by runtime.radio.collectAsStateWithLifecycle()
     val radioKnown by runtime.radioKnown.collectAsStateWithLifecycle()
+    val appState by runtime.appState.collectAsStateWithLifecycle()
     val list = rememberLazyListState()
     ScrollToTopOnReselect(reselects, list)
     UmshScaffold(
@@ -94,6 +97,28 @@ fun SettingsScreen(
                         )
                         .clickable(onClick = onOpenIdentity)
                         .testTag(Tags.SETTINGS_YOUR_IDENTITY),
+                )
+            }
+            item {
+                // Joined on this phone; the radio's own channels are managed apart.
+                val joined = appState?.channels?.count { it.joinedPhone }
+                ListItem(
+                    headlineContent = { Text(stringResource(R.string.channels_title)) },
+                    leadingContent = { Icon(painterResource(R.drawable.ic_tag), contentDescription = null) },
+                    trailingContent = joined?.let { count ->
+                        { Text(pluralStringResource(R.plurals.settings_channels_joined, count, NumberFormat.getIntegerInstance(LocalConfiguration.current.locales[0]).format(count.toLong()))) }
+                    },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                    modifier = Modifier
+                        .selectionBackground(
+                            selected == SettingsRow.Channels,
+                            Color.Transparent,
+                            MaterialTheme.colorScheme.secondaryContainer,
+                            MaterialTheme.shapes.large,
+                        )
+                        .clickable(role = Role.Button, onClick = onOpenChannels)
+                        .semantics(mergeDescendants = true) {}
+                        .testTag(Tags.SETTINGS_CHANNELS),
                 )
             }
             item { SectionHeader(stringResource(R.string.settings_section_radios)) }

@@ -63,6 +63,7 @@ class PeersViewModel(
     private val _searching = MutableStateFlow(false)
     private val _pendingRemoval = MutableStateFlow<PendingRemoval?>(null)
     private val _failure = MutableStateFlow<PeersFailure?>(null)
+    private val _sharing = MutableStateFlow<String?>(null)
 
     val sort: StateFlow<PeerSort> = savedSort.map(PeerSort::named)
         .stateIn(viewModelScope, SharingStarted.Eagerly, PeerSort.Alphabetical)
@@ -71,6 +72,17 @@ class PeersViewModel(
     val searching: StateFlow<Boolean> = _searching.asStateFlow()
     val pendingRemoval: StateFlow<PendingRemoval?> = _pendingRemoval.asStateFlow()
     val failure: StateFlow<PeersFailure?> = _failure.asStateFlow()
+
+    /**
+     * The node whose share sheet is open: kept across a rotation, not after
+     * process death. A node that leaves the list (expired, cleared, erased)
+     * closes its sheet for good, so the sheet never reopens by itself when
+     * the node is heard again.
+     */
+    val shared: StateFlow<PeerSummary?> = combine(runtime.appState, _sharing) { state, address ->
+        if (address == null || state == null) return@combine null
+        state.peers.firstOrNull { it.address == address }.also { if (it == null) _sharing.compareAndSet(address, null) }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     // The stored order itself, not [sort]'s default: the list waits for it rather than redrawing in another order.
     private val arrangement = combine(savedSort.map(PeerSort::named), _filter, this.environment) { sort, filter, env ->
@@ -116,6 +128,11 @@ class PeersViewModel(
 
     fun setFavorite(peer: PeerSummary, favorite: Boolean) =
         perform({ runtime.setFavorite(peer.address, favorite) }, PeersFailure::NotChanged)
+
+    /** The long press's Share (`share.svg` 2 note): the node's share sheet; null closes it. */
+    fun share(peer: PeerSummary?) {
+        _sharing.value = peer?.address
+    }
 
     /** Save a node heard over the air: the long press's Save, and search's add button. */
     fun save(peer: PeerSummary) = perform({ runtime.promotePeer(peer.address) }, PeersFailure::NotSaved)

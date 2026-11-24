@@ -16,6 +16,14 @@ sealed interface UmshKey : NavKey {
     @Serializable
     data class Thread(val address: String) : UmshKey
 
+    /**
+     * A channel conversation's Conversation info (`conversation-info.svg`),
+     * above its thread, from the thread's title. Closed with the thread
+     * once the conversation is gone ([ShellState.closeThreadsNotIn]).
+     */
+    @Serializable
+    data class ConversationInfo(val address: String) : UmshKey
+
     /** One message's details (`bubbles.svg` 6–7), from its thread. */
     @Serializable
     data class MessageDetails(val address: String, val sessionId: String, val handle: Long) : UmshKey
@@ -46,10 +54,11 @@ sealed interface UmshKey : NavKey {
     /**
      * A peer's page (`peer-page.svg`). [destination] is the stack it is on,
      * which picks its pane; null above the shell (from Radio Detail there,
-     * and links).
+     * and links). [link] is where the link that opened it came from: such
+     * a page has Close, which returns there (board 5, D7).
      */
     @Serializable
-    data class PeerPage(val address: String, val destination: Destination?) : UmshKey, PeerPageKey {
+    data class PeerPage(val address: String, val destination: Destination?, val link: LinkOrigin? = null) : UmshKey, PeerPageKey {
         override val peerAddress: String get() = address
     }
 
@@ -109,9 +118,48 @@ sealed interface UmshKey : NavKey {
     @Serializable
     data class Exchange(val destination: Destination) : UmshKey, MeetsNearby
 
+    /**
+     * The QR scanner (`qr-scanner.svg`): full screen above the shell, from
+     * Scan on [destination]'s root, or the scan button in that stack's Add
+     * peer field or Join channel's field ([target]). A recognized code goes back to where the scan
+     * began ([ShellState.deliverScan]).
+     */
+    @Serializable
+    data class Scanner(val target: ScanTarget, val destination: Destination) : UmshKey
+
     /** Settings › Notifications. */
     @Serializable
     data object Notifications : UmshKey
+
+    /** Settings › Channels (`channels.svg` 1–3): the channels this phone joined. */
+    @Serializable
+    data object Channels : UmshKey
+
+    /**
+     * A channel's page (`channels.svg` 10–13), by its ID: above Channels in
+     * Settings, or above Conversation info on Conversations ([destination],
+     * the stack it is on, which picks its pane). Closed once this phone no
+     * longer has it joined ([ShellState.closeChannelPagesNotIn]).
+     */
+    @Serializable
+    data class ChannelPage(val id: String, val destination: Destination = Destination.Settings) : UmshKey
+
+    /**
+     * Join channel (`channels.svg` 5–9): a full-screen dialog above the
+     * shell, from Channels, a channel link ([input] filled in and looked
+     * up), or New channel chat ([forChat]: the join opens the channel's
+     * conversation, as joining from Settings does not). An [input] holding
+     * a private key is sealed (`ChannelKeyText`): this key is saved state.
+     * [opening] tells one link's opening from the next, so the same link
+     * opened again starts Join channel over rather than keeping the page
+     * it replaces; 0 for every other opening.
+     */
+    @Serializable
+    data class ChannelJoin(val input: String? = null, val forChat: Boolean = false, val opening: Long = 0) : UmshKey
+
+    /** New private channel (`channels.svg` 4): a full-screen dialog above the shell, from Channels. */
+    @Serializable
+    data object ChannelCreate : UmshKey
 
     /** The app-level stack's root: the shell itself, with its destinations. */
     @Serializable
@@ -132,3 +180,19 @@ interface PeerPageKey {
  * selected destination's top page ([MeetPresence]).
  */
 interface MeetsNearby
+
+/** Where a scan began, and so where its code is previewed. */
+@Serializable
+enum class ScanTarget {
+    /** Scan in a root's top app bar: the preview opens as a sheet over the root (`qr-scanner.svg` 3). */
+    Root,
+
+    /** The Add peer field's scan button: the field is filled and previewed. */
+    AddPeerField,
+
+    /** Join channel's field: the field is filled and looked up (`channels.svg` 5). */
+    JoinChannelField,
+}
+
+/** A code the scanner recognized, waiting for the page the scan began on. */
+data class PendingScan(val target: ScanTarget, val destination: Destination, val text: String)

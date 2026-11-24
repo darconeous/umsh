@@ -6,9 +6,11 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import com.voria.umsh.app.SendOutcome
 import com.voria.umsh.app.StagedHost
 import com.voria.umsh.app.UmshKey
 import com.voria.umsh.models.ChannelConversationSummary
+import com.voria.umsh.models.ChatMessage
 import java.util.concurrent.Executors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -106,6 +108,64 @@ class ThreadSendTest {
         withContext(main) { thread.toggleReaction(mine, com.voria.umsh.models.ReactionKind.Exclaim) }
         assertNull(thread.emergencyPrompt.value)
         staged.messagesWhere(emergency) { messages -> messages.first { it.ref == mine.ref }.reactions.any { it.isMine } }
+    }
+
+    /** The member sheet's Request identity: straight out on a channel; on `EMERGENCY` the sheet steps aside for the warning. */
+    @Test
+    fun requestIdentityGoesOrWaitsForEmergencysWarning() = runBlocking<Unit> {
+        staged = StagedHost(temp.newFolder())
+        val runtime = staged.start()
+        val crew = staged.stateWhere { state -> state.channelConversations.any { it.channel.name == "Trail Crew" } }
+            .channelConversations.first { it.channel.name == "Trail Crew" }.address
+        // Maya, a live staged node, off Peers; each ask is answered by a fresh advertisement from her.
+        val maya = staged.stateWhere { state -> state.peers.any { it.advertisedName == "Maya Ortiz" } }
+            .peers.first { it.advertisedName == "Maya Ortiz" }
+        runtime.demotePeer(maya.address).await()
+        fun heard() = runtime.appState.value!!.peers.first { it.address == maya.address }.advertisementReceivedAtMs
+        suspend fun answered(before: Long?) = staged.stateWhere { state ->
+            state.peers.first { it.address == maya.address }.advertisementReceivedAtMs.let { it != null && it != before }
+        }
+        staged.stateWhere { state -> state.peers.first { it.address == maya.address }.isSaved.not() }
+        val said = staged.messagesWhere(crew) { messages -> messages.any { it.senderAddress == maya.address && it.senderHint != null } }
+            .first { it.senderAddress == maya.address && it.senderHint != null }
+        val firstHeard = heard()
+
+        val thread = thread(crew)
+        withTimeout(StagedHost.TIMEOUT) { thread.conversation.first { it != null } }
+        withContext(main) { thread.openMember(said) }
+        assertEquals(MemberRef(said.senderHint!!, said.senderNodeHint), thread.member.value)
+        withContext(main) { thread.requestMemberIdentity() }
+        assertTrue(thread.memberRequested.value)
+        assertEquals(1, thread.memberAsks.value.size)
+        // Once: a second tap asks for nothing.
+        withContext(main) { thread.requestMemberIdentity() }
+        assertEquals(1, thread.memberAsks.value.size)
+        eventually({ thread.memberAsks.value }) { it == listOf(SendOutcome.Sent) }
+        answered(firstHeard)
+        assertEquals(listOf(SendOutcome.Sent), thread.memberAsks.value)
+        assertNull(thread.alert.value)
+        assertTrue(thread.memberRequested.value)
+        withContext(main) { thread.closeMember() }
+        assertNull(thread.member.value)
+
+        // EMERGENCY, not yet agreed to: the warning first, with the sheet closed; agreed, the ask goes (staged air only).
+        val emergency = staged.emergency()
+        val alarm = thread(emergency)
+        withTimeout(StagedHost.TIMEOUT) {
+            alarm.conversation.first { (it as? ChannelConversationSummary)?.needsEmergencyAgreement == true }
+        }
+        withContext(main) { alarm.openMember(said) }
+        withContext(main) { alarm.requestMemberIdentity() }
+        assertNull(alarm.member.value)
+        assertEquals(EmergencyPrompt(sends = false), alarm.emergencyPrompt.value)
+        // Nothing goes before agreement.
+        assertTrue(alarm.memberAsks.value.isEmpty())
+        withContext(main) { alarm.certify() }
+        // Agreed: the one ask goes and the core takes it. Staged peers hear
+        // EMERGENCY only in the core's own tests, so no answer comes here.
+        eventually({ alarm.memberAsks.value }) { it == listOf(SendOutcome.Sent) }
+        assertNull(alarm.emergencyPrompt.value)
+        assertNull(alarm.alert.value)
     }
 
     @Test

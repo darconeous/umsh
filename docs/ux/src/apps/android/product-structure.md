@@ -237,11 +237,21 @@ Conversations and Peers:
    the camera permission the first time it opens.
 2. The scanner accepts only `umsh:` codes. Any other code is reported as not a
    UMSH code, and the scanner keeps running.
-3. A recognized code closes the scanner and opens the same import preview a
-   pasted or opened URI opens, as a bottom sheet over the screen the scan
-   started from.
-4. Confirming the preview saves and then navigates as a deep link would.
-   Dismissing it returns to the screen the scan started from.
+3. A recognized code closes the scanner and is handled where the scan
+   started, as the same text typed there would be:
+   - A node code opens the import preview as a bottom sheet over that
+     screen. A node already saved, or the companion radio, opens its peer
+     page instead, and this phone's own code opens Your identity.
+   - A channel code opens the channel preview as a bottom sheet over that
+     screen; scanned from the Join channel field, it fills the field and
+     previews there.
+
+   An unsaved node's code is previewed even though an opened node link is
+   not (see Deep links), because the user has not yet seen what the code
+   holds.
+4. Confirming a sheet's preview saves or joins, then opens the peer page or
+   the conversation from the screen the scan started from. Dismissing it
+   returns there.
 
 The iOS app has no in-app scanner yet; when it gets one, it takes the same
 place.
@@ -251,15 +261,19 @@ place.
 The app handles the `umsh` scheme through an intent filter, routed as the iOS
 app routes `onOpenURL`. Links are held until launch has loaded the store.
 
-1. `umsh:gs:` and `umsh:gk:` are channels. Settings is selected, and the
-   channel join preview opens over it.
+1. `umsh:gs:` and `umsh:gk:`, and the deprecated `umsh:cs:` and `umsh:ck:`,
+   are channels. Settings › Channels is selected, and Join channel opens over
+   it with the link's preview.
 2. Any other `umsh:` link is looked up as a node.
    1. A link that does not parse opens the import preview, which says what is
       wrong with it.
    2. A link to this phone's own identity selects Settings at Your identity.
    3. Any other node opens its peer page as an app-level page above whatever
-      was showing. Back or Close returns there. Its verbs, such as **Message**,
-      navigate into the destinations.
+      was showing, without the import preview. Close and Back return to where
+      the link was opened: to the other app for a link from another app, or to
+      the screen that was showing for a link tapped in UMSH. Once the user
+      leaves the app some other way, Close returns to the app instead. Its
+      verbs, such as **Message**, navigate into the destinations.
 
 ### Notification taps
 

@@ -1,6 +1,8 @@
 package com.voria.umsh.services.mobilecore
 
+import com.voria.umsh.core.ChannelKindRecord
 import com.voria.umsh.core.IdentitySignatureState
+import com.voria.umsh.core.MobileAppChannelPreviewRecord
 import com.voria.umsh.core.MobileAppChannelConversationRecord
 import com.voria.umsh.core.MobileAppDirectConversationRecord
 import com.voria.umsh.core.MobileAppMessageRecord
@@ -42,6 +44,7 @@ import com.voria.umsh.models.RouteCandidate
 import com.voria.umsh.models.AppStateSnapshot
 import com.voria.umsh.models.ChannelConversationSummary
 import com.voria.umsh.models.ChannelKind
+import com.voria.umsh.models.ChannelPreview
 import com.voria.umsh.models.ChannelSummary
 import com.voria.umsh.models.ChatMessage
 import com.voria.umsh.models.ConversationPreview
@@ -227,6 +230,19 @@ object RecordMapping {
         notificationsEnabled = record.notificationsEnabled,
         joinedAtMs = record.joinedAtMs,
         conversationAddress = conversationAddress,
+    )
+
+    /** A channel name or invitation as `preview_channel` read it from [input]. */
+    fun channelPreview(input: String, record: MobileAppChannelPreviewRecord) = ChannelPreview(
+        input = input,
+        isPrivate = record.preview.kind == ChannelKindRecord.PRIVATE_KEY,
+        canonicalName = record.preview.canonicalName,
+        displayName = record.preview.displayName,
+        key = Octets(record.preview.key),
+        channelIdHex = Octets(record.preview.channelId).hex(),
+        tint = Octets(record.preview.tint),
+        existing = record.existing?.let { channel(it, null) },
+        nameConflict = record.nameConflict?.let { channel(it, null) },
     )
 
     fun preview(record: MobileAppPreviewRecord): ConversationPreview {

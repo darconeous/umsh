@@ -49,6 +49,8 @@ fun UmshTopAppBar(
     title: @Composable () -> Unit,
     modifier: Modifier = Modifier,
     onBack: (() -> Unit)? = null,
+    /** [onBack] draws Close rather than Back: a page that returns to where it was opened from (`peer-page.svg` 5). */
+    closes: Boolean = false,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
     val radioControl = LocalTopBarRadioControl.current
@@ -56,7 +58,11 @@ fun UmshTopAppBar(
         title = title,
         modifier = modifier.testTag(Tags.TOP_APP_BAR),
         navigationIcon = {
-            if (onBack != null) {
+            if (onBack != null && closes) {
+                IconButton(onClick = onBack, modifier = Modifier.testTag(Tags.TOP_BAR_CLOSE)) {
+                    Icon(painterResource(R.drawable.ic_close), contentDescription = stringResource(R.string.action_close))
+                }
+            } else if (onBack != null) {
                 IconButton(onClick = onBack, modifier = Modifier.testTag(Tags.TOP_BAR_BACK)) {
                     Icon(painterResource(R.drawable.ic_arrow_back), contentDescription = stringResource(R.string.action_back))
                 }

@@ -17,6 +17,8 @@ import com.voria.umsh.core.PublicIdentityRecord
 import com.voria.umsh.features.peers.HopNames
 import com.voria.umsh.features.peers.NeighborSource
 import com.voria.umsh.models.AppStateSnapshot
+import com.voria.umsh.models.ChannelPreview
+import com.voria.umsh.models.JoinedChannel
 import com.voria.umsh.models.KeyProtection
 import com.voria.umsh.models.LocalIdentity
 import com.voria.umsh.models.ManualPath
@@ -580,6 +582,18 @@ class AppRuntime(
         address
     }
 
+    /**
+     * The node an opened link names (product-structure, "Deep links" 2):
+     * recorded unsaved with the link's identity when this phone has no row
+     * for it, a stored row left as it is. Answers with its address once the
+     * lists show it, or null when the link names this phone.
+     */
+    fun recordLinkPeer(input: String): Deferred<String?> = scope.async {
+        val address = core.recordLinkPeer(input.trim())
+        if (address != null) reload(full = true).await()
+        address
+    }
+
     /** Whether a direct conversation may notify. */
     fun setConversationNotifications(address: String, enabled: Boolean): Deferred<Unit> = scope.async {
         core.setConversationNotifications(address, enabled)
@@ -713,6 +727,103 @@ class AppRuntime(
         reload(full = false).await()
         address
     }
+
+    // region Channels (Settings › Channels, the join preview, the channel page)
+
+    /**
+     * A channel name or a `umsh:` invitation, read locally with what this
+     * phone already holds under its key or its name. Nothing is stored or
+     * sent. Fails `InvalidInput` for text that is neither.
+     */
+    suspend fun previewChannel(input: String): ChannelPreview =
+        stored { RecordMapping.channelPreview(input, core.previewChannel(input)) }
+
+    /**
+     * Join by the text a preview was read from, which the core reads again:
+     * a key already held is rejoined if it was left and given the alias, one
+     * not held is stored and registered. With [openConversation] its
+     * conversation opens too, and its address comes back. A phone holding
+     * as many channels as it can fails `ChannelTableFull`, keeping nothing.
+     * The core keeps a held channel's alias when [alias] is empty;
+     * [clearAlias] clears it instead.
+     */
+    fun joinChannel(input: String, alias: String?, openConversation: Boolean, clearAlias: Boolean = false): Deferred<JoinedChannel> = scope.async {
+        val named = alias?.trim()?.ifEmpty { null }
+        val joined = core.joinChannel(input.trim(), named, openConversation)
+        if (clearAlias && named == null) {
+            // Joined either way: an alias left in place is not a failed join.
+            try {
+                core.setChannelAlias(joined.channelId, null)
+            } catch (error: MobileAppException) {
+                AppLog.w(TAG, "channel alias not cleared: ${error.javaClass.simpleName}")
+            }
+        }
+        reload(full = false).await()
+        JoinedChannel(joined.channelId, joined.conversationAddress)
+    }
+
+    /** A private channel under a new key made in the core, called [name]: its ID. */
+    fun createPrivateChannel(name: String): Deferred<String> = scope.async {
+        val id = core.createPrivateChannel(name.trim())
+        reload(full = false).await()
+        id
+    }
+
+    /**
+     * Leave a channel on this phone: its conversation and messages go, and
+     * the key and row of any but the built-in channels, which stay to be
+     * joined again.
+     */
+    fun leaveChannel(id: String): Deferred<Unit> = scope.async {
+        core.leaveChannel(id)
+        reload(full = false).await()
+    }
+
+    /** Join a channel this phone left but still holds (a built-in one, from Suggested channels). */
+    fun rejoinChannel(id: String): Deferred<Unit> = scope.async {
+        core.rejoinChannel(id)
+        reload(full = false).await()
+    }
+
+    /** What this user calls a channel, trimmed; empty or null clears it. */
+    fun setChannelAlias(id: String, alias: String?): Deferred<Unit> = scope.async {
+        core.setChannelAlias(id, alias?.trim()?.ifEmpty { null })
+        reload(full = false).await()
+    }
+
+    /**
+     * The link that invites someone to a channel: its name for a named
+     * channel, its key for a private one. The alias never travels.
+     */
+    fun channelInvitation(id: String): Deferred<String> = scope.async { core.channelInvitation(id) }
+
+    /** Whether a channel's conversation may notify. A direct one's is [setConversationNotifications]. */
+    fun setChannelNotifications(id: String, enabled: Boolean): Deferred<Unit> = scope.async {
+        core.setChannelNotifications(id, enabled)
+        reload(full = false).await()
+    }
+
+    /**
+     * Ask the member of the channel conversation at [address] known by its
+     * three-byte node [hint] who it is, over the channel. The answer arrives
+     * as a peers change, and fills in the sender of every message the hint
+     * names. On `EMERGENCY` the core refuses it until the warning is agreed
+     * to ([SendOutcome.Refused.needsEmergencyAgreement]); [SendOutcome.Kept]
+     * never comes of it.
+     */
+    fun requestMemberIdentity(address: String, hint: Octets): Deferred<SendOutcome> = scope.async {
+        try {
+            core.requestMemberIdentity(address, hint.toByteArray())
+            SendOutcome.Sent
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            AppLog.w(TAG, "member identity not asked: ${error.javaClass.simpleName}")
+            SendOutcome.Refused(error)
+        }
+    }
+
+    // endregion
 
     /**
      * Keep what is typed: shown at once, saved after a pause. A draft is

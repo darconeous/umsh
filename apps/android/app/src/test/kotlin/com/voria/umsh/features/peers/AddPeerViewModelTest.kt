@@ -76,10 +76,18 @@ class AddPeerViewModelTest {
         assertNull(model.preview.value)
         model.edited()
         assertNull(model.problem.value)
+        // A channel link opens the channel's join preview, each time afresh.
+        var last = 0L
         for (channel in listOf("umsh:gs:public", "UMSH:gk:4LrFpcVdqA9LrfxgUz6zE6iUMoWiZVqU2PUVFN5D4y7d", " umsh:cs:public ")) {
             model.preview(channel)
-            assertEquals(channel, AddPeerProblem.ChannelLink, model.problem.value)
+            assertNull(channel, model.problem.value)
             assertNull(model.preview.value)
+            val opening = model.channel.value
+            assertEquals(channel.trim(), opening?.input)
+            assertTrue(opening!!.opening > last)
+            last = opening.opening
+            model.closeChannel()
+            assertNull(model.channel.value)
         }
         // Blank is not previewed at all.
         model.edited()

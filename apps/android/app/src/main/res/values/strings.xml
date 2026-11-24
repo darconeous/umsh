@@ -1799,8 +1799,10 @@
     <string name="add_peer_preview">Preview</string>
     <!-- Under Add peer's field: what was entered names no node. Nothing is imported. -->
     <string name="add_peer_not_peer">Not a UMSH link, address, or key.</string>
-    <!-- Under Add peer's field: a channel's link was entered, which does not add a peer. -->
-    <string name="add_peer_channel_link">This is a channel link, not a peer.</string>
+    <!-- Failure dialog title: a umsh: link opened from another app or a message could not be opened. -->
+    <string name="link_not_opened_title">Couldn’t open this link</string>
+    <!-- Failure dialog body: a umsh: link could not be opened; no peer was stored. -->
+    <string name="link_not_opened_body">Nothing was saved.</string>
     <!-- Add peer row: opens this phone's own QR code sheet, so the other person can add it. -->
     <string name="show_your_code">Show your code</string>
     <!-- Import preview, under the node's name: the link carried the node's advertised details. -->
@@ -1883,4 +1885,233 @@
     <string name="exchange_done">Done</string>
     <!-- Exchange page, after it ended: starts over under a new key, so both glyphs and the code change. -->
     <string name="exchange_try_again">Try again</string>
+
+    <!-- Sharing and the QR scanner (share.svg, qr-scanner.svg, permissions.svg 2–3). -->
+    <!-- Top app bar action: opens the QR scanner. Also the scan button in Add peer's field. -->
+    <string name="action_scan">Scan</string>
+    <!-- Top app bar action, a verb: shares this node's link (peer page). Also a long-press menu item on a Peers row. -->
+    <string name="action_share">Share</string>
+    <!-- Closes a full-screen page (the QR scanner). -->
+    <string name="action_close">Close</string>
+    <!-- TalkBack: the QR code image on a peer's share sheet. %1$s is the peer's name. -->
+    <string name="peer_qr_description">QR code with <xliff:g id="name" example="Ridge Medic">%1$s</xliff:g>’s link</string>
+    <!-- QR scanner's title. -->
+    <string name="scanner_title">Scan a code</string>
+    <!-- TalkBack: the camera's picture on the QR scanner. -->
+    <string name="scanner_viewfinder_description">Camera viewfinder. Hold a UMSH code inside the frame.</string>
+    <!-- Pill over the QR scanner's picture: the code in the frame is not a UMSH code; the scanner keeps running. -->
+    <string name="scanner_not_umsh">Not a UMSH code</string>
+    <!-- QR scanner without a camera picture: the camera permission is refused, or the camera cannot be used now. -->
+    <string name="scanner_camera_off">Camera access is off for UMSH</string>
+    <!-- Button under "Camera access is off for UMSH": asks for the camera again, or opens the app's settings. -->
+    <string name="scanner_allow_camera">Allow camera</string>
+    <!-- TalkBack: the QR scanner's flashlight button. -->
+    <string name="scanner_torch">Flashlight</string>
+    <!-- TalkBack state of the QR scanner's flashlight button. -->
+    <string name="scanner_torch_on">On</string>
+    <!-- TalkBack state of the QR scanner's flashlight button. -->
+    <string name="scanner_torch_off">Off</string>
+
+    <!-- Phone-side channels (channels.svg, new-channel-chat.svg, qr-scanner.svg 4). -->
+    <!-- Settings row and page title: the channels this phone has joined. -->
+    <string name="channels_title">Channels</string>
+    <!-- Settings › Channels row, at its end: how many channels this phone has joined. The number is already formatted. -->
+    <plurals name="settings_channels_joined">
+        <item quantity="one"><xliff:g id="count" example="1">%1$s</xliff:g> joined</item>
+        <item quantity="other"><xliff:g id="count" example="3">%1$s</xliff:g> joined</item>
+    </plurals>
+    <!-- Floating button on Channels: opens the two ways to add a channel. -->
+    <string name="add_channel">Add channel</string>
+    <!-- Title and buttons: join an existing channel by its name or an invitation. -->
+    <string name="join_channel">Join channel</string>
+    <!-- Button: makes a new private channel under a new key. -->
+    <string name="new_private_channel">New private channel</string>
+    <!-- Channels, when this phone has joined none. -->
+    <string name="channels_empty_title">No channels</string>
+    <!-- Channels, when this phone has joined none: what a channel is. -->
+    <string name="channels_empty_body">A channel is a shared key. Join one by name if it is public, or with an invitation if it is private.</string>
+    <!-- TalkBack: what a long press on a channel row does. -->
+    <string name="channel_actions">Show actions</string>
+    <!-- Long-press menu item, page row and confirmation button: leaves the channel on this phone. -->
+    <string name="leave_channel">Leave channel</string>
+    <!-- Under a channel's name: its kind (Built-in, Public or Private), then its identifier, which is never translated. -->
+    <string name="channel_kind_identifier"><xliff:g id="kind" example="Private">%1$s</xliff:g> · <xliff:g id="identifier" example="9c41">%2$s</xliff:g></string>
+    <!-- Confirmation title before leaving a channel; the channel's name, in quotes. -->
+    <string name="leave_channel_title">Leave “<xliff:g id="channel" example="Fire">%1$s</xliff:g>”?</string>
+    <!-- Confirmation body before leaving a private channel: its key goes with it. -->
+    <string name="leave_channel_private_body">The channel key is deleted from this phone. Joining again requires a new invitation from someone still in the channel. Its messages are removed from this phone.</string>
+    <!-- Confirmation body before leaving a built-in channel or one joined by name. -->
+    <string name="leave_channel_named_body">You can join again with its name. Its messages are removed from this phone.</string>
+    <!-- Failure dialog title: leaving a channel failed. -->
+    <string name="channel_not_left_title">Couldn’t leave the channel</string>
+    <!-- Failure dialog body: leaving a channel failed. -->
+    <string name="channel_not_left_body">You’re still in the channel.</string>
+
+    <!-- New private channel: the full-screen dialog's title. -->
+    <string name="channel_create_title">New channel</string>
+    <!-- New private channel: the action that makes it. A verb. -->
+    <string name="channel_create">Create</string>
+    <!-- TalkBack: the spinner while a new channel is being made. -->
+    <string name="channel_creating">Creating the channel</string>
+    <!-- Field label, and a row on the channel page: the channel's own name. -->
+    <string name="channel_name">Name</string>
+    <!-- Under New private channel's Name field. -->
+    <string name="channel_name_supporting">Suggested to anyone you invite.</string>
+    <!-- New private channel: a section heading. -->
+    <string name="channel_create_section">What this creates</string>
+    <!-- New private channel: what everyone invited can do. -->
+    <string name="channel_create_members">A new random key, made on this phone. Everyone you invite becomes a full member: they can read everything sent here and send as any member.</string>
+    <!-- New private channel: removing a member later. -->
+    <string name="channel_create_removing">Removing someone later means a new channel, and inviting everyone else again.</string>
+    <!-- Failure dialog title: making a private channel failed. -->
+    <string name="channel_not_created_title">Couldn’t create the channel</string>
+    <!-- Failure dialog body: making a private channel failed. -->
+    <string name="channel_not_created_body">No channel was created.</string>
+
+    <!-- Join channel's field label. -->
+    <string name="join_channel_field">Channel name or invitation</string>
+    <!-- Button under Join channel's field: reads what was entered and shows the channel, joining nothing. A verb. -->
+    <string name="channel_look_up">Look up</string>
+    <!-- Join channel, before a lookup. -->
+    <string name="join_channel_intro">A public channel is joined by name. A private channel needs its invitation.</string>
+    <!-- Join channel: a section of built-in channels this phone left. -->
+    <string name="suggested_channels">Suggested channels</string>
+    <!-- Join channel's action: joins what was looked up. A verb. -->
+    <string name="channel_join">Join</string>
+    <!-- Join channel's action for a channel already joined: changes only its details on this phone. A verb. -->
+    <string name="channel_update">Update</string>
+    <!-- TalkBack: the spinner while a channel is being joined. -->
+    <string name="channel_joining">Joining the channel</string>
+    <!-- Under Join channel's field: a name with characters a channel name cannot have. Nothing is joined. -->
+    <string name="channel_input_not_ascii">Channel names use plain letters, digits, and punctuation.</string>
+    <!-- Under Join channel's field: a name longer than a channel name can be. Nothing is joined. -->
+    <string name="channel_input_too_long">Channel names are at most 64 characters.</string>
+    <!-- Under Join channel's field: neither a channel name nor a channel invitation. Nothing is joined. -->
+    <string name="channel_input_not_channel">Not a channel name or invitation.</string>
+    <!-- Failure dialog title: what was entered could not be looked up. -->
+    <string name="channel_not_looked_up_title">Couldn’t look up the channel</string>
+    <!-- Failure dialog title: joining a channel failed. -->
+    <string name="channel_not_joined_title">Couldn’t join the channel</string>
+    <!-- Failure dialog body: looking up or joining a channel failed. -->
+    <string name="channel_not_joined_body">No channel was joined.</string>
+    <!-- Under a looked-up channel's name: it is joined by name. -->
+    <string name="channel_preview_public">Public channel</string>
+    <!-- Under a looked-up channel's name: an invitation that carries the channel's key. -->
+    <string name="channel_preview_private">Private channel invitation</string>
+    <!-- Row label: a channel's two-byte identifier. -->
+    <string name="channel_identifier">Identifier</string>
+    <!-- Row label: a private invitation's key, hidden until shown. -->
+    <string name="channel_key">Channel key</string>
+    <!-- TalkBack: the channel key, hidden behind dots. -->
+    <string name="channel_key_hidden">Hidden</string>
+    <!-- TalkBack: the eye button that shows the channel key. -->
+    <string name="channel_key_show">Show channel key</string>
+    <!-- TalkBack: the eye button that hides the channel key again. -->
+    <string name="channel_key_hide">Hide channel key</string>
+    <!-- Under a channel joined by name: the one fact a joiner needs. -->
+    <string name="channel_preview_public_line">The name is not a password. Anyone who knows it can join and read everything sent here.</string>
+    <!-- Under a private invitation: the one fact a joiner needs. -->
+    <string name="channel_preview_private_line">Anyone holding this key can read the channel and send as any member. Treat the invitation as a secret.</string>
+    <!-- Join channel: this phone already holds the same key; the placeholder is the channel's name. -->
+    <string name="channel_already_joined">Already joined as “<xliff:g id="channel" example="hike-club">%1$s</xliff:g>”</string>
+    <!-- Join channel: under "Already joined as …". -->
+    <string name="channel_already_joined_body">The same key you already hold. Joining updates its local details instead of adding a second channel.</string>
+    <!-- Join channel: another channel this phone holds has the same name; the placeholder is that name. -->
+    <string name="channel_name_conflict">You already have a channel called “<xliff:g id="channel" example="Fire">%1$s</xliff:g>”</string>
+    <!-- Join channel: under the name conflict. Only a suggestion; joining still works. -->
+    <string name="channel_name_conflict_body">It’s a different channel. You might give this one another name so you don’t mix them up.</string>
+    <!-- Field label and channel page row: what this user calls the channel, on this phone only. -->
+    <string name="channel_alias">Alias</string>
+    <!-- Field label in the scanned channel's sheet: the alias, which may be left empty. -->
+    <string name="channel_alias_optional">Alias (optional)</string>
+
+    <!-- Channel page: a verb that opens the channel's conversation. -->
+    <string name="channel_verb_conversation">Conversation</string>
+    <!-- Channel page: a section heading. -->
+    <string name="channel_section">Channel</string>
+    <!-- Channel page row: when this phone joined the channel. -->
+    <string name="channel_joined">Joined</string>
+    <!-- Channel page: the Alias row when there is none. -->
+    <string name="channel_alias_none">None</string>
+    <!-- TalkBack: what tapping the Alias row does. -->
+    <string name="channel_alias_edit">Edit alias</string>
+    <!-- Channel page: a section heading over how Public and EMERGENCY behave. -->
+    <string name="channel_how_it_works">How this channel works</string>
+    <!-- How the Public channel works. -->
+    <string name="channel_public_identified">Every sender is identified. Messages that arrive without a full sender key are ignored.</string>
+    <!-- How the Public channel works. -->
+    <string name="channel_public_group_only">This channel carries group traffic only—it is never used to conceal a direct message.</string>
+    <!-- How the EMERGENCY channel works. -->
+    <string name="channel_emergency_unencrypted">All traffic here is unencrypted, so any node in range can read it—including nodes that never joined.</string>
+    <!-- How the EMERGENCY channel works. -->
+    <string name="channel_emergency_signed">Every message is signed and identifies its sender. Anything unsigned or unattributed is ignored.</string>
+    <!-- How the EMERGENCY channel works. -->
+    <string name="channel_emergency_priority">Repeaters give this channel priority.</string>
+    <!-- Failure dialog title: a channel's alias was not saved. -->
+    <string name="channel_not_changed_title">Couldn’t change the alias</string>
+    <!-- Failure dialog body: a channel's alias was not saved. -->
+    <string name="channel_not_changed_body">The alias is unchanged.</string>
+    <!-- Failure dialog title: a channel's invitation could not be made. -->
+    <string name="channel_not_shared_title">Couldn’t share the channel</string>
+    <!-- Failure dialog body: a channel's invitation could not be made. -->
+    <string name="channel_not_shared_body">Nothing was shared.</string>
+    <!-- A private channel's share sheet: what handing the invitation on means. The placeholder is the channel's name. -->
+    <string name="channel_invitation_warning">Anyone who scans or receives this becomes a full member of “<xliff:g id="channel" example="Fire">%1$s</xliff:g>”, and can pass the invitation on.</string>
+    <!-- Share sheet button: copies a private channel's invitation. -->
+    <string name="copy_invitation">Copy invitation</string>
+    <!-- Brief notice after an invitation was copied. Shown on Android 12 and earlier only. -->
+    <string name="invitation_copied">Invitation copied</string>
+    <!-- TalkBack: the QR code on a private channel's share sheet. The placeholder is the channel's name. -->
+    <string name="channel_invitation_qr_description">QR code with the invitation to <xliff:g id="channel" example="Fire">%1$s</xliff:g></string>
+    <!-- TalkBack: the QR code on a public channel's share sheet. The placeholder is the channel's name. -->
+    <string name="channel_link_qr_description">QR code with <xliff:g id="channel" example="hike-club">%1$s</xliff:g>’s link</string>
+
+    <!-- New chat sheet item, and the title of its own sheet: start a chat in a channel this phone joined. -->
+    <string name="new_channel_chat">New channel chat</string>
+    <!-- Under "New channel chat" in the New chat sheet. -->
+    <string name="new_channel_chat_detail">In a channel you’ve joined</string>
+    <!-- Conversations' empty state: a button that opens New channel chat. -->
+    <string name="channel_chat">Channel chat</string>
+    <!-- New channel chat, when every joined channel already has a conversation. -->
+    <string name="channel_chooser_none">Every channel you’ve joined has a conversation.</string>
+    <!-- New channel chat: opens Join channel, whose join opens the channel's conversation. -->
+    <string name="join_a_channel">Join a channel…</string>
+
+    <!-- Conversation info (conversation-info.svg) and the channel member sheet. -->
+    <!-- TalkBack: what tapping a channel conversation's title does. -->
+    <string name="conversation_info_open">Conversation info</string>
+    <!-- TalkBack: what tapping the channel row at the top of Conversation info does: opens the channel's own page. -->
+    <string name="conversation_info_open_channel">Open channel</string>
+    <!-- One line under the channel row at the top of Conversation info: what the channel's page holds. -->
+    <string name="conversation_info_channel_footer">Alias, sharing, and leaving the channel</string>
+    <!-- Under the Notifications switch of a channel conversation: messages still count as unread with it off. -->
+    <string name="conversation_info_notifications_footer">Still counted as unread when off</string>
+    <!-- Switch on the EMERGENCY channel's Conversation info: whether messages starting with TEST: notify. "Test" is a noun: drill messages. -->
+    <string name="conversation_info_test_messages">Test messages</string>
+    <!-- Under the Test messages switch. TEST: is the literal prefix such messages start with; do not translate it. -->
+    <string name="conversation_info_test_messages_footer">Notify for messages starting “TEST:”</string>
+    <!-- Section header: facts about this conversation on this phone. -->
+    <string name="conversation_info_section_conversation">Conversation</string>
+    <!-- Row label: how many messages this conversation holds on this phone. -->
+    <string name="conversation_info_messages">Messages</string>
+    <!-- Failure dialog title: a notification switch on Conversation info did not take. -->
+    <string name="conversation_info_not_changed_title">Couldn’t change notifications</string>
+    <!-- Confirmation body for clearing a channel conversation's messages. -->
+    <string name="clear_channel_messages_body">The message history on this phone is erased. Nothing is sent, and everyone else in the channel keeps their copy.</string>
+    <!-- TalkBack: what tapping a channel sender's avatar does, and the custom action on their messages: opens their member sheet. -->
+    <string name="member_show">Show member</string>
+    <!-- Member sheet section header: what this phone knows about one channel member. -->
+    <string name="member_section">Member</string>
+    <!-- Member sheet row label: what the thread calls this member. -->
+    <string name="member_name">Name</string>
+    <!-- Member sheet row label: the name the member put on their own message, when it differs from the one above. -->
+    <string name="member_calls_themselves">Calls themselves</string>
+    <!-- Member sheet row label: the member's node hint. -->
+    <string name="member_hint_label">Hint</string>
+    <!-- Member sheet button, a verb phrase: asks the member, over the channel, to send their identity. -->
+    <string name="member_request_identity">Request identity</string>
+    <!-- Member sheet button once the ask has gone out. -->
+    <string name="member_identity_requested">Identity requested</string>
+    <!-- Under Request identity. -->
+    <string name="member_request_footer">Asking over the channel invites this member to send their full identity.</string>
 </resources>

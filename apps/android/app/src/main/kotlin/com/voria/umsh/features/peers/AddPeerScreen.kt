@@ -20,6 +20,7 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
@@ -61,6 +62,10 @@ import com.voria.umsh.designsystem.IdentifierTextStyle
 import com.voria.umsh.designsystem.SectionHeader
 import com.voria.umsh.designsystem.UmshScaffold
 import com.voria.umsh.designsystem.UmshTopAppBar
+import com.voria.umsh.features.channels.ChannelKeyText
+import com.voria.umsh.features.channels.ChannelPreviewSheet
+import com.voria.umsh.features.scanner.ScannedCode
+import com.voria.umsh.features.scanner.hasCamera
 import com.voria.umsh.features.settings.IdentityQrSheet
 import com.voria.umsh.models.MeetDevice
 import com.voria.umsh.models.MeetExchange
@@ -70,16 +75,23 @@ import com.voria.umsh.models.MeetExchange
  * (`nearby-exchange.svg` 1); the Peer identity field with Preview; and
  * Your identity's Show your code, since swapping codes is the other half
  * of adding someone. Preview opens the import preview over the page
- * (boards 3–4); a node already saved opens its page instead. A device
+ * (boards 3–4); a node already saved opens its page instead, and a
+ * channel link the channel's join preview (`qr-scanner.svg` 4). A device
  * asking to exchange opens its sheet over the page. The field's scan
- * button arrives with its stage (D14).
+ * button opens the QR scanner ([onScan]; absent without a camera); the
+ * code it reads comes back as [scanned], fills the field and is previewed.
  *
  * [onBack] is null beside the Peers list, where there is no Back.
  * [onExit] takes Add peer's way out: a page, a conversation, or Your
  * identity.
  */
 @Composable
-fun AddPeerScreen(onBack: (() -> Unit)?, onExit: (AddPeerExit) -> Unit) {
+fun AddPeerScreen(
+    onBack: (() -> Unit)?,
+    onExit: (AddPeerExit) -> Unit,
+    onScan: (() -> Unit)? = null,
+    scanned: ScannedCode? = null,
+) {
     val viewModel = runtimeViewModel { AddPeerViewModel(RuntimeImportHost(it)) }
     val problem by viewModel.problem.collectAsStateWithLifecycle()
     val preview by viewModel.preview.collectAsStateWithLifecycle()
@@ -88,12 +100,22 @@ fun AddPeerScreen(onBack: (() -> Unit)?, onExit: (AddPeerExit) -> Unit) {
     val exchange = checkNotNull(LocalExchangeHost.current) { "Add peer outside the shell" }
     LaunchedEffect(viewModel) { viewModel.exits.collect { exit(it) } }
 
-    // What was typed is restored after process death; nothing is read or sent until Preview.
-    var input by rememberSaveable { mutableStateOf("") }
+    // What was typed is restored after process death, but a channel's private key only within this process (§3.8);
+    // nothing is read or sent until Preview.
+    var input by rememberSaveable(stateSaver = ChannelKeyText.FieldSaver) { mutableStateOf("") }
     val keyboard = LocalSoftwareKeyboardController.current
     val runPreview = {
         keyboard?.hide()
         viewModel.preview(input)
+    }
+    val currentScan by rememberUpdatedState(scanned)
+    LaunchedEffect(scanned?.text) {
+        currentScan?.let { code ->
+            code.onTaken()
+            input = code.text
+            viewModel.edited()
+            viewModel.preview(code.text)
+        }
     }
 
     DetailPane {
@@ -119,6 +141,7 @@ fun AddPeerScreen(onBack: (() -> Unit)?, onExit: (AddPeerExit) -> Unit) {
                         viewModel.edited()
                     },
                     onGo = runPreview,
+                    onScan = onScan?.takeIf { hasCamera() },
                 )
                 FilledTonalButton(
                     onClick = runPreview,
@@ -134,6 +157,18 @@ fun AddPeerScreen(onBack: (() -> Unit)?, onExit: (AddPeerExit) -> Unit) {
     }
 
     preview?.let { shown -> ImportPreviewSheet(shown, viewModel) }
+    val channel by viewModel.channel.collectAsStateWithLifecycle()
+    channel?.let { opening ->
+        ChannelPreviewSheet(
+            opening.input,
+            opening.opening,
+            onDismiss = viewModel::closeChannel,
+            onJoined = { address ->
+                viewModel.closeChannel()
+                exit(AddPeerExit.Conversation(address))
+            },
+        )
+    }
     val meet by exchange.meet.collectAsStateWithLifecycle()
     (meet?.exchange as? MeetExchange.Asked)?.let { asked -> AskedSheet(asked.device, exchange) }
     if (codeShown) {
@@ -146,11 +181,18 @@ fun AddPeerScreen(onBack: (() -> Unit)?, onExit: (AddPeerExit) -> Unit) {
 
 /** The field: a link, an address or a key, as typed; never corrected or capitalized. */
 @Composable
-private fun IdentityField(input: String, problem: AddPeerProblem?, onInput: (String) -> Unit, onGo: () -> Unit) {
+internal fun IdentityField(input: String, problem: AddPeerProblem?, onInput: (String) -> Unit, onGo: () -> Unit, onScan: (() -> Unit)?) {
     TextField(
         value = input,
         onValueChange = onInput,
         label = { Text(stringResource(R.string.add_peer_field)) },
+        trailingIcon = onScan?.let { scan ->
+            {
+                IconButton(onClick = scan, modifier = Modifier.testTag(Tags.ADD_PEER_SCAN)) {
+                    Icon(painterResource(R.drawable.ic_qr_code), contentDescription = stringResource(R.string.action_scan))
+                }
+            }
+        },
         isError = problem != null,
         supportingText = problem?.let { shown ->
             {
@@ -158,7 +200,6 @@ private fun IdentityField(input: String, problem: AddPeerProblem?, onInput: (Str
                     stringResource(
                         when (shown) {
                             AddPeerProblem.NotPeer -> R.string.add_peer_not_peer
-                            AddPeerProblem.ChannelLink -> R.string.add_peer_channel_link
                         },
                     ),
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }.testTag(Tags.ADD_PEER_PROBLEM),

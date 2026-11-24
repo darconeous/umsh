@@ -3,7 +3,9 @@ package com.voria.umsh.app
 import androidx.compose.runtime.mutableStateOf
 import androidx.navigation3.runtime.NavBackStack
 import androidx.navigation3.runtime.NavKey
+import com.voria.umsh.features.channels.ChannelKeyText
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 /**
@@ -246,5 +248,170 @@ class ShellStateTest {
             stack(Destination.Conversations).toList(),
         )
         assertEquals(3, stack(Destination.Peers).size)
+    }
+
+    @Test
+    fun aScannedCodeGoesBackToWhereTheScanBeganOnce() {
+        shell.openScanner(ScanTarget.Root, Destination.Peers)
+        shell.openScanner(ScanTarget.Root, Destination.Peers)
+        val scanner = UmshKey.Scanner(ScanTarget.Root, Destination.Peers)
+        assertEquals(listOf(UmshKey.Shell, scanner), shell.appStack.toList())
+
+        shell.deliverScan(scanner, "umsh:n:x")
+
+        assertEquals(listOf(UmshKey.Shell), shell.appStack.toList())
+        // Not for another place's scan; then taken once by its own.
+        assertEquals(null, shell.takeScan(ScanTarget.Root, Destination.Conversations))
+        assertEquals(null, shell.takeScan(ScanTarget.AddPeerField, Destination.Peers))
+        assertEquals("umsh:n:x", shell.takeScan(ScanTarget.Root, Destination.Peers))
+        assertEquals(null, shell.takeScan(ScanTarget.Root, Destination.Peers))
+        assertEquals(null, shell.pendingScan)
+    }
+
+    @Test
+    fun aLinksPageOpensAboveTheShellOnceAndClosesBackToTheOtherApp() {
+        shell.openRadioDetail()
+        shell.openPeer("radio", destination = null)
+        // A page Radio Detail opened is not a link's: Back stays in the app.
+        assertEquals(false, shell.closingLeavesApp)
+
+        shell.openLinkedPeer("marmot", LinkOrigin.OtherApp)
+        shell.openRoute(UmshKey.PeerPage("marmot", null, LinkOrigin.OtherApp))
+        // Above the link's page, Back pops to it.
+        assertEquals(false, shell.closingLeavesApp)
+        // The same node's link again: its page, fresh, in place of the first and what was above it.
+        shell.openLinkedPeer("marmot", LinkOrigin.InApp)
+        assertEquals(
+            listOf(UmshKey.Shell, UmshKey.RadioDetail, UmshKey.PeerPage("radio", null), UmshKey.PeerPage("marmot", null, LinkOrigin.InApp)),
+            shell.appStack.toList(),
+        )
+        assertEquals(false, shell.closingLeavesApp)
+
+        // Another node's link from another app: a second page above, which leaves for that app.
+        shell.openLinkedPeer("kestrel", LinkOrigin.OtherApp)
+        assertEquals(true, shell.closingLeavesApp)
+        shell.popAppPage()
+        assertEquals(UmshKey.PeerPage("marmot", null, LinkOrigin.InApp), shell.appStack.last())
+        // Selecting nothing: the destination shown never changes under a link.
+        assertEquals(Destination.Conversations, shell.selected)
+    }
+
+    @Test
+    fun aLinksPageLeftSomeOtherWayClosesToTheShell() {
+        shell.openLinkedPeer("marmot", LinkOrigin.OtherApp)
+        assertEquals(true, shell.closingLeavesApp)
+        // Home, then back by the launcher: the link's flow is over.
+        shell.appLeft()
+        assertEquals(false, shell.closingLeavesApp)
+
+        // Another app's link opens a second page: it leads back out again, until it is closed that way.
+        shell.openLinkedPeer("kestrel", LinkOrigin.OtherApp)
+        assertEquals(true, shell.closingLeavesApp)
+        shell.popAppPage()
+        shell.appLeft()
+        // The page beneath, brought back by the launcher, closes to the shell.
+        assertEquals(UmshKey.PeerPage("marmot", null, LinkOrigin.OtherApp), shell.appStack.last())
+        assertEquals(false, shell.closingLeavesApp)
+    }
+
+    @Test
+    fun messageOnALinksPageLeavesForConversations() {
+        shell.openLinkedPeer("marmot", LinkOrigin.OtherApp)
+        shell.openConversationFrom(UmshKey.PeerPage("marmot", null, LinkOrigin.OtherApp), "marmot")
+        assertEquals(listOf(UmshKey.Shell), shell.appStack.toList())
+        assertEquals(Destination.Conversations, shell.selected)
+        assertEquals(UmshKey.Thread("marmot"), stack(Destination.Conversations).last())
+    }
+
+    @Test
+    fun aChannelLinkOpensJoinChannelOverSettingsChannels() {
+        stack(Destination.Settings).add(UmshKey.Notifications)
+        shell.appStack.add(UmshKey.RadioDetail)
+
+        shell.openChannelLink("umsh:gs:hike-club")
+
+        assertEquals(Destination.Settings, shell.selected)
+        assertEquals(listOf(UmshKey.SettingsRoot, UmshKey.Channels), stack(Destination.Settings).toList())
+        assertEquals(listOf(UmshKey.Shell, UmshKey.ChannelJoin("umsh:gs:hike-club", opening = 1)), shell.appStack.toList())
+        // The same link again is a new page, not the one it replaces (whose field may have been edited).
+        shell.openChannelLink("umsh:gs:hike-club")
+        assertEquals(listOf(UmshKey.Shell, UmshKey.ChannelJoin("umsh:gs:hike-club", opening = 2)), shell.appStack.toList())
+        // A join from Settings stays there; New channel chat's opens the conversation.
+        shell.leaveChannelJoin(UmshKey.ChannelJoin("umsh:gs:hike-club", opening = 2), null)
+        assertEquals(listOf(UmshKey.Shell), shell.appStack.toList())
+        assertEquals(Destination.Settings, shell.selected)
+        shell.openChannelJoin(forChat = true)
+        shell.leaveChannelJoin(UmshKey.ChannelJoin(forChat = true), "chat")
+        assertEquals(Destination.Conversations, shell.selected)
+        assertEquals(listOf(UmshKey.ConversationsRoot, UmshKey.Thread("chat")), stack(Destination.Conversations).toList())
+        assertEquals(listOf(UmshKey.Shell), shell.appStack.toList())
+
+        // A private invitation's key stays out of the key, which is saved state (§3.8).
+        val invitation = "umsh:gk:" + "A".repeat(43)
+        shell.openChannelLink(invitation)
+        val join = shell.appStack.last() as UmshKey.ChannelJoin
+        assertFalse(join.input!!.contains(invitation))
+        assertFalse(join.toString().contains(invitation))
+        assertEquals(invitation, ChannelKeyText.open(join.input!!))
+    }
+
+    @Test
+    fun aCreatedChannelOpensOnItsPageAboveChannels() {
+        shell.openChannelCreate()
+        shell.openChannelCreate()
+        assertEquals(listOf(UmshKey.Shell, UmshKey.ChannelCreate), shell.appStack.toList())
+
+        shell.leaveChannelCreate("A")
+
+        assertEquals(listOf(UmshKey.Shell), shell.appStack.toList())
+        assertEquals(Destination.Settings, shell.selected)
+        assertEquals(listOf(UmshKey.SettingsRoot, UmshKey.Channels, UmshKey.ChannelPage("A")), stack(Destination.Settings).toList())
+    }
+
+    @Test
+    fun aLeftChannelsPageClosesWithWhatIsAboveIt() {
+        stack(Destination.Settings).addAll(listOf(UmshKey.Channels, UmshKey.ChannelPage("left"), Above("sheet")))
+        shell.closeChannelPagesNotIn(setOf("kept"))
+        assertEquals(listOf(UmshKey.SettingsRoot, UmshKey.Channels), stack(Destination.Settings).toList())
+        shell.openChannelPage("kept")
+        shell.closeChannelPagesNotIn(setOf("kept"))
+        assertEquals(listOf(UmshKey.SettingsRoot, UmshKey.Channels, UmshKey.ChannelPage("kept")), stack(Destination.Settings).toList())
+    }
+
+    /** Conversation info above its thread, the channel's page above that; Conversation there returns to the thread. */
+    @Test
+    fun conversationInfoAndItsChannelPageStackAboveTheThread() {
+        shell.openDetail(Destination.Conversations, UmshKey.Thread("ch:a"))
+        shell.openConversationInfo("ch:a")
+        shell.openConversationInfo("ch:a")
+        shell.openChannelPageFromInfo("A")
+        val page = UmshKey.ChannelPage("A", Destination.Conversations)
+        assertEquals(
+            listOf(UmshKey.ConversationsRoot, UmshKey.Thread("ch:a"), UmshKey.ConversationInfo("ch:a"), page),
+            stack(Destination.Conversations).toList(),
+        )
+        shell.openConversationFrom(page, "ch:a")
+        assertEquals(listOf(UmshKey.ConversationsRoot, UmshKey.Thread("ch:a")), stack(Destination.Conversations).toList())
+
+        // Left from its page there: the page closes with the channel, the thread and its info with the conversation.
+        shell.openConversationInfo("ch:a")
+        shell.openChannelPageFromInfo("A")
+        shell.closeChannelPagesNotIn(emptySet())
+        assertEquals(
+            listOf(UmshKey.ConversationsRoot, UmshKey.Thread("ch:a"), UmshKey.ConversationInfo("ch:a")),
+            stack(Destination.Conversations).toList(),
+        )
+        shell.closeThreadsNotIn(emptySet())
+        assertEquals(listOf(UmshKey.ConversationsRoot), stack(Destination.Conversations).toList())
+    }
+
+    /** From Settings, the channel page's Conversation opens the conversation on Conversations. */
+    @Test
+    fun aSettingsChannelPagesConversationOpensOnConversations() {
+        shell.select(Destination.Settings)
+        shell.openChannelPage("A")
+        shell.openConversationFrom(UmshKey.ChannelPage("A"), "ch:a")
+        assertEquals(Destination.Conversations, shell.selected)
+        assertEquals(listOf(UmshKey.ConversationsRoot, UmshKey.Thread("ch:a")), stack(Destination.Conversations).toList())
     }
 }

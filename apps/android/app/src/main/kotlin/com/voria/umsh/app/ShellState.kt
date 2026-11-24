@@ -12,12 +12,14 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.navigation3.runtime.NavBackStack
 import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.rememberNavBackStack
 import com.voria.umsh.R
+import com.voria.umsh.features.channels.ChannelKeyText
 
 /** The four destinations, in the bar's order (`navigation.svg`). */
 enum class Destination(
@@ -50,9 +52,27 @@ class ShellState(
      * Opening one never changes the selected destination.
      */
     val appStack: NavBackStack<NavKey>,
+    pendingScan: MutableState<PendingScan?> = mutableStateOf(null),
+    leftSinceLink: MutableState<Boolean> = mutableStateOf(false),
 ) {
     var selected by selected
         private set
+
+    /**
+     * A code the scanner recognized, until the page the scan began on takes
+     * it ([takeScan]). Saved with the stacks, so a code read just before
+     * process death still reaches its page; a channel invitation's key
+     * stays in this process ([ChannelKeyText]), so that one does not.
+     */
+    var pendingScan by pendingScan
+        private set
+
+    /**
+     * The app was left ([appLeft]) since another app's link last opened a
+     * page: whoever brings it back, that link's flow is over. Saved with
+     * the stacks.
+     */
+    private var leftSinceLink by leftSinceLink
 
     private val reselects = mutableStateMapOf<Destination, Int>()
 
@@ -118,6 +138,25 @@ class ShellState(
         appStack.add(UmshKey.RadioPicker)
     }
 
+    /** The QR scanner above the shell, for a scan begun at [target] on [destination]'s stack; once. */
+    fun openScanner(target: ScanTarget, destination: Destination) = pushOnce(appStack, UmshKey.Scanner(target, destination))
+
+    /**
+     * [scanner] recognized [text]: it closes, and the code waits for the page
+     * the scan began on, which previews it.
+     */
+    fun deliverScan(scanner: UmshKey.Scanner, text: String) {
+        pendingScan = PendingScan(scanner.target, scanner.destination, text)
+        appStack.removeAll { it == scanner }
+    }
+
+    /** The code waiting for a scan begun at [target] on [destination]'s stack, taken once; null with none. */
+    fun takeScan(target: ScanTarget, destination: Destination): String? {
+        val waiting = pendingScan?.takeIf { it.target == target && it.destination == destination } ?: return null
+        pendingScan = null
+        return waiting.text
+    }
+
     /** Choose a radio is done: closed, back to whatever opened it. */
     fun closeRadioPicker() {
         appStack.removeAll { it == UmshKey.RadioPicker }
@@ -143,6 +182,34 @@ class ShellState(
     fun openPeer(address: String, destination: Destination?) {
         val key = UmshKey.PeerPage(address, destination)
         pushOnce(destination?.let(stacks::getValue) ?: appStack, key)
+    }
+
+    /**
+     * The node an opened link names: its page above whatever was showing
+     * (product-structure, "Deep links" 2.3), with Close (`peer-page.svg` 5).
+     * A page the same node already has from a link closes first, with
+     * whatever is above it, so the page shown is this link's.
+     */
+    fun openLinkedPeer(address: String, origin: LinkOrigin) {
+        val index = appStack.indexOfFirst { it is UmshKey.PeerPage && it.link != null && it.address == address }
+        if (index >= 1) while (appStack.size > index) appStack.removeAt(appStack.lastIndex)
+        appStack.add(UmshKey.PeerPage(address, null, origin))
+        if (origin == LinkOrigin.OtherApp) leftSinceLink = false
+    }
+
+    /**
+     * Whether closing the top app-level page leaves the app: a page another
+     * app's link opened is the only thing that link added, so Close and
+     * Back on it return to that app (D7), until the app is left some other
+     * way. Brought back from the launcher or Recents, the page closes to
+     * the shell.
+     */
+    val closingLeavesApp: Boolean
+        get() = !leftSinceLink && appStack.size > 1 && (appStack.last() as? UmshKey.PeerPage)?.link == LinkOrigin.OtherApp
+
+    /** The app is no longer seen (not a recreation): a link's page no longer leads back out of it. */
+    fun appLeft() {
+        leftSinceLink = true
     }
 
     /** Route from [page]: pushed on the stack the page is on (D12), above the shell with it. */
@@ -200,6 +267,14 @@ class ShellState(
      */
     fun leaveAddPeerForIdentity(addPeer: UmshKey.AddPeer, twoPane: Boolean) {
         closeFrom(stacks.getValue(addPeer.destination), addPeer)
+        openOwnIdentity(twoPane)
+    }
+
+    /**
+     * Settings at Your identity, with no app-level page over the shell: where
+     * this phone's own code leads, entered or scanned.
+     */
+    fun openOwnIdentity(twoPane: Boolean) {
         while (appStack.size > 1) appStack.removeAt(appStack.lastIndex)
         selected = Destination.Settings
         if (twoPane) showRoot(Destination.Settings) else openDetail(Destination.Settings, UmshKey.YourIdentity)
@@ -358,6 +433,89 @@ class ShellState(
         }
     }
 
+    /**
+     * Close every channel page whose channel is not among [joined] (this
+     * phone's joined channels' IDs), with whatever is above it: the channel
+     * was left here or anywhere else, or erased.
+     */
+    fun closeChannelPagesNotIn(joined: Set<String>) {
+        val gone = { key: NavKey -> key is UmshKey.ChannelPage && key.id !in joined }
+        (stacks.values + listOf(appStack)).forEach { stack ->
+            val index = stack.indexOfFirst(gone)
+            if (index >= 1) while (stack.size > index) stack.removeAt(stack.lastIndex)
+        }
+    }
+
+    /** Settings › Channels, as the Settings list's one detail page. */
+    fun openChannels() = openDetail(Destination.Settings, UmshKey.Channels)
+
+    /** A channel's page, above Channels in Settings; once. */
+    fun openChannelPage(id: String) {
+        val stack = stacks.getValue(Destination.Settings)
+        if (UmshKey.Channels !in stack) openChannels()
+        pushOnce(stack, UmshKey.ChannelPage(id))
+    }
+
+    /** A channel conversation's Conversation info, above its thread on Conversations; once. */
+    fun openConversationInfo(address: String) = push(Destination.Conversations, UmshKey.ConversationInfo(address))
+
+    /** A channel's page from Conversation info's header: on the Conversations stack, above it; once. */
+    fun openChannelPageFromInfo(id: String) = push(Destination.Conversations, UmshKey.ChannelPage(id, Destination.Conversations))
+
+    /**
+     * The channel page's Conversation: back to the thread beneath it when
+     * [page] is on Conversations above that conversation's thread, else
+     * [conversation] opened on Conversations.
+     */
+    fun openConversationFrom(page: UmshKey.ChannelPage, conversation: String) {
+        val stack = stacks.getValue(page.destination)
+        val thread = stack.indexOf(UmshKey.Thread(conversation))
+        if (page.destination == Destination.Conversations && thread >= 1 && thread < stack.lastIndexOf(page)) {
+            while (stack.size > thread + 1) stack.removeAt(stack.lastIndex)
+            selected = Destination.Conversations
+            return
+        }
+        openConversation(conversation)
+    }
+
+    /** Join channel above the shell ([UmshKey.ChannelJoin]); once. */
+    fun openChannelJoin(input: String? = null, forChat: Boolean = false) =
+        pushOnce(appStack, UmshKey.ChannelJoin(input?.let(ChannelKeyText::seal), forChat))
+
+    /** New private channel above the shell; once. */
+    fun openChannelCreate() = pushOnce(appStack, UmshKey.ChannelCreate)
+
+    /**
+     * An opened channel link (product-structure, "Deep links" 1): Settings
+     * selected at Channels, and Join channel over it with the link filled
+     * in, in place of any page above the shell. Each opening is a new
+     * page, even of the link already shown: one the user edited is not kept.
+     */
+    fun openChannelLink(uri: String) {
+        val opening = appStack.maxOf { (it as? UmshKey.ChannelJoin)?.opening ?: 0L } + 1
+        while (appStack.size > 1) appStack.removeAt(appStack.lastIndex)
+        selected = Destination.Settings
+        openChannels()
+        appStack.add(UmshKey.ChannelJoin(ChannelKeyText.seal(uri), opening = opening))
+    }
+
+    /** New private channel made [id]: the dialog closes on its page, where Share holds the invitation (board 4). */
+    fun leaveChannelCreate(id: String) {
+        appStack.removeAll { it == UmshKey.ChannelCreate }
+        selected = Destination.Settings
+        openChannelPage(id)
+    }
+
+    /**
+     * [join] is done: it closes, and when the join opened the channel's
+     * conversation ([conversation]: New channel chat's), that opens on
+     * Conversations; otherwise the page beneath (Channels) shows the channel.
+     */
+    fun leaveChannelJoin(join: UmshKey.ChannelJoin, conversation: String?) {
+        appStack.removeAll { it == join }
+        if (conversation != null) openConversation(conversation)
+    }
+
     /** [destination] at its root: what its list shows, with its detail placeholder beside it. */
     fun showRoot(destination: Destination) = popToRoot(destination)
 
@@ -387,9 +545,21 @@ fun rememberShellState(): ShellState {
     val selected = rememberSaveable { mutableStateOf(Destination.Conversations) }
     val stacks = Destination.entries.associateWith { rememberNavBackStack(it.root) }
     val appStack = rememberNavBackStack(UmshKey.Shell)
+    val pendingScan = rememberSaveable(stateSaver = PendingScanSaver) { mutableStateOf(null) }
+    val leftSinceLink = rememberSaveable { mutableStateOf(false) }
     // The stacks are the same instances on every pass.
-    return remember { ShellState(selected, stacks, appStack) }
+    return remember { ShellState(selected, stacks, appStack, pendingScan, leftSinceLink) }
 }
+
+/** A waiting scan as three strings, for the saved state; one holding a channel key is gone after process death. */
+private val PendingScanSaver: Saver<PendingScan?, Any> = Saver(
+    save = { scan -> scan?.let { arrayListOf(it.target.name, it.destination.name, ChannelKeyText.seal(it.text)) } },
+    restore = { saved ->
+        @Suppress("UNCHECKED_CAST")
+        val parts = saved as List<String>
+        ChannelKeyText.open(parts[2])?.let { text -> PendingScan(ScanTarget.valueOf(parts[0]), Destination.valueOf(parts[1]), text) }
+    },
+)
 
 /**
  * A root's half of reselect: scroll [list] to the top once for each bump of

@@ -67,7 +67,7 @@ left out. The drawing stays the target.
 | 4 | [AA. QR scanner](#aa-qr-scanner) | Approved 2026-11-18 |
 | 4 | [AB. Sharing](#ab-sharing) | Approved 2026-11-18 |
 | 4 | [AC. Channels](#ac-channels) | Approved 2026-11-18 |
-| 4 | [AN. New channel chat](#an-new-channel-chat) | Awaiting review |
+| 4 | [AN. New channel chat](#an-new-channel-chat) | Approved 2026-11-23 |
 | 5 | [AD. Map](#ad-map) | Approved 2026-11-18 |
 | 5 | [AE. Place picker](#ae-place-picker) | Approved 2026-11-18 |
 | 5 | [AF. Region suggestion](#af-region-suggestion) | Approved 2026-11-18 |
@@ -278,7 +278,9 @@ notes say so and [open decisions](open-decisions.md#conversations) explain why.
   title opens the peer page (batch 4).
 - **Routing** limits what this phone sends in the channel: any number of
   regions, or none, and a maximum hop count. Public and EMERGENCY keep the
-  protocol's fixed 10 hops.
+  protocol's fixed 10 hops. The section is gated on
+  [several regions on a channel](open-decisions.md#several-regions-on-a-channel),
+  a deferred protocol change; until it lands the page is built without it.
 - **Clear all messages** erases only this phone's history and keeps the
   conversation.
 - A channel sender's avatar opens a member sheet with **Request identity**
@@ -440,18 +442,25 @@ departs from it, the board's notes say so and
 
 - **Neighboring repeaters** reads one page per Refresh, with Load more;
   opening it sends nothing.
-- **Discover peers** is a page in the Peers stack: ask, a live list of nodes
-  heard since it opened, and **Announce my identity** with a confirmation.
+- **Discover peers** is a page on the stack that opened it: the Peers stack
+  from the list, or the stack the Route is on from **Ask near this node**.
+  Neighbors and Route follow the same rule. It holds the ask, a live list of
+  nodes heard since it opened, and **Announce my identity** with a
+  confirmation.
 
 ## Y. Add peer and import
 
 [![Add peer mockups: the page with nearby devices, the identity field and your code, without a radio and with a link that does not parse, and the import preview signed and unsigned](mockups/add-peer.svg)](mockups/add-peer.svg)
 
-- The Add peer FAB pushes a page: Nearby first, then the identity field with
-  its scan button, then **Show your code**.
-- Every node link, typed, opened, or scanned, goes through the same import
-  preview: a bottom sheet with the advertised details, their signature
-  status, and a local name, ending in **Save peer** or **Message**.
+- The Add peer FAB pushes a page on the Peers stack; **New message** in
+  Conversations pushes the same page on the Conversations stack. Nearby comes
+  first, then the identity field with its scan button, then **Show your
+  code**.
+- A typed or scanned node link goes through the import preview: a bottom
+  sheet with the advertised details, their signature status, and a local
+  name, ending in **Save peer** or **Message**. An opened node link goes
+  straight to the peer page; only a link that does not parse opens the
+  preview, to say what is wrong with it.
 
 ## Z. Exchanging contacts
 
@@ -479,7 +488,8 @@ departs from it, the board's notes say so and
 [![Sharing mockups: sharing a peer, the Android Sharesheet, the system's copy confirmation, and your own code from Add peer](mockups/share.svg)](mockups/share.svg)
 
 - Sharing a peer reuses Your identity's QR sheet: code, address, **Copy
-  link**, and **Share**, which opens the Android Sharesheet.
+  link**, and **Share**, which opens the Android Sharesheet. The link is the
+  peer's bare `umsh:n:` link, as on iOS.
 - On Android 13 and later the system confirms a copy, so the app shows
   nothing of its own.
 

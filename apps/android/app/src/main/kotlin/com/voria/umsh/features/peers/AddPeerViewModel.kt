@@ -19,10 +19,15 @@ import kotlinx.coroutines.launch
 enum class AddPeerProblem {
     /** Not a node link, an address or a key. */
     NotPeer,
-
-    /** A channel link: joining a channel is not adding a peer (an interim line until channels, §3.9). */
-    ChannelLink,
 }
+
+/**
+ * A channel link entered or scanned where a peer was looked for: the
+ * channel's join preview opens for it (`qr-scanner.svg` 4). [opening]
+ * tells one opening from the next, so the same link entered twice starts
+ * afresh.
+ */
+data class ChannelOpening(val input: String, val opening: Long)
 
 /** Where Add peer leaves for once the field or the preview is done. */
 sealed interface AddPeerExit {
@@ -67,8 +72,9 @@ class RuntimeImportHost(private val runtime: AppRuntime) : PeerImportHost {
 
 /**
  * Add peer's identity field and its import preview (`add-peer.svg` 1–4).
- * Preview reads the text locally: a channel link or anything that names
- * no node is a line under the field; a node already saved, or this phone
+ * Preview reads the text locally: a channel link opens the channel's join
+ * preview; anything that names no node is a line under the field; a node
+ * already saved, or this phone
  * itself, opens its page instead; any other node opens the preview, and
  * nothing is stored or sent until Save peer or Message. The save runs in
  * the runtime's scope, so a rotation does not cancel it; after process
@@ -83,10 +89,15 @@ class AddPeerViewModel(
     private val _save = MutableStateFlow<ImportSave>(ImportSave.Idle)
     private val _exits = Channel<AddPeerExit>(Channel.BUFFERED)
     private val _codeShown = MutableStateFlow(false)
+    private val _channel = MutableStateFlow<ChannelOpening?>(null)
+    private var openings = 0L
 
     val problem: StateFlow<AddPeerProblem?> = _problem.asStateFlow()
     val preview: StateFlow<ImportPreview?> = _preview.asStateFlow()
     val save: StateFlow<ImportSave> = _save.asStateFlow()
+
+    /** A channel link's join preview, open over the page; null when none is. */
+    val channel: StateFlow<ChannelOpening?> = _channel.asStateFlow()
 
     /** Your identity's QR sheet is open: kept across a rotation, not after process death. */
     val codeShown: StateFlow<Boolean> = _codeShown.asStateFlow()
@@ -107,7 +118,10 @@ class AddPeerViewModel(
     fun preview(input: String) {
         if (input.isBlank()) return
         when (val checked = check(input)) {
-            ImportCheck.ChannelLink -> _problem.value = AddPeerProblem.ChannelLink
+            ImportCheck.ChannelLink -> {
+                _problem.value = null
+                _channel.value = ChannelOpening(input.trim(), ++openings)
+            }
             ImportCheck.NotPeer -> _problem.value = AddPeerProblem.NotPeer
             is ImportCheck.Node -> {
                 _problem.value = null
@@ -123,6 +137,11 @@ class AddPeerViewModel(
                 }
             }
         }
+    }
+
+    /** The channel's preview closed: dismissed, or joined. */
+    fun closeChannel() {
+        _channel.value = null
     }
 
     /** The sheet was dismissed: back to Add peer, nothing saved. Not while a save is under way. */

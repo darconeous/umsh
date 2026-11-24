@@ -84,6 +84,10 @@ import com.voria.umsh.designsystem.PeerAvatar
 import com.voria.umsh.designsystem.SectionHeader
 import com.voria.umsh.designsystem.UmshScaffold
 import com.voria.umsh.designsystem.UmshTopAppBar
+import com.voria.umsh.features.scanner.ScanAction
+import com.voria.umsh.features.scanner.ScannedCode
+import com.voria.umsh.features.scanner.ScannedCodePreview
+import com.voria.umsh.features.share.PeerShareSheet
 import com.voria.umsh.designsystem.ageText
 import com.voria.umsh.designsystem.peerRoleLine
 import com.voria.umsh.designsystem.rememberListEnvironment
@@ -98,10 +102,21 @@ import java.time.Instant
  * a long press its actions. [selected] is the peer whose page is beside the
  * list. Discover peers ends the list and is the empty state's one action.
  * The Add peer button opens Add peer ([onAddPeer]); it stands aside for
- * search. Scan and Share arrive with their pages (D14).
+ * search. Scan opens the QR scanner ([onScan], absent without a camera);
+ * a node code it reads comes back as [scanned] and is previewed over the
+ * list, as Add peer previews one ([onScannedExit] takes the preview's way out).
  */
 @Composable
-fun PeersScreen(reselects: Int, selected: String?, onOpen: (String) -> Unit, onDiscover: () -> Unit, onAddPeer: () -> Unit) {
+fun PeersScreen(
+    reselects: Int,
+    selected: String?,
+    onOpen: (String) -> Unit,
+    onDiscover: () -> Unit,
+    onAddPeer: () -> Unit,
+    onScan: (() -> Unit)? = null,
+    scanned: ScannedCode? = null,
+    onScannedExit: (AddPeerExit) -> Unit = {},
+) {
     val environment = rememberListEnvironment()
     val preferences = LocalAppCoreHost.current.preferences
     val viewModel = runtimeViewModel { PeersViewModel(it, environment, preferences.peersSort, preferences::setPeersSort) }
@@ -127,15 +142,20 @@ fun PeersScreen(reselects: Int, selected: String?, onOpen: (String) -> Unit, onD
                     IconButton(onClick = { viewModel.setSearching(true) }, modifier = Modifier.testTag(Tags.PEERS_SEARCH)) {
                         Icon(painterResource(R.drawable.ic_search), contentDescription = stringResource(R.string.action_search))
                     }
+                    onScan?.let { ScanAction(it, Modifier.testTag(Tags.PEERS_SCAN)) }
                 }
             }
         },
         modifier = Modifier.testTag(Tags.PEERS_ROOT),
         floatingActionButton = {
             if (!searching) {
-                ExtendedFloatingActionButton(onClick = onAddPeer, modifier = Modifier.testTag(Tags.PEERS_ADD)) {
-                    Text(stringResource(R.string.add_peer))
-                }
+                ExtendedFloatingActionButton(
+                    text = { Text(stringResource(R.string.add_peer)) },
+                    // Material hides an icon-and-label FAB's label from TalkBack; the icon speaks it.
+                    icon = { Icon(painterResource(R.drawable.ic_person_add), contentDescription = stringResource(R.string.add_peer)) },
+                    onClick = onAddPeer,
+                    modifier = Modifier.testTag(Tags.PEERS_ADD),
+                )
             }
         },
     ) { padding ->
@@ -153,6 +173,7 @@ fun PeersScreen(reselects: Int, selected: String?, onOpen: (String) -> Unit, onD
                 onFavorite = viewModel::setFavorite,
                 onSave = viewModel::save,
                 onRemove = viewModel::askToRemove,
+                onShare = viewModel::share,
             )
             when (val shown = content) {
                 PeersContent.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -234,6 +255,9 @@ fun PeersScreen(reselects: Int, selected: String?, onOpen: (String) -> Unit, onD
             onDismiss = viewModel::cancelRemoval,
         )
     }
+    ScannedCodePreview(scanned, onScannedExit)
+    val shared by viewModel.shared.collectAsStateWithLifecycle()
+    shared?.let { peer -> PeerShareSheet(peer, environment.names.peer(peer), onDismiss = { viewModel.share(null) }) }
     failure?.let { shown ->
         val title = when (shown) {
             is PeersFailure.NotSaved -> R.string.peer_not_saved_title
@@ -251,6 +275,7 @@ private class RowActions(
     val onFavorite: (PeerSummary, Boolean) -> Unit,
     val onSave: (PeerSummary) -> Unit,
     val onRemove: (PeerSummary) -> Unit,
+    val onShare: (PeerSummary) -> Unit,
 )
 
 /** Search in the top bar (`peers-list.svg` 3): Back closes it, the cross empties it. The chips stay beneath. */
@@ -398,7 +423,7 @@ private fun LazyListScope.section(
 
 /**
  * One node: tap opens its page, long press its actions (Favorite or
- * Unfavorite, Save for a node not saved, Remove peer); the companion
+ * Unfavorite, Save for a node not saved, Share, Remove peer); the companion
  * radio's row has no menu. A discovered node shows when it was heard and
  * an add button.
  */
@@ -461,6 +486,10 @@ private fun PeerRow(
                     menuOpen = false
                     actions.onSave(peer)
                 }
+            }
+            MenuItem(R.string.action_share, Tags.PEER_MENU_SHARE) {
+                menuOpen = false
+                actions.onShare(peer)
             }
             HorizontalDivider()
             DropdownMenuItem(

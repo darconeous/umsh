@@ -188,16 +188,22 @@ class AddPeerTest {
         openFromPeers()
         val other = ImportFixtures.address(0x41)
 
-        // Board 2: not a node, then a channel link's interim line.
+        // Board 2: not a node; editing clears the line.
         enter("umsh:x:Mx4eTq8VbN3k")
         waitForTag(Tags.ADD_PEER_PROBLEM)
         assertEquals(string(R.string.add_peer_not_peer), text(Tags.ADD_PEER_PROBLEM))
         compose.onNodeWithTag(Tags.IMPORT_SHEET).assertDoesNotExist()
-        enter("umsh:gs:public")
-        compose.waitUntil(TIMEOUT) { present(Tags.ADD_PEER_PROBLEM) && text(Tags.ADD_PEER_PROBLEM) == string(R.string.add_peer_channel_link) }
-        // Editing clears the line.
-        compose.onNodeWithTag(Tags.ADD_PEER_FIELD).performTextReplacement("umsh:gs:publi")
+        compose.onNodeWithTag(Tags.ADD_PEER_FIELD).performTextReplacement("umsh:x:Mx4eTq8VbN3")
         waitGone(Tags.ADD_PEER_PROBLEM)
+        // A channel link opens the channel's join preview over Add peer (`qr-scanner.svg` 4); Back dismisses it.
+        enter("umsh:gs:hike-club")
+        waitForTag(Tags.CHANNEL_SHEET)
+        compose.waitUntil(TIMEOUT) { present(Tags.CHANNEL_PREVIEW_NAME) && text(Tags.CHANNEL_PREVIEW_NAME) == "hike-club" }
+        compose.onNodeWithTag(Tags.ADD_PEER_PROBLEM).assertDoesNotExist()
+        compose.waitForIdle()
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+        waitGone(Tags.CHANNEL_SHEET)
+        compose.onNodeWithTag(Tags.ADD_PEER).assertIsDisplayed()
 
         // A bare link, the address, and the hex key each preview the key alone.
         for (input in listOf(nodeUriForAddress(other), other, ImportFixtures.hex(other))) {

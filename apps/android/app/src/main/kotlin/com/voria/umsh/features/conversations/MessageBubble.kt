@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -60,12 +61,14 @@ import com.voria.umsh.R
 import com.voria.umsh.app.Tags
 import com.voria.umsh.designsystem.LocalFixedColors
 import com.voria.umsh.designsystem.PeerAvatar
+import com.voria.umsh.designsystem.PeerAvatarShape
 import com.voria.umsh.designsystem.annotatedStringResource
 import com.voria.umsh.designsystem.dateLineText
 import com.voria.umsh.designsystem.isolated
 import com.voria.umsh.models.ChatMessage
 import com.voria.umsh.models.DeliveryState
 import com.voria.umsh.models.MessageRef
+import com.voria.umsh.models.NodeHint
 import com.voria.umsh.models.Presence
 import com.voria.umsh.models.PreviewText.Sender
 import com.voria.umsh.models.Quote
@@ -230,7 +233,7 @@ private fun Bubble(
                 // Level with the bubble's bottom, not the chips hanging below it.
                 Box(Modifier.width(gutter).alignBy { it.measuredHeight }) {
                     if (presentation.isLastInRun && avatar != null) {
-                        PeerAvatar(avatar.first, avatar.second, Modifier.testTag(Tags.MEMBER_AVATAR), size = MEMBER_AVATAR, describe = false)
+                        MemberAvatar(avatar.first, avatar.second, context.runLabel(message), message, handlers)
                     }
                 }
             }
@@ -261,7 +264,7 @@ private fun Bubble(
                             QuoteBlock(quote, context, outbound, handlers.onOpenQuote)
                         }
                         Text(
-                            remember(message.body) { linkified(message.body) },
+                            remember(message.body, handlers) { linkified(message.body, onUmsh = handlers.onOpenLink) },
                             style = MaterialTheme.typography.bodyLarge,
                             color = ink,
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
@@ -527,3 +530,39 @@ private fun BubbleWithChips(
 }
 private const val HIGHLIGHT_ALPHA = 0.14f
 private const val HIGHLIGHT_FADE_MS = 800
+
+/**
+ * A channel run's sender avatar. Tapped, it opens their member sheet
+ * (`conversation-info.svg` 6); TalkBack reads it as one button named for
+ * them, apart from the message.
+ */
+@Composable
+private fun MemberAvatar(
+    hint: NodeHint,
+    shape: PeerAvatarShape,
+    sender: Sender?,
+    message: ChatMessage,
+    handlers: MessageHandlers,
+) {
+    val open = handlers.onMember?.takeIf { handlers.hasMember(message) }
+    val name = sender?.let { senderText(it).text }
+    val openLabel = stringResource(R.string.member_show)
+    PeerAvatar(
+        hint,
+        shape,
+        Modifier
+            .then(
+                if (open != null) {
+                    Modifier
+                        .clip(CircleShape)
+                        .clickable(role = Role.Button, onClickLabel = openLabel) { open(message) }
+                        .semantics { name?.let { contentDescription = it } }
+                } else {
+                    Modifier
+                },
+            )
+            .testTag(Tags.MEMBER_AVATAR),
+        size = MEMBER_AVATAR,
+        describe = false,
+    )
+}

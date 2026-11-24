@@ -1,6 +1,7 @@
 package com.voria.umsh.app
 
 import android.icu.text.NumberFormat
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
@@ -30,6 +31,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,6 +46,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ProcessLifecycleOwner
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
@@ -56,6 +59,7 @@ import androidx.navigation3.ui.NavDisplay
 import com.voria.umsh.R
 import com.voria.umsh.designsystem.CopyNotice
 import com.voria.umsh.designsystem.DataLoadBanner
+import com.voria.umsh.designsystem.FailureDialog
 import com.voria.umsh.designsystem.LocalCopyNotice
 import com.voria.umsh.designsystem.LocalScreenBanner
 import com.voria.umsh.designsystem.LocalTopBarRadioControl
@@ -66,6 +70,12 @@ import com.voria.umsh.designsystem.RadioProblemBanner
 import com.voria.umsh.designsystem.isRailLayout
 import com.voria.umsh.designsystem.isTwoPaneLayout
 import com.voria.umsh.designsystem.windowAdaptiveInfo
+import com.voria.umsh.features.channels.ChannelCreateScreen
+import com.voria.umsh.features.channels.ChannelJoinScreen
+import com.voria.umsh.features.channels.ChannelKeyText
+import com.voria.umsh.features.channels.ChannelPageScreen
+import com.voria.umsh.features.conversations.ConversationInfoScreen
+import com.voria.umsh.features.channels.ChannelsScreen
 import com.voria.umsh.features.conversations.ConversationsScreen
 import com.voria.umsh.features.conversations.MessageDetailsScreen
 import com.voria.umsh.features.conversations.NoConversationSelected
@@ -78,12 +88,15 @@ import com.voria.umsh.features.peers.LocalExchangeHost
 import com.voria.umsh.features.peers.RuntimeExchangeHost
 import com.voria.umsh.features.peers.NoPeerSelected
 import com.voria.umsh.features.peers.DiscoverScreen
+import com.voria.umsh.features.peers.LinkImportSheet
 import com.voria.umsh.features.peers.NeighborsScreen
 import com.voria.umsh.features.peers.PeerPageScreen
 import com.voria.umsh.features.peers.PeersScreen
 import com.voria.umsh.features.peers.RouteScreen
 import com.voria.umsh.features.peers.manualpath.ManualPathScreen
 import com.voria.umsh.features.radio.RadioDetailScreen
+import com.voria.umsh.features.scanner.ScannedCode
+import com.voria.umsh.features.scanner.ScannerScreen
 import com.voria.umsh.features.radio.RadioPickerScreen
 import com.voria.umsh.features.settings.NotificationsSettingsScreen
 import com.voria.umsh.features.settings.SettingsRow
@@ -93,7 +106,6 @@ import com.voria.umsh.services.permissions.rememberBluetoothEnabler
 import com.voria.umsh.services.permissions.rememberNearbyDevicesAsker
 import com.voria.umsh.services.radio.RadioBanner
 import java.time.Instant
-import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.withTimeoutOrNull
@@ -124,12 +136,20 @@ fun UmshShell(shell: ShellState = rememberShellState()) {
         val started = ProcessLifecycleOwner.get().lifecycle.currentStateFlow.map { it.isAtLeast(Lifecycle.State.STARTED) }
         ShellViewModel(it, host.bluetooth, host.preferences.radioRegistry.bound, started, exchange)
     }
-    val conversations by viewModel.conversations.collectAsStateWithLifecycle()
-    // A conversation removed, from its row or anywhere else: its thread closes.
-    LaunchedEffect(conversations) { conversations?.let(shell::closeThreadsNotIn) }
-    val peers by viewModel.peers.collectAsStateWithLifecycle()
-    // A peer removed or erased: every page about it closes, wherever it is.
-    LaunchedEffect(peers) { peers?.let(shell::closePeerPagesNotIn) }
+    // A conversation removed, from its row or anywhere else: its thread
+    // closes. A peer removed or erased: every page about it closes, wherever
+    // it is. Read from the runtime's state itself, never a copy derived from
+    // it or held in composition: a page opened once a command's lists were
+    // read (a link's node, a conversation just started) is never closed by
+    // an older list arriving after it.
+    LaunchedEffect(runtime, shell) {
+        runtime.appState.collect { state ->
+            if (state == null) return@collect
+            shell.closeThreadsNotIn(state.conversations.mapTo(HashSet()) { it.address })
+            shell.closePeerPagesNotIn(state.peers.mapTo(HashSet()) { it.address })
+            shell.closeChannelPagesNotIn(state.channels.filter { it.joinedPhone }.mapTo(HashSet()) { it.id })
+        }
+    }
     // The page on screen decides whether the exchange is open (an app-level
     // page over Add peer hides it), and the exchange page comes and goes
     // with the exchange over the Add peer shown: in one pass, so leaving the
@@ -140,17 +160,42 @@ fun UmshShell(shell: ShellState = rememberShellState()) {
             shell.followMeet(viewModel.currentMeetStep())
         }
     }
-    // A notification's or shortcut's tap: that conversation, above its
-    // list, or the radio notification's Radio Detail.
+    // A notification's or shortcut's tap (that conversation, above its
+    // list, or the radio notification's Radio Detail) and opened links, in
+    // the order they arrived. One left unopened by a recreation is opened
+    // by the next shell.
     val requests = LocalOpenRequests.current
+    val twoPane by rememberUpdatedState(isTwoPaneLayout())
     LaunchedEffect(requests) {
-        requests.filterNotNull().collect { request ->
+        requests.pending.collect { pending ->
+            val request = pending.firstOrNull() ?: return@collect
             when (request) {
                 is OpenRequest.Conversation -> shell.openConversation(request.address)
                 OpenRequest.RadioDetail -> shell.openRadioDetail()
                 is OpenRequest.Peer -> openPeerRequest(runtime, shell, request.address)
+                is OpenRequest.Link -> openLink(runtime, shell, viewModel, request) { twoPane }
             }
-            requests.compareAndSet(request, null)
+            requests.done(request)
+        }
+    }
+    val activity = LocalActivity.current
+    // Close or Back on an app-level page: back to the shell as it was left,
+    // or, for a page another app's link opened, back to that app (D7).
+    // Beside that app (split screen, a desktop window) it is already in
+    // view: the page closes to the shell, and the app keeps its place.
+    val closeAppPage: () -> Unit = remember(shell, activity) {
+        {
+            val leaving = shell.closingLeavesApp && activity?.isInMultiWindowMode != true
+            shell.popAppPage()
+            if (leaving) activity?.moveTaskToBack(true)
+        }
+    }
+    // Left by any other way (Home, Recents, another app, the screen off):
+    // whatever brings the app back, a link's page no longer leads out of it.
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
+        if (activity?.isChangingConfigurations != true) {
+            shell.appLeft()
+            viewModel.appLeft()
         }
     }
 
@@ -172,7 +217,7 @@ fun UmshShell(shell: ShellState = rememberShellState()) {
     ) {
         NavDisplay(
             backStack = shell.appStack,
-            onBack = { shell.popAppPage() },
+            onBack = closeAppPage,
             entryDecorators = rememberAppStackDecorators(),
             modifier = Modifier.testTag(Tags.APP_NAV_DISPLAY),
             entryProvider = entryProvider {
@@ -192,15 +237,19 @@ fun UmshShell(shell: ShellState = rememberShellState()) {
                     }
                 }
                 entry<UmshKey.PeerPage> { key ->
-                    // Above the shell, over Radio Detail: as that page, no radio control or banner.
-                    AppPage {
+                    // Above the shell, over Radio Detail or opened from a link.
+                    // Over Radio Detail, as Radio Detail: no radio control or
+                    // banner. A link's page has Close and the radio control
+                    // (`peer-page.svg` 5): it may be all of the app shown.
+                    AppPage(radioControl.takeIf { key.link != null }) {
                         PeerPageScreen(
                             key.address,
-                            onBack = { shell.popAppPage() },
+                            onBack = closeAppPage,
                             onConversation = { shell.openConversationFrom(key, it) },
                             onOpenRoute = { shell.openRoute(key) },
                             onOpenNeighbors = { shell.openNeighbors(key) },
                             onOpenPeer = { shell.openPeer(it, destination = null) },
+                            closes = key.link != null,
                         )
                     }
                 }
@@ -239,6 +288,30 @@ fun UmshShell(shell: ShellState = rememberShellState()) {
                         ManualPathScreen(key.address, onClose = { shell.popAppPage() })
                     }
                 }
+                entry<UmshKey.ChannelJoin> { key ->
+                    // A full-screen dialog above the shell: Join and the radio control share its bar; no banner.
+                    AppPage(radioControl) {
+                        ChannelJoinScreen(
+                            input = key.input?.let(ChannelKeyText::open),
+                            forChat = key.forChat,
+                            onClose = { shell.popAppPage() },
+                            onJoined = { shell.leaveChannelJoin(key, it.conversationAddress) },
+                            onScan = { shell.openScanner(ScanTarget.JoinChannelField, Destination.Settings) },
+                            scanned = shell.scanned(ScanTarget.JoinChannelField, Destination.Settings),
+                        )
+                    }
+                }
+                entry<UmshKey.ChannelCreate> {
+                    AppPage(radioControl) {
+                        ChannelCreateScreen(onClose = { shell.popAppPage() }, onCreated = shell::leaveChannelCreate)
+                    }
+                }
+                entry<UmshKey.Scanner> { key ->
+                    // Full screen above the shell; a code it takes goes back to where the scan began.
+                    AppPage {
+                        ScannerScreen(onClose = { shell.popAppPage() }, onScanned = { shell.deliverScan(key, it) })
+                    }
+                }
                 entry<UmshKey.RadioPicker> {
                     // Full width above the shell and whatever opened it, as Radio Detail.
                     AppPage {
@@ -247,6 +320,58 @@ fun UmshShell(shell: ShellState = rememberShellState()) {
                 }
             },
         )
+        // An opened link that names no node: the import sheet over whatever shows.
+        val linkImport by viewModel.linkImport.collectAsStateWithLifecycle()
+        LinkImportSheet(
+            linkImport?.uri,
+            opening = linkImport?.opening ?: 0L,
+            onDismiss = viewModel::closeLinkImport,
+            onExit = { exit ->
+                when (exit) {
+                    is AddPeerExit.Page -> shell.openLinkedPeer(exit.address, viewModel.linkImport.value?.origin ?: LinkOrigin.InApp)
+                    is AddPeerExit.Conversation -> shell.openConversation(exit.address)
+                    AddPeerExit.OwnIdentity -> shell.openOwnIdentity(twoPane)
+                }
+            },
+            onChannel = shell::openChannelLink,
+        )
+        val linkFailure by viewModel.linkFailure.collectAsStateWithLifecycle()
+        linkFailure?.let { error ->
+            FailureDialog(
+                stringResource(R.string.link_not_opened_title),
+                stringResource(R.string.link_not_opened_body),
+                error,
+                onDismiss = { viewModel.linkFailed(null) },
+            )
+        }
+    }
+}
+
+/**
+ * An opened `umsh:` link, from another app or a message, by one route
+ * (product-structure, "Deep links"): a node opens its page above whatever
+ * shows, recorded unsaved when this phone has no row for it; this phone's
+ * own link opens Your identity; a link that names no node opens the import
+ * sheet with what is wrong with it; a channel link opens Join channel over
+ * Settings › Channels.
+ */
+private suspend fun openLink(runtime: AppRuntime, shell: ShellState, viewModel: ShellViewModel, link: OpenRequest.Link, twoPane: () -> Boolean) {
+    viewModel.closeLinkImport()
+    when (val target = LinkRoute.target(link.uri, runtime.identity.value.address)) {
+        is LinkTarget.Channel -> shell.openChannelLink(target.uri)
+        is LinkTarget.Unreadable -> viewModel.showLinkImport(target.uri, link.origin)
+        LinkTarget.OwnIdentity -> shell.openOwnIdentity(twoPane())
+        is LinkTarget.Node -> try {
+            when (val address = runtime.recordLinkPeer(target.uri).await()) {
+                null -> shell.openOwnIdentity(twoPane())
+                else -> shell.openLinkedPeer(address, link.origin)
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            AppLog.w("umsh.shell", "link not opened: ${error.javaClass.simpleName}")
+            viewModel.linkFailed(error)
+        }
     }
 }
 
@@ -327,7 +452,7 @@ private fun ShellScaffold(shell: ShellState, viewModel: ShellViewModel, snackbar
     val rail = isRailLayout()
     // A thread owns the bottom of a phone's screen: its composer, over the IME.
     // A message's details, opened from it, stay in the thread's flow.
-    val barHidden = !rail && (shell.top is UmshKey.Thread || shell.top is UmshKey.MessageDetails)
+    val barHidden = !rail && (shell.top is UmshKey.Thread || shell.top is UmshKey.MessageDetails || shell.top is UmshKey.ConversationInfo)
     val suiteState = rememberNavigationSuiteScaffoldState()
     LaunchedEffect(barHidden) { if (barHidden) suiteState.hide() else suiteState.show() }
 
@@ -475,9 +600,21 @@ private fun Destinations(shell: ShellState) {
                 onOpen = { address -> shell.openDetail(Destination.Conversations, UmshKey.Thread(address)) },
                 onNewMessage = { shell.openAddPeer(Destination.Conversations) },
                 reselects = shell.reselectCount(Destination.Conversations),
+                onJoinChannel = { shell.openChannelJoin(forChat = true) },
+                onScan = { shell.openScanner(ScanTarget.Root, Destination.Conversations) },
+                scanned = shell.scanned(ScanTarget.Root, Destination.Conversations),
+                onScannedExit = { exit ->
+                    when (exit) {
+                        // On this stack, as Add peer opened from New message leaves for a page (D11).
+                        is AddPeerExit.Page -> shell.openDetail(Destination.Conversations, UmshKey.PeerPage(exit.address, Destination.Conversations))
+                        is AddPeerExit.Conversation -> shell.openConversation(exit.address)
+                        AddPeerExit.OwnIdentity -> shell.openOwnIdentity(twoPane)
+                    }
+                },
             )
         }
         entry<UmshKey.Thread>(metadata = ListDetailSceneStrategy.detailPane(Destination.Conversations)) { key ->
+            val requests = LocalOpenRequests.current
             ThreadScreen(
                 key,
                 current = shell.isShown(Destination.Conversations, key, twoPane),
@@ -485,9 +622,16 @@ private fun Destinations(shell: ShellState) {
                 onLeave = { shell.closeThread(key) },
                 onOpenDetails = { ref -> shell.push(Destination.Conversations, UmshKey.MessageDetails(key.address, ref.sessionId, ref.handle)) },
                 onOpenPeer = { shell.openPeer(it, Destination.Conversations) },
+                onOpenInfo = { shell.openConversationInfo(key.address) },
                 onOpenRadio = shell::openRadioDetail,
                 onChooseRadio = shell::openRadioPicker,
+                // A link in a message: by the same route as another app's.
+                onOpenLink = { requests.offer(OpenRequest.Link(it, LinkOrigin.InApp)) },
             )
+        }
+        // Above its thread, in the same pane.
+        entry<UmshKey.ConversationInfo>(metadata = ListDetailSceneStrategy.detailPane(Destination.Conversations)) { key ->
+            ConversationInfoScreen(key.address, onBack = { shell.pop() }, onOpenChannel = shell::openChannelPageFromInfo)
         }
         entry<UmshKey.MessageDetails>(metadata = ListDetailSceneStrategy.detailPane(Destination.Conversations)) { key ->
             MessageDetailsScreen(key, onBack = { shell.pop() }, onOpenPeer = { shell.openPeer(it, Destination.Conversations) })
@@ -503,6 +647,15 @@ private fun Destinations(shell: ShellState) {
                 onOpen = shell::openPeerFromList,
                 onDiscover = shell::openDiscoverFromList,
                 onAddPeer = { shell.openAddPeer(Destination.Peers) },
+                onScan = { shell.openScanner(ScanTarget.Root, Destination.Peers) },
+                scanned = shell.scanned(ScanTarget.Root, Destination.Peers),
+                onScannedExit = { exit ->
+                    when (exit) {
+                        is AddPeerExit.Page -> shell.openPeerFromList(exit.address)
+                        is AddPeerExit.Conversation -> shell.openConversation(exit.address)
+                        AddPeerExit.OwnIdentity -> shell.openOwnIdentity(twoPane)
+                    }
+                },
             )
         }
         // From the Peers list, the list's detail page; from New message, above the conversation list (D11).
@@ -519,6 +672,8 @@ private fun Destinations(shell: ShellState) {
                         AddPeerExit.OwnIdentity -> shell.leaveAddPeerForIdentity(key, twoPane)
                     }
                 },
+                onScan = { shell.openScanner(ScanTarget.AddPeerField, key.destination) },
+                scanned = shell.scanned(ScanTarget.AddPeerField, key.destination),
             )
         }
         // Over the Add peer it came from, in the same pane; Back leaves the attempt for both.
@@ -586,6 +741,7 @@ private fun Destinations(shell: ShellState) {
                     !twoPane -> null
                     open == UmshKey.RadioDetail -> SettingsRow.CompanionRadio
                     open == UmshKey.Notifications -> SettingsRow.Notifications
+                    open == UmshKey.Channels || open is UmshKey.ChannelPage -> SettingsRow.Channels
                     // Reached from Companion radio's Radio identity row.
                     open is PeerPageKey -> SettingsRow.CompanionRadio
                     else -> SettingsRow.YourIdentity
@@ -599,6 +755,7 @@ private fun Destinations(shell: ShellState) {
                 onOpenRadio = { shell.openDetail(Destination.Settings, UmshKey.RadioDetail) },
                 onChooseRadio = shell::openRadioPicker,
                 onOpenNotifications = { shell.openDetail(Destination.Settings, UmshKey.Notifications) },
+                onOpenChannels = shell::openChannels,
                 reselects = shell.reselectCount(Destination.Settings),
             )
         }
@@ -607,6 +764,20 @@ private fun Destinations(shell: ShellState) {
         }
         entry<UmshKey.Notifications>(metadata = ListDetailSceneStrategy.detailPane(Destination.Settings)) {
             NotificationsSettingsScreen(onBack = if (twoPane) null else ({ shell.pop() }))
+        }
+        entry<UmshKey.Channels>(metadata = ListDetailSceneStrategy.detailPane(Destination.Settings)) {
+            ChannelsScreen(
+                onBack = if (twoPane) null else ({ shell.pop() }),
+                onOpen = shell::openChannelPage,
+                onJoin = { shell.openChannelJoin() },
+                onCreate = shell::openChannelCreate,
+            )
+        }
+        // Above Channels, or above Conversation info, in the same pane, with Back to it.
+        entry<UmshKey.ChannelPage>(
+            metadata = { key: UmshKey.ChannelPage -> ListDetailSceneStrategy.detailPane(key.destination) },
+        ) { key ->
+            ChannelPageScreen(key.id, onBack = { shell.pop() }, onConversation = { shell.openConversationFrom(key, it) })
         }
         entry<UmshKey.RadioDetail>(metadata = ListDetailSceneStrategy.detailPane(Destination.Settings)) {
             // As above the shell: the radio control and the banner would only
@@ -648,6 +819,12 @@ private fun Destinations(shell: ShellState) {
         onBack = { shell.back() },
     )
 }
+
+/** The code waiting for a scan begun at [target] on [destination]'s stack, for its page to take. */
+private fun ShellState.scanned(target: ScanTarget, destination: Destination): ScannedCode? =
+    pendingScan?.takeIf { it.target == target && it.destination == destination }?.let { waiting ->
+        ScannedCode(waiting.text) { takeScan(target, destination) }
+    }
 
 /**
  * Makes each page a focus target of its own. The list-detail scaffold moves

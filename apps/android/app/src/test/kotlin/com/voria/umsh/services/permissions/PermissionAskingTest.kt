@@ -38,6 +38,18 @@ class PermissionAskingTest {
     }
 
     @Test
+    fun anEmptyAnswerIsADismissalNotARefusal() {
+        // The dialog closed under the app (a link arriving, D7): nothing answered, nothing changes,
+        // even where a refusal with the same rationale would have blocked.
+        assertEquals(null, PermissionAsking.blockedAfterAnswer(emptyMap(), granted = false, dialogShown = false, rationaleBefore = false, rationaleAfter = false))
+        assertEquals(null, PermissionAsking.blockedAfterAnswer(emptyMap(), granted = false, dialogShown = true, rationaleBefore = true, rationaleAfter = false))
+        val camera = mapOf("android.permission.CAMERA" to false)
+        assertEquals(true, PermissionAsking.blockedAfterAnswer(camera, granted = false, dialogShown = true, rationaleBefore = true, rationaleAfter = false))
+        assertEquals(false, PermissionAsking.blockedAfterAnswer(camera, granted = false, dialogShown = true, rationaleBefore = false, rationaleAfter = true))
+        assertEquals(false, PermissionAsking.blockedAfterAnswer(mapOf("android.permission.CAMERA" to true), granted = true, dialogShown = true, rationaleBefore = false, rationaleAfter = false))
+    }
+
+    @Test
     fun eachBannerHasItsAction() {
         val reading = Reading("T1000-E", 78, 1_000L)
         assertEquals(RadioBannerAction.ChooseRadio, RadioBanner.NoRadio.action())

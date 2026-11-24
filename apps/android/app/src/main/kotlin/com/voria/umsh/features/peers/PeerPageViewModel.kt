@@ -119,6 +119,15 @@ class PeerPageViewModel(
     private val _failure = MutableStateFlow<PeerPageFailure?>(null)
     val failure: StateFlow<PeerPageFailure?> = _failure.asStateFlow()
 
+    private val _sharing = MutableStateFlow(false)
+
+    /** The share sheet is open (`share.svg` 1): kept across a rotation, not after process death. */
+    val sharing: StateFlow<Boolean> = _sharing.asStateFlow()
+
+    fun share(shown: Boolean) {
+        _sharing.value = shown
+    }
+
     private val _conversationOpened = Channel<String>(Channel.CONFLATED)
 
     /** Message's conversation, opened: the shell shows it. */

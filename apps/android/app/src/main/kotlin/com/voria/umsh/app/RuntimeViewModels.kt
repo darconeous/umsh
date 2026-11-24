@@ -14,6 +14,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 
 /** The runtime the shell is drawn over; provided inside the shell's keyed block. */
 val LocalAppRuntime = staticCompositionLocalOf<AppRuntime> { error("no runtime: outside the shell") }
@@ -21,7 +24,7 @@ val LocalAppRuntime = staticCompositionLocalOf<AppRuntime> { error("no runtime: 
 /** The process's host, for the few screens that act on it (the debug Developer section). */
 val LocalAppCoreHost = staticCompositionLocalOf<AppCoreHost> { error("no host: outside the app") }
 
-/** A page a notification or a shortcut asked to open. */
+/** A page a notification, a shortcut or a link asked to open. */
 sealed interface OpenRequest {
     /** A conversation, by address. */
     data class Conversation(val address: String) : OpenRequest
@@ -34,13 +37,49 @@ sealed interface OpenRequest {
      * conversation when it sends text, else its page on Peers.
      */
     data class Peer(val address: String) : OpenRequest
+
+    /** A `umsh:` link, opened from [origin] ([LinkRoute]). */
+    data class Link(val uri: String, val origin: LinkOrigin) : OpenRequest
 }
 
 /**
- * What a notification or a shortcut asked to open; the shell opens it and
- * clears it. None outside the activity.
+ * What notifications, shortcuts and links asked to open, in the order they
+ * arrived, until the shell opens each. At most one link and one other
+ * request wait: a newer one of either kind replaces the older. Held by the
+ * activity, so a link that arrives during onboarding waits for the shell
+ * (and, through the activity's saved state, across process death).
  */
-val LocalOpenRequests = staticCompositionLocalOf { MutableStateFlow<OpenRequest?>(null) }
+class OpenRequests {
+    private val _pending = MutableStateFlow<List<OpenRequest>>(emptyList())
+
+    val pending: StateFlow<List<OpenRequest>> = _pending.asStateFlow()
+
+    /** The link waiting, if any. */
+    val link: OpenRequest.Link? get() = _pending.value.firstNotNullOfOrNull { it as? OpenRequest.Link }
+
+    /**
+     * [request] waits to be opened. One equal to a request already waiting
+     * (the same link tapped twice) is that request: requests are compared
+     * by value throughout, as the [pending] flow compares its lists, so a
+     * repeat is never held unseen behind one the shell is opening.
+     */
+    fun offer(request: OpenRequest) {
+        _pending.update { waiting ->
+            if (request in waiting) waiting else waiting.filterNot { (it is OpenRequest.Link) == (request is OpenRequest.Link) } + request
+        }
+    }
+
+    /** [request] was opened: no longer waiting, nor any repeat of it. */
+    fun done(request: OpenRequest) {
+        _pending.update { waiting -> waiting - request }
+    }
+}
+
+/**
+ * What notifications, shortcuts and links asked to open; the shell opens
+ * each and clears it. None outside the activity.
+ */
+val LocalOpenRequests = staticCompositionLocalOf { OpenRequests() }
 
 /**
  * The shell's own ViewModel store: for a page drawn in two places, such as

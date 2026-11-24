@@ -73,6 +73,7 @@ import com.voria.umsh.designsystem.label
 import com.voria.umsh.designsystem.listText
 import com.voria.umsh.designsystem.rememberDisplayNames
 import com.voria.umsh.designsystem.userIsolated
+import com.voria.umsh.features.share.PeerShareSheet
 import com.voria.umsh.models.DisplayNames
 import com.voria.umsh.models.PeerRole
 import com.voria.umsh.models.PeerSummary
@@ -87,8 +88,8 @@ import java.time.Instant
  * row by address, so identity replies and route changes land while it is
  * open; the shell closes it once the node is gone. [onBack] is null beside
  * the Peers list. Ping opens its sheet on the ping it sends; the strip's
- * Route opens the Route page. The map card, Manage and Share arrive
- * later (D14).
+ * Route opens the Route page; Share opens the node's share sheet. The
+ * map card and Manage arrive later (D14).
  */
 @Composable
 fun PeerPageScreen(
@@ -102,6 +103,8 @@ fun PeerPageScreen(
     onOpenNeighbors: () -> Unit,
     /** A named repeater on a ping's path: its page, on this page's stack. */
     onOpenPeer: (String) -> Unit,
+    /** Opened from a link: [onBack] is Close (`peer-page.svg` 5). */
+    closes: Boolean = false,
 ) {
     val viewModel = runtimeViewModel { PeerPageViewModel(it, address) }
     val timings = LocalUiTimings.current
@@ -117,6 +120,7 @@ fun PeerPageScreen(
     val asking by viewModel.asking.collectAsStateWithLifecycle()
     val busy by viewModel.busy.collectAsStateWithLifecycle()
     val failure by viewModel.failure.collectAsStateWithLifecycle()
+    val sharing by viewModel.sharing.collectAsStateWithLifecycle()
     val now by LocalAppRuntime.current.now.collectAsStateWithLifecycle()
     val names = rememberDisplayNames()
     val context = LocalContext.current
@@ -133,8 +137,13 @@ fun PeerPageScreen(
     DetailPane {
         UmshScaffold(
             topBar = {
-                UmshTopAppBar(title = {}, onBack = onBack) {
+                UmshTopAppBar(title = {}, onBack = onBack, closes = closes) {
                     val peer = shown?.peer
+                    if (peer != null) {
+                        IconButton(onClick = { viewModel.share(true) }, modifier = Modifier.testTag(Tags.PEER_SHARE)) {
+                            Icon(painterResource(R.drawable.ic_share), contentDescription = stringResource(R.string.action_share))
+                        }
+                    }
                     if (peer != null && peer.isSaved && !peer.isCompanionRadio) {
                         val favorite = pendingFavorite ?: peer.isFavorite
                         IconButton(onClick = { viewModel.setFavorite(!favorite) }, modifier = Modifier.testTag(Tags.PEER_FAVORITE)) {
@@ -305,6 +314,8 @@ fun PeerPageScreen(
         }
         FailureDialog(stringResource(title), stringResource(body), shownFailure.error, viewModel::dismissFailure)
     }
+    val sharedPeer = model?.peer
+    if (sharing && sharedPeer != null) PeerShareSheet(sharedPeer, names.peer(sharedPeer), onDismiss = { viewModel.share(false) })
 }
 
 /**

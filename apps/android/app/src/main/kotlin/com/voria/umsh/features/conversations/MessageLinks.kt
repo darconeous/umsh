@@ -6,7 +6,6 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextDecoration
-import androidx.compose.ui.text.withStyle
 import androidx.core.util.PatternsCompat
 
 /** A link found in a message body: its place, and what it opens. */
@@ -15,7 +14,7 @@ data class MessageLink(val start: Int, val end: Int, val target: Target) {
         /** A web address, with a scheme added when the body gave none. */
         data class Web(val url: String) : Target
 
-        /** An `umsh:` link, which opens in the app once its pages exist (Phase 3). */
+        /** An `umsh:` link, which opens in the app by the route another app's link takes. */
         data class Umsh(val uri: String) : Target
     }
 
@@ -51,23 +50,25 @@ data class MessageLink(val start: Int, val end: Int, val target: Target) {
 
 /**
  * [body] with its links underlined in the body's own color: web links open
- * in the browser, `umsh:` links are underlined with no action until their
- * pages exist.
+ * in the browser; `umsh:` links are handed to [onUmsh], which opens them
+ * in the app (product-structure, "Deep links").
  */
-fun linkified(body: String, links: List<MessageLink> = MessageLink.find(body)): AnnotatedString = buildAnnotatedString {
+fun linkified(
+    body: String,
+    links: List<MessageLink> = MessageLink.find(body),
+    onUmsh: (String) -> Unit = {},
+): AnnotatedString = buildAnnotatedString {
     var index = 0
-    val underline = SpanStyle(textDecoration = TextDecoration.Underline)
+    val styles = TextLinkStyles(style = SpanStyle(textDecoration = TextDecoration.Underline))
     for (link in links) {
         append(body.substring(index, link.start))
         val text = body.substring(link.start, link.end)
         when (val target = link.target) {
-            is MessageLink.Target.Web -> {
-                pushLink(LinkAnnotation.Url(target.url, TextLinkStyles(style = underline)))
-                append(text)
-                pop()
-            }
-            is MessageLink.Target.Umsh -> withStyle(underline) { append(text) }
+            is MessageLink.Target.Web -> pushLink(LinkAnnotation.Url(target.url, styles))
+            is MessageLink.Target.Umsh -> pushLink(LinkAnnotation.Clickable(target.uri, styles) { onUmsh(target.uri) })
         }
+        append(text)
+        pop()
         index = link.end
     }
     append(body.substring(index))

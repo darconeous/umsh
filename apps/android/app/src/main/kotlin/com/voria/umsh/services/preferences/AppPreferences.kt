@@ -154,8 +154,9 @@ class AppPreferences(file: File, scope: CoroutineScope) : RuntimePreferences {
     /** Notifications were asked for once, after the first radio connected (§6.6); never asked unprompted again. */
     suspend fun notificationsAsked(): Boolean = data.map { it[NOTIFICATIONS_ASKED] ?: false }.first()
 
-    suspend fun setNotificationsAsked() {
-        store.edit { it[NOTIFICATIONS_ASKED] = true }
+    /** [asked] false: an ask that ended unanswered, so a later one comes back. */
+    suspend fun setNotificationsAsked(asked: Boolean = true) {
+        store.edit { it[NOTIFICATIONS_ASKED] = asked }
     }
 
     /** Android has stopped showing its notifications dialog: Turn on opens the app's notification settings. */
@@ -163,6 +164,13 @@ class AppPreferences(file: File, scope: CoroutineScope) : RuntimePreferences {
 
     suspend fun setNotificationsBlocked(blocked: Boolean) {
         store.edit { it[NOTIFICATIONS_BLOCKED] = blocked }
+    }
+
+    /** Android has stopped showing its camera dialog: the scanner's Allow camera opens the app's settings. */
+    val cameraBlocked: Flow<Boolean> = data.map { it[CAMERA_BLOCKED] ?: false }.distinctUntilChanged()
+
+    suspend fun setCameraBlocked(blocked: Boolean) {
+        store.edit { it[CAMERA_BLOCKED] = blocked }
     }
 
     /** The Peers list's order, by its name; null until one is chosen (`peers-list.svg` 2: remembered). */
@@ -251,6 +259,7 @@ class AppPreferences(file: File, scope: CoroutineScope) : RuntimePreferences {
         val PEERS_SORT = stringPreferencesKey("peers.sort")
         val LOCATION_BLOCKED = booleanPreferencesKey("permissions.location.blocked")
         val PRECISE_LOCATION_BLOCKED = booleanPreferencesKey("permissions.preciseLocation.blocked")
+        val CAMERA_BLOCKED = booleanPreferencesKey("permissions.camera.blocked")
         val RADIO_KIND = stringPreferencesKey("radio.kind")
         val RADIO_LINK_ID = stringPreferencesKey("radio.linkId")
         val RADIO_ASSOCIATION_ID = stringPreferencesKey("radio.associationId")

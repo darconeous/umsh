@@ -40,7 +40,9 @@ import com.voria.umsh.designsystem.userIsolated
 /**
  * Rename (`peer-page.svg` 6): the field starts with the current name; the
  * line under it is what the node calls itself, which an empty name falls
- * back to. Drawn above the keyboard, as Edit name is.
+ * back to. Drawn above the keyboard, as Edit name is. A channel's Alias
+ * (`channels.svg` 10) is the same dialog under its own [title], with the
+ * channel's name as the field's placeholder ([placeholder]) and no line.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -50,6 +52,9 @@ fun RenameDialog(
     onChange: (String) -> Unit,
     onSave: () -> Unit,
     onDismiss: () -> Unit,
+    title: String = stringResource(R.string.rename_title),
+    label: String = stringResource(R.string.rename_label),
+    placeholder: String? = advertisedName,
 ) {
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
@@ -65,7 +70,7 @@ fun RenameDialog(
         ) {
             Column(Modifier.verticalScroll(rememberScrollState()).padding(24.dp)) {
                 Text(
-                    stringResource(R.string.rename_title),
+                    title,
                     style = MaterialTheme.typography.headlineSmall,
                     color = AlertDialogDefaults.titleContentColor,
                     modifier = Modifier.padding(bottom = 16.dp).semantics { heading() },
@@ -73,8 +78,8 @@ fun RenameDialog(
                 OutlinedTextField(
                     value = text,
                     onValueChange = onChange,
-                    label = { Text(stringResource(R.string.rename_label)) },
-                    placeholder = advertisedName?.let { { Text(it) } },
+                    label = { Text(label) },
+                    placeholder = placeholder?.let { { Text(it) } },
                     supportingText = advertisedName?.let { { Text(stringResource(R.string.rename_calls_itself, userIsolated(it))) } },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(
