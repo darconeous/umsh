@@ -178,24 +178,123 @@ fn a_newer_database_is_refused() {
     );
 }
 
+/// Leave a file at `version` the way the Swift store did: its ladder run
+/// from nothing, one step at a time.
+fn swift_store_at(path: &str, version: i64) -> Connection {
+    let connection = raw(path);
+    connection
+        .pragma_update(None, "foreign_keys", true)
+        .unwrap();
+    for step in SWIFT_LADDER.iter().take_while(|s| s.version <= version) {
+        connection.execute_batch(step.sql).unwrap();
+        connection
+            .pragma_update(None, "user_version", step.version)
+            .unwrap();
+    }
+    connection
+}
+
 #[test]
-fn a_database_below_the_swift_store_s_last_migration_is_refused() {
+fn the_swift_ladder_builds_the_baseline_exactly() {
+    let connection = Connection::open_in_memory().unwrap();
+    for step in SWIFT_LADDER {
+        connection.execute_batch(step.sql).unwrap();
+    }
+    assert_eq!(dump(&connection), baseline_schema());
+}
+
+#[test]
+fn the_swift_ladder_builds_what_the_swift_store_wrote() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = path_in(&directory);
+    std::fs::write(&path, SWIFT_STORE_V31).unwrap();
+    let written = dump(&raw(&path));
+    let connection = Connection::open_in_memory().unwrap();
+    for step in SWIFT_LADDER {
+        connection.execute_batch(step.sql).unwrap();
+    }
+    assert_eq!(dump(&connection), written);
+}
+
+#[test]
+fn every_version_the_swift_store_left_opens_at_the_current_schema() {
+    for version in 1..=BASELINE_VERSION {
+        let directory = tempfile::tempdir().unwrap();
+        let path = path_in(&directory);
+        drop(swift_store_at(&path, version));
+        let store =
+            MobileAppStore::open(path).unwrap_or_else(|error| panic!("v{version}: {error:?}"));
+        assert_eq!(store.schema_version(), Ok(current_version()), "v{version}");
+        assert_eq!(dump(&store.connection()), current_schema(), "v{version}");
+    }
+}
+
+#[test]
+fn a_first_build_database_keeps_its_records_under_its_address() {
     let directory = tempfile::tempdir().unwrap();
     let path = path_in(&directory);
     {
-        let connection = raw(&path);
+        // The earliest store: everything under the 'primary' slot.
+        let connection = swift_store_at(&path, 2);
         connection
-            .execute_batch("CREATE TABLE local_identity (id TEXT PRIMARY KEY)")
+            .execute_batch(
+                "INSERT INTO local_identity (id, public_address, created_at_ms)
+                    VALUES ('primary', 'me-public', 1);
+                INSERT INTO node (owner_identity_id, public_address, alias, alias_search)
+                    VALUES ('primary', 'peer-public', 'Émile', 'emile');
+                INSERT INTO direct_conversation (owner_identity_id, node_id, created_at_ms)
+                    VALUES ('primary', 1, 2);",
+            )
             .unwrap();
-        connection.pragma_update(None, "user_version", 30).unwrap();
     }
-    let before = std::fs::read(&path).unwrap();
-    assert_eq!(
-        MobileAppStore::open(path.clone()).err(),
-        Some(MobileStoreError::UnsupportedSchema { version: 30 })
-    );
-    // Refusing writes nothing, not even the journal mode.
-    assert_eq!(std::fs::read(&path).unwrap(), before);
+    let store = MobileAppStore::open(path).unwrap();
+    assert_eq!(store.schema_version(), Ok(current_version()));
+    let connection = store.connection();
+    let owners: Vec<String> = connection
+        .prepare(
+            "SELECT id FROM local_identity
+            UNION ALL SELECT owner_identity_id FROM node
+            UNION ALL SELECT owner_identity_id FROM direct_conversation",
+        )
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(owners, ["me-public", "me-public", "me-public"]);
+    let alias: String = connection
+        .query_row("SELECT alias FROM node", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(alias, "Émile");
+    let violations: i64 = connection
+        .query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(violations, 0);
+}
+
+#[test]
+fn a_store_without_a_legacy_slot_is_untouched_by_the_re_key() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = path_in(&directory);
+    {
+        let connection = swift_store_at(&path, BASELINE_VERSION);
+        connection
+            .execute_batch(
+                "INSERT INTO local_identity (id, public_address, created_at_ms)
+                    VALUES ('me-public', 'me-public', 1);
+                INSERT INTO node (owner_identity_id, public_address, alias_search)
+                    VALUES ('me-public', 'peer-public', '');",
+            )
+            .unwrap();
+    }
+    let store = MobileAppStore::open(path).unwrap();
+    let owner: String = store
+        .connection()
+        .query_row("SELECT owner_identity_id FROM node", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(owner, "me-public");
 }
 
 #[test]
@@ -280,6 +379,14 @@ fn the_ladder_is_consecutive_from_the_baseline() {
     for (offset, step) in MIGRATIONS.iter().enumerate() {
         assert_eq!(step.version, BASELINE_VERSION + 1 + offset as i64);
     }
+}
+
+#[test]
+fn the_swift_ladder_is_consecutive_from_one_to_the_baseline() {
+    for (offset, step) in SWIFT_LADDER.iter().enumerate() {
+        assert_eq!(step.version, 1 + offset as i64);
+    }
+    assert_eq!(SWIFT_LADDER.last().unwrap().version, BASELINE_VERSION);
 }
 
 /// A store whose `node` table comes first in the schema, as no real store

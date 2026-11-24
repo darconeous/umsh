@@ -88,11 +88,148 @@ struct Migration {
     sql: &'static str,
 }
 
-/// This store's migrations, in order, starting at v32.
-const MIGRATIONS: &[Migration] = &[Migration {
-    version: 32,
-    sql: include_str!("migration_v32.sql"),
-}];
+/// The Swift store's ladder, v1 to [`BASELINE_VERSION`], verbatim. A file
+/// any build of that store left behind climbs it to the baseline; a new file
+/// takes [`BASELINE`] instead. Every version an app ever wrote opens.
+const SWIFT_LADDER: &[Migration] = &[
+    Migration {
+        version: 1,
+        sql: include_str!("swift_ladder/v01.sql"),
+    },
+    Migration {
+        version: 2,
+        sql: include_str!("swift_ladder/v02.sql"),
+    },
+    Migration {
+        version: 3,
+        sql: include_str!("swift_ladder/v03.sql"),
+    },
+    Migration {
+        version: 4,
+        sql: include_str!("swift_ladder/v04.sql"),
+    },
+    Migration {
+        version: 5,
+        sql: include_str!("swift_ladder/v05.sql"),
+    },
+    Migration {
+        version: 6,
+        sql: include_str!("swift_ladder/v06.sql"),
+    },
+    Migration {
+        version: 7,
+        sql: include_str!("swift_ladder/v07.sql"),
+    },
+    Migration {
+        version: 8,
+        sql: include_str!("swift_ladder/v08.sql"),
+    },
+    Migration {
+        version: 9,
+        sql: include_str!("swift_ladder/v09.sql"),
+    },
+    Migration {
+        version: 10,
+        sql: include_str!("swift_ladder/v10.sql"),
+    },
+    Migration {
+        version: 11,
+        sql: include_str!("swift_ladder/v11.sql"),
+    },
+    Migration {
+        version: 12,
+        sql: include_str!("swift_ladder/v12.sql"),
+    },
+    Migration {
+        version: 13,
+        sql: include_str!("swift_ladder/v13.sql"),
+    },
+    Migration {
+        version: 14,
+        sql: include_str!("swift_ladder/v14.sql"),
+    },
+    Migration {
+        version: 15,
+        sql: include_str!("swift_ladder/v15.sql"),
+    },
+    Migration {
+        version: 16,
+        sql: include_str!("swift_ladder/v16.sql"),
+    },
+    Migration {
+        version: 17,
+        sql: include_str!("swift_ladder/v17.sql"),
+    },
+    Migration {
+        version: 18,
+        sql: include_str!("swift_ladder/v18.sql"),
+    },
+    Migration {
+        version: 19,
+        sql: include_str!("swift_ladder/v19.sql"),
+    },
+    Migration {
+        version: 20,
+        sql: include_str!("swift_ladder/v20.sql"),
+    },
+    Migration {
+        version: 21,
+        sql: include_str!("swift_ladder/v21.sql"),
+    },
+    Migration {
+        version: 22,
+        sql: include_str!("swift_ladder/v22.sql"),
+    },
+    Migration {
+        version: 23,
+        sql: include_str!("swift_ladder/v23.sql"),
+    },
+    Migration {
+        version: 24,
+        sql: include_str!("swift_ladder/v24.sql"),
+    },
+    Migration {
+        version: 25,
+        sql: include_str!("swift_ladder/v25.sql"),
+    },
+    Migration {
+        version: 26,
+        sql: include_str!("swift_ladder/v26.sql"),
+    },
+    Migration {
+        version: 27,
+        sql: include_str!("swift_ladder/v27.sql"),
+    },
+    Migration {
+        version: 28,
+        sql: include_str!("swift_ladder/v28.sql"),
+    },
+    Migration {
+        version: 29,
+        sql: include_str!("swift_ladder/v29.sql"),
+    },
+    Migration {
+        version: 30,
+        sql: include_str!("swift_ladder/v30.sql"),
+    },
+    Migration {
+        version: 31,
+        sql: include_str!("swift_ladder/v31.sql"),
+    },
+];
+
+/// This store's migrations, in order, starting at v32. Steps are only ever
+/// added: removing one strands every file still below it.
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 32,
+        sql: include_str!("migration_v32.sql"),
+    },
+    Migration {
+        version: 33,
+        sql: include_str!("migration_v33.sql"),
+    },
+];
 
 /// How long a statement waits on another connection's lock before failing.
 const BUSY_TIMEOUT: Duration = Duration::from_millis(5_000);
@@ -107,8 +244,7 @@ pub enum MobileStoreError {
     /// result code.
     OpenFailed { code: i32 },
     /// The file holds a schema this store does not read: newer than it
-    /// knows, older than the Swift store's last migration, or a database
-    /// that is not the application store at all.
+    /// knows, or a database that is not the application store at all.
     UnsupportedSchema { version: i64 },
     /// The record an update names does not exist.
     RecordNotFound,
@@ -349,7 +485,11 @@ fn migrate(connection: &mut Connection, ladder: &[Migration]) -> Result<i64, Mob
         version = BASELINE_VERSION;
     }
     let start = version;
-    for step in ladder.iter().filter(|step| step.version > start) {
+    for step in SWIFT_LADDER
+        .iter()
+        .chain(ladder)
+        .filter(|step| step.version > start)
+    {
         debug_assert_eq!(step.version, version + 1, "migrations must be consecutive");
         transaction.execute_batch(step.sql)?;
         version = step.version;
@@ -369,8 +509,8 @@ fn ladder_top(ladder: &[Migration]) -> i64 {
 }
 
 /// The version a file is at, when a build whose ladder ends at `current`
-/// can open it: 0 for a new file, or a version from the baseline to
-/// `current`. Only reads.
+/// can open it: 0 for a new file, or any version from 1 to `current`. Only
+/// reads.
 fn openable_version(connection: &Connection, current: i64) -> Result<i64, MobileStoreError> {
     let version = user_version(connection)?;
     if version == 0 {
@@ -381,7 +521,7 @@ fn openable_version(connection: &Connection, current: i64) -> Result<i64, Mobile
         if objects != 0 {
             return Err(MobileStoreError::UnsupportedSchema { version });
         }
-    } else if !(BASELINE_VERSION..=current).contains(&version) {
+    } else if !(1..=current).contains(&version) {
         return Err(MobileStoreError::UnsupportedSchema { version });
     }
     Ok(version)
