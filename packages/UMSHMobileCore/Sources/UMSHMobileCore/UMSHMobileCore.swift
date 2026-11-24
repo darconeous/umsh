@@ -39814,8 +39814,7 @@ enum MobileStoreError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErr
     )
     /**
      * The file holds a schema this store does not read: newer than it
-     * knows, older than the Swift store's last migration, or a database
-     * that is not the application store at all.
+     * knows, or a database that is not the application store at all.
      */
     case UnsupportedSchema(version: Int64
     )

@@ -15,24 +15,24 @@ struct PersistenceSmokeTest {
         let initialSchemaVersion = try await store.schemaVersion()
         precondition(initialSchemaVersion >= 31, "a new store is at or past the baseline")
 
-        // A file older than the baseline is refused and left as it was:
-        // the Swift migrations that would have upgraded it are gone.
+        // A file an old build left opens at the current schema with its
+        // records: every version any build wrote must.
         let historicalURL = root.appendingPathComponent("historical.sqlite")
         try createHistoricalStore(path: historicalURL.path)
-        let historicalBytes = try Data(contentsOf: historicalURL)
-        do {
-            _ = try SQLiteApplicationStore(path: historicalURL.path)
-            preconditionFailure("A v12 store must be refused")
-        } catch ApplicationStoreError.unsupportedSchema(let version) {
-            precondition(version == 12)
-        }
-        let historicalAfter = try Data(contentsOf: historicalURL)
-        precondition(historicalAfter == historicalBytes)
+        let historical = try SQLiteApplicationStore(path: historicalURL.path)
+        let historicalVersion = try await historical.schemaVersion()
+        precondition(historicalVersion == initialSchemaVersion, "a v12 store migrates")
+        let historicalNodes = try historical.coreStore.listNodes(ownerIdentityId: "alice")
+        precondition(historicalNodes.map(\.alias) == ["Ridge Medic"])
+        let historicalPage = try historical.coreStore.chatMessagePageNewest(
+            ownerIdentityId: "alice", conversationAddress: "historical-peer", limit: 10
+        )
+        precondition(historicalPage.messages.map(\.body) == ["Historical message"])
 
         try await checkRemainingCalls(store, path: databaseURL.path)
         try await checkReopenAndErase(store, path: databaseURL.path)
 
-        print("SQLite refusal, round-trip, and reopen checks passed")
+        print("SQLite migration, round-trip, and reopen checks passed")
 
         // Seeding tens of thousands of rows takes long enough that the ordinary
         // smoke run should not pay for it.

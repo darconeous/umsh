@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use rusqlite::Connection;
 
-use super::super::{BASELINE, BASELINE_VERSION};
+use super::super::{BASELINE, BASELINE_VERSION, MIGRATIONS, ladder_top};
 use super::*;
 
 const OWNER: &str = "alice";
@@ -643,7 +643,7 @@ fn a_swift_store_migrates_its_nodes() {
             .unwrap();
     }
     let store = MobileAppStore::open(path).unwrap();
-    assert_eq!(store.schema_version(), Ok(32));
+    assert_eq!(store.schema_version(), Ok(ladder_top(MIGRATIONS)));
     let stored = node(&store, "peer");
     assert_eq!(stored.alias.as_deref(), Some("Straße"));
     assert_eq!(stored.last_heard_at_ms, Some(1_700_000_002_123));
