@@ -14,6 +14,7 @@ import androidx.core.content.ContextCompat
 import com.voria.umsh.core.MobilePositionRecord
 import com.voria.umsh.services.mobilecore.AppLog
 import java.util.concurrent.Executor
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -23,6 +24,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.onEach
 
@@ -55,6 +57,13 @@ interface PhoneLocationSource {
     /** Readings good to about [cellMeters], while collected; nothing when [grant] allows none. */
     fun fixes(grant: LocationGrant, cellMeters: Double): Flow<PhoneFix>
 
+    /**
+     * One current fix, or null once there is none to be had: no grant,
+     * system location off, no provider, or every provider answered without
+     * one. Never waits on a switch that is off; the caller bounds the wait.
+     */
+    suspend fun currentFix(grant: LocationGrant): PhoneFix?
+
     /** No location at all: tests that never share one. */
     object None : PhoneLocationSource {
         override val grant: StateFlow<LocationGrant> = MutableStateFlow(LocationGrant.None)
@@ -63,6 +72,8 @@ interface PhoneLocationSource {
         override fun refresh() = Unit
 
         override fun fixes(grant: LocationGrant, cellMeters: Double): Flow<PhoneFix> = emptyFlow()
+
+        override suspend fun currentFix(grant: LocationGrant): PhoneFix? = null
     }
 }
 
@@ -121,6 +132,36 @@ class PhoneLocation(private val context: Context) : PhoneLocationSource {
         // Android leaves a request made while system location is off
         // inactive once it is turned on, so requests follow the switch.
         return locationOn(manager).flatMapLatest { on -> if (on) listening(manager, grant, cellMeters) else emptyFlow() }
+    }
+
+    override suspend fun currentFix(grant: LocationGrant): PhoneFix? {
+        val manager = manager ?: return null
+        if (grant == LocationGrant.None) return null
+        if (!manager.isLocationEnabled) return null
+        val providers = providers(manager, grant)
+        if (providers.isEmpty()) return null
+        val approximate = grant == LocationGrant.Approximate
+        return callbackFlow {
+            val direct = Executor(Runnable::run)
+            val signals = providers.map { CancellationSignal() }
+            // Done without a fix once every provider has answered without one.
+            val unanswered = AtomicInteger(providers.size)
+            val noFix = { if (unanswered.decrementAndGet() == 0) close() }
+            providers.zip(signals).forEach { (provider, signal) ->
+                try {
+                    manager.getCurrentLocation(provider, signal, direct) { location ->
+                        if (location != null) trySend(location.fix(approximate)) else noFix()
+                    }
+                } catch (error: SecurityException) {
+                    refused(provider, error)
+                    noFix()
+                } catch (error: IllegalArgumentException) {
+                    unavailable(provider)
+                    noFix()
+                }
+            }
+            awaitClose { signals.forEach { it.cancel() } }
+        }.firstOrNull()
     }
 
     /** The system location switch, now and as it changes. */

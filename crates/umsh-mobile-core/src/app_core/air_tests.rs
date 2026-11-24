@@ -469,6 +469,112 @@ async fn a_manual_path_is_held_kept_and_cleared() {
     assert_eq!(route.hold_remaining_ms, None);
 }
 
+/// A held path through a repeater hint nobody on the air owns misses its
+/// acknowledgment, and the flood after it is acknowledged through the
+/// repeater that does reach the peer: the path that teaches is kept beside
+/// the held one and offered once the phone has moved.
+#[tokio::test]
+async fn a_held_path_nobody_forwards_learns_the_way_the_flood_went() {
+    use super::{MobileAppChatRequest, MobileAppPositionReading};
+    let staged = Staged::new().await;
+    // Sam Ihara, out of the radio's range, hears only Glen Alpine Relay.
+    let speaker = address_of(0x66);
+    let relay_hint = crate::inspect_public_identity(address_of(0x77))
+        .unwrap()
+        .hint
+        .bytes[..2]
+        .to_vec();
+    let set_at = MobilePositionRecord {
+        latitude_degrees: 38.9,
+        longitude_degrees: -120.1,
+        accuracy_meters: Some(10.0),
+    };
+    // No staged node's hint starts with these bytes.
+    let nobody = MobileMeshExplicitPath {
+        hints: vec![vec![0x00, 0x01]],
+        flood_hops: 2,
+    };
+    assert!(
+        staged
+            .core
+            .core
+            .set_manual_path(speaker.clone(), nobody, 600_000, Some(set_at))
+            .await
+            .unwrap()
+    );
+    staged
+        .core
+        .core
+        .start_conversation(speaker.clone())
+        .await
+        .unwrap();
+    staged
+        .core
+        .core
+        .send_chat(
+            speaker.clone(),
+            MobileAppChatRequest::Typed {
+                text: "Which way?".into(),
+                forward_secret: None,
+            },
+            Some("Which way?".into()),
+        )
+        .await
+        .unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    let route = loop {
+        let route = staged.core.core.peer_route(speaker.clone()).await.unwrap();
+        if route.fallback_acks > 0 && route.candidate.is_some() {
+            break route;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "never learned a candidate: {route:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    assert_eq!(route.fallback_acks, 1);
+    assert!(route.hold_remaining_ms.is_some());
+    let candidate = route.candidate.as_ref().unwrap();
+    assert_eq!(candidate.kind, MobileMeshRouteKind::Source);
+    assert_eq!(
+        candidate
+            .hints
+            .iter()
+            .map(|hint| hint.bytes.clone())
+            .collect::<Vec<_>>(),
+        [relay_hint]
+    );
+    let offer = |position| {
+        staged
+            .core
+            .core
+            .learned_path_offer(speaker.clone(), position)
+    };
+    assert_eq!(
+        offer(None).await.unwrap(),
+        MobileAppLearnedPathOffer::NeedsPosition
+    );
+    // About 333 m north of where the path was set.
+    let moved = MobilePositionRecord {
+        latitude_degrees: 38.903,
+        ..set_at
+    };
+    assert!(matches!(
+        offer(Some(MobileAppPositionReading::Found { position: moved }))
+            .await
+            .unwrap(),
+        MobileAppLearnedPathOffer::Offer { .. }
+    ));
+    assert_eq!(
+        offer(Some(MobileAppPositionReading::Found { position: set_at }))
+            .await
+            .unwrap(),
+        MobileAppLearnedPathOffer::None,
+        "a phone that has not moved is not offered it"
+    );
+}
+
 /// The managed repeater, across the mesh, with its card read.
 async fn managed_repeater(staged: &Staged) -> Arc<crate::MobileManagedDevice> {
     let device = staged

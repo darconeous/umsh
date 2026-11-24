@@ -137,6 +137,25 @@ abstract class StageBoards : DefaultTask() {
     }
 }
 
+/**
+ * Stages the host platforms Nearby names and draws (`PlatformCatalog`):
+ * `docs/hardware/platforms.json` as an asset. A plain copy, generated and
+ * never committed, so the two apps read the same list.
+ */
+abstract class StagePlatforms : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val platformsJson: RegularFileProperty
+
+    @get:OutputDirectory abstract val assets: DirectoryProperty
+
+    @TaskAction
+    fun stage() {
+        val assetsDir = assets.get().asFile.apply { deleteRecursively(); mkdirs() }
+        platformsJson.get().asFile.copyTo(assetsDir.resolve("platforms.json"))
+    }
+}
+
 androidComponents {
     onVariants { variant ->
         val suffix = variant.name.replaceFirstChar { it.uppercase() }
@@ -149,6 +168,10 @@ androidComponents {
         }
         variant.sources.assets?.addGeneratedSourceDirectory(boards, StageBoards::assets)
         variant.sources.res?.addGeneratedSourceDirectory(boards, StageBoards::res)
+        val platforms = tasks.register<StagePlatforms>("stage${suffix}Platforms") {
+            platformsJson.set(repoDir.resolve("docs/hardware/platforms.json"))
+        }
+        variant.sources.assets?.addGeneratedSourceDirectory(platforms, StagePlatforms::assets)
     }
 }
 

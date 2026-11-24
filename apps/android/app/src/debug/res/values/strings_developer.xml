@@ -17,6 +17,7 @@
     <string name="developer_peer_loses_one" translatable="false">Staged lost channel message</string>
     <string name="developer_peer_reacts" translatable="false">Staged reaction in 5 seconds</string>
     <string name="developer_peer_replies" translatable="false">Staged reply in 5 seconds</string>
+    <string name="developer_peer_asks_exchange" translatable="false">Staged peer asks to exchange</string>
     <string name="developer_connect_radio_preview" translatable="false">Connect a radio preview</string>
     <string name="developer_connect_radio_live" translatable="false">Connect a radio over Bluetooth</string>
     <string name="developer_bonded_radios" translatable="false">Bonded radios (paired in Settings › Bluetooth)</string>

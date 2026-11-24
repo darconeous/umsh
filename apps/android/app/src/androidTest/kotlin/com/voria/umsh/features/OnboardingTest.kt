@@ -277,6 +277,7 @@ class OnboardingTest {
         val runtime = AppRuntime(
             core = core,
             kind = CoreKind.Live,
+            platformModel = 65026u,
             generation = 1,
             owner = owner,
             identityOps = IdentityOperations(KeystoreIdentityVault(KeystoreSecretVault(File(dir, "identity"), "${paths.keyAliasPrefix}.benchid"))),

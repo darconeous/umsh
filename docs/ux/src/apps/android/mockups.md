@@ -67,6 +67,7 @@ left out. The drawing stays the target.
 | 4 | [AA. QR scanner](#aa-qr-scanner) | Approved 2026-11-18 |
 | 4 | [AB. Sharing](#ab-sharing) | Approved 2026-11-18 |
 | 4 | [AC. Channels](#ac-channels) | Approved 2026-11-18 |
+| 4 | [AN. New channel chat](#an-new-channel-chat) | Awaiting review |
 | 5 | [AD. Map](#ad-map) | Approved 2026-11-18 |
 | 5 | [AE. Place picker](#ae-place-picker) | Approved 2026-11-18 |
 | 5 | [AF. Region suggestion](#af-region-suggestion) | Approved 2026-11-18 |
@@ -496,6 +497,16 @@ departs from it, the board's notes say so and
 - Nothing here concerns the radio's own channels, which will be managed
   separately.
 - A private channel's invitation shows its warning before the code.
+
+## AN. New channel chat
+
+[![New channel chat mockups: the sheet of joined channels without a conversation and Join a channel, the sheet with only Join a channel, and the sheet in dark](mockups/new-channel-chat.svg)](mockups/new-channel-chat.svg)
+
+- **New channel chat** on the New chat sheet opens a bottom sheet of the
+  joined channels that have no conversation yet. Tapping one starts its
+  conversation.
+- **Join a channel…** opens Join channel. A channel joined from here opens
+  its conversation; joining from Settings does not.
 
 # Batch 5: Map, radio, and management
 

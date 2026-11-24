@@ -4,6 +4,7 @@ import com.voria.umsh.core.MobileAppLifecycle
 import com.voria.umsh.core.MobileStagingAirException
 import com.voria.umsh.models.AppStateSnapshot
 import com.voria.umsh.models.ChatMessage
+import com.voria.umsh.services.location.PositionSource
 import com.voria.umsh.services.preferences.AppPreferences
 import java.io.File
 import java.time.Clock
@@ -20,11 +21,21 @@ import kotlinx.coroutines.withTimeout
  * A host running the staging core over the real core (JNA), whose staged
  * radio carries this phone: the staged mesh to send into.
  */
-class StagedHost(root: File) {
+class StagedHost(root: File, positions: PositionSource = PositionSource.None) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val paths = AppPaths(File(root, "files").apply { mkdirs() }, File(root, "cache").apply { mkdirs() })
     val preferences = AppPreferences(paths.preferences, scope)
-    val host = AppCoreHost(paths, MemoryVaults(VaultLog()), preferences, { 65026u }, Clock.systemUTC(), MutableSharedFlow(), true, scope)
+    val host = AppCoreHost(
+        paths,
+        MemoryVaults(VaultLog()),
+        preferences,
+        { 65026u },
+        Clock.systemUTC(),
+        MutableSharedFlow(),
+        true,
+        scope,
+        positions = positions,
+    )
 
     lateinit var runtime: AppRuntime
         private set

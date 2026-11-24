@@ -16,6 +16,7 @@ import androidx.compose.material3.Text
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
 import androidx.compose.material3.adaptive.layout.calculatePaneScaffoldDirective
+import androidx.compose.material3.adaptive.navigation.BackNavigationBehavior
 import androidx.compose.material3.adaptive.navigation3.ListDetailSceneStrategy
 import androidx.compose.material3.adaptive.navigation3.rememberListDetailSceneStrategy
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteItem
@@ -29,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusTarget
@@ -40,6 +42,8 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
@@ -55,6 +59,7 @@ import com.voria.umsh.designsystem.DataLoadBanner
 import com.voria.umsh.designsystem.LocalCopyNotice
 import com.voria.umsh.designsystem.LocalScreenBanner
 import com.voria.umsh.designsystem.LocalTopBarRadioControl
+import com.voria.umsh.designsystem.NoticeHost
 import com.voria.umsh.designsystem.RadioBannerAction
 import com.voria.umsh.designsystem.RadioControl
 import com.voria.umsh.designsystem.RadioProblemBanner
@@ -66,8 +71,18 @@ import com.voria.umsh.features.conversations.MessageDetailsScreen
 import com.voria.umsh.features.conversations.NoConversationSelected
 import com.voria.umsh.features.conversations.ThreadScreen
 import com.voria.umsh.features.map.MapScreen
+import com.voria.umsh.features.peers.AddPeerExit
+import com.voria.umsh.features.peers.AddPeerScreen
+import com.voria.umsh.features.peers.ExchangeScreen
+import com.voria.umsh.features.peers.LocalExchangeHost
+import com.voria.umsh.features.peers.RuntimeExchangeHost
 import com.voria.umsh.features.peers.NoPeerSelected
+import com.voria.umsh.features.peers.DiscoverScreen
+import com.voria.umsh.features.peers.NeighborsScreen
+import com.voria.umsh.features.peers.PeerPageScreen
 import com.voria.umsh.features.peers.PeersScreen
+import com.voria.umsh.features.peers.RouteScreen
+import com.voria.umsh.features.peers.manualpath.ManualPathScreen
 import com.voria.umsh.features.radio.RadioDetailScreen
 import com.voria.umsh.features.radio.RadioPickerScreen
 import com.voria.umsh.features.settings.NotificationsSettingsScreen
@@ -79,6 +94,13 @@ import com.voria.umsh.services.permissions.rememberNearbyDevicesAsker
 import com.voria.umsh.services.radio.RadioBanner
 import java.time.Instant
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.cancellation.CancellationException
+import com.voria.umsh.services.mobilecore.AppLog
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /**
@@ -96,10 +118,28 @@ import kotlinx.coroutines.launch
 @Composable
 fun UmshShell(shell: ShellState = rememberShellState()) {
     val host = LocalAppCoreHost.current
-    val viewModel = runtimeViewModel { ShellViewModel(it, host.bluetooth, host.preferences.radioRegistry.bound) }
+    val runtime = LocalAppRuntime.current
+    val exchange = LocalExchangeHost.current ?: remember(runtime) { RuntimeExchangeHost(runtime) }
+    val viewModel = runtimeViewModel {
+        val started = ProcessLifecycleOwner.get().lifecycle.currentStateFlow.map { it.isAtLeast(Lifecycle.State.STARTED) }
+        ShellViewModel(it, host.bluetooth, host.preferences.radioRegistry.bound, started, exchange)
+    }
     val conversations by viewModel.conversations.collectAsStateWithLifecycle()
     // A conversation removed, from its row or anywhere else: its thread closes.
     LaunchedEffect(conversations) { conversations?.let(shell::closeThreadsNotIn) }
+    val peers by viewModel.peers.collectAsStateWithLifecycle()
+    // A peer removed or erased: every page about it closes, wherever it is.
+    LaunchedEffect(peers) { peers?.let(shell::closePeerPagesNotIn) }
+    // The page on screen decides whether the exchange is open (an app-level
+    // page over Add peer hides it), and the exchange page comes and goes
+    // with the exchange over the Add peer shown: in one pass, so leaving the
+    // page backs out before the page is followed again.
+    LaunchedEffect(shell, viewModel) {
+        combine(viewModel.meetStep, snapshotFlow { shell.shownTop }) { _, top -> top }.collect { top ->
+            viewModel.topPageChanged(top)
+            shell.followMeet(viewModel.currentMeetStep())
+        }
+    }
     // A notification's or shortcut's tap: that conversation, above its
     // list, or the radio notification's Radio Detail.
     val requests = LocalOpenRequests.current
@@ -108,10 +148,14 @@ fun UmshShell(shell: ShellState = rememberShellState()) {
             when (request) {
                 is OpenRequest.Conversation -> shell.openConversation(request.address)
                 OpenRequest.RadioDetail -> shell.openRadioDetail()
+                is OpenRequest.Peer -> openPeerRequest(runtime, shell, request.address)
             }
             requests.compareAndSet(request, null)
         }
     }
+
+    // The radio control for a full-screen dialog above the shell, as the shell's own bars draw it.
+    val radioControl: @Composable () -> Unit = remember(viewModel, shell) { { AppStackRadioControl(viewModel, shell) } }
 
     val snackbars = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -124,11 +168,12 @@ fun UmshShell(shell: ShellState = rememberShellState()) {
         // The store the shell is drawn in: pages drawn in two places share it.
         LocalShellViewModelStoreOwner provides checkNotNull(LocalViewModelStoreOwner.current),
         LocalCopyNotice provides copyNotice,
+        LocalExchangeHost provides exchange,
     ) {
         NavDisplay(
             backStack = shell.appStack,
             onBack = { shell.popAppPage() },
-            entryDecorators = listOf(rememberSaveableStateHolderNavEntryDecorator()),
+            entryDecorators = rememberAppStackDecorators(),
             modifier = Modifier.testTag(Tags.APP_NAV_DISPLAY),
             entryProvider = entryProvider {
                 entry<UmshKey.Shell> { ShellScaffold(shell, viewModel, snackbars) }
@@ -136,18 +181,67 @@ fun UmshShell(shell: ShellState = rememberShellState()) {
                     // Full width above the shell: no radio control in its bar
                     // (it is what opened the page), and no banner (the page
                     // states the radio's problem itself).
-                    CompositionLocalProvider(LocalTopBarRadioControl provides null, LocalScreenBanner provides null) {
+                    AppPage {
                         RadioDetailScreen(
                             onBack = { shell.popAppPage() },
                             onGone = shell::closeRadioDetail,
                             inPane = false,
                             onChooseRadio = shell::openRadioPicker,
+                            onOpenPeer = { shell.openPeer(it, destination = null) },
                         )
+                    }
+                }
+                entry<UmshKey.PeerPage> { key ->
+                    // Above the shell, over Radio Detail: as that page, no radio control or banner.
+                    AppPage {
+                        PeerPageScreen(
+                            key.address,
+                            onBack = { shell.popAppPage() },
+                            onConversation = { shell.openConversationFrom(key, it) },
+                            onOpenRoute = { shell.openRoute(key) },
+                            onOpenNeighbors = { shell.openNeighbors(key) },
+                            onOpenPeer = { shell.openPeer(it, destination = null) },
+                        )
+                    }
+                }
+                entry<UmshKey.Route> { key ->
+                    AppPage {
+                        RouteScreen(
+                            key.address,
+                            onBack = { shell.popAppPage() },
+                            onOpenPeer = { shell.openPeer(it.address, destination = null) },
+                            onAskNear = { shell.openDiscover(key) },
+                            onEdit = { shell.openManualPath(key.address) },
+                        )
+                    }
+                }
+                entry<UmshKey.Neighbors> { key ->
+                    AppPage {
+                        NeighborsScreen(
+                            key.address,
+                            onBack = { shell.popAppPage() },
+                            onOpenPeer = { shell.openPeer(it, destination = null) },
+                        )
+                    }
+                }
+                entry<UmshKey.Discover> { key ->
+                    AppPage {
+                        DiscoverScreen(
+                            key.vantagePeer,
+                            onBack = { shell.popAppPage() },
+                            onOpenPeer = { shell.openPeer(it, destination = null) },
+                        )
+                    }
+                }
+                entry<UmshKey.ManualPath> { key ->
+                    // A full-screen dialog above the shell: Save and the radio control share its bar; no banner.
+                    AppPage(radioControl) {
+                        ManualPathScreen(key.address, onClose = { shell.popAppPage() })
                     }
                 }
                 entry<UmshKey.RadioPicker> {
                     // Full width above the shell and whatever opened it, as Radio Detail.
-                    CompositionLocalProvider(LocalTopBarRadioControl provides null, LocalScreenBanner provides null) {
+                    AppPage {
                         RadioPickerScreen(onBack = { shell.popAppPage() }, onChosen = shell::closeRadioPicker)
                     }
                 }
@@ -155,6 +249,71 @@ fun UmshShell(shell: ShellState = rememberShellState()) {
         )
     }
 }
+
+/**
+ * A notification about a node (product-structure, "Notification taps"):
+ * one that sends text opens its conversation, started if there is none;
+ * any other opens its page on Peers. A node not read yet is waited for
+ * briefly; one that never appears (deleted since) opens nothing.
+ */
+private suspend fun openPeerRequest(runtime: AppRuntime, shell: ShellState, address: String) {
+    val peer = withTimeoutOrNull(PEER_REQUEST_WAIT_MS) {
+        runtime.appState.mapNotNull { state -> state?.peers?.firstOrNull { it.address == address } }.first()
+    }
+    when {
+        peer == null -> AppLog.w("umsh.shell", "notified peer not stored")
+        peer.offersTextMessages -> try {
+            shell.openConversation(runtime.startConversation(address).await())
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            AppLog.w("umsh.shell", "notified peer's conversation not opened: ${error.javaClass.simpleName}")
+            shell.showPeer(address)
+        }
+        else -> shell.showPeer(address)
+    }
+}
+
+/**
+ * A page above the shell: no banner, the radio control only when given
+ * (a full-screen dialog's bar), and notices of its own, since the shell's
+ * snackbar host is not drawn beneath it.
+ */
+@Composable
+private fun AppPage(radioControl: (@Composable () -> Unit)? = null, content: @Composable () -> Unit) {
+    CompositionLocalProvider(LocalTopBarRadioControl provides radioControl, LocalScreenBanner provides null) {
+        NoticeHost(content)
+    }
+}
+
+/** The radio control drawn above the shell: Radio Detail when a radio is held, else Choose a radio. */
+@Composable
+private fun AppStackRadioControl(viewModel: ShellViewModel, shell: ShellState) {
+    val shown by viewModel.radio.collectAsStateWithLifecycle()
+    val now by viewModel.now.collectAsStateWithLifecycle()
+    val showDetails: (() -> Unit)? = when {
+        shown.radio != null -> shell::openRadioDetail
+        shown.known -> shell::openRadioPicker
+        else -> null
+    }
+    RadioControl(shown.radio, now, known = shown.known, onShowDetails = showDetails)
+}
+
+/** How long a notification tap waits for its node to be read. */
+private const val PEER_REQUEST_WAIT_MS = 5_000L
+
+/**
+ * What each page above the shell is wrapped in: its saved state, and
+ * ViewModels of its own, cleared when it is popped, so two pages of one
+ * kind (two peers opened from links) never share one. Pages drawn in two
+ * places that must share a ViewModel name the shell's store
+ * ([LocalShellViewModelStoreOwner]) themselves.
+ */
+@Composable
+internal fun rememberAppStackDecorators(): List<NavEntryDecorator<NavKey>> = listOf(
+    rememberSaveableStateHolderNavEntryDecorator(),
+    rememberViewModelStoreNavEntryDecorator(),
+)
 
 /** The navigation suite around the destinations, with the radio control and the banners. */
 @Composable
@@ -289,7 +448,13 @@ private fun UnreadBadge(count: Int) {
 private fun Destinations(shell: ShellState) {
     val owner = checkNotNull(LocalViewModelStoreOwner.current)
     val twoPane = isTwoPaneLayout()
-    val strategy = rememberListDetailSceneStrategy<NavKey>(directive = calculatePaneScaffoldDirective(windowAdaptiveInfo()))
+    // Back pops one page, as the shell's own back does. The library's default
+    // pops until the panes change, which beside a list they never do: Back
+    // from a message's details, or a page above them, left the app.
+    val strategy = rememberListDetailSceneStrategy<NavKey>(
+        backNavigationBehavior = BackNavigationBehavior.PopLatest,
+        directive = calculatePaneScaffoldDirective(windowAdaptiveInfo()),
+    )
     // Each destination's panes carry its own scene key: list-detail pairs a
     // list with the details after it only within one destination, never a
     // Settings list with a Conversations placeholder beneath it.
@@ -300,17 +465,15 @@ private fun Destinations(shell: ShellState) {
             val conversations = shell.stacks.getValue(Destination.Conversations)
             ConversationsScreen(
                 current = shell.isShown(Destination.Conversations, UmshKey.ConversationsRoot, twoPane),
-                // Beside the list, the open conversation's row is highlighted, under a message's details too.
+                // Beside the list, the open conversation's row is highlighted, under
+                // whatever was opened from it too (a message's details, a peer page).
                 selected = if (twoPane) {
-                    when (val shown = conversations.lastOrNull()) {
-                        is UmshKey.Thread -> shown.address
-                        is UmshKey.MessageDetails -> shown.address
-                        else -> null
-                    }
+                    conversations.filterIsInstance<UmshKey.Thread>().lastOrNull()?.address
                 } else {
                     null
                 },
                 onOpen = { address -> shell.openDetail(Destination.Conversations, UmshKey.Thread(address)) },
+                onNewMessage = { shell.openAddPeer(Destination.Conversations) },
                 reselects = shell.reselectCount(Destination.Conversations),
             )
         }
@@ -321,16 +484,97 @@ private fun Destinations(shell: ShellState) {
                 onBack = if (twoPane) null else ({ shell.pop() }),
                 onLeave = { shell.closeThread(key) },
                 onOpenDetails = { ref -> shell.push(Destination.Conversations, UmshKey.MessageDetails(key.address, ref.sessionId, ref.handle)) },
+                onOpenPeer = { shell.openPeer(it, Destination.Conversations) },
                 onOpenRadio = shell::openRadioDetail,
                 onChooseRadio = shell::openRadioPicker,
             )
         }
         entry<UmshKey.MessageDetails>(metadata = ListDetailSceneStrategy.detailPane(Destination.Conversations)) { key ->
-            MessageDetailsScreen(key, onBack = { shell.pop() })
+            MessageDetailsScreen(key, onBack = { shell.pop() }, onOpenPeer = { shell.openPeer(it, Destination.Conversations) })
         }
         entry<UmshKey.PeersRoot>(
             metadata = ListDetailSceneStrategy.listPane(Destination.Peers) { NoPeerSelected() },
-        ) { PeersScreen(reselects = shell.reselectCount(Destination.Peers)) }
+        ) {
+            PeersScreen(
+                reselects = shell.reselectCount(Destination.Peers),
+                // Beside the list, the open peer's row is highlighted.
+                // The list's detail page is the one above its root, whatever was opened from it.
+                selected = if (twoPane) (shell.stacks.getValue(Destination.Peers).getOrNull(1) as? UmshKey.PeerPage)?.address else null,
+                onOpen = shell::openPeerFromList,
+                onDiscover = shell::openDiscoverFromList,
+                onAddPeer = { shell.openAddPeer(Destination.Peers) },
+            )
+        }
+        // From the Peers list, the list's detail page; from New message, above the conversation list (D11).
+        entry<UmshKey.AddPeer>(
+            metadata = { key: UmshKey.AddPeer -> ListDetailSceneStrategy.detailPane(key.destination) },
+        ) { key ->
+            val overDetail = shell.stacks.getValue(key.destination).indexOf(key) > 1
+            AddPeerScreen(
+                onBack = if (twoPane && !overDetail) null else ({ shell.pop() }),
+                onExit = { exit ->
+                    when (exit) {
+                        is AddPeerExit.Page -> shell.leaveAddPeerForPage(key, exit.address)
+                        is AddPeerExit.Conversation -> shell.leaveAddPeerForConversation(key, exit.address)
+                        AddPeerExit.OwnIdentity -> shell.leaveAddPeerForIdentity(key, twoPane)
+                    }
+                },
+            )
+        }
+        // Over the Add peer it came from, in the same pane; Back leaves the attempt for both.
+        entry<UmshKey.Exchange>(
+            metadata = { key: UmshKey.Exchange -> ListDetailSceneStrategy.detailPane(key.destination) },
+        ) {
+            ExchangeScreen(onBack = { shell.pop() })
+        }
+        // In the detail pane of the destination whose stack it is on.
+        entry<UmshKey.PeerPage>(
+            metadata = { key: UmshKey.PeerPage -> ListDetailSceneStrategy.detailPane(key.destination ?: Destination.Peers) },
+        ) { key ->
+            val destination = key.destination ?: Destination.Peers
+            // Beside a list there is no Back, unless the page is pushed over another detail page.
+            val stack = shell.stacks.getValue(destination)
+            val overDetail = stack.indexOf(key) > 1
+            PeerPageScreen(
+                key.address,
+                onBack = if (twoPane && !overDetail) null else ({ shell.pop() }),
+                onConversation = { shell.openConversationFrom(key, it) },
+                onOpenRoute = { shell.openRoute(key) },
+                onOpenNeighbors = { shell.openNeighbors(key) },
+                onOpenPeer = { shell.openPeer(it, destination) },
+            )
+        }
+        // Above the page that opened it, in the same pane (D12).
+        entry<UmshKey.Route>(
+            metadata = { key: UmshKey.Route -> ListDetailSceneStrategy.detailPane(key.destination ?: Destination.Peers) },
+        ) { key ->
+            val destination = key.destination ?: Destination.Peers
+            RouteScreen(
+                key.address,
+                onBack = { shell.pop() },
+                onOpenPeer = { shell.openPeer(it.address, destination) },
+                onAskNear = { shell.openDiscover(key) },
+                onEdit = { shell.openManualPath(key.address) },
+            )
+        }
+        entry<UmshKey.Neighbors>(
+            metadata = { key: UmshKey.Neighbors -> ListDetailSceneStrategy.detailPane(key.destination ?: Destination.Peers) },
+        ) { key ->
+            val destination = key.destination ?: Destination.Peers
+            NeighborsScreen(key.address, onBack = { shell.pop() }, onOpenPeer = { shell.openPeer(it, destination) })
+        }
+        // From the Peers list, the list's detail page; from Ask near this node, above the Route page that asked.
+        entry<UmshKey.Discover>(
+            metadata = { key: UmshKey.Discover -> ListDetailSceneStrategy.detailPane(key.destination ?: Destination.Peers) },
+        ) { key ->
+            val destination = key.destination ?: Destination.Peers
+            val overDetail = shell.stacks.getValue(destination).indexOf(key) > 1
+            DiscoverScreen(
+                key.vantagePeer,
+                onBack = if (twoPane && !overDetail) null else ({ shell.pop() }),
+                onOpenPeer = { shell.openPeer(it, destination) },
+            )
+        }
         entry<UmshKey.MapRoot> { MapScreen() }
         entry<UmshKey.SettingsRoot>(
             // Settings opens Your identity beside the list rather than an empty pane.
@@ -342,6 +586,8 @@ private fun Destinations(shell: ShellState) {
                     !twoPane -> null
                     open == UmshKey.RadioDetail -> SettingsRow.CompanionRadio
                     open == UmshKey.Notifications -> SettingsRow.Notifications
+                    // Reached from Companion radio's Radio identity row.
+                    open is PeerPageKey -> SettingsRow.CompanionRadio
                     else -> SettingsRow.YourIdentity
                 },
                 onOpenIdentity = {
@@ -371,6 +617,7 @@ private fun Destinations(shell: ShellState) {
                     onGone = shell::closeRadioDetail,
                     inPane = true,
                     onChooseRadio = shell::openRadioPicker,
+                    onOpenPeer = { shell.openPeer(it, Destination.Settings) },
                 )
             }
         }

@@ -28,6 +28,12 @@ sealed interface OpenRequest {
 
     /** Radio Detail: the radio notification's tap. */
     data object RadioDetail : OpenRequest
+
+    /**
+     * A notification about a node (a Next time heard notice): its
+     * conversation when it sends text, else its page on Peers.
+     */
+    data class Peer(val address: String) : OpenRequest
 }
 
 /**

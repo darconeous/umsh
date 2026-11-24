@@ -20,6 +20,7 @@ use std::sync::{Arc, Mutex};
 
 use tokio::sync::{mpsc, oneshot};
 use umsh_lan_bearer::socket::LanConfig;
+use umsh_lan_bearer::{DEFAULT_GROUP, DEFAULT_PORT};
 use umsh_ulcp_device::{QueuedClass, QueuedNotice};
 use umsh_ulcp_simdev::driven::{self, SpawnError};
 use umsh_ulcp_simdev::host::{HostPlatform, StateLock};
@@ -54,6 +55,28 @@ impl fmt::Display for MobileVirtualRadioError {
 }
 
 impl std::error::Error for MobileVirtualRadioError {}
+
+/// Who hears the virtual radio's group.
+///
+/// Every start names one, so nothing joins the LAN by default: a LAN may
+/// have a bridge that carries whatever reaches the group onto the air.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum MobileVirtualRadioReach {
+    /// The group on the network the host routes it through.
+    Lan,
+    /// The group on this host's loopback interface: only its own
+    /// participants hear it. For tests.
+    ThisHost,
+}
+
+impl MobileVirtualRadioReach {
+    fn config(self) -> LanConfig {
+        match self {
+            Self::Lan => LanConfig::lan(),
+            Self::ThisHost => LanConfig::host_local(DEFAULT_GROUP.into(), DEFAULT_PORT),
+        }
+    }
+}
 
 /// What a queued frame is, as far as a notification is concerned.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
@@ -125,20 +148,22 @@ impl MobileVirtualRadio {
     /// `state_dir`, for a host in this process.
     ///
     /// With `enable_phy`, the device comes up listening whatever it saved:
-    /// starting it is choosing the LAN. Without, its saved state decides,
-    /// so a host that turned the PHY off and saved keeps it off across
-    /// restarts.
+    /// starting it is choosing the network. Without, its saved state
+    /// decides, so a host that turned the PHY off and saved keeps it off
+    /// across restarts. Either way, `reach` decides who hears it: a host
+    /// that attaches may turn the PHY on.
     #[uniffi::constructor]
     pub fn start(
         state_dir: String,
         enable_phy: bool,
+        reach: MobileVirtualRadioReach,
         listener: Arc<dyn MobileVirtualRadioListener>,
     ) -> Result<Arc<Self>, MobileVirtualRadioError> {
         Self::launch(
             PathBuf::from(state_dir),
             None,
             enable_phy,
-            LanConfig::lan(),
+            reach.config(),
             listener,
         )
     }
@@ -153,13 +178,14 @@ impl MobileVirtualRadio {
         state_dir: String,
         socket_path: String,
         enable_phy: bool,
+        reach: MobileVirtualRadioReach,
         listener: Arc<dyn MobileVirtualRadioListener>,
     ) -> Result<Arc<Self>, MobileVirtualRadioError> {
         Self::launch(
             PathBuf::from(state_dir),
             Some(PathBuf::from(socket_path)),
             enable_phy,
-            LanConfig::lan(),
+            reach.config(),
             listener,
         )
     }
@@ -291,6 +317,23 @@ mod tests {
         fn on_queued(&self, _: MobileQueuedNoticeRecord) {}
     }
 
+    /// `ThisHost` stays on the loopback interface: a test radio that joined
+    /// the LAN could reach a bridge that carries it onto the air.
+    #[test]
+    fn reach_this_host_is_loopback_only() {
+        let this_host = MobileVirtualRadioReach::ThisHost.config();
+        assert_eq!(this_host.interface, std::net::Ipv4Addr::LOCALHOST);
+        assert_eq!(
+            this_host,
+            LanConfig::host_local(DEFAULT_GROUP.into(), DEFAULT_PORT)
+        );
+        assert_eq!(MobileVirtualRadioReach::Lan.config(), LanConfig::lan());
+        assert_ne!(
+            MobileVirtualRadioReach::Lan.config().interface,
+            std::net::Ipv4Addr::LOCALHOST
+        );
+    }
+
     impl MobileWireSink for Collect {
         fn on_wire(&self, bytes: Vec<u8>) {
             let _ = self.0.lock().unwrap().send(bytes);
@@ -387,6 +430,7 @@ mod tests {
             dir.to_string_lossy().into_owned(),
             socket.to_string_lossy().into_owned(),
             false,
+            MobileVirtualRadioReach::ThisHost,
             listener,
         )
         .unwrap();

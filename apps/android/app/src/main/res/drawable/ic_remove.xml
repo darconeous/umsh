@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- After Material Symbols "remove", weight 400, optical size 24
+     (Apache License 2.0, github.com/google/material-design-icons): a minus. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960">
+    <group android:translateY="960">
+        <path
+            android:fillColor="@android:color/white"
+            android:pathData="M200-440v-80h560v80H200Z" />
+    </group>
+</vector>

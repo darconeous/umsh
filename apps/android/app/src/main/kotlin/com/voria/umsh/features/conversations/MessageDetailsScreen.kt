@@ -41,23 +41,29 @@ import com.voria.umsh.app.runtimeViewModel
 import com.voria.umsh.core.renderRepeaterHint
 import com.voria.umsh.designsystem.DetailPane
 import com.voria.umsh.designsystem.EmptyState
+import com.voria.umsh.designsystem.RepeaterHintRow
 import com.voria.umsh.designsystem.SectionHeader
 import com.voria.umsh.designsystem.UmshScaffold
 import com.voria.umsh.designsystem.UmshTopAppBar
 import com.voria.umsh.designsystem.identifierAnnotated
 import com.voria.umsh.designsystem.rememberCopier
 import com.voria.umsh.designsystem.rememberDisplayNames
+import com.voria.umsh.features.peers.NamedHops
 import com.voria.umsh.models.ChatMessage
 import com.voria.umsh.models.MessageRef
 import com.voria.umsh.models.Octets
 import com.voria.umsh.services.mobilecore.AppLog
 import java.util.Locale
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /** What the details page has of its message. */
@@ -75,6 +81,14 @@ class MessageDetailsViewModel(private val runtime: AppRuntime, private val key: 
     private val _message = MutableStateFlow<DetailsRead>(DetailsRead.Reading)
 
     val message: StateFlow<DetailsRead> = _message.asStateFlow()
+
+    /** A received message's route hops, named (entry for entry with its route hints), with the hints they answer. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val routeNames: StateFlow<NamedHops> = _message.map { read ->
+        (read as? DetailsRead.Shown)?.message?.reception?.routeHints.orEmpty()
+    }.distinctUntilChanged().flatMapLatest { hints ->
+        runtime.hopNames.peers(hints, runtime.appState)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, NamedHops.NONE)
 
     init {
         val ref = MessageRef(key.sessionId, key.handle)
@@ -99,13 +113,15 @@ class MessageDetailsViewModel(private val runtime: AppRuntime, private val key: 
  * A message's details (`bubbles.svg` 6–7), with iOS's sections: the
  * message; for mine, the repeaters heard carrying it; for a received one,
  * its sender, its reception and its route, from the sender toward this
- * phone. Read from the stored message; its rows open nothing yet (the
- * repeater page and hint lookup are Phase 3's, D14).
+ * phone. Read from the stored message. A repeater the core named, or a
+ * route hop [com.voria.umsh.features.peers.HopNames] names, opens its page
+ * through [onOpenPeer]; one that names no node offers a lookup.
  */
 @Composable
-fun MessageDetailsScreen(key: UmshKey.MessageDetails, onBack: (() -> Unit)?) {
+fun MessageDetailsScreen(key: UmshKey.MessageDetails, onBack: (() -> Unit)?, onOpenPeer: (String) -> Unit) {
     val viewModel = runtimeViewModel { MessageDetailsViewModel(it, key) }
     val read by viewModel.message.collectAsStateWithLifecycle()
+    val routeNames by viewModel.routeNames.collectAsStateWithLifecycle()
     val runtime = LocalAppRuntime.current
     val appState by runtime.appState.collectAsStateWithLifecycle()
     val names = rememberDisplayNames()
@@ -148,10 +164,20 @@ fun MessageDetailsScreen(key: UmshKey.MessageDetails, onBack: (() -> Unit)?) {
                     if (shown.isOutbound && repeats != null) {
                         SectionHeader(stringResource(R.string.details_section_repeated_by))
                         var named = false
+                        // Each was heard forwarding this phone's own frame, so it is
+                        // in range: asked with no repeater before it.
                         repeats.repeaters.forEach { repeater ->
-                            val name = repeater.peerAddress?.let(peers::get)?.let(names::peer)
-                            if (name != null) named = true
-                            HintRow(name, repeater.text)
+                            val peer = repeater.peerAddress?.let(peers::get)
+                            if (peer != null) named = true
+                            RepeaterHintRow(
+                                hint = repeater.hint,
+                                text = repeater.text,
+                                named = peer,
+                                names = names,
+                                onOpen = { onOpenPeer(it.address) },
+                                lookUp = { runtime.lookUpRepeaterHint(repeater.hint, emptyList()) },
+                                modifier = Modifier.testTag(Tags.detailsRepeater(repeater.hint.hex())),
+                            )
                         }
                         if (repeats.anonymous > 0) {
                             DetailRow(stringResource(R.string.repeater_unidentified), integer(repeats.anonymous, locale))
@@ -202,8 +228,20 @@ fun MessageDetailsScreen(key: UmshKey.MessageDetails, onBack: (() -> Unit)?) {
                         )
                         if (reception.routeHints.isNotEmpty()) {
                             SectionHeader(stringResource(R.string.details_section_route))
-                            // Listed the way the message traveled: sender first.
-                            reception.routeHints.asReversed().forEach { HintRow(null, repeaterHintText(it)) }
+                            val hopNodes = routeNames.forHints(reception.routeHints)
+                            RouteHop.listed(reception.routeHints).forEach { hop ->
+                                RepeaterHintRow(
+                                    hint = hop.hint,
+                                    text = repeaterHintText(hop.hint),
+                                    // The hops before it are its index in the route.
+                                    named = hopNodes.getOrNull(hop.preceding.size),
+                                    names = names,
+                                    onOpen = { onOpenPeer(it.address) },
+                                    lookUp = { runtime.lookUpRepeaterHint(hop.hint, hop.preceding) },
+                                    modifier = Modifier.testTag(Tags.detailsRepeater(hop.hint.hex())),
+                                )
+                            }
+                            if (hopNodes.any { it != null }) Note(stringResource(R.string.repeater_hint_footer))
                         }
                     } else if (!shown.isOutbound) {
                         Note(stringResource(R.string.details_no_reception))
@@ -212,18 +250,6 @@ fun MessageDetailsScreen(key: UmshKey.MessageDetails, onBack: (() -> Unit)?) {
             }
         }
     }
-}
-
-/** A repeater: its name and hint, or the hint alone. */
-@Composable
-private fun HintRow(name: String?, hint: String) {
-    val hintLine = stringResource(R.string.repeater_hint_row, hint)
-    ListItem(
-        headlineContent = { Text(name ?: hintLine) },
-        supportingContent = if (name != null) ({ Text(hintLine) }) else null,
-        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-        modifier = Modifier.semantics(mergeDescendants = true) {},
-    )
 }
 
 @Composable
@@ -312,6 +338,23 @@ private fun decibels(centibels: Int, locale: Locale): String =
         minimumFractionDigits = 1
         maximumFractionDigits = 1
     }.format(centibels / 10.0)
+
+/** One hop of a received message's route, and the hops a lookup of it is steered through. */
+data class RouteHop(
+    val hint: Octets,
+    /** The hops between it and this phone, nearest this phone first, as the core keeps a route. */
+    val preceding: List<Octets>,
+) {
+    companion object {
+        /**
+         * [route] as the core records it (nearest this phone first), listed
+         * the way the message traveled: sender first. Each hop is asked by
+         * way of the ones nearer this phone, as iOS's `route[..<index]`.
+         */
+        fun listed(route: List<Octets>): List<RouteHop> =
+            route.indices.reversed().map { index -> RouteHop(route[index], route.take(index)) }
+    }
+}
 
 /** A two-byte repeater hint as the core renders it; its hex if the core refuses it. */
 private fun repeaterHintText(hint: Octets): String =

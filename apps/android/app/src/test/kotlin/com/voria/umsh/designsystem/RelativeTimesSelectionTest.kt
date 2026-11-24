@@ -2,6 +2,7 @@ package com.voria.umsh.designsystem
 
 import com.voria.umsh.services.format.AgeUnit
 import com.voria.umsh.services.format.TimeFormatting
+import com.voria.umsh.services.format.holdEnd
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -53,6 +54,14 @@ class RelativeTimesSelectionTest {
         assertEquals(ListTime.Text("Dec 30, 2025"), RelativeTimes.listTime(at(2025, 12, 30, 9, 0), now, twelve))
         // A time ahead of the clock (a skewed peer) still reads as a time.
         assertEquals(ListTime.Text("11:00 AM"), RelativeTimes.listTime(at(2026, 11, 3, 11, 0), now, twelve))
+    }
+
+    /** A hold ending today reads as a time; one ending on a later day carries its date (the editor's Until and Route's Held until). */
+    @Test
+    fun holdEnds() {
+        assertEquals("3:40 PM", twelve.holdEnd(at(2026, 11, 3, 15, 40), now))
+        assertEquals("Nov 4 3:40 PM", twelve.holdEnd(at(2026, 11, 4, 15, 40), now))
+        assertEquals("Nov 4 0:05", twentyFour.holdEnd(at(2026, 11, 4, 0, 5), now))
     }
 
     /** Today and Yesterday carry a time; older lines a month and day with a time, and the year if it differs. */

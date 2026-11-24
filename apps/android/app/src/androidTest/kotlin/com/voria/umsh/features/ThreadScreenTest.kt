@@ -314,6 +314,7 @@ class ThreadScreenTest {
                         onBack = null,
                         onLeave = {},
                         onOpenDetails = {},
+                        onOpenPeer = {},
                         onOpenRadio = {},
                         onChooseRadio = {},
                     )

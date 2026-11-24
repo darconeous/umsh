@@ -4,10 +4,12 @@ import android.content.Intent
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
@@ -106,6 +108,40 @@ class NotificationAskTest {
         again.waitFor(Lifecycle.State.RESUMED)
         assertFalse(blocked())
         again.close()
+    }
+
+    /**
+     * Next time heard (§3.2), refused so far: the tap arms the node in the
+     * core and then asks, once per tap; Back leaves it armed. Disarming
+     * never asks.
+     */
+    @Test
+    fun nextTimeHeardArmsThenAsks() {
+        assumeTrue(Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+        assumeFalse("POST_NOTIFICATIONS is granted: revoke it before the run", NotificationPermission.granted(context))
+        // The first attach's ask is the test above's.
+        runBlocking { preferences.setNotificationsAsked() }
+        val scenario = launch()
+        attached()
+        scenario.waitFor(Lifecycle.State.RESUMED)
+        val runtime = (fresh.host.state.value as HostState.Ready).runtime
+        fun tallac() = runtime.appState.value!!.peers.first { it.advertisedName == "Tallac Ridge" }
+        compose.waitUntil(TIMEOUT) { runtime.appState.value?.peers?.any { it.advertisedName == "Tallac Ridge" } == true }
+        compose.onNodeWithTag(Tags.NAV_PEERS).performClick()
+        compose.onNodeWithTag(Tags.PEERS_LIST).performScrollToNode(hasTestTag(Tags.peerRow(tallac().address)))
+        compose.onNodeWithTag(Tags.peerRow(tallac().address)).performClick()
+        compose.onNodeWithTag(Tags.PEER_NOTIFY_HEARD).performScrollTo().performClick()
+        scenario.waitFor(Lifecycle.State.STARTED)
+        dismissDialog()
+        scenario.waitFor(Lifecycle.State.RESUMED)
+        assertTrue(tallac().notifyWhenHeard)
+        assertFalse(NotificationPermission.granted(context))
+
+        compose.onNodeWithTag(Tags.PEER_NOTIFY_HEARD).performClick()
+        compose.waitUntil(TIMEOUT) { !tallac().notifyWhenHeard }
+        Thread.sleep(SETTLE_MS)
+        assertEquals(Lifecycle.State.RESUMED, scenario.state)
+        scenario.close()
     }
 
     @Test

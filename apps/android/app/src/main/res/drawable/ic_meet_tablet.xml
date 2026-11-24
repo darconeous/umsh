@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Nearby's tablet outline (nearby-exchange.svg 7): a filled slate, drawn on the session color. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="@android:color/white"
+        android:fillType="evenOdd"
+        android:pathData="M6.5,4h11a2,2 0,0 1,2 2v12a2,2 0,0 1,-2 2h-11a2,2 0,0 1,-2 -2v-12a2,2 0,0 1,2 -2zM10.75,17.5h2.5v1h-2.5z" />
+</vector>

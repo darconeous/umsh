@@ -17,7 +17,9 @@ import com.voria.umsh.R
  * A node's full address, all 44 characters, in groups of four that wrap
  * like words, balanced across the lines (`identity.svg`: six groups and five
  * on a phone held upright).
- * Tapping copies it with no spaces. Never truncated, never abbreviated.
+ * Tapping copies it with no spaces, unless [copyable] is false because an
+ * enclosing row is the copy target, so TalkBack reads row and address as one.
+ * Never truncated, never abbreviated.
  */
 @Composable
 fun CanonicalAddress(
@@ -25,17 +27,21 @@ fun CanonicalAddress(
     modifier: Modifier = Modifier,
     textAlign: TextAlign = TextAlign.Center,
     color: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    copyable: Boolean = true,
 ) {
     val copier = rememberCopier()
+    val copyLabel = stringResource(R.string.action_copy_address)
     Text(
         text = identifierAnnotated(AddressGrouping.grouped(address), monospace = false),
         // The minimum size inside the clickable, so the target it reports
         // (and its ripple) is 48 dp even when the address fits two lines.
-        modifier = modifier
-            .clickable(onClickLabel = stringResource(R.string.action_copy_address)) {
-                copier.copy(address, R.string.copied_address)
-            }
-            .minimumInteractiveComponentSize(),
+        modifier = if (copyable) {
+            modifier
+                .clickable(onClickLabel = copyLabel) { copier.copy(address, R.string.copied_address) }
+                .minimumInteractiveComponentSize()
+        } else {
+            modifier
+        },
         // Balanced, so the eleven groups split six and five rather than
         // leaving one group alone on the second line.
         style = IdentifierTextStyle.copy(

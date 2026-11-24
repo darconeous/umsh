@@ -39,3 +39,10 @@ interface TimeFormatting {
 }
 
 enum class AgeUnit { Minutes, Hours, Days }
+
+/**
+ * When a hold ends: its time today, else its date and time, so a 12-hour
+ * or day-long hold is never read as ending today.
+ */
+fun TimeFormatting.holdEnd(until: Instant, now: Instant): String =
+    if (until.atZone(zone).toLocalDate() == now.atZone(zone).toLocalDate()) timeOfDay(until) else monthDayTime(until)

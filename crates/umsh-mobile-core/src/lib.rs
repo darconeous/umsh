@@ -142,7 +142,7 @@ pub use ulcp::{
 
 pub use virtual_radio::{
     MobileQueuedClass, MobileQueuedNoticeRecord, MobileVirtualRadio, MobileVirtualRadioError,
-    MobileVirtualRadioListener,
+    MobileVirtualRadioListener, MobileVirtualRadioReach,
 };
 
 uniffi::setup_scaffolding!();
@@ -151,7 +151,7 @@ uniffi::setup_scaffolding!();
 ///
 /// Increment this when a binding-visible operation, record, or error contract
 /// changes incompatibly. It is independent of the UMSH wire version.
-pub const MOBILE_API_VERSION: u16 = 97;
+pub const MOBILE_API_VERSION: u16 = 99;
 
 /// Stable error categories consumed by platform adapters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Error)]
@@ -410,6 +410,33 @@ pub fn inspect_node_uri(uri: String) -> Result<NodeUriPreviewRecord, MobileError
         identity: decoded,
         identity_payload: payload,
     })
+}
+
+/// Which preview a piece of text belongs to; see [`classify_umsh_link`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum MobileLinkKind {
+    Node,
+    Channel,
+    NotLink,
+}
+
+/// Which preview a `umsh:` link belongs to: channel links (`gs:`, `gk:`,
+/// and the deprecated `cs:`, `ck:`) are `Channel`; any other `umsh:` link
+/// is `Node`; anything else, bare addresses and keys included, is
+/// `NotLink`. Trims whitespace, then matches the scheme without case and
+/// the kind prefix as `umsh-uri` parses it.
+#[uniffi::export]
+pub fn classify_umsh_link(input: String) -> MobileLinkKind {
+    let Some(rest) = umsh_uri::strip_scheme(input.trim()) else {
+        return MobileLinkKind::NotLink;
+    };
+    if umsh_uri::strip_group_name_kind(rest).is_some()
+        || umsh_uri::strip_group_key_kind(rest).is_some()
+    {
+        MobileLinkKind::Channel
+    } else {
+        MobileLinkKind::Node
+    }
 }
 
 /// How a channel's key is established.
@@ -1793,6 +1820,52 @@ mod tests {
     #[test]
     fn peer_identity_rejects_wrong_length_hex() {
         assert!(inspect_peer_identity("ab12".into()).is_err());
+    }
+
+    #[test]
+    fn links_sort_into_node_channel_or_none() {
+        let canonical = public_identity_record(&PublicKey([0xAB; 32])).canonical_address;
+        let hex = "ab".repeat(32);
+        let cases = [
+            ("umsh:gs:public", MobileLinkKind::Channel),
+            (
+                "umsh:gk:4LrFpcVdqA9LrfxgUz6zE6iUMoWiZVqU2PUVFN5D4y7d",
+                MobileLinkKind::Channel,
+            ),
+            ("umsh:cs:public", MobileLinkKind::Channel),
+            (
+                "umsh:ck:4LrFpcVdqA9LrfxgUz6zE6iUMoWiZVqU2PUVFN5D4y7d",
+                MobileLinkKind::Channel,
+            ),
+            ("UMSH:gs:public", MobileLinkKind::Channel),
+            (
+                "  umsh:gs:trail-crew?n=Trail%20Crew\n",
+                MobileLinkKind::Channel,
+            ),
+            ("Umsh:n:x", MobileLinkKind::Node),
+            ("umsh:", MobileLinkKind::Node),
+            ("https://umsh.dev/", MobileLinkKind::NotLink),
+            ("mailto:someone@example.com", MobileLinkKind::NotLink),
+            ("", MobileLinkKind::NotLink),
+            ("umsh", MobileLinkKind::NotLink),
+        ];
+        for (input, kind) in cases {
+            assert_eq!(classify_umsh_link(input.into()), kind, "{input:?}");
+        }
+        for input in [format!("umsh:n:{canonical}"), format!(" umsh:{canonical} ")] {
+            assert_eq!(
+                classify_umsh_link(input.clone()),
+                MobileLinkKind::Node,
+                "{input}"
+            );
+        }
+        for input in [canonical, hex, format!("0x{}", "ab".repeat(32))] {
+            assert_eq!(
+                classify_umsh_link(input.clone()),
+                MobileLinkKind::NotLink,
+                "{input}"
+            );
+        }
     }
 
     #[test]

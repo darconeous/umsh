@@ -11,6 +11,7 @@ import com.voria.umsh.services.identity.IdentityOperations
 import com.voria.umsh.services.identity.IdentityVault
 import com.voria.umsh.services.identity.IdentityVaultException
 import com.voria.umsh.services.location.PhoneLocationSource
+import com.voria.umsh.services.location.PositionSource
 import com.voria.umsh.models.NodeHint
 import com.voria.umsh.services.mobilecore.AppLog
 import com.voria.umsh.services.mobilecore.RecordMapping
@@ -181,7 +182,7 @@ class AppCoreHost(
     private val vaults: VaultFactory,
     val preferences: AppPreferences,
     /** `platforms.json`: 65026 for a phone, 65027 for a tablet. */
-    private val platformModel: () -> UShort,
+    val platformModel: () -> UShort,
     private val clock: Clock,
     private val foregroundSignals: Flow<Unit>,
     /** Debug builds: the staging core may be chosen. */
@@ -198,6 +199,8 @@ class AppCoreHost(
     private val bindings: RadioBindings = RadioBindings { },
     /** This phone's location readings and grant, for Share location; none in tests that never share one. */
     private val location: PhoneLocationSource = PhoneLocationSource.None,
+    /** One reading of the phone's position under a grant already given; tests hand in fixes of their own. */
+    private val positions: PositionSource = PositionSource.of(location),
 ) {
     private class Opened(
         val kind: CoreKind,
@@ -763,10 +766,13 @@ class AppCoreHost(
             is IdentityOperations.Loaded.Ready -> loaded.identity
         }
         val vault = vaults.channelKeys(kind)
+        // Read once: the runtime shows the model this core advertises, even
+        // after the screen it was read from changes width.
+        val config = config(kind)
         val core = try {
             withContext(io) {
                 paths.counters(kind).mkdirs()
-                MobileAppCore(store, vault, config(kind))
+                MobileAppCore(store, vault, config)
             }
         } catch (error: Exception) {
             AppLog.e(TAG, "core not made: ${error.javaClass.simpleName}")
@@ -784,6 +790,7 @@ class AppCoreHost(
         val runtime = AppRuntime(
             core = core,
             kind = kind,
+            platformModel = config.platformModel,
             generation = runtimeGeneration,
             owner = owner,
             identityOps = identity,
@@ -800,6 +807,7 @@ class AppCoreHost(
             scope = runtimeScope,
             onIdentityLost = { detail -> identityLost(runtimeGeneration, detail) },
             location = location,
+            positions = positions,
         )
         val opened = Opened(kind, core, runtime, runtimeScope, air)
         current = opened

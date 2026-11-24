@@ -117,3 +117,10 @@ fun UmshScaffold(
         content = content,
     )
 }
+
+/**
+ * Room a scrolling list leaves under its last row for a floating action
+ * button: the button's 56 dp and the 16 dp margin on either side of it,
+ * so the last row can scroll clear of it.
+ */
+val FAB_CLEARANCE = 88.dp

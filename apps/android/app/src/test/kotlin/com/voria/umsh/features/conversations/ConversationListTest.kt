@@ -12,7 +12,9 @@ import com.voria.umsh.features.conversations.ListFixtures.names
 import com.voria.umsh.features.conversations.ListFixtures.peer
 import com.voria.umsh.features.conversations.ListFixtures.preview
 import com.voria.umsh.features.conversations.ListFixtures.state
+import com.voria.umsh.features.peers.PeerArrangement
 import com.voria.umsh.features.peers.PeerSections
+import com.voria.umsh.features.peers.PeerSort
 import com.voria.umsh.models.PreviewText
 import com.voria.umsh.models.PreviewText.Sender
 import com.voria.umsh.services.format.SearchFolding
@@ -188,12 +190,12 @@ class ConversationListTest {
         val heard = peer("Ri4x", advertisedName = "Riverbend", saved = false)
         val radio = peer("Tr4d", advertisedName = "Trail radio", companion = true, saved = false)
 
-        val sections = PeerSections.of(state(peers = listOf(ridge, kestrel, alder, heard, radio)), names, collation)
+        val sections = PeerSections.of(state(peers = listOf(ridge, kestrel, alder, heard, radio)), PeerArrangement(PeerSort.Alphabetical, null, names, collation))
 
         assertEquals(listOf(ridge), sections.favorites)
         assertEquals(listOf(alder, kestrel), sections.saved)
         assertEquals(listOf(radio), sections.radios)
-        assertTrue(PeerSections.of(state(peers = listOf(heard)), names, collation).isEmpty)
+        assertTrue(PeerSections.of(state(peers = listOf(heard)), PeerArrangement(PeerSort.Alphabetical, null, names, collation)).isEmpty)
     }
 
     /** The seeded staging store, read through a radioless core: every conversation is a row, newest first. */

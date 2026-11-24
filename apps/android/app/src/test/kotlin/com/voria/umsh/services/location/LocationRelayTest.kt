@@ -46,6 +46,12 @@ class FakeLocationSource(grant: LocationGrant = LocationGrant.Precise, inUse: Bo
             if (counted) listening--
         }
     }
+
+    /** What a one-shot read answers: none unless a test sets one. */
+    @Volatile
+    var current: PhoneFix? = null
+
+    override suspend fun currentFix(grant: LocationGrant): PhoneFix? = current
 }
 
 /** Which readings reach the core, by sharing, grant and whether the app is in use (§3.8, §7.6). */

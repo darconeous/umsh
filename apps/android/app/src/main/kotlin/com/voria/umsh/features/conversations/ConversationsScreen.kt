@@ -1,6 +1,22 @@
 package com.voria.umsh.features.conversations
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.semantics.Role
+import com.voria.umsh.designsystem.FAB_CLEARANCE
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -46,8 +62,9 @@ import com.voria.umsh.designsystem.userIsolated
  * The Conversations root (`conversation-list.svg`): every conversation,
  * newest activity first, with Search in the top app bar. A swipe toward
  * the start, or the row's TalkBack action, asks before deleting a direct
- * conversation or leaving a channel's chat. Scan and New chat wait for
- * their pages (D5).
+ * conversation or leaving a channel's chat. New chat opens its sheet
+ * (board 6), whose New message is Add peer above this list ([onNewMessage],
+ * D11); New channel chat waits for channels. Scan waits for its page (D5).
  *
  * [current] is whether the shell has the list as a page shown, not only
  * behind a back preview: only then may search take focus. [selected] is
@@ -59,6 +76,7 @@ fun ConversationsScreen(
     current: Boolean,
     selected: String?,
     onOpen: (String) -> Unit,
+    onNewMessage: () -> Unit,
     reselects: Int,
 ) {
     val runtime = LocalAppRuntime.current
@@ -78,6 +96,7 @@ fun ConversationsScreen(
 
     val list = rememberLazyListState()
     ScrollToTopOnReselect(reselects, list)
+    val newChat by viewModel.newChatShown.collectAsStateWithLifecycle()
 
     Box(Modifier.fillMaxSize()) {
         UmshScaffold(
@@ -92,13 +111,27 @@ fun ConversationsScreen(
                 )
             },
             modifier = Modifier.testTag(Tags.CONVERSATIONS_ROOT),
+            floatingActionButton = {
+                // Board 2's own buttons stand in for it on the empty list.
+                if (content is ConversationsContent.Rows) {
+                    ExtendedFloatingActionButton(onClick = { viewModel.showNewChat(true) }, modifier = Modifier.testTag(Tags.CONVERSATIONS_NEW_CHAT)) {
+                        Text(stringResource(R.string.new_chat))
+                    }
+                }
+            },
         ) { padding ->
             when (val shown = content) {
                 ConversationsContent.Loading -> Loading(Modifier.padding(padding))
-                ConversationsContent.Empty -> Empty(Modifier.padding(padding))
+                ConversationsContent.Empty -> Empty(Modifier.padding(padding), onNewMessage)
                 is ConversationsContent.Rows -> LazyColumn(
                     state = list,
-                    contentPadding = padding,
+                    // The last row clears the New chat button.
+                    contentPadding = PaddingValues(
+                        start = padding.calculateStartPadding(LocalLayoutDirection.current),
+                        top = padding.calculateTopPadding(),
+                        end = padding.calculateEndPadding(LocalLayoutDirection.current),
+                        bottom = padding.calculateBottomPadding() + FAB_CLEARANCE,
+                    ),
                     modifier = Modifier.fillMaxSize().testTag(Tags.CONVERSATION_LIST),
                 ) {
                     items(shown.rows, key = { it.address }) { row ->
@@ -135,6 +168,15 @@ fun ConversationsScreen(
         }
     }
 
+    if (newChat) {
+        NewChatSheet(
+            onNewMessage = {
+                viewModel.showNewChat(false)
+                onNewMessage()
+            },
+            onDismiss = { viewModel.showNewChat(false) },
+        )
+    }
     pending?.let { removal -> RemovalDialog(removal, viewModel::confirmRemoval, viewModel::cancelRemoval) }
     failure?.let { shown ->
         val (title, body) = when (shown) {
@@ -185,9 +227,9 @@ private fun Loading(modifier: Modifier) {
     }
 }
 
-/** Board 2, its body and buttons left out until New chat exists (D5). */
+/** Board 2: New message; Channel chat arrives with channels. */
 @Composable
-private fun Empty(modifier: Modifier) {
+private fun Empty(modifier: Modifier, onNewMessage: () -> Unit) {
     Column(
         modifier.fillMaxSize().padding(horizontal = 24.dp).testTag(Tags.CONVERSATIONS_EMPTY),
         verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
@@ -205,6 +247,42 @@ private fun Empty(modifier: Modifier) {
             textAlign = TextAlign.Center,
             modifier = Modifier.semantics { heading() },
         )
+        Text(
+            stringResource(R.string.conversations_empty_body),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+        Button(onClick = onNewMessage, modifier = Modifier.padding(top = 4.dp).testTag(Tags.CONVERSATIONS_EMPTY_NEW_MESSAGE)) {
+            Text(stringResource(R.string.new_message))
+        }
+    }
+}
+
+/**
+ * New chat (board 6): the ways into a conversation. New message finds or
+ * adds a peer (Add peer); New channel chat arrives with channels.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun NewChatSheet(onNewMessage: () -> Unit, onDismiss: () -> Unit) {
+    ModalBottomSheet(onDismissRequest = onDismiss, modifier = Modifier.testTag(Tags.NEW_CHAT_SHEET)) {
+        Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 16.dp)) {
+            Text(
+                stringResource(R.string.new_chat),
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp).semantics { heading() },
+            )
+            ListItem(
+                headlineContent = { Text(stringResource(R.string.new_message)) },
+                supportingContent = { Text(stringResource(R.string.new_message_detail)) },
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                modifier = Modifier
+                    .clickable(role = Role.Button, onClick = onNewMessage)
+                    .padding(horizontal = 8.dp)
+                    .testTag(Tags.NEW_CHAT_MESSAGE),
+            )
+        }
     }
 }
 

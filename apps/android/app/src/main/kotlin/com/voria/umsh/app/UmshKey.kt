@@ -43,6 +43,72 @@ sealed interface UmshKey : NavKey {
     @Serializable
     data object RadioPicker : UmshKey
 
+    /**
+     * A peer's page (`peer-page.svg`). [destination] is the stack it is on,
+     * which picks its pane; null above the shell (from Radio Detail there,
+     * and links).
+     */
+    @Serializable
+    data class PeerPage(val address: String, val destination: Destination?) : UmshKey, PeerPageKey {
+        override val peerAddress: String get() = address
+    }
+
+    /**
+     * How this phone reaches a peer (`ping-route.svg` 4–5), pushed on the
+     * stack of the page that opened it (D12): [destination] as that page's.
+     */
+    @Serializable
+    data class Route(val address: String, val destination: Destination?) : UmshKey, PeerPageKey {
+        override val peerAddress: String get() = address
+    }
+
+    /**
+     * What a repeater reports hearing (`repeaters-discover.svg` 1–2), pushed
+     * on the stack of the page that opened it (D12).
+     */
+    @Serializable
+    data class Neighbors(val address: String, val destination: Destination?) : UmshKey, PeerPageKey {
+        override val peerAddress: String get() = address
+    }
+
+    /**
+     * Discover peers (`repeaters-discover.svg` 3–5): from the Peers list, or
+     * aimed near [vantagePeer] by its Route page's Ask near this node, on
+     * that page's stack (D12). It holds the peer, not the vantage, so a page
+     * restored after process death asks where the route goes now.
+     */
+    @Serializable
+    data class Discover(val vantagePeer: String?, val destination: Destination?) : UmshKey, PeerPageKey {
+        override val peerAddress: String? get() = vantagePeer
+    }
+
+    /**
+     * The manual path editor for a peer (`manual-path.svg`): a full-screen
+     * dialog above the shell, from the Route page's Edit, wherever that is.
+     */
+    @Serializable
+    data class ManualPath(val address: String) : UmshKey, PeerPageKey {
+        override val peerAddress: String get() = address
+    }
+
+    /**
+     * Add peer (`add-peer.svg`): from the Peers list's button, as the list's
+     * detail page, or from Conversations' New message, above that list
+     * (D11). [destination] is the stack it is on. Its Nearby keeps the
+     * contact exchange open.
+     */
+    @Serializable
+    data class AddPeer(val destination: Destination) : UmshKey, MeetsNearby
+
+    /**
+     * A contact exchange under way (`nearby-exchange.svg` 2–5), pushed over
+     * the Add peer on [destination]'s stack; the exchange stays open under
+     * it. The exchange does not survive process death, so a restored one
+     * closes itself ([ShellState.followMeet]).
+     */
+    @Serializable
+    data class Exchange(val destination: Destination) : UmshKey, MeetsNearby
+
     /** Settings › Notifications. */
     @Serializable
     data object Notifications : UmshKey
@@ -51,3 +117,18 @@ sealed interface UmshKey : NavKey {
     @Serializable
     data object Shell : UmshKey
 }
+
+/**
+ * A page about one stored peer: closed, with whatever is above it, once
+ * [peerAddress] is no longer stored ([ShellState.closePeerPagesNotIn]).
+ * Null for a page that names no peer.
+ */
+interface PeerPageKey {
+    val peerAddress: String?
+}
+
+/**
+ * A page that keeps Add peer's contact exchange open while it is the
+ * selected destination's top page ([MeetPresence]).
+ */
+interface MeetsNearby

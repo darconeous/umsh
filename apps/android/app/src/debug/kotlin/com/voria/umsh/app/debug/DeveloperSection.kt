@@ -115,6 +115,11 @@ fun DeveloperSection(host: AppCoreHost, runtime: AppRuntime) {
             ActionRow(stringResource(R.string.developer_peer_replies)) {
                 connection.later(STAGED_DELAY_MS) { peerReplies(reply) }
             }
+            // The staged T-LoRa Pager opens Add peer and asks this phone once
+            // it lists it: open Add peer to be asked (nearby-exchange.svg 1).
+            ActionRow(stringResource(R.string.developer_peer_asks_exchange), Tags.DEV_PEER_ASKS_EXCHANGE) {
+                connection.later(0) { peerOpensAddPeer(true) }
+            }
         }
         BridgedRadioRows(host)
         BondedRadioRows(host)

@@ -124,8 +124,10 @@ class MainActivity : ComponentActivity() {
     @VisibleForTesting
     internal fun takeRequest(intent: Intent) {
         intent.getStringExtra(EXTRA_CONVERSATION)?.let { openRequests.value = OpenRequest.Conversation(it) }
+        intent.getStringExtra(EXTRA_PEER)?.let { openRequests.value = OpenRequest.Peer(it) }
         if (intent.getBooleanExtra(EXTRA_RADIO_DETAIL, false)) openRequests.value = OpenRequest.RadioDetail
         intent.removeExtra(EXTRA_CONVERSATION)
+        intent.removeExtra(EXTRA_PEER)
         intent.removeExtra(EXTRA_RADIO_DETAIL)
     }
 
@@ -153,6 +155,9 @@ class MainActivity : ComponentActivity() {
         /** The conversation a notification or shortcut opens, by its address. */
         const val EXTRA_CONVERSATION = "umsh.conversation"
 
+        /** A node a Next time heard notice is about, by its address. */
+        const val EXTRA_PEER = "umsh.peer"
+
         /** Radio Detail: the radio notification's tap. */
         const val EXTRA_RADIO_DETAIL = "umsh.radioDetail"
 
@@ -169,6 +174,13 @@ class MainActivity : ComponentActivity() {
             Intent(context, MainActivity::class.java)
                 .setAction(Intent.ACTION_VIEW)
                 .putExtra(EXTRA_CONVERSATION, address)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+
+        /** Opens the app at a node: its conversation if it sends text, else its page on Peers. */
+        fun peerIntent(context: Context, address: String): Intent =
+            Intent(context, MainActivity::class.java)
+                .setAction(Intent.ACTION_VIEW)
+                .putExtra(EXTRA_PEER, address)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
 
         /** Opens the app at Radio Detail: the existing activity, brought to front, or a new one. */

@@ -55,6 +55,7 @@ final class LanRadioProvider: NEAppPushProvider, @unchecked Sendable {
                 stateDir: VirtualRadioPaths.stateDirectory.path,
                 socketPath: VirtualRadioPaths.socketPath,
                 enablePhy: true,
+                reach: .lan,
                 listener: QueuedNotifier()
             )
         } catch {

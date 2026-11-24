@@ -173,15 +173,12 @@ class BleAttachTest {
         start()
         val runtime = connect()
         runtime.radioWhere { it.carriesThisPhone }
-        val channel = withTimeout(TIMEOUT) {
-            runtime.appState.first { state -> state?.channels?.any { it.canonicalName == "emergency" } == true }!!
-        }.channels.first { it.canonicalName == "emergency" }
-        val emergency = runtime.openChannelConversation(channel.id).await()
-        runtime.certifyEmergency().getOrThrow()
-        withTimeout(TIMEOUT) { runtime.emergencyCertified.first { it } }
-        val text = "TEST: radio check"
+        // A private channel of the test's own: nothing a person listens on.
+        val channel = runtime.core.createPrivateChannel("BleAttachTest")
+        val conversation = runtime.openChannelConversation(channel).await()
+        val text = "BleAttachTest frame"
         val before = peripheral.framesIn.size
-        assertEquals(SendOutcome.Sent, runtime.send(emergency, text, forwardSecret = null).await())
+        assertEquals(SendOutcome.Sent, runtime.send(conversation, text, forwardSecret = null).await())
         // A CMD_STR_SEND (9) to the radio, carrying more than the text: the
         // whole packet, sealed. Property polls and the like are not it.
         withTimeout(TIMEOUT) {

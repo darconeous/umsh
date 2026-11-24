@@ -106,6 +106,15 @@ class ConversationsViewModel(private val runtime: AppRuntime, environment: ListE
         _query.value = query
     }
 
+    private val _newChatShown = MutableStateFlow(false)
+
+    /** The New chat sheet is open: kept across a rotation, not after process death. */
+    val newChatShown: StateFlow<Boolean> = _newChatShown.asStateFlow()
+
+    fun showNewChat(shown: Boolean) {
+        _newChatShown.value = shown
+    }
+
     fun setSearching(open: Boolean) {
         _searching.value = open
         if (!open) _query.value = ""

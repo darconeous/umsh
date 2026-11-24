@@ -14,8 +14,8 @@ import com.voria.umsh.app.Tags
 
 /**
  * A confirmation before something that cannot be undone: the title says
- * what, the body what goes with it, and the destructive [confirm] button
- * sits beside Cancel, which dismissing also means.
+ * what, the body what goes with it, and the [confirm] button (in the error
+ * color when [destructive]) sits beside Cancel, which dismissing also means.
  */
 @Composable
 fun ConfirmDialog(
@@ -24,6 +24,9 @@ fun ConfirmDialog(
     confirm: String,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
+    destructive: Boolean = true,
+    /** The other button; Cancel unless the dialog names it. */
+    dismiss: String? = null,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -32,13 +35,13 @@ fun ConfirmDialog(
         text = { Text(body) },
         dismissButton = {
             TextButton(onClick = onDismiss, modifier = Modifier.testTag(Tags.CONFIRM_CANCEL)) {
-                Text(stringResource(R.string.dialog_cancel))
+                Text(dismiss ?: stringResource(R.string.dialog_cancel))
             }
         },
         confirmButton = {
             TextButton(
                 onClick = onConfirm,
-                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                colors = if (destructive) ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error) else ButtonDefaults.textButtonColors(),
                 modifier = Modifier.testTag(Tags.CONFIRM_ACTION),
             ) {
                 Text(confirm)

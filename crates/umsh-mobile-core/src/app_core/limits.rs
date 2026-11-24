@@ -21,6 +21,20 @@ const ADVERT_INTERVAL_CHOICES_S: [u32; 5] = [0, HOUR_S, 4 * HOUR_S, 12 * HOUR_S,
 /// Beacon intervals offered, 0 (off) first.
 const BEACON_INTERVAL_CHOICES_S: [u32; 5] = [0, 20 * 60, 30 * 60, HOUR_S, 4 * HOUR_S];
 
+const HOUR_MS: u64 = 60 * 60 * 1000;
+
+/// How long a manual path can be held, shortest first.
+const MANUAL_PATH_HOLD_CHOICES_MS: [u64; 5] = [
+    HOUR_MS / 2,
+    HOUR_MS,
+    4 * HOUR_MS,
+    12 * HOUR_MS,
+    24 * HOUR_MS,
+];
+
+/// The hold a new manual path starts with.
+const MANUAL_PATH_HOLD_DEFAULT_MS: u64 = HOUR_MS;
+
 const _: () = assert!(DEFAULT_LOCATION_PRECISION == umsh_ulcp_device::DEFAULT_IDENT_PRECISION);
 const _: () = assert!(umsh_node::location::MAX_PRECISION == umsh_ulcp_device::MAX_IDENT_PRECISION);
 const _: () = assert!(umsh_mac::CachedRoute::MAX_HINTS == umsh_ulcp::node_msg::MAX_ROUTE_HINTS);
@@ -54,6 +68,10 @@ pub struct MobileLimitsRecord {
     pub beacon_interval_choices_s: Vec<u32>,
     /// Shortest gap between two unnarrowed asks for identities.
     pub discovery_cooldown_ms: u64,
+    /// How long a manual path can be held, milliseconds, shortest first.
+    pub manual_path_hold_choices_ms: Vec<u64>,
+    /// The hold a new manual path starts with; one of the choices.
+    pub manual_path_hold_default_ms: u64,
 }
 
 /// See [`MobileLimitsRecord`].
@@ -75,6 +93,8 @@ pub fn mobile_limits() -> MobileLimitsRecord {
         advert_interval_choices_s: ADVERT_INTERVAL_CHOICES_S.to_vec(),
         beacon_interval_choices_s: BEACON_INTERVAL_CHOICES_S.to_vec(),
         discovery_cooldown_ms: DISCOVERY_COOLDOWN_MS,
+        manual_path_hold_choices_ms: MANUAL_PATH_HOLD_CHOICES_MS.to_vec(),
+        manual_path_hold_default_ms: MANUAL_PATH_HOLD_DEFAULT_MS,
     }
 }
 
@@ -137,6 +157,16 @@ mod tests {
             ),
             (15, 3, 2)
         );
+    }
+
+    #[test]
+    fn manual_path_holds_ascend_and_the_default_is_one_of_them() {
+        let limits = mobile_limits();
+        let choices = &limits.manual_path_hold_choices_ms;
+        assert!(!choices.is_empty());
+        assert!(choices.windows(2).all(|pair| pair[0] < pair[1]));
+        assert!(choices.first().is_some_and(|&shortest| shortest > 0));
+        assert!(choices.contains(&limits.manual_path_hold_default_ms));
     }
 
     #[test]

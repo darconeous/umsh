@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A mast with waves either side (`peer-page.svg`'s Neighbors tile), drawn as a stroke. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="@android:color/white"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M12,11L8,21M12,11L16,21M9.6,17h4.8M7.6,6.6a6,6 0,0 0,0 8M16.4,6.6a6,6 0,0 1,0 8M12,9.4v0.2" />
+</vector>

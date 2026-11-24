@@ -1159,6 +1159,14 @@ public protocol MobileAppCoreProtocol: AnyObject, Sendable {
     func messageCount(conversationAddress: String) throws  -> Int64
 
     /**
+     * For each 2-byte repeater hint, the address of the known peer it most
+     * likely names: among peers whose node hint starts with it, the one
+     * likely to forward, else the only one; `None` when no peer or several
+     * fit. A hint that is not `repeater_hint_len` bytes gets `None`.
+     */
+    func nameRepeaterHints(hints: [Data]) throws  -> [String?]
+
+    /**
      * What a repeater last said about its neighbors, or `None` when it was
      * never asked.
      */
@@ -2607,6 +2615,22 @@ open func messageCount(conversationAddress: String)throws  -> Int64  {
     uniffi_umsh_mobile_core_fn_method_mobileappcore_message_count(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(conversationAddress),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * For each 2-byte repeater hint, the address of the known peer it most
+     * likely names: among peers whose node hint starts with it, the one
+     * likely to forward, else the only one; `None` when no peer or several
+     * fit. A hint that is not `repeater_hint_len` bytes gets `None`.
+     */
+open func nameRepeaterHints(hints: [Data])throws  -> [String?]  {
+    return try  FfiConverterSequenceOptionString.lift(try rustCallWithError(FfiConverterTypeMobileAppError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappcore_name_repeater_hints(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceData.lower(hints),uniffiCallStatus
     )
 })
 }
@@ -12566,13 +12590,14 @@ open class MobileVirtualRadio: MobileVirtualRadioProtocol, @unchecked Sendable {
      * The socket is placed where only processes entitled to the radio
      * can reach it, and is removed when the radio stops.
      */
-public static func serve(stateDir: String, socketPath: String, enablePhy: Bool, listener: MobileVirtualRadioListener)throws  -> MobileVirtualRadio  {
+public static func serve(stateDir: String, socketPath: String, enablePhy: Bool, reach: MobileVirtualRadioReach, listener: MobileVirtualRadioListener)throws  -> MobileVirtualRadio  {
     return try  FfiConverterTypeMobileVirtualRadio_lift(try rustCallWithError(FfiConverterTypeMobileVirtualRadioError_lift) {
         uniffiCallStatus in
     uniffi_umsh_mobile_core_fn_constructor_mobilevirtualradio_serve(
         FfiConverterString.lower(stateDir),
         FfiConverterString.lower(socketPath),
         FfiConverterBool.lower(enablePhy),
+        FfiConverterTypeMobileVirtualRadioReach_lower(reach),
         FfiConverterTypeMobileVirtualRadioListener_lower(listener),uniffiCallStatus
     )
 })
@@ -12583,16 +12608,18 @@ public static func serve(stateDir: String, socketPath: String, enablePhy: Bool, 
      * `state_dir`, for a host in this process.
      *
      * With `enable_phy`, the device comes up listening whatever it saved:
-     * starting it is choosing the LAN. Without, its saved state decides,
-     * so a host that turned the PHY off and saved keeps it off across
-     * restarts.
+     * starting it is choosing the network. Without, its saved state
+     * decides, so a host that turned the PHY off and saved keeps it off
+     * across restarts. Either way, `reach` decides who hears it: a host
+     * that attaches may turn the PHY on.
      */
-public static func start(stateDir: String, enablePhy: Bool, listener: MobileVirtualRadioListener)throws  -> MobileVirtualRadio  {
+public static func start(stateDir: String, enablePhy: Bool, reach: MobileVirtualRadioReach, listener: MobileVirtualRadioListener)throws  -> MobileVirtualRadio  {
     return try  FfiConverterTypeMobileVirtualRadio_lift(try rustCallWithError(FfiConverterTypeMobileVirtualRadioError_lift) {
         uniffiCallStatus in
     uniffi_umsh_mobile_core_fn_constructor_mobilevirtualradio_start(
         FfiConverterString.lower(stateDir),
         FfiConverterBool.lower(enablePhy),
+        FfiConverterTypeMobileVirtualRadioReach_lower(reach),
         FfiConverterTypeMobileVirtualRadioListener_lower(listener),uniffiCallStatus
     )
 })
@@ -18256,6 +18283,14 @@ public struct MobileLimitsRecord: Equatable, Hashable {
      * Shortest gap between two unnarrowed asks for identities.
      */
     public var discoveryCooldownMs: UInt64
+    /**
+     * How long a manual path can be held, milliseconds, shortest first.
+     */
+    public var manualPathHoldChoicesMs: [UInt64]
+    /**
+     * The hold a new manual path starts with; one of the choices.
+     */
+    public var manualPathHoldDefaultMs: UInt64
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -18284,7 +18319,13 @@ public struct MobileLimitsRecord: Equatable, Hashable {
          */advertIntervalChoicesS: [UInt32], beaconIntervalChoicesS: [UInt32],
         /**
          * Shortest gap between two unnarrowed asks for identities.
-         */discoveryCooldownMs: UInt64) {
+         */discoveryCooldownMs: UInt64,
+        /**
+         * How long a manual path can be held, milliseconds, shortest first.
+         */manualPathHoldChoicesMs: [UInt64],
+        /**
+         * The hold a new manual path starts with; one of the choices.
+         */manualPathHoldDefaultMs: UInt64) {
         self.maxFloodHops = maxFloodHops
         self.recommendedFloodHops = recommendedFloodHops
         self.recommendedBeaconFloodHops = recommendedBeaconFloodHops
@@ -18300,6 +18341,8 @@ public struct MobileLimitsRecord: Equatable, Hashable {
         self.advertIntervalChoicesS = advertIntervalChoicesS
         self.beaconIntervalChoicesS = beaconIntervalChoicesS
         self.discoveryCooldownMs = discoveryCooldownMs
+        self.manualPathHoldChoicesMs = manualPathHoldChoicesMs
+        self.manualPathHoldDefaultMs = manualPathHoldDefaultMs
     }
 
 
@@ -18332,7 +18375,9 @@ public struct FfiConverterTypeMobileLimitsRecord: FfiConverterRustBuffer {
                 maxAnnounceIntervalS: FfiConverterUInt32.read(from: &buf),
                 advertIntervalChoicesS: FfiConverterSequenceUInt32.read(from: &buf),
                 beaconIntervalChoicesS: FfiConverterSequenceUInt32.read(from: &buf),
-                discoveryCooldownMs: FfiConverterUInt64.read(from: &buf)
+                discoveryCooldownMs: FfiConverterUInt64.read(from: &buf),
+                manualPathHoldChoicesMs: FfiConverterSequenceUInt64.read(from: &buf),
+                manualPathHoldDefaultMs: FfiConverterUInt64.read(from: &buf)
         )
     }
 
@@ -18352,6 +18397,8 @@ public struct FfiConverterTypeMobileLimitsRecord: FfiConverterRustBuffer {
         FfiConverterSequenceUInt32.write(value.advertIntervalChoicesS, into: &buf)
         FfiConverterSequenceUInt32.write(value.beaconIntervalChoicesS, into: &buf)
         FfiConverterUInt64.write(value.discoveryCooldownMs, into: &buf)
+        FfiConverterSequenceUInt64.write(value.manualPathHoldChoicesMs, into: &buf)
+        FfiConverterUInt64.write(value.manualPathHoldDefaultMs, into: &buf)
     }
 }
 
@@ -34957,6 +35004,82 @@ public func FfiConverterTypeMobileKeyTable_lower(_ value: MobileKeyTable) -> Rus
 
 
 
+/**
+ * Which preview a piece of text belongs to; see [`classify_umsh_link`].
+ */
+
+public enum MobileLinkKind: Equatable, Hashable {
+
+    case node
+    case channel
+    case notLink
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileLinkKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileLinkKind: FfiConverterRustBuffer {
+    typealias SwiftType = MobileLinkKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileLinkKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .node
+
+        case 2: return .channel
+
+        case 3: return .notLink
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileLinkKind, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .node:
+            writeInt(&buf, Int32(1))
+
+
+        case .channel:
+            writeInt(&buf, Int32(2))
+
+
+        case .notLink:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileLinkKind_lift(_ buf: RustBuffer) throws -> MobileLinkKind {
+    return try FfiConverterTypeMobileLinkKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileLinkKind_lower(_ value: MobileLinkKind) -> RustBuffer {
+    return FfiConverterTypeMobileLinkKind.lower(value)
+}
+
+
+
 
 public enum MobileLogLevel: Equatable, Hashable {
 
@@ -40445,6 +40568,85 @@ public func FfiConverterTypeMobileVirtualRadioError_lift(_ buf: RustBuffer) thro
 public func FfiConverterTypeMobileVirtualRadioError_lower(_ value: MobileVirtualRadioError) -> RustBuffer {
     return FfiConverterTypeMobileVirtualRadioError.lower(value)
 }
+
+
+/**
+ * Who hears the virtual radio's group.
+ *
+ * Every start names one, so nothing joins the LAN by default: a LAN may
+ * have a bridge that carries whatever reaches the group onto the air.
+ */
+
+public enum MobileVirtualRadioReach: Equatable, Hashable {
+
+    /**
+     * The group on the network the host routes it through.
+     */
+    case lan
+    /**
+     * The group on this host's loopback interface: only its own
+     * participants hear it. For tests.
+     */
+    case thisHost
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileVirtualRadioReach: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileVirtualRadioReach: FfiConverterRustBuffer {
+    typealias SwiftType = MobileVirtualRadioReach
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileVirtualRadioReach {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .lan
+
+        case 2: return .thisHost
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileVirtualRadioReach, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .lan:
+            writeInt(&buf, Int32(1))
+
+
+        case .thisHost:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileVirtualRadioReach_lift(_ buf: RustBuffer) throws -> MobileVirtualRadioReach {
+    return try FfiConverterTypeMobileVirtualRadioReach.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileVirtualRadioReach_lower(_ value: MobileVirtualRadioReach) -> RustBuffer {
+    return FfiConverterTypeMobileVirtualRadioReach.lower(value)
+}
+
 
 
 /**
@@ -46735,6 +46937,31 @@ fileprivate struct FfiConverterSequenceOptionUInt16: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceOptionString: FfiConverterRustBuffer {
+    typealias SwiftType = [String?]
+
+    public static func write(_ value: [String?], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterOptionString.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [String?] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [String?]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterOptionString.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceOptionTypeMobileReaction: FfiConverterRustBuffer {
     typealias SwiftType = [MobileReaction?]
 
@@ -46828,6 +47055,21 @@ public func channelKeyDigest(key: Data) -> String  {
         uniffiCallStatus in
     uniffi_umsh_mobile_core_fn_func_channel_key_digest(
         FfiConverterData.lower(key),uniffiCallStatus
+    )
+})
+}
+/**
+ * Which preview a `umsh:` link belongs to: channel links (`gs:`, `gk:`,
+ * and the deprecated `cs:`, `ck:`) are `Channel`; any other `umsh:` link
+ * is `Node`; anything else, bare addresses and keys included, is
+ * `NotLink`. Trims whitespace, then matches the scheme without case and
+ * the kind prefix as `umsh-uri` parses it.
+ */
+public func classifyUmshLink(input: String) -> MobileLinkKind  {
+    return try!  FfiConverterTypeMobileLinkKind_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_classify_umsh_link(
+        FfiConverterString.lower(input),uniffiCallStatus
     )
 })
 }
@@ -47988,6 +48230,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_channel_key_digest() != 30400) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_func_classify_umsh_link() != 16659) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_func_decode_node_identity() != 44653) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -48430,6 +48675,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_message_count() != 47892) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_name_repeater_hints() != 32073) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileappcore_peer_repeaters() != 27757) {
@@ -49392,10 +49640,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_constructor_mobileulcpsession_new() != 48651) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_constructor_mobilevirtualradio_serve() != 4768) {
+    if (uniffi_umsh_mobile_core_checksum_constructor_mobilevirtualradio_serve() != 52965) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_constructor_mobilevirtualradio_start() != 51525) {
+    if (uniffi_umsh_mobile_core_checksum_constructor_mobilevirtualradio_start() != 27601) {
         return InitializationResult.apiChecksumMismatch
     }
 

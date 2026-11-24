@@ -132,6 +132,9 @@ class TestLocationSource : PhoneLocationSource {
 
     override fun fixes(grant: LocationGrant, cellMeters: Double): Flow<PhoneFix> = readings
 
+    /** The last reading handed out, at once: a test with none reads no fix. */
+    override suspend fun currentFix(grant: LocationGrant): PhoneFix? = readings.replayCache.lastOrNull()
+
     fun reset() {
         grant.value = LocationGrant.None
         inUse.value = true

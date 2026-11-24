@@ -1232,4 +1232,654 @@
     <string name="notifications_off">Notifications are off</string>
     <!-- Button on the card: allows notifications. -->
     <string name="notifications_turn_on">Turn on</string>
+    <!-- Peers list (peers-list.svg) and peer page (peer-page.svg). -->
+    <!-- Peers sort order, on the sort chip and in its menu: by name. -->
+    <string name="peers_sort_alphabetical">Alphabetical</string>
+    <!-- Peers sort order: the node heard most recently first. -->
+    <string name="peers_sort_recently_heard">Recently heard</string>
+    <!-- Peers sort order: the node with the newest message first. -->
+    <string name="peers_sort_latest_message">Latest message</string>
+    <!-- TalkBack: what tapping the sort chip does. -->
+    <string name="peers_sort_change">Change order</string>
+    <!-- Peers filter chip: chat nodes and nodes with a conversation. -->
+    <string name="peers_filter_people">People</string>
+    <!-- Peers filter chip: sensors and trackers. -->
+    <string name="peers_filter_sensors">Sensors</string>
+    <!-- Peers filter chip: nodes that forward traffic. -->
+    <string name="peers_filter_repeaters">Repeaters</string>
+    <!-- Peers list with no nodes at all: title. -->
+    <string name="peers_empty_title">No known nodes</string>
+    <!-- Peers list with no nodes at all: body. -->
+    <string name="peers_empty_body">Import a peer to get started, or listen for nodes announcing themselves nearby.</string>
+    <!-- Footer under search's Discovered nodes. -->
+    <string name="peers_search_discovered_footer">Heard over the air but not saved.</string>
+    <!-- Peers search found nothing. -->
+    <string name="peers_search_nothing">No nodes match this search.</string>
+    <!-- A discovered node's second line: when it was last heard, such as "4 min ago". -->
+    <string name="peer_heard_age">Heard <xliff:g id="age" example="4 min ago">%1$s</xliff:g></string>
+    <!-- A discovered node's second line: when it was last heard, then its role. -->
+    <string name="peer_heard_age_role">Heard <xliff:g id="age" example="4 min ago">%1$s</xliff:g> · <xliff:g id="role" example="Repeater">%2$s</xliff:g></string>
+    <!-- Button: puts a node heard over the air on the Peers list. "Peers" is the tab's name. -->
+    <string name="add_to_peers">Add to Peers</string>
+    <!-- TalkBack: what a long press on a peer row does. -->
+    <string name="peer_actions">Show actions</string>
+    <!-- Menu item, a verb: marks the peer as a favorite. -->
+    <string name="peer_favorite">Favorite</string>
+    <!-- Menu item, a verb: clears the peer's favorite mark. -->
+    <string name="peer_unfavorite">Unfavorite</string>
+    <!-- Menu item, a verb: saves a node heard over the air to the Peers list. -->
+    <string name="peer_save">Save</string>
+    <!-- Menu item and peer page row: opens the removal confirmation. -->
+    <string name="remove_peer">Remove peer</string>
+    <!-- Removal confirmation title; the node's name. -->
+    <string name="remove_peer_title">Remove <xliff:g id="peer" example="Kestrel">%1$s</xliff:g>?</string>
+    <!-- Removal confirmation body, for a saved node with a conversation. -->
+    <string name="remove_peer_body_conversation">Removing keeps the conversation. Deleting erases it too.</string>
+    <!-- Removal confirmation body, for a node not saved that has a conversation: only deleting is offered. -->
+    <string name="remove_peer_body_delete_conversation">Deleting erases the conversation too.</string>
+    <!-- Removal confirmation body, for a node with no conversation. -->
+    <string name="remove_peer_body_alone">Nothing is sent to the node.</string>
+    <!-- Removal confirmation button: deletes the node and its messages. -->
+    <string name="delete_peer_and_conversation">Delete peer and conversation</string>
+    <!-- Removal confirmation button: deletes the node. -->
+    <string name="delete_peer">Delete peer</string>
+    <!-- Failure dialog title. -->
+    <string name="peer_not_saved_title">Couldn’t save this peer</string>
+    <!-- Failure dialog title: a favorite or notification switch did not change. -->
+    <string name="peer_not_changed_title">Couldn’t change this peer</string>
+    <!-- Failure dialog title. -->
+    <string name="peer_not_removed_title">Couldn’t remove this peer</string>
+    <!-- Failure dialog title. -->
+    <string name="peer_not_deleted_title">Couldn’t delete this peer</string>
+    <!-- Failure dialog title. -->
+    <string name="peer_not_renamed_title">Couldn’t rename this peer</string>
+    <!-- Failure dialog title. -->
+    <string name="messages_not_cleared_title">Couldn’t clear the messages</string>
+    <!-- Failure dialog title: asking a node for its identity did not go out. -->
+    <string name="identity_not_asked_title">Couldn’t ask for its identity</string>
+    <!-- Failure dialog body: a change to a peer that did not take. -->
+    <string name="peer_failure_body">Nothing was changed.</string>
+    <!-- Failure dialog body: a request that did not go out. -->
+    <string name="request_failure_body">Nothing was sent.</string>
+    <!-- Peer page subtitle when an alias hides the name the node advertised: its role, then that name. -->
+    <string name="peer_subtitle_role_name"><xliff:g id="role" example="Chat">%1$s</xliff:g> · “<xliff:g id="name" example="Ridge Medic">%2$s</xliff:g>”</string>
+    <!-- Peer page subtitle when an alias hides the name the node advertised and its role is unknown. -->
+    <string name="peer_subtitle_name">“<xliff:g id="name" example="Ridge Medic">%1$s</xliff:g>”</string>
+    <!-- TalkBack: what tapping a peer's name on its page does. -->
+    <string name="peer_rename_action">Rename</string>
+    <!-- Peer page action tile, a verb: asks a node that never advertised who it is. -->
+    <string name="verb_identify">Identify</string>
+    <!-- Peer page action tile, a verb: opens the conversation with the node. -->
+    <string name="verb_message">Message</string>
+    <!-- Glance strip label: when the node was last heard. Keep short. -->
+    <string name="glance_heard">Heard</string>
+    <!-- Glance strip label: how this phone reaches the node. A noun. Keep short. -->
+    <string name="glance_route">Route</string>
+    <!-- Glance strip label: how far away the node is. Keep short. -->
+    <string name="glance_distance">Distance</string>
+    <!-- Glance strip value: heard within the last minute. -->
+    <string name="glance_just_now">Just now</string>
+    <!-- Glance strip route: heard directly, no repeater between. -->
+    <string name="route_brief_direct">Direct</string>
+    <!-- Glance strip route: the next message floods. A noun. -->
+    <string name="route_brief_flood">Flood</string>
+    <!-- Glance strip route: a path chosen by hand. -->
+    <string name="route_brief_manual">Manual</string>
+    <!-- A route's length, counted in radio hops. -->
+    <plurals name="route_hops">
+        <item quantity="one"><xliff:g id="count" example="1">%d</xliff:g> hop</item>
+        <item quantity="other"><xliff:g id="count" example="3">%d</xliff:g> hops</item>
+    </plurals>
+    <!-- Glance strip distance known only as an upper bound: the two nodes' location cells overlap. -->
+    <string name="distance_under">&lt;<xliff:g id="distance" example="0.4 km">%1$s</xliff:g></string>
+    <!-- TalkBack: a distance, then which way it lies, such as "4.2 km, northeast". -->
+    <string name="distance_spoken"><xliff:g id="distance" example="4.2 km">%1$s</xliff:g>, <xliff:g id="direction" example="northeast">%2$s</xliff:g></string>
+    <!-- Compass direction, read by TalkBack after a distance. -->
+    <string name="compass_north">north</string>
+    <!-- Compass direction, read by TalkBack after a distance. -->
+    <string name="compass_northeast">northeast</string>
+    <!-- Compass direction, read by TalkBack after a distance. -->
+    <string name="compass_east">east</string>
+    <!-- Compass direction, read by TalkBack after a distance. -->
+    <string name="compass_southeast">southeast</string>
+    <!-- Compass direction, read by TalkBack after a distance. -->
+    <string name="compass_south">south</string>
+    <!-- Compass direction, read by TalkBack after a distance. -->
+    <string name="compass_southwest">southwest</string>
+    <!-- Compass direction, read by TalkBack after a distance. -->
+    <string name="compass_west">west</string>
+    <!-- Compass direction, read by TalkBack after a distance. -->
+    <string name="compass_northwest">northwest</string>
+    <!-- TalkBack: one glance strip cell, its label then its value, such as "Route, 3 hops". -->
+    <string name="glance_spoken"><xliff:g id="label" example="Route">%1$s</xliff:g>, <xliff:g id="value" example="3 hops">%2$s</xliff:g></string>
+    <!-- TalkBack: a strip value that is not known, drawn as a dash. -->
+    <string name="glance_unknown">Unknown</string>
+    <!-- Peer page section header. -->
+    <string name="peer_section_notifications">Notifications</string>
+    <!-- Switch: notify for this node's messages. -->
+    <string name="peer_notify_messages">Messages</string>
+    <!-- Switch: notify once, the next time anything is heard from this node. -->
+    <string name="peer_notify_next_heard">Next time heard</string>
+    <!-- Peer page section header. -->
+    <string name="peer_section_about">About</string>
+    <!-- Row label: what a node advertises it can do. -->
+    <string name="peer_capabilities">Capabilities</string>
+    <!-- Row label: when the node last said who it is. -->
+    <string name="peer_advertised">Advertised</string>
+    <!-- Advertised row value: the identity came from a link or code, not the air. -->
+    <string name="peer_advertised_imported">Imported</string>
+    <!-- Advertised row value: the node has not said who it is. -->
+    <string name="peer_advertised_never">Never</string>
+    <!-- TalkBack: asks a node for its identity again. -->
+    <string name="peer_ask_again">Ask again</string>
+    <!-- TalkBack: a request is out and its answer awaited. -->
+    <string name="waiting_for_reply">Waiting for a reply</string>
+    <!-- Under a node's advertised details that carry no signature. -->
+    <string name="identity_unsigned_warning">These details carry no signature, so they may not have come from this node at all.</string>
+    <!-- Under a node's advertised details whose signature fails. -->
+    <string name="identity_invalid_warning">The signature on these details does not verify. Do not rely on them.</string>
+    <!-- Peer page row: opens the confirmation that erases the conversation's messages. -->
+    <string name="clear_all_messages">Clear all messages</string>
+    <!-- Confirmation title. -->
+    <string name="clear_messages_title">Clear all messages?</string>
+    <!-- Confirmation body; the peer's name. -->
+    <string name="clear_messages_body">The message history on this phone is erased. Nothing is sent, and <xliff:g id="peer" example="Ridge Medic">%1$s</xliff:g> keeps their copy.</string>
+    <!-- Confirmation button: erases the conversation's messages. -->
+    <plurals name="clear_messages_confirm">
+        <item quantity="one">Clear <xliff:g id="count" example="1">%d</xliff:g> message</item>
+        <item quantity="other">Clear <xliff:g id="count" example="128">%d</xliff:g> messages</item>
+    </plurals>
+    <!-- Rename dialog title. -->
+    <string name="rename_title">Rename</string>
+    <!-- Rename dialog field label. -->
+    <string name="rename_label">Name</string>
+    <!-- Under the Rename field: the name the node advertises, which an empty field falls back to. -->
+    <string name="rename_calls_itself">Calls itself “<xliff:g id="name" example="Ridge Medic">%1$s</xliff:g>”</string>
+    <!-- TalkBack: the top bar button that marks a peer as a favorite. -->
+    <string name="action_favorite">Favorite</string>
+    <!-- TalkBack: the top bar button that clears a peer's favorite mark. -->
+    <string name="action_unfavorite">Unfavorite</string>
+    <!-- TalkBack: what tapping a repeater or peer row does. -->
+    <string name="open_peer_page">Open page</string>
+    <!-- TalkBack: asks the node behind a repeater hint who it is. -->
+    <string name="look_up_hint">Look up</string>
+    <!-- Ping and Route (ping-route.svg). -->
+    <!-- Peer page action tile, a verb: checks whether the node answers, and how its answer came back. A radio term (like a network ping), not a sound. -->
+    <string name="verb_ping">Ping</string>
+    <!-- TalkBack: what tapping the glance strip's Route cell does. "Route" is a noun: how this phone reaches the node. -->
+    <string name="glance_open_route">Open route</string>
+    <!-- Ping sheet button: sends another ping, replacing one still waiting. -->
+    <string name="ping_again">Ping again</string>
+    <!-- Ping sheet section header: the path the ping's reply came back along. -->
+    <string name="ping_reply_path">Reply path</string>
+    <!-- Ping sheet section header: pings sent before the one shown, during this visit to the page. -->
+    <string name="ping_earlier">Earlier</string>
+    <!-- Ping result: nothing came back. -->
+    <string name="ping_no_reply">No reply</string>
+    <!-- Under a ping's result: the first attempt (or its answer) was lost, and the automatic retry was answered. -->
+    <string name="ping_answered_on_retry">Answered on retry</string>
+    <!-- An earlier ping: its round trip, then how far its reply came, such as "1.3 s · 3 hops". -->
+    <string name="ping_earlier_reply"><xliff:g id="time" example="1.3 s">%1$s</xliff:g> · <xliff:g id="hops" example="3 hops">%2$s</xliff:g></string>
+    <!-- TalkBack: a ping's result, its round trip then how far its reply came. -->
+    <string name="ping_reply_spoken">Reply in <xliff:g id="time" example="1.4 seconds">%1$s</xliff:g>, <xliff:g id="hops" example="3 hops">%2$s</xliff:g></string>
+    <!-- TalkBack: a ping's result when its round trip is known and its hops are not. -->
+    <string name="ping_reply_spoken_time">Reply in <xliff:g id="time" example="1.4 seconds">%1$s</xliff:g></string>
+    <!-- TalkBack: a ping's result when its hops are known and its round trip is not, such as "Reply, 3 hops" or "Reply, Direct". -->
+    <string name="ping_reply_spoken_hops">Reply, <xliff:g id="hops" example="3 hops">%1$s</xliff:g></string>
+    <!-- TalkBack: a ping's result when the reply said neither its round trip nor its hops. -->
+    <string name="ping_reply_spoken_bare">Reply</string>
+    <!-- TalkBack: a ping's result, then that only its retry was answered. -->
+    <string name="ping_spoken_with_retry"><xliff:g id="result" example="Reply in 1.4 seconds, 3 hops">%1$s</xliff:g>. <xliff:g id="retry" example="Answered on retry">%2$s</xliff:g></string>
+    <!-- Button: forgets the route this phone learned to the node, so the next message floods and learns one again. -->
+    <string name="reset_route">Reset route</string>
+    <!-- Brief notice after the learned route was forgotten. -->
+    <string name="route_reset_notice">Route reset</string>
+    <!-- Brief notice when there was no learned route to forget. -->
+    <string name="route_reset_none_notice">No route to reset</string>
+    <!-- Failure dialog title. "Route" is a noun. -->
+    <string name="route_not_reset_title">Couldn’t reset the route</string>
+    <!-- Failure dialog title. -->
+    <string name="manual_path_not_cleared_title">Couldn’t clear the manual path</string>
+    <!-- Route page title: how this phone reaches the node. A noun. -->
+    <string name="route_title">Route</string>
+    <!-- Route page section header: the repeaters the route goes through. A noun. -->
+    <string name="route_path">Path</string>
+    <!-- The first node on a drawn path: the phone the user holds. -->
+    <string name="path_this_phone">This phone</string>
+    <!-- Under This phone on a path: the companion radio it sends through; its name. -->
+    <string name="path_sent_through">Sent through <xliff:g id="radio" example="T1000-E">%1$s</xliff:g></string>
+    <!-- Under a repeater on a manual path that names no known node: its hint was typed in. -->
+    <string name="path_entered_by_hand">Entered by hand</string>
+    <!-- TalkBack: the X on a ping's path when no reply came. -->
+    <string name="path_no_path">No path</string>
+    <!-- A path leg that crossed a link that is not radio (a bridge), so it has no signal reading. -->
+    <string name="path_bridged">Bridged</string>
+    <!-- A stretch of a reply's path that nobody traced or counted. -->
+    <string name="path_unknown">Unknown path</string>
+    <!-- Repeaters a ping reply counted without naming them. -->
+    <plurals name="path_unnamed_repeaters">
+        <item quantity="one"><xliff:g id="count" example="1">%d</xliff:g> unnamed repeater</item>
+        <item quantity="other"><xliff:g id="count" example="2">%d</xliff:g> unnamed repeaters</item>
+    </plurals>
+    <!-- Route page row label: how the next message to this node is routed. -->
+    <string name="route_next_send">Next send</string>
+    <!-- Route page row label: when this route last carried an acknowledgment. -->
+    <string name="route_confirmed">Confirmed</string>
+    <!-- Route page row label: how far a manual path floods past its last repeater. "Flood" is a routing term: every repeater rebroadcasts. -->
+    <string name="route_then_flood">Then flood</string>
+    <!-- Route page row label: when the hold on a manual path ends. -->
+    <string name="route_held_until">Held until</string>
+    <!-- Route page row label: when a held path last carried an acknowledgment ("ack"). -->
+    <string name="route_last_ack">Last ack</string>
+    <!-- Route page row label: the regions a flood route was learned in. -->
+    <string name="route_regions">Regions</string>
+    <!-- Next send value: a source route, in which the sender names each repeater. -->
+    <string name="route_kind_source">Source route</string>
+    <!-- Next send value: nothing has been learned, so the next message floods. -->
+    <string name="route_kind_unknown">Not learned yet</string>
+    <!-- TalkBack: a Route page detail (Confirmed, Last ack) whose value is not known, drawn as a dash. -->
+    <string name="route_value_unknown">Unknown</string>
+    <!-- Next send value: there is no radio session to ask. -->
+    <string name="route_kind_unavailable">Unavailable</string>
+    <!-- Next send value: a path chosen by hand that names no repeaters and does not flood. -->
+    <string name="route_kind_manual_direct">Manual · Direct</string>
+    <!-- Next send value: a path chosen by hand, and how many hops it takes. -->
+    <plurals name="route_kind_manual_hops">
+        <item quantity="one">Manual · <xliff:g id="count" example="1">%d</xliff:g> hop</item>
+        <item quantity="other">Manual · <xliff:g id="count" example="4">%d</xliff:g> hops</item>
+    </plurals>
+    <!-- Next send value: a path chosen by hand that floods from the start, and how far. "Flood" is a routing term. -->
+    <plurals name="route_kind_manual_flood">
+        <item quantity="one">Manual · Flood <xliff:g id="count" example="1">%d</xliff:g> hop</item>
+        <item quantity="other">Manual · Flood <xliff:g id="count" example="2">%d</xliff:g> hops</item>
+    </plurals>
+    <!-- Then flood value: the path does not flood past its last repeater. -->
+    <string name="route_flood_off">Off</string>
+    <!-- Button: drops a path chosen by hand, so learned routes are used again. -->
+    <string name="clear_manual_path">Clear manual path</string>
+    <!-- Under a held manual path on the Route page. -->
+    <string name="route_held_explanation">Learned paths can replace it once the hold ends.</string>
+    <!-- Under a learned route on the Route page; the node's name. -->
+    <string name="route_learned_from">Learned from <xliff:g id="peer" example="Ridge Medic">%1$s</xliff:g>’s last reply.</string>
+    <!-- A received signal strength, in decibel-milliwatts; a number. -->
+    <string name="signal_dbm"><xliff:g id="value" example="−97">%1$s</xliff:g> dBm</string>
+    <!-- A signal-to-noise ratio in decibels; SNR is the usual abbreviation; a number. -->
+    <string name="signal_snr">SNR <xliff:g id="value" example="6.5">%1$s</xliff:g> dB</string>
+    <!-- A radio reading: signal strength, then signal-to-noise ratio. -->
+    <string name="signal_reading"><xliff:g id="strength" example="−97 dBm">%1$s</xliff:g> · <xliff:g id="noise" example="SNR 6.5 dB">%2$s</xliff:g></string>
+
+    <!-- Neighboring repeaters and Discover (repeaters-discover.svg). -->
+    <!-- Peer page action tile, a noun: opens what this repeater reports hearing around it. "Neighbors" are the repeaters in its radio range. -->
+    <string name="verb_neighbors">Neighbors</string>
+    <!-- Page title: the repeaters one repeater reports hearing. -->
+    <string name="neighbors_title">Neighboring repeaters</string>
+    <!-- Section header on that page: the repeaters it hears. A noun. -->
+    <string name="neighbors_section">Neighbors</string>
+    <!-- TalkBack: the top bar button that asks the repeater for its neighbors again. -->
+    <string name="neighbors_refresh">Refresh</string>
+    <!-- TalkBack: the spinner while the repeater is being asked. -->
+    <string name="neighbors_asking">Asking the repeater</string>
+    <!-- The repeater was never asked for its neighbors, so there is nothing to show. Different from "None". -->
+    <string name="neighbors_not_read">Not read</string>
+    <!-- The repeater was asked and reported no neighbors. Different from "Not read". -->
+    <string name="neighbors_none">None</string>
+    <!-- Inline, under the neighbors, when the repeater did not answer. -->
+    <string name="neighbors_no_answer">The repeater did not answer. It may be out of reach, or it may not keep a neighbor table.</string>
+    <!-- Button: asks the repeater for its next page of neighbors. -->
+    <string name="neighbors_load_more">Load more</string>
+    <!-- Beside Load more: how many of the repeater's neighbors are shown, of how many it has, such as "4 of 9". -->
+    <string name="neighbors_count"><xliff:g id="shown" example="4">%1$d</xliff:g> of <xliff:g id="total" example="9">%2$d</xliff:g></string>
+    <!-- Footer: the neighbors were read from the repeater during this visit. -->
+    <string name="neighbors_read_now">Read from the repeater just now.</string>
+    <!-- Footer: when the neighbors shown were read from the repeater; an age, such as "12 min ago". -->
+    <string name="neighbors_last_read">Last read <xliff:g id="age" example="12 min ago">%1$s</xliff:g>.</string>
+    <!-- Footer: the repeater has never been asked. -->
+    <string name="neighbors_nothing_read">Nothing read yet.</string>
+    <!-- Failure dialog title: the request for a repeater's neighbors did not go out. -->
+    <string name="neighbors_not_asked_title">Couldn’t ask the repeater</string>
+    <!-- A neighbor's first line: how it was heard, then when, such as "−88 dBm · SNR 7.5 dB · heard 4 min ago". -->
+    <string name="neighbor_heard"><xliff:g id="signal" example="−88 dBm · SNR 7.5 dB">%1$s</xliff:g> · heard <xliff:g id="age" example="4 min ago">%2$s</xliff:g></string>
+    <!-- A neighbor's first line when the repeater last heard it longer ago than it can count. -->
+    <string name="neighbor_heard_long_ago"><xliff:g id="signal" example="−88 dBm · SNR 7.5 dB">%1$s</xliff:g> · heard long ago</string>
+    <!-- In place of a neighbor's signal: the repeater knows it over a link that is not radio (a bridge), so there is no reading. -->
+    <string name="neighbor_bridged">Bridged</string>
+    <!-- A neighbor's second line: its regions, then its distance from the repeater, such as "EUG · 12.4 km". -->
+    <string name="neighbor_regions_distance"><xliff:g id="regions" example="EUG">%1$s</xliff:g> · <xliff:g id="distance" example="12.4 km">%2$s</xliff:g></string>
+    <!-- Long-press menu item: puts a node's reported latitude and longitude on the clipboard. -->
+    <string name="copy_coordinates">Copy coordinates</string>
+    <!-- Brief notice after the coordinates were copied (Android 12 and earlier). -->
+    <string name="coordinates_copied">Coordinates copied</string>
+    <!-- Route page action: opens Discover peers aimed at the nodes around this peer. -->
+    <string name="route_ask_near">Ask near this node</string>
+    <!-- Peers list row and empty-state button: opens Discover peers, which asks nearby nodes to identify themselves. -->
+    <string name="discover_peers">Discover peers</string>
+    <!-- Page title. -->
+    <string name="discover_title">Discover peers</string>
+    <!-- TalkBack: the top bar button that opens more actions. -->
+    <string name="action_more_options">More options</string>
+    <!-- Discover section header: the controls that send an identity request. "Ask" is a verb. -->
+    <string name="discover_section_ask">Ask</string>
+    <!-- Field label: where the identity request is sent. -->
+    <string name="discover_where">Where to ask</string>
+    <!-- Where to ask: only the nodes in this phone's own radio range, with no repeater carrying it. -->
+    <string name="discover_where_nearby">Nearby—direct</string>
+    <!-- Where to ask: along the route to a peer, so nodes near it answer; the hop count and the peer's name. -->
+    <plurals name="discover_where_hops">
+        <item quantity="one"><xliff:g id="count" example="1">%1$d</xliff:g> hop to <xliff:g id="peer" example="Ridge Medic">%2$s</xliff:g></item>
+        <item quantity="other"><xliff:g id="count" example="3">%1$d</xliff:g> hops to <xliff:g id="peer" example="Ridge Medic">%2$s</xliff:g></item>
+    </plurals>
+    <!-- Field label: which nodes are asked, by role. "Ask" is a verb, as in "who to ask". -->
+    <string name="discover_role">Ask</string>
+    <!-- Which nodes are asked: every role. -->
+    <string name="discover_role_all">All nodes</string>
+    <!-- Button: sends an identity request to the nodes in range of this phone. -->
+    <string name="discover_ask_nearby">Ask nearby nodes to identify</string>
+    <!-- Button: sends an identity request to the nodes in range of a peer; its name. -->
+    <string name="discover_ask_near">Ask nodes near <xliff:g id="peer" example="Ridge Medic">%1$s</xliff:g> to identify</string>
+    <!-- Under the ask button, aimed nearby: who answers it. -->
+    <string name="discover_nearby_footer">Answered by whatever is in range of this phone.</string>
+    <!-- Under the ask button after this page asked: a duration until another ask may go, such as "32 sec". -->
+    <string name="discover_asked_wait">Asked—replies appear below. Ask again in <xliff:g id="duration" example="32 sec">%1$s</xliff:g>.</string>
+    <!-- Under the ask button while an ask made elsewhere holds it back: a duration, such as "32 sec". -->
+    <string name="discover_wait">Ask again in <xliff:g id="duration" example="32 sec">%1$s</xliff:g>.</string>
+    <!-- TalkBack, said once when the ask button works again after its wait. -->
+    <string name="discover_ready_spoken">You can ask again.</string>
+    <!-- Discover section header: the nodes that identified themselves while the page was open. -->
+    <string name="discover_section_heard">Heard since opened</string>
+    <!-- No node identified itself since the page opened. -->
+    <string name="discover_nothing_heard">Nothing heard yet.</string>
+    <!-- Footer under the nodes heard: they are what answered while open, not every node there is. -->
+    <string name="discover_window_footer">A live window, not a directory of the mesh.</string>
+    <!-- A heard node's subtitle when it is already saved; then its role, such as "Saved · Sensor". "Saved" is a state, kept in Peers. -->
+    <string name="discover_saved_role">Saved · <xliff:g id="role" example="Sensor">%1$s</xliff:g></string>
+    <!-- A heard node's subtitle when it is already saved and its role is unknown. -->
+    <string name="discover_saved">Saved</string>
+    <!-- Discover section header: broadcasting this phone's own identity. A noun. -->
+    <string name="discover_section_announce">Announce</string>
+    <!-- Button: broadcasts this phone's signed identity, after a confirmation. -->
+    <string name="discover_announce">Announce my identity</string>
+    <!-- Under Announce my identity. -->
+    <string name="discover_announce_footer">Broadcasts your signed identity so nearby nodes can record you.</string>
+    <!-- Failure dialog title: the identity request did not go out. -->
+    <string name="discover_not_asked_title">Couldn’t ask nodes to identify</string>
+    <!-- Confirmation title before broadcasting this phone's identity. -->
+    <string name="announce_title">Announce your identity?</string>
+    <!-- Confirmation body: the name the broadcast carries. -->
+    <string name="announce_body_named">Broadcasts your signed public identity as “<xliff:g id="name" example="Juniper">%1$s</xliff:g>” to every node in range, and repeaters may carry it further. It cannot be unsent.</string>
+    <!-- Confirmation body when this phone has no name. -->
+    <string name="announce_body_nameless">Broadcasts your signed public identity without a name—only your address and hint—to every node in range, and repeaters may carry it further. It cannot be unsent.</string>
+    <!-- Confirmation button: broadcasts this phone's identity. A verb. -->
+    <string name="announce_confirm">Announce</string>
+    <!-- Failure dialog title. -->
+    <string name="announce_failed_title">Couldn’t announce your identity</string>
+    <!-- Discover overflow item, and what its confirmation clears: nodes heard over the air and never saved. -->
+    <string name="clear_discovered">Clear discovered nodes</string>
+    <!-- Confirmation title. -->
+    <string name="clear_discovered_title">Clear discovered nodes?</string>
+    <!-- Confirmation body. -->
+    <string name="clear_discovered_body">Removes nodes heard over the air that are not saved and have no conversation. Saved nodes stay.</string>
+    <!-- Confirmation button: removes the discovered nodes. -->
+    <string name="clear_discovered_confirm">Clear</string>
+    <!-- Failure dialog title. -->
+    <string name="discovered_not_cleared_title">Couldn’t clear discovered nodes</string>
+    <!-- Manual path (manual-path.svg). -->
+    <!-- TalkBack: the Route page's pencil, which opens the manual path editor. A verb. -->
+    <string name="route_edit">Edit path</string>
+    <!-- Full-screen dialog title: a path to a node chosen by hand, repeater by repeater. -->
+    <string name="manual_path_title">Manual path</string>
+    <!-- TalkBack: the X that closes the manual path editor. -->
+    <string name="manual_path_close">Close</string>
+    <!-- TalkBack: the spinner in place of Save while the path is being held. -->
+    <string name="manual_path_saving">Saving</string>
+    <!-- Manual path section header: the path to this node; its name. -->
+    <string name="manual_path_to">Path to <xliff:g id="peer" example="Ridge Medic">%1$s</xliff:g></string>
+    <!-- Under a repeater typed into a manual path: its hint in hex. -->
+    <string name="manual_path_entered_by_hand">Entered by hand · <xliff:g id="hex" example="5EBD">%1$s</xliff:g></string>
+    <!-- Manual path row: opens the page that picks the next repeater. A verb. -->
+    <string name="manual_path_add_hop">Add hop</string>
+    <!-- Stepper label on a manual path with no repeaters: how far the message floods from this phone. "Flood" is a routing term: every repeater rebroadcasts. -->
+    <string name="manual_path_flood">Flood</string>
+    <!-- TalkBack action on the Then flood stepper: one hop more. -->
+    <string name="manual_path_flood_increase">Increase</string>
+    <!-- TalkBack action on the Then flood stepper: one hop fewer. -->
+    <string name="manual_path_flood_decrease">Decrease</string>
+    <!-- TalkBack action on a repeater in a manual path: moves it one place nearer this phone. -->
+    <string name="manual_path_move_up">Move up</string>
+    <!-- TalkBack action on a repeater in a manual path: moves it one place nearer the node. -->
+    <string name="manual_path_move_down">Move down</string>
+    <!-- TalkBack: the red button that takes a repeater off a manual path; its name or repeater hint. -->
+    <string name="manual_path_remove_hop">Remove <xliff:g id="hop" example="Spencer Butte">%1$s</xliff:g></string>
+    <!-- Manual path section header: try the path before saving it. A noun. -->
+    <string name="manual_path_test">Test</string>
+    <!-- Button: pings the node along the path as edited, without saving it. "Ping" is a radio term, not a sound. -->
+    <string name="manual_path_ping">Ping along path</string>
+    <!-- Ping along path's result: the node replied; the round trip, such as "3.8 s". -->
+    <string name="manual_path_replied">Replied in <xliff:g id="time" example="3.8 s">%1$s</xliff:g></string>
+    <!-- TalkBack: the spinner while Ping along path waits for a reply. -->
+    <string name="manual_path_pinging">Waiting for a reply</string>
+    <!-- Manual path section header: how long the path stands ahead of learned ones. "Hold" is a noun. -->
+    <string name="manual_path_hold">Hold</string>
+    <!-- Manual path field label: how long the path is held. -->
+    <string name="manual_path_hold_for">Hold for</string>
+    <!-- Manual path row label: when the hold would end. -->
+    <string name="manual_path_until">Until</string>
+    <!-- Under the hold: what happens when it ends. -->
+    <string name="manual_path_hold_footer">Then a learned path can replace it.</string>
+    <!-- Under the editor when the phone's routing refused the path. -->
+    <string name="manual_path_refused">This phone’s routing did not take the path. Check the radio.</string>
+    <!-- Failure dialog title. -->
+    <string name="manual_path_not_saved_title">Couldn’t save the manual path</string>
+    <!-- Dialog title: leaving the manual path editor with changes. -->
+    <string name="manual_path_discard_title">Discard changes?</string>
+    <!-- Dialog body: leaving the editor changes nothing. -->
+    <string name="manual_path_discard_body">The route stays as it was.</string>
+    <!-- Dialog button: leaves the editor, dropping the changes. -->
+    <string name="manual_path_discard">Discard</string>
+    <!-- Dialog button: stays in the editor. -->
+    <string name="manual_path_keep_editing">Keep editing</string>
+    <!-- A full manual path: how many repeaters it holds, which is the most it can name. -->
+    <plurals name="manual_path_full">
+        <item quantity="one">The path holds <xliff:g id="count" example="1">%d</xliff:g> repeater, the most it can carry.</item>
+        <item quantity="other">The path holds <xliff:g id="count" example="15">%d</xliff:g> repeaters, the most it can carry.</item>
+    </plurals>
+    <!-- Page title: choose the repeater for this place in the path; the place, counted from this phone, such as "Add hop 3". -->
+    <string name="add_hop_title">Add hop <xliff:g id="number" example="3">%1$s</xliff:g></string>
+    <!-- Button: back to the editor with the repeaters chosen. -->
+    <string name="add_hop_done">Done</string>
+    <!-- Filter field placeholder on Add hop. -->
+    <string name="add_hop_filter">Name or repeater hint</string>
+    <!-- Add hop's trail: one step of the path chosen so far, then the next, such as "This phone › Spencer Butte". -->
+    <string name="add_hop_crumb_step"><xliff:g id="path" example="This phone">%1$s</xliff:g> › <xliff:g id="next" example="Spencer Butte">%2$s</xliff:g></string>
+    <!-- The end of Add hop's trail: the repeater being chosen. -->
+    <string name="add_hop_crumb_next">?</string>
+    <!-- Add hop tab, a noun: the repeaters the previous hop reports hearing. -->
+    <string name="add_hop_neighbors">Neighbors</string>
+    <!-- Add hop tab: repeaters this phone has heard. -->
+    <string name="add_hop_known">Known repeaters</string>
+    <!-- Add hop section header: the repeaters the previous hop reports; its name. -->
+    <string name="add_hop_heard_by">Heard by <xliff:g id="peer" example="Skinner Ridge">%1$s</xliff:g></string>
+    <!-- Beside a repeater already on the path, which cannot be added again. -->
+    <string name="add_hop_in_path">In path</string>
+    <!-- Under Add hop's neighbors: the repeaters the ask was sent through; names or repeater hints. -->
+    <string name="add_hop_asked_through">Asked through <xliff:g id="path" example="Spencer Butte">%1$s</xliff:g>.</string>
+    <!-- Add hop row: opens the page for typing a repeater hint. -->
+    <string name="add_hop_enter_hint">Enter repeater hint</string>
+    <!-- Add hop button beside the node the path leads to, when it is among the neighbors: the path ends here. -->
+    <string name="add_hop_finish_here">Finish here</string>
+    <!-- Inline on Add hop: the previous hop did not answer. "Known repeaters" is the tab's name. -->
+    <string name="add_hop_no_answer">No answer. Pick from Known repeaters instead.</string>
+    <!-- Inline on Add hop: the request for neighbors could not go out. -->
+    <string name="add_hop_not_sent">This phone could not send the request.</string>
+    <!-- TalkBack: what tapping a repeater on Add hop does. -->
+    <string name="add_hop_choose">Add to path</string>
+    <!-- Page title: type a repeater's hint by hand. -->
+    <string name="hint_entry_title">Repeater hint</string>
+    <!-- Button: adds the typed repeater to the path. -->
+    <string name="hint_entry_add">Add</string>
+    <!-- Segmented choice: the hint is typed as the start of the node's Base58 address. -->
+    <string name="hint_entry_base58">Base58 prefix</string>
+    <!-- Segmented choice: the hint is typed as four hexadecimal digits. -->
+    <string name="hint_entry_hex">Hex</string>
+    <!-- Field label: the typed repeater hint. -->
+    <string name="hint_entry_field">Repeater hint</string>
+    <!-- Placeholder in the empty field: an example Base58 prefix. Not translated. -->
+    <string name="hint_entry_base58_example" translatable="false">7Nq4</string>
+    <!-- Placeholder in the empty field: an example hex repeater hint. Not translated. -->
+    <string name="hint_entry_hex_example" translatable="false">5EBD</string>
+    <!-- Under the field: what to type in Base58. -->
+    <string name="hint_entry_base58_help">The first 4 or more characters of the address.</string>
+    <!-- Under the field: the typed text uses letters Base58 leaves out. -->
+    <string name="hint_entry_base58_invalid">Base58 has no 0, O, I, or l.</string>
+    <!-- Under the field: no address begins with what was typed. -->
+    <string name="hint_entry_base58_out_of_range">No address starts this way.</string>
+    <!-- Under the field: more characters than an address has. -->
+    <string name="hint_entry_base58_too_long">Longer than an address.</string>
+    <!-- Under the field: what to type in hex. -->
+    <string name="hint_entry_hex_help">Exactly 4 hex digits.</string>
+    <!-- Under the field: the typed text is not hexadecimal. -->
+    <string name="hint_entry_hex_invalid">Only 0–9 and A–F.</string>
+    <!-- Section header: the repeater hint the typed text names. -->
+    <string name="hint_entry_hop">Hop</string>
+    <!-- Row label: the hint in the form the app shows hints. -->
+    <string name="hint_entry_row_hint">Repeater hint</string>
+    <!-- Row label: the hint as four hexadecimal digits. -->
+    <string name="hint_entry_row_hex">Hex</string>
+    <!-- Row label: the saved node whose hint this is. -->
+    <string name="hint_entry_row_known">Known node</string>
+    <!-- Known node value: no saved node has this hint. -->
+    <string name="hint_entry_known_none">None</string>
+    <!-- Under the typed hint: that repeater is on the path already. -->
+    <string name="hint_entry_in_path">Already in the path.</string>
+    <!-- Section header: the typed text fits two repeater hints. -->
+    <string name="hint_entry_two_fit">Two hints fit</string>
+    <!-- Under the two hints: how to settle which. -->
+    <string name="hint_entry_two_fit_footer">Type another character, or pick one.</string>
+    <!-- A candidate hint that names no known node. -->
+    <string name="hint_entry_unknown_node">Unknown node</string>
+    <!-- A candidate's second line: its repeater hint, then its hex, such as "Repeater hint H1* · EDBC". -->
+    <string name="hint_entry_candidate">Repeater hint <xliff:g id="hint" example="H1*">%1$s</xliff:g> · <xliff:g id="hex" example="EDBC">%2$s</xliff:g></string>
+    <!-- Sheet title in a conversation: offers the path the mesh learned in place of the manual one. -->
+    <string name="learned_path_title">Switch to the learned path?</string>
+    <!-- Card label: the path chosen by hand. -->
+    <string name="learned_path_manual">Manual</string>
+    <!-- Card label: the path learned while the manual one was held. -->
+    <string name="learned_path_learned">Learned</string>
+    <!-- On the manual path's card: how many messages in a row got no acknowledgment ("ack") along it. -->
+    <plurals name="learned_path_no_ack">
+        <item quantity="one">No ack on the last send</item>
+        <item quantity="other">No ack on the last <xliff:g id="count" example="3">%d</xliff:g> sends</item>
+    </plurals>
+    <!-- On the learned path's card: it carried the acknowledgments that came back by flood. -->
+    <string name="learned_path_carried">Carried the flooded acks</string>
+    <!-- Button: replaces the manual path with the learned one. -->
+    <string name="learned_path_use">Use learned path</string>
+    <!-- Button: keeps the manual path; the question is not asked again for it. -->
+    <string name="learned_path_keep">Keep manual path</string>
+    <!-- TalkBack: the spinner in place of "Use learned path" while the switch is made. -->
+    <string name="learned_path_switching">Switching to the learned path</string>
+    <!-- Failure dialog title. -->
+    <string name="learned_path_not_switched_title">Couldn’t switch paths</string>
+    <!-- Add peer and import (add-peer.svg), New chat (conversation-list.svg 6). -->
+    <!-- Button on the Peers list, and the title of the page it opens: add a node to this phone's peers. -->
+    <string name="add_peer">Add peer</string>
+    <!-- Button on the conversation list, and the title of the sheet it opens: start a conversation. -->
+    <string name="new_chat">New chat</string>
+    <!-- New chat sheet item, and a button on the empty conversation list: a conversation with one peer. -->
+    <string name="new_message">New message</string>
+    <!-- Under New message in the New chat sheet: the ways to name the peer. -->
+    <string name="new_message_detail">A peer by name, link, or code</string>
+    <!-- The empty conversation list, under "No conversations". -->
+    <string name="conversations_empty_body">Message a peer, or open a channel you’ve joined.</string>
+    <!-- Add peer section header: the field that takes another node's identity. -->
+    <string name="add_peer_section_identity">Peer identity</string>
+    <!-- Label of Add peer's field: the three forms it accepts. -->
+    <string name="add_peer_field">Link, address, or key</string>
+    <!-- Button under Add peer's field: reads what was entered and shows the node, saving nothing. A verb. -->
+    <string name="add_peer_preview">Preview</string>
+    <!-- Under Add peer's field: what was entered names no node. Nothing is imported. -->
+    <string name="add_peer_not_peer">Not a UMSH link, address, or key.</string>
+    <!-- Under Add peer's field: a channel's link was entered, which does not add a peer. -->
+    <string name="add_peer_channel_link">This is a channel link, not a peer.</string>
+    <!-- Add peer row: opens this phone's own QR code sheet, so the other person can add it. -->
+    <string name="show_your_code">Show your code</string>
+    <!-- Import preview, under the node's name: the link carried the node's advertised details. -->
+    <string name="import_caption_details">Includes advertised identity details</string>
+    <!-- Import preview, under the node's address: the link carried only the key, or details that could not be read. -->
+    <string name="import_caption_key_only">Public key only</string>
+    <!-- Import preview row label: the node's full address. -->
+    <string name="import_address">Address</string>
+    <!-- Import preview row label: the node's advertised role, such as Chat or Repeater. -->
+    <string name="import_role">Role</string>
+    <!-- Import preview row label: where the node says it is. -->
+    <string name="import_location">Location</string>
+    <!-- Import preview Location value: latitude and longitude in degrees. -->
+    <string name="import_location_value"><xliff:g id="latitude" example="44.0521">%1$s</xliff:g>, <xliff:g id="longitude" example="-123.0868">%2$s</xliff:g></string>
+    <!-- Import preview Location value: latitude, longitude, and the width of the area the node disclosed. Keep the no-break spaces, so "within" never ends a line apart from the size. -->
+    <string name="import_location_within"><xliff:g id="latitude" example="44.0521">%1$s</xliff:g>, <xliff:g id="longitude" example="-123.0868">%2$s</xliff:g> ·\u00A0within\u00A0<xliff:g id="size" example="38 m">%3$s</xliff:g></string>
+    <!-- Import preview row label: when the node made the claims shown. A past participle. -->
+    <string name="import_reported">Reported</string>
+    <!-- Import preview, under the node's details. -->
+    <string name="import_claims_note">These details are the node’s own claims about itself.</string>
+    <!-- Import preview field label: what this phone will call the node, stored only on this phone. -->
+    <string name="import_name">Name (optional)</string>
+    <!-- Import preview button: saves the node to Peers and opens its page. -->
+    <string name="import_save">Save peer</string>
+    <!-- Import preview button: saves the node and opens a conversation with it. A verb. -->
+    <string name="import_message">Message</string>
+    <!-- TalkBack: Save peer or Message is storing the node on this phone. Nothing is sent. -->
+    <string name="import_saving">Saving</string>
+
+    <!-- P3g: contact exchange (nearby-exchange.svg). -->
+    <!-- Add peer section header: devices beside this phone that have Add peer open too. -->
+    <string name="nearby_section">Nearby</string>
+    <!-- Beside this phone's own glyph at the end of the Nearby header: this phone. -->
+    <string name="nearby_you">You</string>
+    <!-- Nearby, while no device has been heard yet. -->
+    <string name="nearby_empty">Nothing nearby yet.</string>
+    <!-- Nearby, while the radio does not carry this phone's traffic, so no exchange can run. -->
+    <string name="nearby_no_radio">Connect a companion radio set up for this phone to exchange contacts.</string>
+    <!-- A device on Nearby, for TalkBack: its model, then how near it seems (meet_nearness_*). -->
+    <string name="nearby_device_description"><xliff:g id="model" example="T-LoRa Pager">%1$s</xliff:g>, <xliff:g id="nearness" example="Fairly close">%2$s</xliff:g></string>
+    <!-- TalkBack: how near a Nearby device seems, the weakest of four steps. -->
+    <string name="meet_nearness_far">Far</string>
+    <!-- TalkBack: how near a Nearby device seems, the second of four steps. -->
+    <string name="meet_nearness_fairly_far">Fairly far</string>
+    <!-- TalkBack: how near a Nearby device seems, the third of four steps. -->
+    <string name="meet_nearness_fairly_close">Fairly close</string>
+    <!-- TalkBack: how near a Nearby device seems, the strongest of four steps. -->
+    <string name="meet_nearness_close">Close</string>
+    <!-- TalkBack: the action a Nearby row takes: asks that device to exchange contacts. -->
+    <string name="nearby_ask_action">Ask to exchange</string>
+    <!-- What Nearby calls a device whose model neither the board nor the platform list knows. -->
+    <string name="meet_device_unknown">Device</string>
+    <!-- A host platform on Nearby: an Android phone (platforms.json "android-phone"). -->
+    <string name="meet_platform_android_phone">Android phone</string>
+    <!-- A host platform on Nearby: an Android tablet (platforms.json "android-tablet"). -->
+    <string name="meet_platform_android_tablet">Android tablet</string>
+    <!-- A host platform on Nearby: a computer other than a Mac (platforms.json "computer"). -->
+    <string name="meet_platform_computer">Computer</string>
+    <!-- Sheet over Add peer when a nearby device asks to exchange contacts. The person standing there is the identification. -->
+    <string name="exchange_asked_title">Exchange contacts?</string>
+    <!-- Declines a nearby device's ask to exchange contacts. -->
+    <string name="exchange_not_now">Not now</string>
+    <!-- Agrees to exchange contacts with the nearby device that asked. A verb. -->
+    <string name="exchange_accept">Exchange</string>
+    <!-- Exchange page, while the other device answers or confirms. %1$s is its model, such as "T-LoRa Pager". -->
+    <string name="exchange_waiting">Waiting for <xliff:g id="model" example="T-LoRa Pager">%1$s</xliff:g></string>
+    <!-- Exchange page, under the six-digit code both screens show: asks whether the other screen shows the same digits. -->
+    <string name="exchange_compare">Same code on the other screen?</string>
+    <!-- Answer: the code on the other screen is different. An adjective, about the code. -->
+    <string name="exchange_different">Different</string>
+    <!-- Answer: the code on the other screen is the same. An adjective, about the code. -->
+    <string name="exchange_same">Same</string>
+    <!-- TalkBack: the check under the code once this phone's holder pressed Same. -->
+    <string name="exchange_same_pressed">Same on this phone</string>
+    <!-- Exchange page: either holder pressed Different; whatever arrived was dropped. -->
+    <string name="exchange_codes_differ">Codes differ. Nothing saved.</string>
+    <!-- Exchange page: declined, backed out, timed out, or the other device was lost; nothing was saved. -->
+    <string name="exchange_not_exchanged">Not exchanged. Nothing saved.</string>
+    <!-- Exchange page, after it ended: back to Add peer. -->
+    <string name="exchange_done">Done</string>
+    <!-- Exchange page, after it ended: starts over under a new key, so both glyphs and the code change. -->
+    <string name="exchange_try_again">Try again</string>
 </resources>

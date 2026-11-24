@@ -3,8 +3,10 @@ package com.voria.umsh.app
 import com.voria.umsh.core.MobileAppCore
 import com.voria.umsh.core.MobileAppChatRequest
 import com.voria.umsh.core.MobileAppException
+import com.voria.umsh.core.MobileAppLearnedPathOffer
 import com.voria.umsh.core.MobileAppLifecycle
 import com.voria.umsh.core.MobileAppPolicyRecord
+import com.voria.umsh.core.MobileAppPositionReading
 import com.voria.umsh.core.MobileAppStartFailure
 import com.voria.umsh.core.MobileAppStatusRecord
 import com.voria.umsh.core.MobileAppTranscriptPageRecord
@@ -12,11 +14,21 @@ import com.voria.umsh.core.MobileException
 import com.voria.umsh.core.MobileNotificationEventRecord
 import com.voria.umsh.core.MobileStoredChatCursorRecord
 import com.voria.umsh.core.PublicIdentityRecord
+import com.voria.umsh.features.peers.HopNames
+import com.voria.umsh.features.peers.NeighborSource
 import com.voria.umsh.models.AppStateSnapshot
 import com.voria.umsh.models.KeyProtection
 import com.voria.umsh.models.LocalIdentity
+import com.voria.umsh.models.ManualPath
+import com.voria.umsh.models.MeetExchange
+import com.voria.umsh.models.MeetState
 import com.voria.umsh.models.MessageRef
+import com.voria.umsh.models.Octets
+import com.voria.umsh.models.PeerRole
+import com.voria.umsh.models.PingOutcome
 import com.voria.umsh.models.ReactionKind
+import com.voria.umsh.models.RepeaterListing
+import com.voria.umsh.models.RouteSummary
 import com.voria.umsh.models.TranscriptCursor
 import com.voria.umsh.models.TranscriptPage
 import com.voria.umsh.services.identity.IdentityOperations
@@ -26,9 +38,11 @@ import com.voria.umsh.services.location.LocationGrant
 import com.voria.umsh.services.location.LocationRelay
 import com.voria.umsh.services.location.PhoneFix
 import com.voria.umsh.services.location.PhoneLocationSource
+import com.voria.umsh.services.location.PositionSource
 import com.voria.umsh.services.location.SharedPrecision
 import com.voria.umsh.services.identity.IdentityVaultException
 import com.voria.umsh.services.mobilecore.AppLog
+import com.voria.umsh.services.mobilecore.CoreErrors
 import com.voria.umsh.services.mobilecore.CoreWake
 import com.voria.umsh.services.mobilecore.RecordMapping
 import com.voria.umsh.services.mobilecore.ReloadCoalescer
@@ -89,6 +103,8 @@ sealed interface FailureNotice {
 class AppRuntime(
     val core: MobileAppCore,
     val kind: CoreKind,
+    /** What [core] says this phone is when it meets another (its config's `platform_model`). */
+    val platformModel: UShort,
     /** Bumped for every runtime the host makes; the UI is keyed on it. */
     val generation: Long,
     owner: PublicIdentityRecord,
@@ -109,9 +125,11 @@ class AppRuntime(
     private val draftDebounceMs: Long = DRAFT_DEBOUNCE_MS,
     /** This phone's readings and what Android allows of them; none in tests that never share a location. */
     private val location: PhoneLocationSource = PhoneLocationSource.None,
+    /** One reading of the phone's position under a grant already given: where a manual path was set, and whether the phone moved. */
+    private val positions: PositionSource = PositionSource.of(location),
     /** The precisions the core sizes, and the approximate clamp. */
     val sharedPrecision: SharedPrecision = SharedPrecision.core,
-) {
+) : NeighborSource {
     val ownerAddress: String = owner.canonicalAddress
 
     private val _lifecycle = MutableStateFlow<MobileAppLifecycle>(MobileAppLifecycle.Idle)
@@ -137,10 +155,28 @@ class AppRuntime(
     /** Peers, channels and conversations; null until the first read. */
     val appState: StateFlow<AppStateSnapshot?> = _appState.asStateFlow()
 
+    private val _peersRevision = MutableStateFlow(0L)
+
+    /**
+     * Bumped each time the stored nodes are read again (a full reload,
+     * which a peers change brings): whatever was worked out from them, such
+     * as a hop's name, is due again.
+     */
+    val peersRevision: StateFlow<Long> = _peersRevision.asStateFlow()
+
     private val _transcriptRevisions = MutableStateFlow<Map<String, Long>>(emptyMap())
 
     /** How many times each conversation's messages changed; an open transcript re-reads on a change. */
     val transcriptRevisions: StateFlow<Map<String, Long>> = _transcriptRevisions.asStateFlow()
+
+    private val _routeRevisions = MutableStateFlow<Map<String, Long>>(emptyMap())
+
+    /**
+     * How many times this phone changed or taught the route to each peer
+     * (a reset, a held path cleared, a ping's reply): every page showing
+     * that route reads it again.
+     */
+    val routeRevisions: StateFlow<Map<String, Long>> = _routeRevisions.asStateFlow()
 
     private val _forwardSecretConversations = MutableStateFlow<Set<String>>(emptySet())
     val forwardSecretConversations: StateFlow<Set<String>> = _forwardSecretConversations.asStateFlow()
@@ -165,6 +201,15 @@ class AppRuntime(
 
     /** Ticks each minute while attached, and on a time, zone or locale change. */
     val now: StateFlow<Instant> = _now.asStateFlow()
+
+    private val _meet = MutableStateFlow<MeetState?>(null)
+
+    /**
+     * Add peer's contact exchange; null while it is closed. A finished
+     * exchange stays [com.voria.umsh.models.MeetExchange.Exchanged] until the
+     * meet closes, so whoever navigates on it reads it late and still finds it.
+     */
+    val meet: StateFlow<MeetState?> = _meet.asStateFlow()
 
     /** The conversation on screen, which notifications leave alone while the app is in front. */
     val visibleConversation = MutableStateFlow<String?>(null)
@@ -199,6 +244,13 @@ class AppRuntime(
     private val shownStartFailures = HashSet<MobileAppStartFailure>()
     private var seedJob: Job? = null
     private var started = false
+
+    /**
+     * The owner is set, so the store can be read. A page restored before
+     * the start gets there (the host is ready first) waits on this rather
+     * than reading nothing; a start that failed to set it fails the read.
+     */
+    private val owned = CompletableDeferred<Unit>()
 
     /** The start: owner set, lists read, the core started. Commands that need the owner wait for it. */
     @Volatile
@@ -296,7 +348,13 @@ class AppRuntime(
             }
             // After the seed: setting the owner raises every list, and a
             // drain reading them before the seed would publish an empty mesh.
-            withContext(read) { core.setOwner(ownerAddress) }
+            try {
+                withContext(read) { core.setOwner(ownerAddress) }
+                owned.complete(Unit)
+            } catch (error: Exception) {
+                owned.completeExceptionally(error)
+                throw error
+            }
             reload(full = true).await()
             startCore()
         }.also { startJob = it }
@@ -347,6 +405,73 @@ class AppRuntime(
     }
 
     fun advertise(): Deferred<Unit> = scope.async { core.advertiseIdentity() }
+
+    /**
+     * Whether Add peer's exchange is wanted open; only [MeetPresence] asks.
+     * The core opens it only while the radio carries this phone.
+     */
+    fun setMeetWanted(wanted: Boolean): Deferred<Unit> = scope.async { core.setMeetWanted(wanted) }
+
+    /** Ask Nearby's [device] to exchange contacts. Whether the ask went out. */
+    fun askToExchange(device: Long): Deferred<Boolean> = scope.async { core.askToExchange(device.toUInt()) }
+
+    /**
+     * Exchange ([accept]) or Not now, to the device asking; nothing once no
+     * device is asking. Declining opens the meet again under a fresh key.
+     */
+    fun answerExchange(accept: Boolean): Deferred<Unit> = scope.async { core.answerExchange(accept) }
+
+    /** Same ([same]) or Different, about the code both screens show. */
+    fun confirmCode(same: Boolean): Deferred<Unit> = scope.async { core.confirmCode(same) }
+
+    /**
+     * Leave the exchange under way (or ended) and open the meet again under
+     * a fresh key; nothing when none is.
+     */
+    fun backOutOfExchange(): Deferred<Unit> = scope.async { core.backOutOfExchange() }
+
+    /**
+     * Hold [path] to a peer for [holdMs], noting where the phone is when
+     * location is already granted (never asking). False when the session
+     * would not hold it.
+     */
+    fun setManualPath(address: String, path: ManualPath, holdMs: Long): Deferred<Boolean> = scope.async {
+        val position = positions.readOnceIfGranted()?.record()
+        val held = core.setManualPath(address, RecordMapping.path(path), holdMs.toULong(), position)
+        routeChanged(address)
+        reload(full = true).await()
+        held
+    }
+
+    /**
+     * The held route, carrying the path learned while holding it, when that
+     * path is due to be offered; else null. The phone's position is read
+     * only when the core asks for it, and only under a grant already given.
+     */
+    fun learnedPathOffer(address: String): Deferred<RouteSummary?> = scope.async {
+        var offer = core.learnedPathOffer(address, null)
+        if (offer is MobileAppLearnedPathOffer.NeedsPosition) {
+            val reading = positions.readOnceIfGranted()
+                ?.let { MobileAppPositionReading.Found(it.record()) }
+                ?: MobileAppPositionReading.Unavailable
+            offer = core.learnedPathOffer(address, reading)
+        }
+        (offer as? MobileAppLearnedPathOffer.Offer)?.route?.let { RecordMapping.route(it, clock.millis()) }
+    }
+
+    /** Drop the held path for the one learned while holding it; false when there was none to take. */
+    fun adoptLearnedPath(address: String): Deferred<Boolean> = scope.async {
+        val adopted = core.adoptLearnedPath(address)
+        routeChanged(address)
+        reload(full = true).await()
+        adopted
+    }
+
+    /** Keep the held path, and stop offering the learned one for it. */
+    fun keepManualPath(address: String): Deferred<Unit> = scope.async {
+        core.keepManualPath(address)
+        routeChanged(address)
+    }
 
     /** The stored policy, every time it changes: what the settings rows show. */
     val policy: Flow<MobileAppPolicyRecord> get() = preferences.policy
@@ -416,6 +541,171 @@ class AppRuntime(
         reload(full = false).await()
         address
     }
+
+    // region Peers (peer page and list)
+
+    /** What this user calls a peer, trimmed; empty or null clears it, and the advertised name shows again. */
+    fun setAlias(address: String, alias: String?): Deferred<Unit> = peerEdit { core.setAlias(address, alias?.trim()?.ifEmpty { null }) }
+
+    /** Favoriting a peer also saves it. */
+    fun setFavorite(address: String, favorite: Boolean): Deferred<Unit> = peerEdit { core.setFavorite(address, favorite) }
+
+    /** Arm or disarm the one-shot watch: a notice the next time the peer is heard. */
+    fun setNotifyWhenHeard(address: String, armed: Boolean): Deferred<Unit> = peerEdit { core.setNotifyWhenHeard(address, armed) }
+
+    /** Add a peer heard over the air (or opened from a link) to Peers. */
+    fun promotePeer(address: String): Deferred<Unit> = peerEdit { core.promotePeer(address) }
+
+    /** Off Peers, back to the nodes heard over the air; its conversation stays. */
+    fun demotePeer(address: String): Deferred<Unit> = peerEdit { core.demotePeer(address) }
+
+    /**
+     * Delete a peer from this phone, and with [withConversation] its
+     * conversation and history. Without, the core refuses a peer a
+     * conversation holds. Nothing is sent to the node.
+     */
+    fun deletePeer(address: String, withConversation: Boolean): Deferred<Unit> =
+        peerEdit { core.deletePeer(address, withConversation) }
+
+    /**
+     * Save a peer from a link, an address or a key (Add peer's import),
+     * named [alias] when one is given. The core parses [input] again and
+     * decides whether its identity replaces a stored one. With
+     * [startConversation] its conversation opens too. Answers with the
+     * peer's address, which is also its conversation's.
+     */
+    fun savePeer(input: String, alias: String?, startConversation: Boolean): Deferred<String> = scope.async {
+        val address = core.savePeer(input, alias?.trim()?.ifEmpty { null }, startConversation)
+        reload(full = true).await()
+        address
+    }
+
+    /** Whether a direct conversation may notify. */
+    fun setConversationNotifications(address: String, enabled: Boolean): Deferred<Unit> = scope.async {
+        core.setConversationNotifications(address, enabled)
+        reload(full = false).await()
+    }
+
+    /** Erase a conversation's messages on this phone; the conversation stays. */
+    fun clearMessages(address: String): Deferred<Unit> = scope.async {
+        core.clearMessages(address)
+        reload(full = false).await()
+    }
+
+    /** Ask a peer who it is; the answer arrives as a peers change. */
+    fun fetchIdentity(address: String): Deferred<Unit> = scope.async { core.fetchIdentity(address) }
+
+    /**
+     * Ask the node behind a repeater hint who it is, steered through
+     * [preceding] (the hops nearer this phone; none for one in range).
+     * Narrowed to one hint, so the core's discovery cooldown does not
+     * hold it back. The answer arrives as a peers change.
+     */
+    fun lookUpRepeaterHint(hint: Octets, preceding: List<Octets>): Deferred<Unit> = scope.async {
+        core.discover(null, hint.toByteArray(), preceding.map { it.toByteArray() })
+    }
+
+    /**
+     * Ask the nodes in range, or where [route] ends (each hop a two-byte
+     * repeater hint, in send order), to identify themselves: those with
+     * [role]'s code, or all. Answers arrive as peers changes. One such ask
+     * goes at most once per the core's discovery cooldown, wherever it was
+     * made; one sooner fails `InvalidRequest` ([discoveryWaitMs] says how
+     * long is left).
+     */
+    fun discover(role: PeerRole?, route: List<Octets>): Deferred<Unit> = scope.async {
+        core.discover(role?.code?.toUByte(), null, route.map(Octets::toByteArray))
+    }
+
+    /** How long until an unnarrowed [discover] may go; 0 when it may now, or when there is no core to ask. */
+    fun discoveryWaitMs(): Long = try {
+        core.discoveryWaitMs().toLong()
+    } catch (error: Exception) {
+        if (error is CancellationException) throw error
+        0L
+    }
+
+    /** Remove every node heard over the air that nothing keeps: saved nodes, conversations and the radio's own stay. */
+    fun clearDiscovered(): Deferred<Unit> = scope.async { core.clearDiscovered() }
+
+    /** What a repeater last said about its neighbors, from this phone's store; null when it was never asked. Sends nothing. */
+    override suspend fun storedNeighbors(address: String): RepeaterListing? =
+        stored { core.peerRepeaters(address) }?.let(RecordMapping::listing)
+
+    /**
+     * Ask a repeater for a page of its neighbors, down [route] (repeater
+     * hints in send order; none for the session's own route): the first with no [cursor], which replaces what was kept, the
+     * next with the cursor the last page gave. Answers with the listing as
+     * it now stands; `NoAnswer` when the repeater did not answer in time.
+     */
+    override fun requestNeighbors(address: String, cursor: Octets?, route: List<Octets>): Deferred<RepeaterListing> = scope.async {
+        RecordMapping.listing(core.requestPeerRepeaters(address, cursor?.toByteArray(), route.map(Octets::toByteArray)))
+    }
+
+    /** The way to a peer as the session knows it now; fails while the core is not running. */
+    fun peerRoute(address: String): Deferred<RouteSummary> = scope.async {
+        val record = core.peerRoute(address)
+        RecordMapping.route(record, clock.millis())
+    }
+
+    /**
+     * Ping a peer, along [path] when one is given (nothing installed), else
+     * the way the session would send. A newer ping to the same peer ends
+     * this one [PingOutcome.Canceled]. One that cannot go out (no radio, not
+     * this phone's, the core not running) is [PingOutcome.Unavailable].
+     */
+    fun ping(address: String, path: ManualPath? = null): Deferred<PingOutcome> = scope.async {
+        try {
+            RecordMapping.ping(core.ping(address, path?.let(RecordMapping::path))).also { if (it is PingOutcome.Reply) routeChanged(address) }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            AppLog.w(TAG, "ping not sent: ${error.javaClass.simpleName}")
+            PingOutcome.Unavailable(CoreErrors.reason(error), error)
+        }
+    }
+
+    /** Forget the learned route to a peer; false when there was none. */
+    fun clearRoute(address: String): Deferred<Boolean> = scope.async {
+        core.clearRoute(address).also { routeChanged(address) }
+    }
+
+    /** Drop a held path to a peer; false when none was held. */
+    fun clearManualPath(address: String): Deferred<Boolean> = scope.async {
+        val cleared = core.clearManualPath(address)
+        routeChanged(address)
+        reload(full = true).await()
+        cleared
+    }
+
+    private fun routeChanged(address: String) {
+        _routeRevisions.update { revisions -> revisions.toMutableMap().apply { merge(address, 1L, Long::plus) } }
+    }
+
+    /**
+     * For each two-byte repeater hint, the address of the stored node it
+     * most likely names, or null (the core's rule; it reads every stored
+     * node, so off the main thread). Use [hopNames], which remembers them.
+     */
+    suspend fun nameRepeaterHints(hints: List<Octets>): List<String?> =
+        stored { core.nameRepeaterHints(hints.map(Octets::toByteArray)) }
+
+    /** Names for route hops, remembered until the stored nodes change. */
+    val hopNames: HopNames by lazy { HopNames(::nameRepeaterHints, peersRevision) }
+
+    /** How many messages a conversation holds; a store read, nothing sent. */
+    suspend fun messageCount(address: String): Long = stored { core.messageCount(address) }
+
+    /** One reading of where this phone is, only under a location grant already given; never asks. */
+    suspend fun phoneFixIfGranted(): PhoneFix? = positions.readOnceIfGranted()
+
+    /** A peer edit, then the lists read again so every screen shows it. */
+    private fun peerEdit(command: suspend () -> Unit): Deferred<Unit> = scope.async {
+        command()
+        reload(full = true).await()
+    }
+
+    // endregion
 
     /** Open a joined channel's conversation, or find it open: its address. */
     fun openChannelConversation(channelId: String): Deferred<String> = scope.async {
@@ -714,12 +1004,18 @@ class AppRuntime(
 
     /** The page around [message]; null when it is no longer stored. */
     suspend fun transcriptAround(address: String, message: MessageRef, radius: Int): TranscriptPage? =
-        withContext(read) { core.transcriptAround(address, RecordMapping.ref(message), radius.toUInt()) }
+        stored { core.transcriptAround(address, RecordMapping.ref(message), radius.toUInt()) }
             ?.let { RecordMapping.page(it, _appState.value?.peers.orEmpty()) }
 
     private suspend fun page(query: () -> MobileAppTranscriptPageRecord): TranscriptPage {
-        val record = withContext(read) { query() }
+        val record = stored(query)
         return RecordMapping.page(record, _appState.value?.peers.orEmpty())
+    }
+
+    /** A store read, once the owner is set: the core reads nothing before. */
+    private suspend fun <T> stored(query: () -> T): T {
+        owned.await()
+        return withContext(read) { query() }
     }
 
     private fun cursor(cursor: TranscriptCursor) = MobileStoredChatCursorRecord(cursor.createdAtMs, cursor.rowId)
@@ -763,6 +1059,9 @@ class AppRuntime(
         } else if (changes.conversationsChanged || transcripts.isNotEmpty()) {
             reload(full = false).await()
         }
+        // After the peers: an exchange that ended with a contact names a
+        // peer the lists now hold.
+        if (changes.meetChanged) showMeet(changes.meet?.let(RecordMapping::meet))
         // After the lists it came with: a start reports Running with the
         // conversations it opened, and Running over lists not yet read
         // would show them as none.
@@ -779,6 +1078,28 @@ class AppRuntime(
         apply(RadioSnapshot.from(status.radio))
         _forwardSecretConversations.value = status.forwardSecretConversations.toSet()
         _emergencyCertified.value = status.emergencyCertified
+        showMeet(status.meet?.let(RecordMapping::meet))
+    }
+
+    private fun stepName(exchange: MeetExchange): String = when (exchange) {
+        MeetExchange.Closed -> "closed"
+        MeetExchange.Opening -> "opening"
+        MeetExchange.Idle -> "idle"
+        is MeetExchange.Asking -> "asking"
+        is MeetExchange.Asked -> "asked"
+        is MeetExchange.Accepted -> "accepted"
+        is MeetExchange.Comparing -> if (exchange.sent) "comparing, sent" else "comparing"
+        is MeetExchange.Ended -> "ended ${exchange.reason}"
+        is MeetExchange.Exchanged -> "exchanged"
+    }
+
+    /** Publishes the exchange, logging where it went: its step and how many are listed, nothing that names anyone. */
+    private fun showMeet(meet: MeetState?) {
+        val shown = _meet.value
+        if (meet?.exchange?.let(::stepName) != shown?.exchange?.let(::stepName) || meet?.devices?.size != shown?.devices?.size) {
+            AppLog.i(TAG, "meet: ${meet?.exchange?.let(::stepName) ?: "closed"}, ${meet?.devices?.size ?: 0} nearby")
+        }
+        _meet.value = meet
     }
 
     private fun apply(radio: RadioSnapshot?) {
@@ -817,6 +1138,8 @@ class AppRuntime(
                 }
             }
             val mapped = withPendingDrafts(RecordMapping.state(record, _transcriptRevisions.value, _appState.value))
+            // Before the lists publish, so a reader of the new peers never pairs them with an old revision.
+            if (isFull) _peersRevision.update { it + 1 }
             _appState.value = mapped
             // A name saved while the read ran is newer than the one it read.
             if (revision == nameRevision.get()) {

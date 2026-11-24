@@ -68,7 +68,24 @@ data class PeerSummary(
     val isFavorite: Boolean,
     val isOnDeviceIdentity: Boolean,
     val notifyWhenHeard: Boolean,
+    /** It plausibly forwards: what it advertised, else a stored repeater or bridge (the core's call). */
+    val likelyRepeater: Boolean = false,
+    /**
+     * Its advertised identity may be attributed to it: signed and valid,
+     * or unsigned in a frame the MAC authenticated (the core's call).
+     */
+    val advertisementAttributable: Boolean = false,
 ) {
     /** The live advertisement's role when there is one, else the stored kind. */
     val role: PeerRole get() = advertised?.role ?: storedRole
+
+    /**
+     * What its advertisement says it can do; null when it never advertised.
+     * Every advertisement carries the bits, so an empty set means none.
+     */
+    val capabilities: Capabilities? get() = advertised?.let { Capabilities(it.capabilityBits) }
+
+    /** It says it exchanges text: the chat role, or the text-messages capability. */
+    val offersTextMessages: Boolean
+        get() = role == PeerRole.Chat || capabilities?.contains(Capabilities.TEXT_MESSAGES) == true
 }

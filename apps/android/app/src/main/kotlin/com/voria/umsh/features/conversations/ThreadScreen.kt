@@ -22,6 +22,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -59,6 +61,7 @@ import com.voria.umsh.designsystem.UmshTopAppBar
 import com.voria.umsh.designsystem.rememberCopier
 import com.voria.umsh.designsystem.rememberDisplayNames
 import com.voria.umsh.models.ChannelConversationSummary
+import com.voria.umsh.features.peers.manualpath.LearnedPathPrompt
 import com.voria.umsh.models.ChatMessage
 import com.voria.umsh.models.DirectConversationSummary
 import com.voria.umsh.models.MessageRef
@@ -72,8 +75,9 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import com.voria.umsh.designsystem.userIsolated
 
 /**
- * A conversation (`threads.svg`): Back, its avatar and title (no action
- * until the peer page and Conversation info exist, D14), the transcript
+ * A conversation (`threads.svg`): Back, its avatar and title (a direct
+ * thread's opens the peer's page; a channel's waits for Conversation
+ * info, D14), the transcript
  * newest at the bottom, and the composer, which owns the bottom edge and
  * rides above the keyboard. The bar hides under it on a phone; beside the
  * list [onBack] is null, since there is no Back there.
@@ -91,6 +95,8 @@ fun ThreadScreen(
     /** Close the thread: `EMERGENCY`'s warning turned down before a send. */
     onLeave: () -> Unit,
     onOpenDetails: (MessageRef) -> Unit,
+    /** A direct thread's title: the peer's page, by its address. */
+    onOpenPeer: (String) -> Unit,
     /** The composer's Connect radio with a radio held: its page. */
     onOpenRadio: () -> Unit,
     /** The composer's Connect radio with none set up: Choose a radio (D20). */
@@ -178,7 +184,20 @@ fun ThreadScreen(
                 UmshTopAppBar(
                     title = {
                         conversation?.let { shown ->
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            val peerAddress = (shown as? DirectConversationSummary)?.peer?.address
+                            val openLabel = stringResource(R.string.open_peer_page)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                modifier = if (peerAddress != null) {
+                                    Modifier
+                                        .clip(MaterialTheme.shapes.small)
+                                        .clickable(onClickLabel = openLabel) { onOpenPeer(peerAddress) }
+                                        .testTag(Tags.THREAD_TITLE)
+                                } else {
+                                    Modifier.testTag(Tags.THREAD_TITLE)
+                                },
+                            ) {
                                 val avatar = when (shown) {
                                     is DirectConversationSummary -> RowAvatar.Peer(shown.peer)
                                     is ChannelConversationSummary -> RowAvatar.Channel(shown.channel)
@@ -263,6 +282,8 @@ fun ThreadScreen(
     }
     original?.let { OriginalDialog(it, onDismiss = viewModel::dismissOriginal) }
     alert?.let { ThreadAlertDialog(it, onDismiss = viewModel::dismissAlert) }
+    // A held path that keeps missing its acks while the flood is answered (`manual-path.svg` 7).
+    if (current && conversation is DirectConversationSummary) LearnedPathPrompt(key.address)
 }
 
 /**

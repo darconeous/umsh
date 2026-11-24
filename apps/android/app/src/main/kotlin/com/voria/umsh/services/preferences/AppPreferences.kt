@@ -165,6 +165,13 @@ class AppPreferences(file: File, scope: CoroutineScope) : RuntimePreferences {
         store.edit { it[NOTIFICATIONS_BLOCKED] = blocked }
     }
 
+    /** The Peers list's order, by its name; null until one is chosen (`peers-list.svg` 2: remembered). */
+    val peersSort: Flow<String?> = data.map { it[PEERS_SORT] }.distinctUntilChanged()
+
+    suspend fun setPeersSort(sort: String) {
+        store.edit { it[PEERS_SORT] = sort }
+    }
+
     /** Everything, as on a first launch. */
     suspend fun clear() {
         store.edit { it.clear() }
@@ -241,6 +248,7 @@ class AppPreferences(file: File, scope: CoroutineScope) : RuntimePreferences {
         val HIDE_LOCK_SCREEN = booleanPreferencesKey("notifications.hideLockScreen")
         val NOTIFICATIONS_ASKED = booleanPreferencesKey("notifications.asked")
         val NOTIFICATIONS_BLOCKED = booleanPreferencesKey("permissions.notifications.blocked")
+        val PEERS_SORT = stringPreferencesKey("peers.sort")
         val LOCATION_BLOCKED = booleanPreferencesKey("permissions.location.blocked")
         val PRECISE_LOCATION_BLOCKED = booleanPreferencesKey("permissions.preciseLocation.blocked")
         val RADIO_KIND = stringPreferencesKey("radio.kind")

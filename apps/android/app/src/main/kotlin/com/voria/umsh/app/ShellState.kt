@@ -61,6 +61,9 @@ class ShellState(
     /** The page on top of the shown destination. */
     val top: UmshKey? get() = currentStack.lastOrNull() as? UmshKey
 
+    /** The page on screen: an app-level page over the shell, else [top]. */
+    val shownTop: NavKey? get() = if (appStack.size > 1) appStack.last() else top
+
     /**
      * Bumped each time [destination] is reselected while its root is already
      * shown; the root scrolls to the top once per bump ([ScrollToTopOnReselect]).
@@ -131,6 +134,140 @@ class ShellState(
         openDetail(Destination.Conversations, UmshKey.Thread(address))
     }
 
+    /**
+     * A peer's page pushed on [destination]'s stack, above whatever it shows
+     * (a thread, Message details, Radio Detail in Settings); above the shell
+     * when [destination] is null (from Radio Detail there). Once: when the
+     * page is already on that stack, the stack goes back to it.
+     */
+    fun openPeer(address: String, destination: Destination?) {
+        val key = UmshKey.PeerPage(address, destination)
+        pushOnce(destination?.let(stacks::getValue) ?: appStack, key)
+    }
+
+    /** Route from [page]: pushed on the stack the page is on (D12), above the shell with it. */
+    fun openRoute(page: UmshKey.PeerPage) {
+        val key = UmshKey.Route(page.address, page.destination)
+        pushOnce(page.destination?.let(stacks::getValue) ?: appStack, key)
+    }
+
+    /** The manual path editor for [address]: above the shell, over whatever stack the Route page is on. */
+    fun openManualPath(address: String) = pushOnce(appStack, UmshKey.ManualPath(address))
+
+    /** Neighbors from [page]: pushed on the stack the page is on (D12), above the shell with it. */
+    fun openNeighbors(page: UmshKey.PeerPage) {
+        val key = UmshKey.Neighbors(page.address, page.destination)
+        pushOnce(page.destination?.let(stacks::getValue) ?: appStack, key)
+    }
+
+    /** Ask near this node on [route]: Discover aimed at its peer, on the stack the Route page is on (D12). */
+    fun openDiscover(route: UmshKey.Route) {
+        val key = UmshKey.Discover(route.address, route.destination)
+        pushOnce(route.destination?.let(stacks::getValue) ?: appStack, key)
+    }
+
+    /** The Peers list's Discover peers: as the list's one detail page, asking nearby. */
+    fun openDiscoverFromList() = openDetail(Destination.Peers, UmshKey.Discover(null, Destination.Peers))
+
+    /** A Peers row: the node's page as the Peers list's one detail page. */
+    fun openPeerFromList(address: String) = openDetail(Destination.Peers, UmshKey.PeerPage(address, Destination.Peers))
+
+    /** Add peer on [destination]'s stack, as its list's one detail page (D11 for Conversations). */
+    fun openAddPeer(destination: Destination) = openDetail(destination, UmshKey.AddPeer(destination))
+
+    /**
+     * Add peer is done with a node: [address]'s page takes its place on the
+     * same stack (`add-peer.svg` 3), so Back from the page returns to the
+     * list, not to a preview already used.
+     */
+    fun leaveAddPeerForPage(addPeer: UmshKey.AddPeer, address: String) {
+        val stack = stacks.getValue(addPeer.destination)
+        closeFrom(stack, addPeer)
+        pushOnce(stack, UmshKey.PeerPage(address, addPeer.destination))
+    }
+
+    /** Add peer is done with a conversation: Add peer closes, and the conversation opens on Conversations. */
+    fun leaveAddPeerForConversation(addPeer: UmshKey.AddPeer, conversation: String) {
+        closeFrom(stacks.getValue(addPeer.destination), addPeer)
+        openConversation(conversation)
+    }
+
+    /**
+     * This phone's own identity was entered in Add peer: Add peer closes and
+     * Settings opens at Your identity, as a link to this phone does
+     * (product-structure, "Deep links" 2). Beside the Settings list, Your
+     * identity is its root's own detail, so the root is enough.
+     */
+    fun leaveAddPeerForIdentity(addPeer: UmshKey.AddPeer, twoPane: Boolean) {
+        closeFrom(stacks.getValue(addPeer.destination), addPeer)
+        while (appStack.size > 1) appStack.removeAt(appStack.lastIndex)
+        selected = Destination.Settings
+        if (twoPane) showRoot(Destination.Settings) else openDetail(Destination.Settings, UmshKey.YourIdentity)
+    }
+
+    /**
+     * The shown destination's pages follow Add peer's exchange
+     * (`nearby-exchange.svg`): an attempt under way pushes the exchange page
+     * over Add peer; one that is over (left, declined, closed, or never
+     * there, as after process death) closes it; contacts crossed replace
+     * Add peer and the exchange with the new peer's page (board 6), so Back
+     * leads to the list, not to the code. The exchange is open only while
+     * Add peer or the exchange is the shown top page, so other stacks never
+     * need following until they are shown, nor this one while an app-level
+     * page is over the shell.
+     */
+    fun followMeet(step: MeetStep) {
+        if (appStack.size > 1) return
+        val stack = currentStack
+        when (val top = stack.lastOrNull()) {
+            is UmshKey.AddPeer -> when (step) {
+                MeetStep.UnderWay -> pushOnce(stack, UmshKey.Exchange(top.destination))
+                is MeetStep.Exchanged -> leaveAddPeerForPage(top, step.peerAddress)
+                MeetStep.None -> Unit
+            }
+            is UmshKey.Exchange -> when (step) {
+                MeetStep.UnderWay -> Unit
+                is MeetStep.Exchanged -> leaveAddPeerForPage(UmshKey.AddPeer(top.destination), step.peerAddress)
+                MeetStep.None -> stack.removeAt(stack.lastIndex)
+            }
+            else -> Unit
+        }
+    }
+
+    /** Close [key] and whatever is above it in [stack]; nothing when it is not there or is the root. */
+    private fun closeFrom(stack: NavBackStack<NavKey>, key: UmshKey) {
+        val index = stack.indexOf(key)
+        if (index < 1) return
+        while (stack.size > index) stack.removeAt(stack.lastIndex)
+    }
+
+    /**
+     * A notification about a node that sends no text (product-structure,
+     * "Notification taps" 3): Peers selected, with its page open above the
+     * list, and no app-level page over it.
+     */
+    fun showPeer(address: String) {
+        while (appStack.size > 1) appStack.removeAt(appStack.lastIndex)
+        selected = Destination.Peers
+        openPeerFromList(address)
+    }
+
+    /**
+     * Message on [page]: back to the thread beneath it when that is this
+     * conversation (iOS `returnToConversation`), else [conversation] opened
+     * on Conversations.
+     */
+    fun openConversationFrom(page: UmshKey.PeerPage, conversation: String) {
+        val stack = page.destination?.let(stacks::getValue) ?: appStack
+        val index = stack.lastIndexOf(page)
+        if (page.destination == Destination.Conversations && index >= 1 && stack[index - 1] == UmshKey.Thread(conversation)) {
+            while (stack.size > index) stack.removeAt(stack.lastIndex)
+            selected = Destination.Conversations
+            return
+        }
+        openConversation(conversation)
+    }
+
     /** Close an app-level page: back to the shell as it was left. False with none open. */
     fun popAppPage(): Boolean {
         if (appStack.size <= 1) return false
@@ -158,10 +295,22 @@ class ShellState(
         currentStack.add(key)
     }
 
-    /** Push [key] on [destination]'s stack, once: a second ask while it is on top does nothing. */
-    fun push(destination: Destination, key: UmshKey) {
-        val stack = stacks.getValue(destination)
-        if (stack.lastOrNull() != key) stack.add(key)
+    /** Push [key] on [destination]'s stack, once: when it is already there, back to it. */
+    fun push(destination: Destination, key: UmshKey) = pushOnce(stacks.getValue(destination), key)
+
+    /**
+     * [key] on top of [stack], never twice in it: a key names its page's
+     * saved state and ViewModels, so two copies would share them. A path
+     * that loops back (a hop's page whose route runs through this node)
+     * returns to the page already open.
+     */
+    private fun pushOnce(stack: NavBackStack<NavKey>, key: UmshKey) {
+        val index = stack.indexOf(key)
+        if (index < 0) {
+            stack.add(key)
+        } else {
+            while (stack.size > index + 1) stack.removeAt(stack.lastIndex)
+        }
     }
 
     /** Close [thread] and whatever is above it, wherever it is in its stack. */
@@ -194,6 +343,19 @@ class ShellState(
         val index = stack.indexOfFirst { it is UmshKey.Thread && it.address !in conversations }
         if (index < 1) return
         while (stack.size > index) stack.removeAt(stack.lastIndex)
+    }
+
+    /**
+     * Close every page about a peer not among [peers] ([PeerPageKey]), with
+     * whatever is above it, on every destination's stack and above the
+     * shell: the peer was removed here or anywhere else, or erased.
+     */
+    fun closePeerPagesNotIn(peers: Set<String>) {
+        val gone = { key: NavKey -> key is PeerPageKey && key.peerAddress?.let { it !in peers } == true }
+        (stacks.values + listOf(appStack)).forEach { stack ->
+            val index = stack.indexOfFirst(gone)
+            if (index >= 1) while (stack.size > index) stack.removeAt(stack.lastIndex)
+        }
     }
 
     /** [destination] at its root: what its list shows, with its detail placeholder beside it. */

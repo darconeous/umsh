@@ -101,7 +101,14 @@ private enum class RadioConfirmation { Forget, Restart, FactoryReset }
  * pages they open exist (D14).
  */
 @Composable
-fun RadioDetailScreen(onBack: (() -> Unit)?, onGone: () -> Unit, inPane: Boolean, onChooseRadio: () -> Unit) {
+fun RadioDetailScreen(
+    onBack: (() -> Unit)?,
+    onGone: () -> Unit,
+    inPane: Boolean,
+    onChooseRadio: () -> Unit,
+    /** The Radio identity row: the radio's own peer page, by its address. */
+    onOpenPeer: (String) -> Unit,
+) {
     val host = LocalAppCoreHost.current
     // The shell's store: the page above the shell and the Settings pane are one ViewModel.
     val viewModel = runtimeViewModel(owner = LocalShellViewModelStoreOwner.current) { RadioDetailViewModel(it, host) }
@@ -183,13 +190,15 @@ fun RadioDetailScreen(onBack: (() -> Unit)?, onGone: () -> Unit, inPane: Boolean
                     if (model.showsIdentity && peer != null) {
                         SectionHeader(stringResource(R.string.radio_section_identity))
                         val names = rememberDisplayNames()
-                        // No action until the peer page exists (D14).
                         ListItem(
                             headlineContent = { Text(names.peer(peer), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             supportingContent = { Text(identifierAnnotated(peer.hint.text)) },
                             leadingContent = { PeerAvatar(peer, describe = false) },
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                            modifier = Modifier.semantics(mergeDescendants = true) {}.testTag(Tags.RADIO_DETAIL_IDENTITY),
+                            modifier = Modifier
+                                .clickable(onClickLabel = stringResource(R.string.open_peer_page)) { onOpenPeer(peer.address) }
+                                .semantics(mergeDescendants = true) {}
+                                .testTag(Tags.RADIO_DETAIL_IDENTITY),
                         )
                     }
                     // The staged radio is the staging core's: none other is chosen.

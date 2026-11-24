@@ -81,6 +81,8 @@ class MessageNotifier(
     },
     /** What a tap or a shortcut opens: the app at [address]'s conversation. */
     private val openConversation: (String) -> Intent,
+    /** What a Next time heard notice's tap opens: the app at that node (its conversation or its page). */
+    private val openPeer: (String) -> Intent,
 ) : RuntimeNotifications {
     /** The lock screen is up, as the post sees it; instrumented tests answer for it. */
     @VisibleForTesting
@@ -391,7 +393,7 @@ class MessageNotifier(
                     )
                     .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
                     .setPublicVersion(publicVersion(plan.channel))
-                    .setContentIntent(openIntent(plan.address))
+                    .setContentIntent(if (plan.kind == NoticeKind.Heard) peerIntent(plan.address) else openIntent(plan.address))
                     .setAutoCancel(true)
                     .setOnlyAlertOnce(alertOnce)
                     .build()
@@ -446,7 +448,7 @@ class MessageNotifier(
         val notification = if (hide) {
             val real = queued.make(true) ?: return
             hiddenReal[key] = real
-            hidden(key.tag, queued.channel, real, alertOnce = !queued.alert)
+            hidden(key, queued.channel, real, alertOnce = !queued.alert)
         } else {
             hiddenReal.remove(key)
             queued.make(!queued.alert) ?: return
@@ -457,14 +459,14 @@ class MessageNotifier(
         if (key.id == MESSAGE_ID) conversations[key.tag]?.postedAt = lastPostAt
     }
 
-    private fun hidden(address: String, channel: String, real: Notification, alertOnce: Boolean): Notification =
+    private fun hidden(key: Key, channel: String, real: Notification, alertOnce: Boolean): Notification =
         NotificationCompat.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_forum)
             .setContentTitle(context.getString(R.string.notification_public_title))
             .setContentText(context.getString(R.string.notification_public_text))
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setContentIntent(openIntent(address))
+            .setContentIntent(if (key.id == NoticeKind.Heard.id) peerIntent(key.tag) else openIntent(key.tag))
             .setAutoCancel(true)
             .setOnlyAlertOnce(alertOnce)
             .addExtras(Bundle().apply { putParcelable(EXTRA_REAL, real) })
@@ -556,6 +558,14 @@ class MessageNotifier(
         context,
         0,
         openConversation(address).setData(Uri.Builder().scheme(SCHEME).authority(OPEN).appendPath(address).build()),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    )
+
+    /** Opens the activity at a node a notice is about: one per node, told apart from its conversation's by the data. */
+    private fun peerIntent(address: String): PendingIntent = PendingIntent.getActivity(
+        context,
+        0,
+        openPeer(address).setData(Uri.Builder().scheme(SCHEME).authority(PEER).appendPath(address).build()),
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
 
@@ -655,6 +665,7 @@ class MessageNotifier(
         const val KEY_REPLY_TEXT = "umsh.reply"
         private const val SCHEME = "umsh-notification"
         private const val OPEN = "open"
+        private const val PEER = "peer"
         const val EXTRA_REAL = "umsh.real"
         private const val EXTRA_CHANNEL = "umsh.channel"
         private const val EXTRA_TITLE = "umsh.title"

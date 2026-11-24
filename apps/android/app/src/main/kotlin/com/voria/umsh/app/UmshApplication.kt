@@ -181,6 +181,7 @@ open class UmshApplication : Application() {
             context = this,
             hideOnLockScreen = { coreHost.preferences.hideLockScreenContents.first() },
             openConversation = { address -> MainActivity.conversationIntent(this, address) },
+            openPeer = { address -> MainActivity.peerIntent(this, address) },
         )
         notifier.watchProcess()
         coreHost = makeHost(appPaths())

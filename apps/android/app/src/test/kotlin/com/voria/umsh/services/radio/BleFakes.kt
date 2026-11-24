@@ -5,6 +5,7 @@ import com.voria.umsh.core.MobileHdlcDecoder
 import com.voria.umsh.core.MobileQueuedNoticeRecord
 import com.voria.umsh.core.MobileVirtualRadio
 import com.voria.umsh.core.MobileVirtualRadioListener
+import com.voria.umsh.core.MobileVirtualRadioReach
 import com.voria.umsh.core.MobileWireSink
 import com.voria.umsh.core.ulcpGattSegments
 import com.voria.umsh.core.ulcpHdlcEncode
@@ -191,7 +192,14 @@ class FakeRadioPeripheral(stateDir: File) : GattPortFactory, AutoCloseable {
     val bondAttempts = AtomicInteger()
     val framesIn: MutableList<ByteArray> = Collections.synchronizedList(mutableListOf())
 
-    private val device = MobileVirtualRadio.start(stateDir.path, false, Quiet)
+    private val device = MobileVirtualRadio.start(
+        stateDir.path,
+        false,
+        // The app turns the PHY on when it sets the radio up, and a LAN may
+        // carry what reaches the group onto the air.
+        MobileVirtualRadioReach.THIS_HOST,
+        Quiet,
+    )
 
     @Volatile private var current: Port? = null
 

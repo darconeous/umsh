@@ -35,7 +35,6 @@ import com.voria.umsh.app.rememberShellState
 import com.voria.umsh.core.MobileAppLifecycle
 import com.voria.umsh.designsystem.UmshTheme
 import com.voria.umsh.features.conversations.ConversationList
-import com.voria.umsh.features.peers.PeerSections
 import com.voria.umsh.models.ChannelConversationSummary
 import com.voria.umsh.models.DirectConversationSummary
 import com.voria.umsh.models.DisplayNames
@@ -46,7 +45,6 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -54,7 +52,7 @@ import com.voria.umsh.designsystem.LocalWindowOverride
 import com.voria.umsh.app.TestWindows
 import androidx.compose.ui.test.onAllNodesWithTag
 
-/** The conversation list (`conversation-list.svg`) and the read-only Peers list (D3), over real cores. */
+/** The conversation list (`conversation-list.svg`), over real cores. */
 class ConversationsScreenTest {
     @get:Rule(order = 0) val fresh = FreshHostRule()
 
@@ -336,31 +334,6 @@ class ConversationsScreenTest {
         waitForTag(Tags.CONVERSATIONS_EMPTY)
         compose.onNodeWithTag(Tags.CONVERSATIONS_EMPTY).assertIsDisplayed()
         waitGone(Tags.CONVERSATION_LIST)
-    }
-
-    /** D3: Favorites, then Saved; nodes heard but not saved are left out, and rows have no action. */
-    @Test
-    fun peersListsSavedNodesBySection() {
-        val runtime = runtime(staging = true)
-        show(runtime)
-        compose.onNodeWithTag(Tags.NAV_PEERS).performClick()
-        compose.onNodeWithTag(Tags.PEERS_LIST).assertIsDisplayed()
-        val sections = PeerSections.of(runtime.appState.value!!, names, collation)
-        assertTrue(sections.favorites.isNotEmpty())
-        compose.onNodeWithTag(Tags.PEERS_FAVORITES).assertIsDisplayed()
-        val shown = sections.favorites + sections.saved + sections.radios
-        val onScreen = shownInOrder("peer_row/")
-        assertTrue("$onScreen", onScreen.size > 1)
-        assertEquals(shown.map { it.address }.filter { it in onScreen }, onScreen)
-        for (peer in shown) {
-            compose.onNodeWithTag(Tags.PEERS_LIST).performScrollToNode(hasTestTag(Tags.peerRow(peer.address)))
-            val node = compose.onNodeWithTag(Tags.peerRow(peer.address)).fetchSemanticsNode()
-            assertNotNull(node)
-            assertFalse(node.config.contains(SemanticsActions.OnClick))
-        }
-        for (peer in runtime.appState.value!!.peers.filter { !it.isSaved && !it.isCompanionRadio }) {
-            compose.onNodeWithTag(Tags.peerRow(peer.address)).assertDoesNotExist()
-        }
     }
 
     private companion object {

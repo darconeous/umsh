@@ -34,6 +34,7 @@ import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -126,6 +127,8 @@ internal fun ConversationRowItem(
             .selectionBackground(selected, colors.background, colors.secondaryContainer, MaterialTheme.shapes.large)
             .clickable(onClick = onOpen)
             .semantics(mergeDescendants = true) {
+                // Beside the open conversation, read as its row, as a Peers row is.
+                if (selected) this.selected = true
                 if (onRemove != null) {
                     customActions = listOf(CustomAccessibilityAction(removeLabel) { onRemove(); true })
                 }

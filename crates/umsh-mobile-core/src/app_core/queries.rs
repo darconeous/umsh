@@ -129,6 +129,26 @@ impl MobileAppCore {
         Ok(Some(mapping::listing(listing, &peers)))
     }
 
+    /// For each 2-byte repeater hint, the address of the known peer it most
+    /// likely names: among peers whose node hint starts with it, the one
+    /// likely to forward, else the only one; `None` when no peer or several
+    /// fit. A hint that is not `repeater_hint_len` bytes gets `None`.
+    pub fn name_repeater_hints(
+        &self,
+        hints: Vec<Vec<u8>>,
+    ) -> Result<Vec<Option<String>>, MobileAppError> {
+        let owner = self.reader()?;
+        let peers = PeerIndex::of_nodes(self.store.list_nodes(owner)?);
+        Ok(hints
+            .iter()
+            .map(|hint| {
+                (hint.len() == umsh_ulcp::node_msg::REPEATER_HINT_LEN)
+                    .then(|| peers.named(hint))
+                    .flatten()
+            })
+            .collect())
+    }
+
     /// The radios this phone was host of recently, most recent first.
     /// Reading forgets those whose claim has lapsed.
     pub fn claimed_radios(&self) -> Result<Vec<MobileStoredClaimedRadioRecord>, MobileAppError> {

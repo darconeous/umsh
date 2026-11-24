@@ -5,6 +5,12 @@ import com.voria.umsh.core.MobileAppChannelConversationRecord
 import com.voria.umsh.core.MobileAppDirectConversationRecord
 import com.voria.umsh.core.MobileAppMessageRecord
 import com.voria.umsh.core.MobileAppPeerRecord
+import com.voria.umsh.core.MobileAppPingReplyRecord
+import com.voria.umsh.core.MobileAppPingResult
+import com.voria.umsh.core.MobileAppRouteRecord
+import com.voria.umsh.core.MobileMeshExplicitPath
+import com.voria.umsh.core.MobileMeshRouteKind
+import com.voria.umsh.core.RepeaterHintRecord
 import com.voria.umsh.core.MobileAppPreviewRecord
 import com.voria.umsh.core.MobileAppRepeaterListingRecord
 import com.voria.umsh.core.MobileAppRepeaterNeighborRecord
@@ -12,8 +18,13 @@ import com.voria.umsh.core.MobileAppResent
 import com.voria.umsh.core.MobileAppStateRecord
 import com.voria.umsh.core.MobileAppTranscriptPageRecord
 import com.voria.umsh.core.MobileChatPresence
+import com.voria.umsh.core.MobileMeetDeviceRecord
+import com.voria.umsh.core.MobileMeetEnd
+import com.voria.umsh.core.MobileMeetExchange
+import com.voria.umsh.core.MobileMeetStateRecord
 import com.voria.umsh.core.MobileMessageActionsRecord
 import com.voria.umsh.core.MobileReaction
+import com.voria.umsh.core.MobileRepeaterEvidence
 import com.voria.umsh.core.MobileStoredChannelKind
 import com.voria.umsh.core.MobileStoredChannelRecord
 import com.voria.umsh.core.MobileStoredChatDeliveryState
@@ -23,8 +34,11 @@ import com.voria.umsh.core.MobileStoredChatReactionRecord
 import com.voria.umsh.core.MobileStoredNodeKind
 import com.voria.umsh.core.MobileStoredSystemRole
 import com.voria.umsh.core.NodeIdentityRecord
+import com.voria.umsh.core.NodeUriPreviewRecord
 import com.voria.umsh.core.PublicIdentityRecord
 import com.voria.umsh.models.AdvertisedIdentity
+import com.voria.umsh.models.ManualPath
+import com.voria.umsh.models.RouteCandidate
 import com.voria.umsh.models.AppStateSnapshot
 import com.voria.umsh.models.ChannelConversationSummary
 import com.voria.umsh.models.ChannelKind
@@ -32,8 +46,14 @@ import com.voria.umsh.models.ChannelSummary
 import com.voria.umsh.models.ChatMessage
 import com.voria.umsh.models.ConversationPreview
 import com.voria.umsh.models.DeliveryState
+import com.voria.umsh.models.ImportPreview
+import com.voria.umsh.models.DiscoveryVantage
 import com.voria.umsh.models.DirectConversationSummary
 import com.voria.umsh.models.MessageActions
+import com.voria.umsh.models.MeetDevice
+import com.voria.umsh.models.MeetEnd
+import com.voria.umsh.models.MeetExchange
+import com.voria.umsh.models.MeetState
 import com.voria.umsh.models.MessageRef
 import com.voria.umsh.models.NeighborReport
 import com.voria.umsh.models.NodeHint
@@ -45,10 +65,17 @@ import com.voria.umsh.models.Quote
 import com.voria.umsh.models.Reaction
 import com.voria.umsh.models.ReactionKind
 import com.voria.umsh.models.Reception
+import com.voria.umsh.models.RepeaterEvidence
+import com.voria.umsh.models.LegSignal
+import com.voria.umsh.models.PingOutcome
+import com.voria.umsh.models.PingReply
+import com.voria.umsh.models.RepeaterHint
 import com.voria.umsh.models.RepeaterListing
 import com.voria.umsh.models.RepeaterNeighbor
 import com.voria.umsh.models.Repeats
 import com.voria.umsh.models.ResendMode
+import com.voria.umsh.models.RouteKind
+import com.voria.umsh.models.RouteSummary
 import com.voria.umsh.models.SignatureState
 import com.voria.umsh.models.TranscriptCursor
 import com.voria.umsh.models.TranscriptPage
@@ -82,8 +109,68 @@ object RecordMapping {
             isFavorite = stored.isFavorite,
             isOnDeviceIdentity = stored.onDeviceIdentity,
             notifyWhenHeard = stored.notifyWhenHeard,
+            likelyRepeater = record.likelyRepeater,
+            advertisementAttributable = record.advertisementAttributable,
         )
     }
+
+    /** A route as read at [readAtMs] (wall clock): its ages become instants. */
+    fun route(record: MobileAppRouteRecord, readAtMs: Long) = RouteSummary(
+        kind = routeKind(record.kind),
+        hints = record.hints.map(::repeaterHint),
+        hopCount = record.hopCount?.toInt(),
+        floodHops = record.floodHops?.toInt(),
+        holdRemainingMs = record.holdRemainingMs?.toLong(),
+        holdFloodHops = record.holdFloodHops?.toInt(),
+        confirmedAgeMs = record.confirmedAgeMs?.toLong(),
+        floodRegions = record.floodRegions.map(::Octets),
+        holdUntilMs = record.holdRemainingMs?.let { readAtMs + it.toLong() },
+        confirmedAtMs = record.confirmedAgeMs?.let { readAtMs - it.toLong() },
+        discoveryVantage = record.discoveryVantage?.let { vantage ->
+            DiscoveryVantage(
+                repeaters = vantage.repeaters.map(::repeaterHint),
+                landsAtPeer = vantage.landsAtPeer,
+                evidence = when (vantage.evidence) {
+                    MobileRepeaterEvidence.YES -> RepeaterEvidence.Yes
+                    MobileRepeaterEvidence.UNKNOWN -> RepeaterEvidence.Unknown
+                    MobileRepeaterEvidence.NO -> RepeaterEvidence.No
+                },
+            )
+        }?.takeIf { it.repeaters.isNotEmpty() },
+        fallbackAcks = record.fallbackAcks.toInt(),
+        candidate = record.candidate?.let { candidate ->
+            RouteCandidate(routeKind(candidate.kind), candidate.hints.map(::repeaterHint), candidate.hopCount?.toInt())
+        },
+    )
+
+    private fun routeKind(kind: MobileMeshRouteKind) = when (kind) {
+        MobileMeshRouteKind.UNKNOWN -> RouteKind.Unknown
+        MobileMeshRouteKind.DIRECT -> RouteKind.Direct
+        MobileMeshRouteKind.SOURCE -> RouteKind.Source
+        MobileMeshRouteKind.FLOOD -> RouteKind.Flood
+    }
+
+    /** A path chosen by hand, as the core takes it. */
+    fun path(path: ManualPath) = MobileMeshExplicitPath(path.hints.map(Octets::toByteArray), path.floodHops.toUByte())
+
+    /** How a ping ended; [MobileAppPingResult.Canceled] when a newer one replaced it. */
+    fun ping(result: MobileAppPingResult): PingOutcome = when (result) {
+        is MobileAppPingResult.Reply -> PingOutcome.Reply(pingReply(result.reply))
+        MobileAppPingResult.TimedOut -> PingOutcome.TimedOut
+        MobileAppPingResult.Canceled -> PingOutcome.Canceled
+    }
+
+    fun pingReply(record: MobileAppPingReplyRecord) = PingReply(
+        roundTripMs = record.roundTripMs?.toLong(),
+        hopCount = record.hopCount?.toInt(),
+        routeHints = record.routeHints.map(::repeaterHint),
+        traceSignal = record.traceSignal.map { LegSignal(it.rssiDbm?.toInt(), it.snrCentibels?.toInt()) },
+        ownSignal = LegSignal(record.rssiDbm?.toInt(), record.snrCentibels?.toInt()),
+        viaRouteRetry = record.viaRouteRetry,
+        unnamedHops = record.unnamedHops?.toInt(),
+    )
+
+    fun repeaterHint(record: RepeaterHintRecord) = RepeaterHint(Octets(record.bytes), record.text)
 
     private fun role(kind: MobileStoredNodeKind?): PeerRole = when (kind) {
         null, MobileStoredNodeKind.UNKNOWN -> PeerRole.Unknown
@@ -95,6 +182,15 @@ object RecordMapping {
         MobileStoredNodeKind.CHAT_ROOM -> PeerRole.ChatRoom
         MobileStoredNodeKind.TEMPORARY_SESSION -> PeerRole.TemporarySession
     }
+
+    /** What [input] names, as the core read it. */
+    fun importPreview(input: String, record: NodeUriPreviewRecord) = ImportPreview(
+        input = input,
+        address = record.canonicalAddress,
+        hint = NodeHint(Octets(record.hint.bytes), record.hint.text),
+        hasIdentityData = record.hasIdentityData,
+        identity = record.identity?.let(::advertised),
+    )
 
     private fun advertised(record: NodeIdentityRecord) = AdvertisedIdentity(
         roleCode = record.roleCode.toInt(),
@@ -377,5 +473,40 @@ object RecordMapping {
             senderHandle = original.senderHandle,
             senderNodeHint = nodeHint(original.senderHint, senderNodeHint),
         )
+    }
+
+    fun meet(record: MobileMeetStateRecord) = MeetState(
+        ownColorRgb = record.ownColorRgb?.toInt(),
+        devices = record.devices.map(::meetDevice),
+        device = record.device?.let(::meetDevice),
+        exchange = when (val exchange = record.exchange) {
+            MobileMeetExchange.Closed -> MeetExchange.Closed
+            MobileMeetExchange.Opening -> MeetExchange.Opening
+            MobileMeetExchange.Idle -> MeetExchange.Idle
+            is MobileMeetExchange.Asking -> MeetExchange.Asking(meetDevice(exchange.device))
+            is MobileMeetExchange.Asked -> MeetExchange.Asked(meetDevice(exchange.device))
+            is MobileMeetExchange.Accepted -> MeetExchange.Accepted(meetDevice(exchange.device))
+            is MobileMeetExchange.Comparing ->
+                MeetExchange.Comparing(meetDevice(exchange.device), exchange.code.toInt(), exchange.sent)
+            is MobileMeetExchange.Ended -> MeetExchange.Ended(meetEnd(exchange.reason))
+            is MobileMeetExchange.Exchanged ->
+                MeetExchange.Exchanged(exchange.contact.peerAddress, exchange.contact.signed)
+        },
+    )
+
+    private fun meetDevice(record: MobileMeetDeviceRecord) = MeetDevice(
+        id = record.id.toLong(),
+        model = record.model.toInt(),
+        colorRgb = record.colorRgb.toInt(),
+        nearness = record.nearness?.toInt(),
+    )
+
+    private fun meetEnd(end: MobileMeetEnd): MeetEnd = when (end) {
+        MobileMeetEnd.NOT_NOW -> MeetEnd.NotNow
+        MobileMeetEnd.BUSY -> MeetEnd.Busy
+        MobileMeetEnd.DIFFERENT -> MeetEnd.Different
+        MobileMeetEnd.LEFT -> MeetEnd.Left
+        MobileMeetEnd.TIMED_OUT -> MeetEnd.TimedOut
+        MobileMeetEnd.FAILED -> MeetEnd.Failed
     }
 }

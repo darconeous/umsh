@@ -294,6 +294,90 @@ fn a_hint_names_the_one_likely_repeater_else_the_one_candidate() {
     assert_eq!(index.named(&[0, 0, 0, 0]), None);
 }
 
+#[test]
+fn repeater_hints_are_named_as_the_neighbor_records_name_them() {
+    let fixture = Fixture::new();
+    let reporter = address(2);
+    let chat = address(3);
+    let bridge = address(4);
+    fixture.peer(&reporter, Some(MobileStoredNodeKind::Repeater), None);
+    fixture.peer(&chat, Some(MobileStoredNodeKind::Chat), None);
+    fixture.peer(&bridge, Some(MobileStoredNodeKind::Bridge), None);
+    let hint = |address: &str| {
+        crate::inspect_public_identity(address.to_owned())
+            .unwrap()
+            .hint
+            .bytes[..2]
+            .to_vec()
+    };
+    let entry = |hint: Vec<u8>| crate::store::MobileStoredPeerRepeaterEntryRecord {
+        hint,
+        name: None,
+        rssi_dbm: None,
+        snr_quarter_db: None,
+        last_heard_minutes: None,
+        latitude: None,
+        longitude: None,
+        location_precision: None,
+        region_codes: Vec::new(),
+        reported_at_ms: NOW_MS,
+    };
+    let hints = vec![hint(&chat), hint(&bridge), hint(&reporter), vec![0, 0]];
+    fixture
+        .store
+        .save_peer_repeater_page(
+            fixture.owner.clone(),
+            reporter.clone(),
+            hints.iter().cloned().map(entry).collect(),
+            None,
+            None,
+            true,
+            NOW_MS,
+        )
+        .unwrap();
+
+    let named = fixture.core.name_repeater_hints(hints.clone()).unwrap();
+    let listing = fixture
+        .core
+        .peer_repeaters(reporter.clone())
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        listing
+            .entries
+            .iter()
+            .map(|neighbor| neighbor.peer_address.clone())
+            .collect::<Vec<_>>(),
+        named
+    );
+    let index = PeerIndex::of_nodes(fixture.store.list_nodes(fixture.owner.clone()).unwrap());
+    for (hint, name) in hints.iter().zip(&named) {
+        assert_eq!(&index.named(hint), name);
+    }
+    assert_eq!(named[0].as_deref(), Some(chat.as_str()));
+    assert_eq!(named[3], None);
+
+    // Only repeater-hint-length input is named: a whole node hint and an
+    // empty one name nobody, even where a peer would fit.
+    let node_hint = crate::inspect_public_identity(chat.clone())
+        .unwrap()
+        .hint
+        .bytes;
+    assert_eq!(
+        fixture
+            .core
+            .name_repeater_hints(vec![node_hint, Vec::new(), hint(&chat)])
+            .unwrap(),
+        vec![None, None, Some(chat)]
+    );
+
+    fixture.core.set_owner(None).unwrap();
+    assert_eq!(
+        fixture.core.name_repeater_hints(hints),
+        Err(MobileAppError::NoOwner)
+    );
+}
+
 #[tokio::test]
 async fn an_advertisement_that_forwards_outranks_the_stored_kind() {
     let fixture = Fixture::new();

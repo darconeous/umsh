@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Nearby's phone outline (nearby-exchange.svg 7): a filled handset, drawn on the session color. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="@android:color/white"
+        android:fillType="evenOdd"
+        android:pathData="M9,3h6a2,2 0,0 1,2 2v14a2,2 0,0 1,-2 2h-6a2,2 0,0 1,-2 -2v-14a2,2 0,0 1,2 -2zM10.5,17.75h3v1.25h-3z" />
+</vector>

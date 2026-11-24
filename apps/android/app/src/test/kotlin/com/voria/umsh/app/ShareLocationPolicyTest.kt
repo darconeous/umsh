@@ -46,6 +46,7 @@ class ShareLocationPolicyTest {
         val runtime = AppRuntime(
             core = core,
             kind = CoreKind.Live,
+            platformModel = 65026u,
             generation = 1,
             owner = owner,
             identityOps = IdentityOperations(MemoryIdentityVault(VaultLog())),
