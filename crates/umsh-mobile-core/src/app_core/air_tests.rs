@@ -31,16 +31,22 @@ struct Staged {
 
 impl Staged {
     async fn new() -> Self {
-        Self::with_vault(false).await
+        Self::with(false, true).await
     }
 
     /// Started with the vault locked, as a phone not yet unlocked since it
     /// booted.
     async fn locked() -> Self {
-        Self::with_vault(true).await
+        Self::with(true, true).await
     }
 
-    async fn with_vault(locked: bool) -> Self {
+    /// Over a radio with no device identity, such as a bridge's host
+    /// interface.
+    async fn without_device_identity() -> Self {
+        Self::with(false, false).await
+    }
+
+    async fn with(locked: bool, dev_identity: bool) -> Self {
         let core = Core::new();
         let owner = identity(PHONE_SEED).public_identity().canonical_address;
         crate::seed_staging(
@@ -53,7 +59,9 @@ impl Staged {
         .unwrap();
         core.vault.set_locked(locked);
         let air_dir = tempfile::tempdir().unwrap();
-        let air = MobileStagingAir::start(air_dir.path().display().to_string(), false).unwrap();
+        let air =
+            MobileStagingAir::start_with(air_dir.path().display().to_string(), false, dev_identity)
+                .unwrap();
         core.core.use_radio(Some(air.radio())).await.unwrap();
         core.start(PHONE_SEED).await;
         air.connect();
@@ -350,6 +358,58 @@ async fn a_locked_vault_holds_the_channels_back_until_it_opens() {
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+}
+
+async fn until_filters(staged: &Staged, wanted: u32, what: &str) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    while radio_filters(staged) != Some(wanted) {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "{what}: the radio holds {:?} filters",
+            radio_filters(staged)
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// Claiming a radio resets its host tables, so every session with it,
+/// a radio with no device identity included, writes the channels again.
+#[tokio::test]
+async fn a_radio_with_no_identity_gets_its_channels_on_every_attach() {
+    let staged = Staged::without_device_identity().await;
+    // Public, EMERGENCY, and the two staged channels.
+    until_filters(&staged, 4, "the first attach").await;
+
+    // As the app's Disconnect: release the host key, withdraw the driver,
+    // and drop the link; reconnecting hands the driver back.
+    staged.air.radio().release_host().await;
+    staged.core.core.use_radio(None).await.unwrap();
+    staged.air.disconnect();
+    staged
+        .until("detached", |changes| {
+            changes
+                .radio
+                .as_ref()
+                .is_some_and(|radio| radio.phase != MobileRadioPhase::Attached)
+        })
+        .await;
+    staged.reset();
+    staged
+        .core
+        .core
+        .use_radio(Some(staged.air.radio()))
+        .await
+        .unwrap();
+    staged.air.connect();
+    staged
+        .until("attached again", |changes| {
+            changes
+                .radio
+                .as_ref()
+                .is_some_and(|radio| radio.phase == MobileRadioPhase::Attached)
+        })
+        .await;
+    until_filters(&staged, 4, "the second attach").await;
 }
 
 /// The staged repeater the phone manages: Tallac Ridge.

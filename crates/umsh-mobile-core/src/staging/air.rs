@@ -246,6 +246,19 @@ impl MobileStagingAir {
         state_dir: String,
         wifi_scan_only: bool,
     ) -> Result<Arc<Self>, MobileStagingAirError> {
+        Self::start_with(state_dir, wifi_scan_only, true)
+    }
+}
+
+impl MobileStagingAir {
+    /// [`Self::start`], with the staged radio's device identity present
+    /// or not. Without one it stands for a radio such as a bridge's host
+    /// interface.
+    pub(crate) fn start_with(
+        state_dir: String,
+        wifi_scan_only: bool,
+        dev_identity: bool,
+    ) -> Result<Arc<Self>, MobileStagingAirError> {
         let dir = PathBuf::from(state_dir);
         std::fs::create_dir_all(&dir).map_err(|_| MobileStagingAirError::StateUnavailable)?;
 
@@ -276,7 +289,13 @@ impl MobileStagingAir {
                 failing: medium_failing,
                 host_key: None,
             };
-            let device = SoftDevice::new(radio_config(), StagedRadio::default());
+            let device = SoftDevice::new(
+                SessionConfig {
+                    dev_identity,
+                    ..radio_config()
+                },
+                StagedRadio::default(),
+            );
             Ok::<_, std::convert::Infallible>(async move {
                 let radio = driven::run(device, medium, host_events, |_| {});
                 let air = Air::new(dir, air_queue, heard, air_reachable, wifi_scan_only)
@@ -297,7 +316,10 @@ impl MobileStagingAir {
             stop: Mutex::new(Some(stop)),
         }))
     }
+}
 
+#[uniffi::export]
+impl MobileStagingAir {
     /// The staged radio's driver, for the app to use as its radio.
     pub fn radio(&self) -> Arc<MobileRadioDriver> {
         self.radio.clone()

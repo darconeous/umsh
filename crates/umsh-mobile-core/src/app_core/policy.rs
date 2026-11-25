@@ -77,14 +77,15 @@ struct RadioPeer {
     link_id: String,
 }
 
-/// Whether `state` is in a session with the radio as this phone's.
+/// Whether `state` is in a session with the radio as this phone's. A
+/// radio with no device identity, such as a bridge's host interface, has
+/// sessions too: what needs the radio's address looks it up itself.
 fn in_session(state: Option<&MobileRadioStateRecord>) -> bool {
     state.is_some_and(|state| {
         matches!(
             state.phase,
             MobileRadioPhase::Attached | MobileRadioPhase::Configuring
         ) && state.host == UlcpHostOwnership::Ours
-            && state.device_key.is_some()
     })
 }
 
