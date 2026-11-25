@@ -16,6 +16,11 @@ repository.workspace = true
 # fonts/OFL.txt); build.rs rasterizes them into anti-aliased glyph tables.
 
 [features]
+# The board a firmware draws for, which keeps only the font faces its sizes
+# resolve to (see build.rs). With neither, every board's are kept, as the
+# host communicator needs.
+pager = []
+tdeck = []
 # The mockup's chats, for a device with nothing behind it yet. It reads
 # typed addresses as a node would, and offers the vetted radio profiles.
 fixture = ["dep:umsh-core", "dep:umsh-ulcp"]

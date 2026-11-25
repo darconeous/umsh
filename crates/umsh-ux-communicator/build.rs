@@ -15,65 +15,86 @@ struct Spec {
     name: &'static str,
     file: &'static str,
     weight: f32,
-    sizes: &'static [u16],
+    /// The sizes the Pager draws, then the T-Deck's.
+    pager: &'static [u16],
+    tdeck: &'static [u16],
     /// The characters rendered, when not every one the font maps.
     only: Option<&'static str>,
 }
 
 const SANS: &str = "fonts/MPLUS1[wght]-latin.ttf";
 const MONO: &str = "fonts/MPLUSCodeLatin[wdth,wght]-latin.ttf";
-/// The Pager's sizes, then the T-Deck's, whose panel is coarser.
-const UI_SIZES: &[u16] = &[12, 14, 16, 17, 20];
+
+// A board carries only the faces its sizes resolve to: each `Metrics` text
+// size (small, secondary, body, title), and the avatar lettering, the flag
+// badges, the clock, and the exchange code below. A size with no face of
+// its own is drawn in the nearest, so a face missing here shows as text a
+// size off, not as an error. `font::tests::faces_cover_requests` checks
+// the metric sizes and the badges.
+
+/// The Pager's text sizes: 16, 17, 20, and its 26 title drawn at 20.
+const PAGER_UI: &[u16] = &[16, 17, 20];
+/// The T-Deck's: 12, 14, 16, and 20, on its coarser panel.
+const TDECK_UI: &[u16] = &[12, 14, 16, 20];
 
 const SPECS: &[Spec] = &[
     Spec {
         name: "REGULAR",
         file: SANS,
         weight: 400.0,
-        sizes: UI_SIZES,
+        pager: PAGER_UI,
+        tdeck: TDECK_UI,
         only: None,
     },
     Spec {
         name: "MEDIUM",
         file: SANS,
         weight: 500.0,
-        sizes: UI_SIZES,
+        pager: PAGER_UI,
+        tdeck: TDECK_UI,
         only: None,
     },
     Spec {
         name: "SEMIBOLD",
         file: SANS,
         weight: 600.0,
-        sizes: UI_SIZES,
+        pager: PAGER_UI,
+        tdeck: TDECK_UI,
         only: None,
     },
-    // The small and large sizes are for avatar lettering.
+    // Beside the text sizes: 10, 12, 13, and 26 for avatar lettering on
+    // both boards, and 10, 12, and 13 for every flag's region badge.
     Spec {
         name: "BOLD",
         file: SANS,
         weight: 700.0,
-        sizes: &[10, 12, 13, 14, 16, 17, 20, 26],
+        pager: &[10, 12, 13, 16, 17, 20, 26],
+        tdeck: &[10, 12, 13, 14, 16, 17, 20, 26],
         only: None,
     },
     Spec {
         name: "EXTRABOLD",
         file: SANS,
         weight: 800.0,
-        sizes: UI_SIZES,
+        pager: PAGER_UI,
+        tdeck: TDECK_UI,
         only: None,
     },
     Spec {
         name: "MONO",
         file: MONO,
         weight: 400.0,
-        sizes: &[12, 14, 16, 20],
+        pager: &[16, 20],
+        tdeck: &[12, 14, 16, 20],
         only: None,
     },
+    // Peer avatars' hints, on both boards.
     Spec {
         name: "MONO_BOLD",
         file: MONO,
         weight: 700.0,
-        sizes: &[10, 13, 14, 16, 20],
+        pager: &[10, 13, 14, 16, 20],
+        tdeck: &[10, 13, 14, 16, 20],
         only: None,
     },
     // The lock screen's time: digits alone, large, beside the date and
@@ -82,16 +103,17 @@ const SPECS: &[Spec] = &[
         name: "CLOCK",
         file: SANS,
         weight: 700.0,
-        sizes: &[46, 56, 72],
+        pager: &[46, 56, 72],
+        tdeck: &[46, 56, 72],
         only: Some("0123456789:"),
     },
-    // A contact exchange's code, for both holders to compare: the T-Deck's,
-    // then the Pager's.
+    // A contact exchange's code, for both holders to compare.
     Spec {
         name: "CODE",
         file: MONO,
         weight: 700.0,
-        sizes: &[32, 42],
+        pager: &[42],
+        tdeck: &[32],
         only: Some("0123456789 "),
     },
 ];
@@ -104,12 +126,29 @@ fn main() {
     let dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let mut out = String::new();
     let mut context = ScaleContext::new();
+    // A build that names no board draws for every one.
+    let (pager, tdeck) = match (
+        std::env::var_os("CARGO_FEATURE_PAGER").is_some(),
+        std::env::var_os("CARGO_FEATURE_TDECK").is_some(),
+    ) {
+        (false, false) => (true, true),
+        named => named,
+    };
     for spec in SPECS {
         println!("cargo:rerun-if-changed={}", spec.file);
         let data = std::fs::read(dir.join(spec.file)).expect("font file");
         let font = FontRef::from_index(&data, 0).expect("parsable font");
+        let mut sizes = Vec::new();
+        if pager {
+            sizes.extend(spec.pager);
+        }
+        if tdeck {
+            sizes.extend(spec.tdeck);
+        }
+        sizes.sort_unstable();
+        sizes.dedup();
         let mut faces = Vec::new();
-        for &size in spec.sizes {
+        for &size in &sizes {
             faces.push(face(&mut out, &mut context, font, spec, size));
         }
         writeln!(
@@ -120,6 +159,22 @@ fn main() {
         )
         .unwrap();
     }
+    writeln!(
+        out,
+        "/// Each typeface's sizes on the Pager, then on the T-Deck.\n\
+         #[cfg(test)]\n\
+         pub(crate) const BOARD_SIZES: &[(&Typeface, &[u16], &[u16])] = &["
+    )
+    .unwrap();
+    for spec in SPECS {
+        writeln!(
+            out,
+            "    (&{}, &{:?}, &{:?}),",
+            spec.name, spec.pager, spec.tdeck
+        )
+        .unwrap();
+    }
+    writeln!(out, "];").unwrap();
     println!("cargo:rerun-if-changed=build.rs");
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     std::fs::write(out_dir.join("fonts.rs"), out).unwrap();

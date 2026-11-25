@@ -22,7 +22,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::pixelcolor::raw::RawU16;
 use umsh_emoji::{Id, Shown, Store};
 
-use crate::theme;
+use crate::{font, theme};
 
 include!(concat!(env!("OUT_DIR"), "/placeholder.rs"));
 
@@ -129,9 +129,10 @@ impl Cell {
         }
     }
 
-    /// The face a flag's region code is set in, from `font`.
-    fn badge_face(&self, font: &PrerenderedFont) -> &'static Face {
-        font.face(u32::from(self.store.size) * 11 / 20)
+    /// The face a flag's region code is set in: bold in any typeface, so
+    /// that the badges need no small sizes of the others.
+    fn badge_face(&self) -> &'static Face {
+        font::BOLD.face(u32::from(self.store.size) * 11 / 20)
     }
 
     /// A badge's width and height, holding `code` set in `face`.
@@ -144,12 +145,12 @@ impl Cell {
         (text + height / 2, height)
     }
 
-    fn width(&self, font: &PrerenderedFont, shown: Shown) -> u32 {
+    fn width(&self, shown: Shown) -> u32 {
         match shown {
             Shown::Glyph(_) | Shown::Placeholder => self.advance,
             Shown::Parts(_, count) => self.advance * u32::from(count),
             Shown::Flag(region) => {
-                let (width, _) = self.badge(self.badge_face(font), region.as_str());
+                let (width, _) = self.badge(self.badge_face(), region.as_str());
                 width + self.advance - u32::from(self.store.size)
             }
             Shown::Text | Shown::Nothing => 0,
@@ -162,18 +163,16 @@ impl Font for Typeface {
 
     fn metrics(&self, attributes: &Self::Attributes) -> impl FontMetrics {
         Metrics {
-            font: &self.text,
             face: self.text.face(attributes.size),
         }
     }
 }
 
-struct Metrics<'a> {
-    font: &'a PrerenderedFont,
+struct Metrics {
     face: &'static Face,
 }
 
-impl FontMetrics for Metrics<'_> {
+impl FontMetrics for Metrics {
     fn rendered_size(&self, character: char) -> Option<Rectangle> {
         self.face.rendered_size(character)
     }
@@ -189,7 +188,7 @@ impl FontMetrics for Metrics<'_> {
     fn cluster_advance(&self, cluster: &str) -> u32 {
         match emoji(self.face, cluster) {
             None => cluster.chars().map(|c| self.face.advance(c)).sum(),
-            Some(shown) => Cell::of(self.face).width(self.font, shown),
+            Some(shown) => Cell::of(self.face).width(shown),
         }
     }
 
@@ -211,7 +210,7 @@ impl FontMetrics for Metrics<'_> {
             Some(shown) => {
                 let cell = Cell::of(self.face);
                 let size = u32::from(cell.store.size);
-                let width = cell.width(self.font, shown) - (cell.advance - size);
+                let width = cell.width(shown) - (cell.advance - size);
                 Some(Rectangle::new(
                     Point::new(cell.lead, cell.top),
                     Size::new(width, size),
@@ -318,7 +317,7 @@ impl Typeface {
         at: Point,
         surface: &mut impl Surface<Color = Rgb565>,
     ) {
-        let face = cell.badge_face(&self.text);
+        let face = cell.badge_face();
         let (width, height) = cell.badge(face, code);
         let top = at.y + (i32::from(cell.store.size) - height as i32) / 2;
         let radius = (height / 4) as i32;
@@ -341,7 +340,7 @@ impl Typeface {
         let mut x = at.x + (height / 4) as i32;
         let y = top + (h - line) / 2;
         for c in code.chars() {
-            self.text.draw(
+            font::BOLD.draw(
                 c,
                 Point::new(x, y),
                 theme::TEXT,
