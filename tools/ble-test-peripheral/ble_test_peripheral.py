@@ -175,7 +175,11 @@ FRAME_IN_UUID = "21EB6B15-0002-4CCF-92E4-A079171BEC97"
 FRAME_OUT_UUID = "21EB6B15-0003-4CCF-92E4-A079171BEC97"
 COMPANY_ID = 0xFFFF
 DEFAULT_TRANSPORT = "android-netsim:name=umsh-radio"
-FALLBACK_TRANSPORT = "tcp-client:127.0.0.1:6402"
+
+
+class TransportUnavailable(Exception):
+    """The Bluetooth controller could not be opened: a precondition, not a bug."""
+
 
 log = logging.getLogger("ble-test-peripheral")
 
@@ -299,17 +303,20 @@ class Radio:
         from bumble.keys import JsonKeyStore
         from bumble.pairing import PairingConfig, PairingDelegate
         from bumble.transport import open_transport
+        from bumble.transport.common import TransportInitError
 
         address, irk = self.load_identity()
         transport_spec = self.args.transport
         log.info("opening %s", transport_spec)
         try:
             transport = await open_transport(transport_spec)
-        except Exception as error:  # noqa: BLE001 - any failure falls back
-            if transport_spec != DEFAULT_TRANSPORT:
-                raise
-            log.warning("%s failed (%s); trying %s", transport_spec, error, FALLBACK_TRANSPORT)
-            transport = await open_transport(FALLBACK_TRANSPORT)
+        except (TransportInitError, OSError) as error:
+            if transport_spec == DEFAULT_TRANSPORT:
+                # netsim exists only while an emulator runs.
+                raise TransportUnavailable(
+                    "no Android emulator is running; start one with `make android-emulator`"
+                ) from error
+            raise TransportUnavailable(f"{transport_spec}: {error}") from error
 
         async with transport:
             config = DeviceConfiguration()
@@ -745,6 +752,9 @@ def main() -> None:
         asyncio.run(Radio(args).run())
     except KeyboardInterrupt:
         pass
+    except TransportUnavailable as error:
+        log.error("%s", error)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
