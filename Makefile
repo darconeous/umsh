@@ -799,8 +799,13 @@ android-notification-ask-test:
 # is using meets the real mesh: whatever it sends there may be carried onto
 # the air by another bridge. Automated runs (tests, agents) keep off the LAN
 # with an empty ANDROID_BRIDGE_LAN=.
+#
+# On the LAN, the bridge's tunnel server listens on every interface, so a
+# bridge elsewhere can tunnel in once its identity is listed as a client;
+# off it, the server stays on the loopback. ANDROID_BRIDGE_LISTEN overrides.
 ANDROID_BRIDGE_DIR := build/android-bridge
 ANDROID_BRIDGE_LAN ?= 1
+ANDROID_BRIDGE_LISTEN ?= $(if $(ANDROID_BRIDGE_LAN),0.0.0.0:21837,127.0.0.1:21837)
 
 android-bridge: android-bridge-config
 	cd $(ANDROID_BRIDGE_DIR) && cargo run -q -p umsh-bridge -- run -c config.toml
@@ -814,7 +819,7 @@ android-bridge-config:
 		'[identity]' \
 		'key_file = "identity.key"' \
 		'[server]' \
-		'listen = ["127.0.0.1:21837"]' \
+		'listen = ["$(ANDROID_BRIDGE_LISTEN)"]' \
 		'[[server.hosts]]' \
 		'name = "phone"' \
 		'listen = "127.0.0.1:21838"' \
