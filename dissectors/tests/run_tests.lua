@@ -2013,14 +2013,14 @@ else
   local function beacon(options_hex)
     return dissect_frame("C0 ED54A5 " .. options_hex)
   end
-  local sig = beacon("78 ED545A32 6C2878E2")
+  local sig = beacon("78 ED545A14 6C2878F4")
   check("trace with signal: path, most recent first",
         has(sig, "Trace: Gy* ← "), true)
   check("trace with signal: two repeaters", has(sig, "(2 repeaters)"), true)
   check("trace with signal: first hop's signal",
-        has(sig, "Repeater 1: Gy* (ED:54), heard -90 dBm, 5.0 dB SNR"), true)
+        has(sig, "Repeater 1: Gy* (ED:54), heard -90 dBm, 5.00 dB SNR"), true)
   check("trace with signal: negative SNR",
-        has(sig, "heard -120 dBm, -3.0 dB SNR"), true)
+        has(sig, "heard -120 dBm, -3.00 dB SNR"), true)
   local bridged = beacon("74 ED540000")
   check("trace: a zero signal is a bridged hop", has(bridged, ", bridged hop"), true)
   local fe = beacon("75 FEED546C28")
