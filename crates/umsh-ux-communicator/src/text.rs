@@ -111,9 +111,19 @@ impl Clone for SharedText {
         // ordering is needed, and a count near overflow means references
         // are being leaked.
         let before = self.header().refs.fetch_add(1, Ordering::Relaxed);
-        assert!(before < isize::MAX as usize, "shared text count overflow");
+        if before >= isize::MAX as usize {
+            count_overflow();
+        }
         Self(self.0)
     }
+}
+
+/// Out of line, as in `Arc`, so each of the many places a clone is inlined
+/// carries only a call.
+#[cold]
+#[inline(never)]
+fn count_overflow() -> ! {
+    panic!("shared text count overflow")
 }
 
 impl Drop for SharedText {

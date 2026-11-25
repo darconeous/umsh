@@ -4,7 +4,7 @@
 //! ([`Settings`]), and the chats, which the device node's received frames
 //! feed and whose frames it sends (see [`crate::task`]).
 
-use core::cell::{Cell, RefCell};
+use core::cell::{Cell, RefCell, RefMut};
 use core::future::poll_fn;
 use core::task::Poll;
 
@@ -350,19 +350,28 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
         &self,
         f: impl FnOnce(&mut ChatHalf<S>, u64, Option<u32>, &mut dyn FnMut(NodeEvent)) -> R,
     ) -> R {
-        let mut events = self.events.borrow_mut();
-        let mut chats = self.chats.borrow_mut();
-        chats.test_message_alerts = self
-            .settings
-            .borrow()
-            .test_message_alerts()
-            .unwrap_or(false);
+        let (mut chats, mut events) = self.chat_half();
         f(
             &mut chats,
             self.clock.now_ms(),
             self.clock.wall(),
             &mut |event| events.push(event),
         )
+    }
+
+    /// The chats, their alert setting brought up to date, and the event
+    /// queue: what [`with_chats`](Self::with_chats) hands its many callers,
+    /// borrowed out of line so they share one copy of the borrows.
+    #[inline(never)]
+    fn chat_half(&self) -> (RefMut<'_, ChatHalf<S>>, RefMut<'_, EventQueue<EVENTS>>) {
+        let events = self.events.borrow_mut();
+        let mut chats = self.chats.borrow_mut();
+        chats.test_message_alerts = self
+            .settings
+            .borrow()
+            .test_message_alerts()
+            .unwrap_or(false);
+        (chats, events)
     }
 
     /// Runs `f` with the contact exchange and the event queue, then takes
@@ -488,11 +497,23 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
     }
 
     fn change(&self, setting: Setting, change: impl FnOnce(&mut Settings<P>) -> bool) {
-        if !change(&mut self.settings.borrow_mut()) {
-            self.events
-                .borrow_mut()
-                .push(NodeEvent::SettingRefused(setting));
+        if !change(&mut self.settings_mut()) {
+            self.refused(setting);
         }
+    }
+
+    /// The settings to change, borrowed out of line so the many changes
+    /// share one copy of the borrow.
+    #[inline(never)]
+    fn settings_mut(&self) -> RefMut<'_, Settings<P>> {
+        self.settings.borrow_mut()
+    }
+
+    #[cold]
+    fn refused(&self, setting: Setting) {
+        self.events
+            .borrow_mut()
+            .push(NodeEvent::SettingRefused(setting));
     }
 }
 

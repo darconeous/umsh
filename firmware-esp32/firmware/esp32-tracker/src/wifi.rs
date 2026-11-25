@@ -81,8 +81,8 @@ static SCAN: Mutex<CriticalSectionRawMutex, RefCell<(bool, u32)>> =
 static CONNECTING: AtomicBool = AtomicBool::new(false);
 static EVENTS: Channel<CriticalSectionRawMutex, (Option<u32>, PublishEvent), 4> = Channel::new();
 type Item = heapless::Vec<u8, { umsh_ulcp::wifi::SCAN_RESULT_MAX_LEN }>;
-/// The retained scan table, bounded by bytes as well as count so a whole
-/// read fits one frame on the device's own settings link.
+/// The retained scan table, strongest first, bounded by bytes as well as
+/// count so a whole read fits one frame on the device's own settings link.
 static RESULTS: Mutex<CriticalSectionRawMutex, RefCell<heapless::Vec<Item, 10>>> =
     Mutex::new(RefCell::new(heapless::Vec::new()));
 const RESULTS_MAX_BYTES: usize = driver::FRAME_IN_MAX - 16;
@@ -434,10 +434,12 @@ async fn report_ap(ap: &AccessPointInfo, generation: u32) {
                 _ => return,
             }
         }
-        results.push(item.clone()).unwrap();
-        results.sort_unstable_by_key(|raw| {
-            core::cmp::Reverse(ScanResult::decode(raw).unwrap().rssi_dbm)
-        });
+        // Kept in order as it is built, so the new one goes in its place.
+        let at = results
+            .iter()
+            .position(|raw| ScanResult::decode(raw).unwrap().rssi_dbm < ap.signal_strength)
+            .unwrap_or(results.len());
+        results.insert(at, item.clone()).unwrap();
     });
     EVENTS
         .send((Some(generation), PublishEvent::WifiScanResult(item)))

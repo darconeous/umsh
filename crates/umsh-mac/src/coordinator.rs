@@ -4089,6 +4089,7 @@ impl<
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
     ) -> bool {
         MacCounters::bump(&mut self.counters.rx_frames);
+        let frame = &mut buf[..frame_len];
         // Whatever the frame turns out to be, it held the channel. One
         // replayed from a queue held it at some other time, and one from a
         // bearer or a wire never did.
@@ -4101,18 +4102,18 @@ impl<
         // whatever its type: it learns nothing from it, and so neither
         // opens, delivers, acknowledges, answers, nor forwards it.
         if self.operating_policy.amateur_radio_mode == AmateurRadioMode::LicensedOnly
-            && PacketHeader::parse(&buf[..frame_len])
+            && PacketHeader::parse(frame)
                 .is_ok_and(|header| header.sec_info.is_some_and(|sec| sec.scf.encrypted()))
         {
             MacCounters::bump(&mut self.counters.rx_encrypted_discarded);
             return false;
         }
         if live_air {
-            self.note_neighbor_beside(&buf[..frame_len], rx.rssi);
+            self.note_neighbor_beside(frame, rx.rssi);
         }
-        self.note_transmitter_observation(&buf[..frame_len], rx);
+        self.note_transmitter_observation(frame, rx);
         let handled = self
-            .process_received_frame_inner(buf, frame_len, rx, &mut on_event)
+            .process_received_frame_inner(frame, rx, &mut on_event)
             .await;
         if handled {
             MacCounters::bump(&mut self.counters.rx_accepted);
@@ -4136,7 +4137,8 @@ impl<
         released: ReleasedFrame,
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
     ) {
-        let Ok(header) = PacketHeader::parse(&buf[..released.len]) else {
+        let frame = &mut buf[..released.len];
+        let Ok(header) = PacketHeader::parse(frame) else {
             return;
         };
         let verified = Some(VerifiedFrame {
@@ -4146,8 +4148,7 @@ impl<
         match header.packet_type() {
             PacketType::Unicast | PacketType::UnicastAckReq => {
                 self.process_unicast(
-                    buf,
-                    released.len,
+                    frame,
                     &header,
                     &released.rx,
                     released.received_at_ms,
@@ -4159,8 +4160,7 @@ impl<
             }
             PacketType::BlindUnicast | PacketType::BlindUnicastAckReq => {
                 self.process_blind_unicast(
-                    buf,
-                    released.len,
+                    frame,
                     &header,
                     &released.rx,
                     released.received_at_ms,
@@ -4176,8 +4176,7 @@ impl<
 
     async fn process_received_frame_inner(
         &mut self,
-        buf: &mut [u8; FRAME],
-        frame_len: usize,
+        frame: &mut [u8],
         rx: &RxInfo,
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
     ) -> bool {
@@ -4189,22 +4188,22 @@ impl<
             .map_or(0, |b| u64::from(b.age_s).saturating_mul(1000));
         let received_at_ms = self.clock.now_ms().saturating_sub(buffered_offset_ms);
 
-        let Ok(header) = PacketHeader::parse(&buf[..frame_len]) else {
+        let Ok(header) = PacketHeader::parse(frame) else {
             return false;
         };
         // A piggy-backed Ack MIC option is read here, before any
         // decryption, because it is aimed at whoever happens to be
         // carrying the acknowledged packet—not at this frame's
         // addressee.
-        self.hint_forwards_for_ack_mic_option(&buf[..frame_len], &header);
+        self.hint_forwards_for_ack_mic_option(frame, &header);
         // The pending table decides what the repeat means for a retry; the
         // watch, which also covers sends with no retry to call off, decides
         // whom to tell.
         let mut mismatched = false;
         let forwarding_confirmed = self
-            .observe_forwarding_confirmation(&buf[..frame_len], &mut mismatched)
+            .observe_forwarding_confirmation(frame, &mut mismatched)
             .is_some();
-        match self.echo_watches.heard(&buf[..frame_len], received_at_ms) {
+        match self.echo_watches.heard(frame, received_at_ms) {
             crate::echo_watch::Heard::Echo(echo) => {
                 if let Some(repeater) = echo.repeater {
                     self.vouch_for_transmitter(repeater, rx);
@@ -4227,12 +4226,11 @@ impl<
 
         match header.packet_type() {
             PacketType::Broadcast => {
-                self.process_broadcast(buf, frame_len, &header, rx, received_at_ms, &mut on_event)
+                self.process_broadcast(frame, &header, rx, received_at_ms, &mut on_event)
                     .await
             }
             PacketType::MacAck => self.process_mac_ack(
-                buf,
-                frame_len,
+                frame,
                 &header,
                 rx,
                 received_at_ms,
@@ -4241,8 +4239,7 @@ impl<
             ),
             PacketType::Unicast | PacketType::UnicastAckReq => {
                 self.process_unicast(
-                    buf,
-                    frame_len,
+                    frame,
                     &header,
                     rx,
                     received_at_ms,
@@ -4254,8 +4251,7 @@ impl<
             }
             PacketType::Multicast => {
                 self.process_multicast(
-                    buf,
-                    frame_len,
+                    frame,
                     &header,
                     rx,
                     received_at_ms,
@@ -4266,8 +4262,7 @@ impl<
             }
             PacketType::BlindUnicast | PacketType::BlindUnicastAckReq => {
                 self.process_blind_unicast(
-                    buf,
-                    frame_len,
+                    frame,
                     &header,
                     rx,
                     received_at_ms,
@@ -4283,22 +4278,20 @@ impl<
 
     async fn process_broadcast(
         &mut self,
-        buf: &[u8; FRAME],
-        frame_len: usize,
+        frame: &[u8],
         header: &PacketHeader,
         rx: &RxInfo,
         received_at_ms: u64,
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
     ) -> bool {
-        let Some((from_hint, from_key)) = Self::resolve_broadcast_source(&buf[..frame_len], header)
-        else {
+        let Some((from_hint, from_key)) = Self::resolve_broadcast_source(frame, header) else {
             return false;
         };
-        if !Self::payload_is_allowed(header.packet_type(), &buf[header.body_range.clone()]) {
+        if !Self::payload_is_allowed(header.packet_type(), &frame[header.body_range.clone()]) {
             return false;
         }
         let mut delivered = false;
-        if !self.refuse_delivery(&buf[..frame_len], header) {
+        if !self.refuse_delivery(frame, header) {
             // A hint-only signer can be verified only by a receiver that
             // already holds its key.
             let signer = from_key.or_else(|| {
@@ -4308,7 +4301,7 @@ impl<
                     .map(|(_, key)| key)
             });
             if let Some((signature, acceptance)) = self
-                .classify_signed_frame(&buf[..frame_len], header, signer, None)
+                .classify_signed_frame(frame, header, signer, None)
                 .await
             {
                 let from_key = if signature == SignatureStatus::Verified {
@@ -4324,14 +4317,14 @@ impl<
                         .as_ref()
                         .and_then(|key| self.peer_registry.lookup_by_key(key))
                     {
-                        self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
+                        self.learn_route_for_peer(peer_id, frame, header, rx);
                     }
                 } else if header.body_range.is_empty() {
                     let peer_id = match from_key {
                         Some(key) => self.peer_registry.lookup_by_key(&key).map(|(id, _)| id),
                         None => self.resolve_unique_hint(from_hint).map(|(id, _)| id),
                     };
-                    self.consider_beacon(&buf[..frame_len], header, peer_id, Some(from_hint), rx);
+                    self.consider_beacon(frame, header, peer_id, Some(from_hint), rx);
                 }
                 for (index, slot) in self.identities.iter().enumerate() {
                     // An ephemeral identity takes only unicast addressed to
@@ -4349,14 +4342,11 @@ impl<
                         LocalIdentityId(index as u8),
                         crate::MacEventRef::Received(
                             crate::ReceivedPacketRef::new(
-                                &buf[..frame_len],
-                                &buf[header.body_range.clone()],
+                                frame,
+                                &frame[header.body_range.clone()],
                                 header.clone(),
-                                ParsedOptions::extract(
-                                    &buf[..frame_len],
-                                    header.options_range.clone(),
-                                )
-                                .unwrap_or_default(),
+                                ParsedOptions::extract(frame, header.options_range.clone())
+                                    .unwrap_or_default(),
                                 from_key,
                                 Some(from_hint),
                                 false,
@@ -4373,7 +4363,7 @@ impl<
         // Broadcast delivery does not consume the packet. Broadcast remains a
         // routable mesh packet and may still be forwarded by a repeater after
         // local delivery.
-        let forwarded = self.maybe_forward_received(&buf[..frame_len], header, rx, false);
+        let forwarded = self.maybe_forward_received(frame, header, rx, false);
         delivered || forwarded
     }
 
@@ -4383,8 +4373,7 @@ impl<
     )]
     fn process_mac_ack(
         &mut self,
-        buf: &[u8; FRAME],
-        frame_len: usize,
+        frame: &[u8],
         header: &PacketHeader,
         rx: &RxInfo,
         received_at_ms: u64,
@@ -4397,17 +4386,16 @@ impl<
         // colliding `ack_mic` from an unrelated exchange fails verification
         // and falls through to forwarding.
         if header.mic_range.len() != 8 {
-            return forwarding_confirmed
-                || self.maybe_forward_received(&buf[..frame_len], header, rx, false);
+            return forwarding_confirmed || self.maybe_forward_received(frame, header, rx, false);
         }
         let mut ack_trailer = [0u8; 8];
-        ack_trailer.copy_from_slice(&buf[header.mic_range.clone()]);
+        ack_trailer.copy_from_slice(&frame[header.mic_range.clone()]);
         // Independent of whether this node is the ack's addressee: a node can
         // be the origin of one exchange and a repeater for another, and the
         // queued forward it may be holding is not this ack's business to
         // match against.
         self.hint_forwards_for_ack_mic(&ack_trailer[..4], false);
-        if let Some((index, receipt, target_peer)) = self.pending_answered_by(&buf[..frame_len])
+        if let Some((index, receipt, target_peer)) = self.pending_answered_by(frame)
             && let Some((identity_id, receipt, via_route_retry)) =
                 self.complete_pending_ack(index, receipt)
         {
@@ -4416,9 +4404,9 @@ impl<
             // displacing a better route, helped by the confirmation the
             // completion just credited to the route the send went out on.
             if let Some((peer_id, _)) = self.peer_registry.lookup_by_key(&target_peer) {
-                self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
+                self.learn_route_for_peer(peer_id, frame, header, rx);
             }
-            let (hop_count, trace) = ack_path(&buf[..frame_len], header);
+            let (hop_count, trace) = ack_path(frame, header);
             on_event(
                 identity_id,
                 crate::MacEventRef::AckReceived {
@@ -4436,14 +4424,13 @@ impl<
         // nothing: every copy carries the same trailer, since its tag
         // covers only what no repeater may change, so the path a copy
         // claims is anyone's to rewrite.
-        forwarding_confirmed || self.maybe_forward_received(&buf[..frame_len], header, rx, false)
+        forwarding_confirmed || self.maybe_forward_received(frame, header, rx, false)
     }
 
     #[allow(clippy::too_many_arguments)]
     async fn process_unicast(
         &mut self,
-        buf: &mut [u8; FRAME],
-        frame_len: usize,
+        frame: &mut [u8],
         header: &PacketHeader,
         rx: &RxInfo,
         received_at_ms: u64,
@@ -4452,34 +4439,31 @@ impl<
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
     ) -> bool {
         let mut original = [0u8; FRAME];
-        original[..frame_len].copy_from_slice(&buf[..frame_len]);
+        let original = &mut original[..frame.len()];
+        original.copy_from_slice(frame);
+        let original = &*original;
         // Whether a key of ours opened it, which is what makes it ours
         // rather than another node's whose hint matches.
         let mut opened = false;
         let handled = if let Some(local_id) = self.find_local_identity_for_dst(header.dst) {
             let mut handled = false;
             let meet_only = self.answers_meet_only(local_id);
-            self.admit_full_key_source(local_id, &buf[..frame_len], header, header.source, None)
+            self.admit_full_key_source(local_id, frame, header, header.source, None)
                 .await;
-            for (peer_id, peer_key) in
-                self.resolve_source_peer_candidates(&buf[..frame_len], header)
-            {
+            for (peer_id, peer_key) in self.resolve_source_peer_candidates(frame, header) {
                 let Ok(keys) = self.ensure_peer_crypto(local_id, peer_id).await else {
                     continue;
                 };
-                let Ok(body_range) =
-                    self.crypto
-                        .open_packet(&mut buf[..frame_len], header, &keys, None)
-                else {
+                let Ok(body_range) = self.crypto.open_packet(frame, header, &keys, None) else {
                     continue;
                 };
                 opened = true;
                 self.peer_registry.mark_proven(peer_id);
-                let payload = &buf[body_range.clone()];
+                let payload = &frame[body_range.clone()];
                 if !Self::payload_is_allowed(header.packet_type(), payload) {
                     continue;
                 }
-                if self.refuse_delivery(&original[..frame_len], header) {
+                if self.refuse_delivery(original, header) {
                     handled = true;
                     break;
                 }
@@ -4488,15 +4472,15 @@ impl<
                     continue;
                 }
                 if header.ack_requested()
-                    && self.should_emit_destination_ack(&buf[..frame_len], header, rx)
-                    && self.can_acknowledge_unicast_duplicate(peer_id, header, &buf[..frame_len])
+                    && self.should_emit_destination_ack(frame, header, rx)
+                    && self.can_acknowledge_unicast_duplicate(peer_id, header, frame)
                 {
                     // A duplicate teaches no route and retires none: the
                     // frame authenticates its sender, but not the copy, and
                     // anyone who heard the original can send it again with
                     // another path or a Route Retry. It earns a re-ack only.
-                    let occasion = self.duplicate_ack_occasion(peer_id, header, &buf[..frame_len]);
-                    let ack_v = self.received_ack_v(&buf[..frame_len], header, None, &keys);
+                    let occasion = self.duplicate_ack_occasion(peer_id, header, frame);
+                    let ack_v = self.received_ack_v(frame, header, None, &keys);
                     self.queue_received_mac_ack(
                         local_id,
                         peer_id,
@@ -4504,7 +4488,7 @@ impl<
                             v: ack_v,
                             keys: &keys,
                         },
-                        &buf[..frame_len],
+                        frame,
                         header,
                         occasion,
                     );
@@ -4516,7 +4500,7 @@ impl<
                 // A new frame with no room is declined before the window
                 // takes it, so its retransmission is judged as new. A
                 // held frame was asked when its sender vouched for it.
-                if !verified && self.declines_payload(&buf[..frame_len], header, rx, payload) {
+                if !verified && self.declines_payload(frame, header, rx, payload) {
                     handled = true;
                     break;
                 }
@@ -4532,7 +4516,7 @@ impl<
                     // window: taking it there makes a later copy a duplicate.
                     // Behind the baseline its Frame Verified set, it is
                     // already spent.
-                    acceptance = self.accept_unicast_replay(peer_id, header, &buf[..frame_len]);
+                    acceptance = self.accept_unicast_replay(peer_id, header, frame);
                 } else {
                     // A session key takes part in no resync: to it, a
                     // resync command is a MAC command like any other.
@@ -4545,8 +4529,8 @@ impl<
                                     peer_key,
                                     ReplyCarriage::Unicast,
                                     header,
-                                    &buf[..frame_len],
-                                    &original[..frame_len],
+                                    frame,
+                                    original,
                                     nonce,
                                 )
                                 .await
@@ -4557,21 +4541,15 @@ impl<
                             continue;
                         }
                         Some((_, nonce)) => {
-                            if !self.accept_frame_verified(
-                                local_id,
-                                peer_id,
-                                header,
-                                &buf[..frame_len],
-                                nonce,
-                            ) {
+                            if !self.accept_frame_verified(local_id, peer_id, header, frame, nonce)
+                            {
                                 continue;
                             }
-                            self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
+                            self.learn_route_for_peer(peer_id, frame, header, rx);
                             if header.ack_requested()
-                                && self.should_emit_destination_ack(&buf[..frame_len], header, rx)
+                                && self.should_emit_destination_ack(frame, header, rx)
                             {
-                                let ack_v =
-                                    self.received_ack_v(&buf[..frame_len], header, None, &keys);
+                                let ack_v = self.received_ack_v(frame, header, None, &keys);
                                 self.queue_received_mac_ack(
                                     local_id,
                                     peer_id,
@@ -4579,7 +4557,7 @@ impl<
                                         v: ack_v,
                                         keys: &keys,
                                     },
-                                    &buf[..frame_len],
+                                    frame,
                                     header,
                                     AckOccasion::First,
                                 );
@@ -4589,10 +4567,9 @@ impl<
                         }
                         None => {}
                     }
-                    match self.unicast_replay_verdict(peer_id, header, &buf[..frame_len]) {
+                    match self.unicast_replay_verdict(peer_id, header, frame) {
                         Some(ReplayVerdict::Accept) => {
-                            acceptance =
-                                self.accept_unicast_replay(peer_id, header, &buf[..frame_len]);
+                            acceptance = self.accept_unicast_replay(peer_id, header, frame);
                             self.settle_counter_resync_response(local_id, peer_id, payload);
                         }
                         // A session key answers nothing, so a frame its
@@ -4602,11 +4579,7 @@ impl<
                         }
                         Some(ReplayVerdict::OutOfWindow | ReplayVerdict::Stale) => {
                             let answer = self.adopt_counter_resync_response(
-                                local_id,
-                                peer_id,
-                                header,
-                                &buf[..frame_len],
-                                payload,
+                                local_id, peer_id, header, frame, payload,
                             );
                             if answer == ProbeAnswer::InStep {
                                 continue;
@@ -4616,26 +4589,16 @@ impl<
                                 // sender vouches for it. Any other is dropped
                                 // behind the probe: it falls behind the
                                 // baseline the resync sets.
-                                match self.refused_frame_action(
-                                    local_id,
-                                    peer_id,
-                                    header,
-                                    &buf[..frame_len],
-                                ) {
+                                match self.refused_frame_action(local_id, peer_id, header, frame) {
                                     RefusedFrame::Hold => {
-                                        let ack_v = self.received_ack_v(
-                                            &buf[..frame_len],
-                                            header,
-                                            None,
-                                            &keys,
-                                        );
+                                        let ack_v = self.received_ack_v(frame, header, None, &keys);
                                         if self
                                             .hold_and_verify(
                                                 local_id,
                                                 peer_id,
                                                 peer_key,
                                                 ReplyCarriage::Unicast,
-                                                &original[..frame_len],
+                                                original,
                                                 payload.first().copied(),
                                                 ack_v,
                                                 rx,
@@ -4653,7 +4616,7 @@ impl<
                                             peer_key,
                                             ReplyCarriage::Unicast,
                                             header,
-                                            &original[..frame_len],
+                                            original,
                                             payload,
                                         )
                                         .await;
@@ -4678,12 +4641,12 @@ impl<
                         None => continue,
                     }
                 }
-                self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
+                self.learn_route_for_peer(peer_id, frame, header, rx);
                 // Ahead of delivery, so whoever handles a response finds
                 // the request it answers already confirmed.
                 self.complete_ack_from_option(
                     &peer_key,
-                    &original[..frame_len],
+                    original,
                     header,
                     rx,
                     received_at_ms,
@@ -4694,9 +4657,9 @@ impl<
                 // Verified already got.
                 if !verified
                     && header.ack_requested()
-                    && self.should_emit_destination_ack(&buf[..frame_len], header, rx)
+                    && self.should_emit_destination_ack(frame, header, rx)
                 {
-                    let ack_v = self.received_ack_v(&buf[..frame_len], header, None, &keys);
+                    let ack_v = self.received_ack_v(frame, header, None, &keys);
                     self.queue_received_mac_ack(
                         local_id,
                         peer_id,
@@ -4704,7 +4667,7 @@ impl<
                             v: ack_v,
                             keys: &keys,
                         },
-                        &buf[..frame_len],
+                        frame,
                         header,
                         AckOccasion::First,
                     );
@@ -4719,7 +4682,7 @@ impl<
                 if let Some(data) = Self::echo_request_data(payload) {
                     let response =
                         Self::build_mac_command_payload(MAC_COMMAND_ECHO_RESPONSE_ID, data);
-                    let options = self.echo_response_options(&original[..frame_len], header);
+                    let options = self.echo_response_options(original, header);
                     let _ = self
                         .send_response(
                             local_id,
@@ -4734,25 +4697,17 @@ impl<
                 // The pairwise window judged the counter; the signature,
                 // checked against the key that opened the frame, only says
                 // whether it verified.
-                let signature = self.charged_signature_status(
-                    header,
-                    &buf[..frame_len],
-                    Some(&peer_key),
-                    None,
-                    None,
-                );
+                let signature =
+                    self.charged_signature_status(header, frame, Some(&peer_key), None, None);
                 on_event(
                     local_id,
                     crate::MacEventRef::Received(
                         crate::ReceivedPacketRef::new(
-                            &original[..frame_len],
-                            &buf[body_range],
+                            original,
+                            &frame[body_range],
                             header.clone(),
-                            ParsedOptions::extract(
-                                &original[..frame_len],
-                                header.options_range.clone(),
-                            )
-                            .unwrap_or_default(),
+                            ParsedOptions::extract(original, header.options_range.clone())
+                                .unwrap_or_default(),
                             Some(peer_key),
                             Some(peer_key.hint()),
                             true,
@@ -4767,9 +4722,7 @@ impl<
                 break;
             }
             handled
-        } else if let Some(retired) =
-            self.retired_address_for(&buf[..frame_len], header.dst, header.source)
-        {
+        } else if let Some(retired) = self.retired_address_for(frame, header.dst, header.source) {
             on_event(
                 retired.parent,
                 crate::MacEventRef::RetiredAddressHeard {
@@ -4780,16 +4733,14 @@ impl<
         } else {
             false
         };
-        let forwarded =
-            self.maybe_forward_received(&original[..frame_len], header, rx, handled || opened);
+        let forwarded = self.maybe_forward_received(original, header, rx, handled || opened);
         handled || forwarding_confirmed || forwarded
     }
 
     #[allow(clippy::too_many_arguments)]
     async fn process_multicast(
         &mut self,
-        buf: &mut [u8; FRAME],
-        frame_len: usize,
+        frame: &mut [u8],
         header: &PacketHeader,
         rx: &RxInfo,
         received_at_ms: u64,
@@ -4797,18 +4748,13 @@ impl<
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
     ) -> bool {
         let mut original = [0u8; FRAME];
-        original[..frame_len].copy_from_slice(&buf[..frame_len]);
+        let original = &mut original[..frame.len()];
+        original.copy_from_slice(frame);
+        let original = &*original;
         let delivered = self
-            .deliver_multicast(
-                buf,
-                &original[..frame_len],
-                header,
-                rx,
-                received_at_ms,
-                &mut on_event,
-            )
+            .deliver_multicast(frame, original, header, rx, received_at_ms, &mut on_event)
             .await;
-        let forwarded = self.maybe_forward_received(&original[..frame_len], header, rx, false);
+        let forwarded = self.maybe_forward_received(original, header, rx, false);
         delivered || forwarding_confirmed || forwarded
     }
 
@@ -4822,14 +4768,13 @@ impl<
     /// moved by it.
     async fn deliver_multicast(
         &mut self,
-        buf: &mut [u8; FRAME],
+        frame: &mut [u8],
         original: &[u8],
         header: &PacketHeader,
         rx: &RxInfo,
         received_at_ms: u64,
         on_event: &mut impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
     ) -> bool {
-        let frame_len = original.len();
         let Some(channel_id) = header.channel else {
             return false;
         };
@@ -4842,36 +4787,30 @@ impl<
                 k_mic: channel.derived.k_mic,
             };
             self.crypto
-                .open_packet(&mut buf[..frame_len], header, &keys, None)
+                .open_packet(frame, header, &keys, None)
                 .ok()
                 .map(|body_range| (channel.channel_key, channel.derived.commitment, body_range))
         });
         let Some((channel_key, commitment, body_range)) = opened else {
             return false;
         };
-        if !Self::payload_is_allowed(header.packet_type(), &buf[body_range.clone()])
+        if !Self::payload_is_allowed(header.packet_type(), &frame[body_range.clone()])
             || self.refuse_delivery(original, header)
         {
             return false;
         }
-        let Some(source) = self.resolve_multicast_source(&buf[..frame_len], header) else {
+        let Some(source) = self.resolve_multicast_source(frame, header) else {
             return false;
         };
         // The signature is checked against the channel whose key opened the
         // frame, never one matched by identifier alone.
         let Some((signature, acceptance)) = self
-            .classify_signed_frame(
-                &buf[..frame_len],
-                header,
-                source.public_key,
-                Some(&commitment),
-            )
+            .classify_signed_frame(frame, header, source.public_key, Some(&commitment))
             .await
         else {
             return false;
         };
-        if signature != SignatureStatus::Verified
-            && !self.accept_unsigned_multicast(header, &buf[..frame_len])
+        if signature != SignatureStatus::Verified && !self.accept_unsigned_multicast(header, frame)
         {
             return false;
         }
@@ -4881,7 +4820,7 @@ impl<
         // An unsigned beacon may still suggest one.
         if signature == SignatureStatus::Verified {
             if let Some(peer_id) = source.peer_id {
-                self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
+                self.learn_route_for_peer(peer_id, frame, header, rx);
             }
         } else if body_range.is_empty() {
             self.consider_beacon(original, header, source.peer_id, source.hint, rx);
@@ -4897,7 +4836,7 @@ impl<
                 crate::MacEventRef::Received(
                     crate::ReceivedPacketRef::new(
                         original,
-                        &buf[body_range.clone()],
+                        &frame[body_range.clone()],
                         header.clone(),
                         ParsedOptions::extract(original, header.options_range.clone())
                             .unwrap_or_default(),
@@ -4923,8 +4862,7 @@ impl<
     #[allow(clippy::too_many_arguments)]
     async fn process_blind_unicast(
         &mut self,
-        buf: &mut [u8; FRAME],
-        frame_len: usize,
+        frame: &mut [u8],
         header: &PacketHeader,
         rx: &RxInfo,
         received_at_ms: u64,
@@ -4933,7 +4871,9 @@ impl<
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
     ) -> bool {
         let mut original = [0u8; FRAME];
-        original[..frame_len].copy_from_slice(&buf[..frame_len]);
+        let original = &mut original[..frame.len()];
+        original.copy_from_slice(frame);
+        let original = &*original;
         // As on the unicast path.
         let mut opened = false;
         let handled = if let Some(channel_id) = header.channel {
@@ -4947,18 +4887,16 @@ impl<
             } else {
                 let mut handled = false;
                 for (resolved_channel_key, channel_keys) in channel_candidates {
-                    buf[..frame_len].copy_from_slice(&original[..frame_len]);
-                    let Ok(blind_addr) = self.crypto.decrypt_blind_addr(
-                        &mut buf[..frame_len],
-                        header,
-                        &channel_keys,
-                    ) else {
+                    frame.copy_from_slice(original);
+                    let Ok(blind_addr) =
+                        self.crypto.decrypt_blind_addr(frame, header, &channel_keys)
+                    else {
                         continue;
                     };
                     let (dst, source_addr) = (blind_addr.dst, blind_addr.source);
                     let Some(local_id) = self.find_local_identity_for_dst(Some(dst)) else {
                         if let Some(retired) =
-                            self.retired_address_for(&buf[..frame_len], Some(dst), source_addr)
+                            self.retired_address_for(frame, Some(dst), source_addr)
                         {
                             on_event(
                                 retired.parent,
@@ -4974,14 +4912,14 @@ impl<
                     let meet_only = self.answers_meet_only(local_id);
                     self.admit_full_key_source(
                         local_id,
-                        &buf[..frame_len],
+                        frame,
                         header,
                         source_addr,
                         Some((&blind_addr.addr, &channel_keys)),
                     )
                     .await;
                     for (peer_id, peer_key) in
-                        self.resolve_blind_source_peer_candidates(&buf[..frame_len], source_addr)
+                        self.resolve_blind_source_peer_candidates(frame, source_addr)
                     {
                         let Ok(pairwise_keys) = self.ensure_peer_crypto(local_id, peer_id).await
                         else {
@@ -4990,7 +4928,7 @@ impl<
                         let blind_keys =
                             self.crypto.derive_blind_keys(&pairwise_keys, &channel_keys);
                         let body_range = match self.crypto.open_packet(
-                            &mut buf[..frame_len],
+                            frame,
                             header,
                             &blind_keys,
                             Some(&blind_addr.addr),
@@ -5000,11 +4938,11 @@ impl<
                         };
                         opened = true;
                         self.peer_registry.mark_proven(peer_id);
-                        let payload = &buf[body_range.clone()];
+                        let payload = &frame[body_range.clone()];
                         if !Self::payload_is_allowed(header.packet_type(), payload) {
                             continue;
                         }
-                        if self.refuse_delivery(&original[..frame_len], header) {
+                        if self.refuse_delivery(original, header) {
                             handled = true;
                             break;
                         }
@@ -5013,18 +4951,13 @@ impl<
                             continue;
                         }
                         if header.ack_requested()
-                            && self.should_emit_destination_ack(&buf[..frame_len], header, rx)
-                            && self.can_acknowledge_unicast_duplicate(
-                                peer_id,
-                                header,
-                                &buf[..frame_len],
-                            )
+                            && self.should_emit_destination_ack(frame, header, rx)
+                            && self.can_acknowledge_unicast_duplicate(peer_id, header, frame)
                         {
                             // As on the unicast path.
-                            let occasion =
-                                self.duplicate_ack_occasion(peer_id, header, &buf[..frame_len]);
+                            let occasion = self.duplicate_ack_occasion(peer_id, header, frame);
                             let ack_v = self.received_ack_v(
-                                &buf[..frame_len],
+                                frame,
                                 header,
                                 Some(&blind_addr.addr),
                                 &blind_keys,
@@ -5036,7 +4969,7 @@ impl<
                                     v: ack_v,
                                     keys: &blind_keys,
                                 },
-                                &buf[..frame_len],
+                                frame,
                                 header,
                                 occasion,
                             );
@@ -5046,9 +4979,7 @@ impl<
                         let verified = verified
                             .is_some_and(|v| v.local_id == local_id && v.peer_id == peer_id);
                         // As on the unicast path.
-                        if !verified
-                            && self.declines_payload(&buf[..frame_len], header, rx, payload)
-                        {
+                        if !verified && self.declines_payload(frame, header, rx, payload) {
                             handled = true;
                             break;
                         }
@@ -5061,8 +4992,7 @@ impl<
                         if verified {
                             // As for unicast: a released frame is taken by the
                             // window, so a later copy is a duplicate.
-                            acceptance =
-                                self.accept_unicast_replay(peer_id, header, &buf[..frame_len]);
+                            acceptance = self.accept_unicast_replay(peer_id, header, frame);
                         } else {
                             // As on the unicast path.
                             match Self::resync_command(payload).filter(|_| !meet_only) {
@@ -5074,8 +5004,8 @@ impl<
                                             peer_key,
                                             ReplyCarriage::Blind(&resolved_channel_key),
                                             header,
-                                            &buf[..frame_len],
-                                            &original[..frame_len],
+                                            frame,
+                                            original,
                                             nonce,
                                         )
                                         .await
@@ -5087,29 +5017,16 @@ impl<
                                 }
                                 Some((_, nonce)) => {
                                     if !self.accept_frame_verified(
-                                        local_id,
-                                        peer_id,
-                                        header,
-                                        &buf[..frame_len],
-                                        nonce,
+                                        local_id, peer_id, header, frame, nonce,
                                     ) {
                                         continue;
                                     }
-                                    self.learn_route_for_peer(
-                                        peer_id,
-                                        &buf[..frame_len],
-                                        header,
-                                        rx,
-                                    );
+                                    self.learn_route_for_peer(peer_id, frame, header, rx);
                                     if header.ack_requested()
-                                        && self.should_emit_destination_ack(
-                                            &buf[..frame_len],
-                                            header,
-                                            rx,
-                                        )
+                                        && self.should_emit_destination_ack(frame, header, rx)
                                     {
                                         let ack_v = self.received_ack_v(
-                                            &buf[..frame_len],
+                                            frame,
                                             header,
                                             Some(&blind_addr.addr),
                                             &blind_keys,
@@ -5121,7 +5038,7 @@ impl<
                                                 v: ack_v,
                                                 keys: &blind_keys,
                                             },
-                                            &buf[..frame_len],
+                                            frame,
                                             header,
                                             AckOccasion::First,
                                         );
@@ -5131,13 +5048,9 @@ impl<
                                 }
                                 None => {}
                             }
-                            match self.unicast_replay_verdict(peer_id, header, &buf[..frame_len]) {
+                            match self.unicast_replay_verdict(peer_id, header, frame) {
                                 Some(ReplayVerdict::Accept) => {
-                                    acceptance = self.accept_unicast_replay(
-                                        peer_id,
-                                        header,
-                                        &buf[..frame_len],
-                                    );
+                                    acceptance = self.accept_unicast_replay(peer_id, header, frame);
                                     self.settle_counter_resync_response(local_id, peer_id, payload);
                                 }
                                 // As on the unicast path.
@@ -5148,11 +5061,7 @@ impl<
                                 }
                                 Some(ReplayVerdict::OutOfWindow | ReplayVerdict::Stale) => {
                                     let answer = self.adopt_counter_resync_response(
-                                        local_id,
-                                        peer_id,
-                                        header,
-                                        &buf[..frame_len],
-                                        payload,
+                                        local_id, peer_id, header, frame, payload,
                                     );
                                     if answer == ProbeAnswer::InStep {
                                         continue;
@@ -5162,15 +5071,12 @@ impl<
                                         // answers ride the channel the frame
                                         // came on.
                                         let carriage = ReplyCarriage::Blind(&resolved_channel_key);
-                                        match self.refused_frame_action(
-                                            local_id,
-                                            peer_id,
-                                            header,
-                                            &buf[..frame_len],
-                                        ) {
+                                        match self
+                                            .refused_frame_action(local_id, peer_id, header, frame)
+                                        {
                                             RefusedFrame::Hold => {
                                                 let ack_v = self.received_ack_v(
-                                                    &buf[..frame_len],
+                                                    frame,
                                                     header,
                                                     Some(&blind_addr.addr),
                                                     &blind_keys,
@@ -5181,7 +5087,7 @@ impl<
                                                         peer_id,
                                                         peer_key,
                                                         carriage,
-                                                        &original[..frame_len],
+                                                        original,
                                                         payload.first().copied(),
                                                         ack_v,
                                                         rx,
@@ -5195,11 +5101,7 @@ impl<
                                             }
                                             RefusedFrame::Probe => {
                                                 self.answer_refused_echo_request(
-                                                    local_id,
-                                                    peer_key,
-                                                    carriage,
-                                                    header,
-                                                    &original[..frame_len],
+                                                    local_id, peer_key, carriage, header, original,
                                                     payload,
                                                 )
                                                 .await;
@@ -5218,10 +5120,10 @@ impl<
                                 None => continue,
                             }
                         }
-                        self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
+                        self.learn_route_for_peer(peer_id, frame, header, rx);
                         self.complete_ack_from_option(
                             &peer_key,
-                            &original[..frame_len],
+                            original,
                             header,
                             rx,
                             received_at_ms,
@@ -5230,10 +5132,10 @@ impl<
 
                         if !verified
                             && header.ack_requested()
-                            && self.should_emit_destination_ack(&buf[..frame_len], header, rx)
+                            && self.should_emit_destination_ack(frame, header, rx)
                         {
                             let ack_v = self.received_ack_v(
-                                &buf[..frame_len],
+                                frame,
                                 header,
                                 Some(&blind_addr.addr),
                                 &blind_keys,
@@ -5245,7 +5147,7 @@ impl<
                                     v: ack_v,
                                     keys: &blind_keys,
                                 },
-                                &buf[..frame_len],
+                                frame,
                                 header,
                                 AckOccasion::First,
                             );
@@ -5262,8 +5164,7 @@ impl<
                         if let Some(data) = Self::echo_request_data(payload) {
                             let response =
                                 Self::build_mac_command_payload(MAC_COMMAND_ECHO_RESPONSE_ID, data);
-                            let options =
-                                self.echo_response_options(&original[..frame_len], header);
+                            let options = self.echo_response_options(original, header);
                             let _ = self
                                 .send_response(
                                     local_id,
@@ -5281,7 +5182,7 @@ impl<
                             .map(|channel| channel.derived.commitment);
                         let signature = self.charged_signature_status(
                             header,
-                            &buf[..frame_len],
+                            frame,
                             Some(&peer_key),
                             Some(&blind_addr.addr),
                             commitment.as_ref(),
@@ -5290,14 +5191,11 @@ impl<
                             local_id,
                             crate::MacEventRef::Received(
                                 crate::ReceivedPacketRef::new(
-                                    &original[..frame_len],
-                                    &buf[body_range],
+                                    original,
+                                    &frame[body_range],
                                     header.clone(),
-                                    ParsedOptions::extract(
-                                        &original[..frame_len],
-                                        header.options_range.clone(),
-                                    )
-                                    .unwrap_or_default(),
+                                    ParsedOptions::extract(original, header.options_range.clone())
+                                        .unwrap_or_default(),
                                     Some(peer_key),
                                     Some(peer_key.hint()),
                                     true,
@@ -5323,8 +5221,7 @@ impl<
         } else {
             false
         };
-        let forwarded =
-            self.maybe_forward_received(&original[..frame_len], header, rx, handled || opened);
+        let forwarded = self.maybe_forward_received(original, header, rx, handled || opened);
         handled || forwarding_confirmed || forwarded
     }
 

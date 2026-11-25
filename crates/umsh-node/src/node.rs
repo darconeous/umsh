@@ -67,6 +67,13 @@ pub(crate) struct NodeMembership {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct SubscriptionHandle(NonZeroU32);
 
+impl SubscriptionHandle {
+    /// The handle of the slot at `index`, counted from one.
+    fn of_slot(index: usize) -> Self {
+        Self(NonZeroU32::MIN.saturating_add(index as u32))
+    }
+}
+
 /// The unregistration a [`Subscription`] holds until it runs, once.
 type SubscriptionCancel = Rc<RefCell<Option<Box<dyn FnMut() -> bool>>>>;
 
@@ -122,10 +129,10 @@ impl<T> HandlerTable<T> {
             .find(|(_, slot)| slot.is_none())
         {
             *slot = Some(handler);
-            return SubscriptionHandle(NonZeroU32::new((index + 1) as u32).unwrap());
+            return SubscriptionHandle::of_slot(index);
         }
         self.slots.push(Some(handler));
-        SubscriptionHandle(NonZeroU32::new(self.slots.len() as u32).unwrap())
+        SubscriptionHandle::of_slot(self.slots.len() - 1)
     }
 
     pub(crate) fn remove(&mut self, handle: SubscriptionHandle) -> bool {
@@ -146,7 +153,7 @@ impl<F: ?Sized> HandlerTable<Rc<RefCell<F>>> {
             .enumerate()
             .filter_map(|(index, slot)| {
                 let handler = slot.as_ref()?;
-                let handle = SubscriptionHandle(NonZeroU32::new((index + 1) as u32).unwrap());
+                let handle = SubscriptionHandle::of_slot(index);
                 Some((handle, handler.clone()))
             })
             .collect()
