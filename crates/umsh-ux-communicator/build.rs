@@ -148,9 +148,24 @@ fn main() {
         sizes.sort_unstable();
         sizes.dedup();
         let mut faces = Vec::new();
+        let mut characters = None;
         for &size in &sizes {
-            faces.push(face(&mut out, &mut context, font, spec, size));
+            let (face, chars) = face(&mut out, &mut context, font, spec, size);
+            faces.push(face);
+            match &characters {
+                None => characters = Some(chars),
+                Some(first) => assert_eq!(first, &chars, "{}: one character set", spec.name),
+            }
         }
+        let characters = characters.expect("a size");
+        writeln!(
+            out,
+            "static {}_RUNS: [CharRun; {}] = [{}];",
+            spec.name,
+            runs(&characters).matches("CharRun").count(),
+            runs(&characters)
+        )
+        .unwrap();
         writeln!(
             out,
             "pub static {}: Typeface = Typeface::new(PrerenderedFont {{ faces: &[{}] }});",
@@ -1024,7 +1039,7 @@ fn face(
     font: FontRef,
     spec: &Spec,
     size: u16,
-) -> String {
+) -> (String, Vec<char>) {
     let settings = [Setting {
         tag: swash::tag_from_bytes(b"wght"),
         value: spec.weight,
@@ -1091,6 +1106,7 @@ fn face(
 
     let mut pixels: Vec<u8> = Vec::new();
     let mut entries = Vec::new();
+    let mut characters = Vec::new();
     for (c, advance, image) in images {
         let start = pixels.len();
         let (left, top, width, height) = match image {
@@ -1107,24 +1123,24 @@ fn face(
             }
             None => (0, 0, 0, 0),
         };
-        let entry = format!(
-            "GlyphEntry {{ character: {c:?}, advance: {advance}, left: {left}, top: {top}, \
-             width: {width}, height: {height}, start: {start} }}"
-        );
-        entries.push(entry);
+        entries.push(glyph_entry(advance, left, top, width, height, start));
+        characters.push(c);
     }
     let fallback = {
         let (side, rise, coverage) = replacement(context, font, spec, size, cap, ascent, descent);
         let start = pixels.len();
         pixels.extend(coverage);
         let left = (f32::from(size) * 0.06).round() as i32;
-        let entry = format!(
-            "GlyphEntry {{ character: {REPLACEMENT:?}, advance: {}, left: {left}, top: {}, \
-             width: {side}, height: {side}, start: {start} }}",
+        let entry = glyph_entry(
             side as i32 + 2 * left,
+            left,
             ascent - rise,
+            side,
+            side,
+            start,
         );
         entries.push(entry.clone());
+        characters.push(REPLACEMENT);
         entry
     };
 
@@ -1146,8 +1162,73 @@ fn face(
         packed.len()
     )
     .unwrap();
-    format!(
+    let face = format!(
         "Face {{ size: {size}, ascent: {ascent}, descent: {descent}, line_gap: {line_gap}, \
-         glyphs: &{id}_GLYPHS, coverage: &{id}_COVERAGE, fallback: Some({fallback}) }}"
+         runs: &{}_RUNS, glyphs: &{id}_GLYPHS, coverage: &{id}_COVERAGE, \
+         fallback: Some({fallback}) }}",
+        spec.name
+    );
+    (face, characters)
+}
+
+/// A glyph's table entry. Every field is a byte, and the start three.
+fn glyph_entry(
+    advance: impl TryInto<u8> + Copy + std::fmt::Display,
+    left: impl TryInto<i8> + Copy + std::fmt::Display,
+    top: impl TryInto<i8> + Copy + std::fmt::Display,
+    width: impl TryInto<u8> + Copy + std::fmt::Display,
+    height: impl TryInto<u8> + Copy + std::fmt::Display,
+    start: usize,
+) -> String {
+    fn byte<T: TryInto<B> + Copy + std::fmt::Display, B>(value: T, what: &str) -> B {
+        value
+            .try_into()
+            .unwrap_or_else(|_| panic!("a glyph's {what} of {value} does not fit a byte"))
+    }
+    let (advance, left, top) = (
+        byte::<_, u8>(advance, "advance"),
+        byte::<_, i8>(left, "left"),
+        byte::<_, i8>(top, "top"),
+    );
+    let (width, height) = (
+        byte::<_, u8>(width, "width"),
+        byte::<_, u8>(height, "height"),
+    );
+    let start = u32::try_from(start)
+        .ok()
+        .filter(|&s| s < 1 << 24)
+        .expect("a face's coverage within 2^24 pixels")
+        .to_le_bytes();
+    format!(
+        "GlyphEntry {{ advance: {advance}, left: {left}, top: {top}, width: {width}, \
+         height: {height}, start: [{}, {}, {}] }}",
+        start[0], start[1], start[2]
     )
+}
+
+/// `characters`, sorted, as runs of consecutive code points.
+fn runs(characters: &[char]) -> String {
+    let mut runs: Vec<(char, u16, u16)> = Vec::new();
+    for (index, &c) in characters.iter().enumerate() {
+        match runs.last_mut() {
+            Some((first, len, _)) if u32::from(*first) + u32::from(*len) == u32::from(c) => {
+                *len += 1;
+            }
+            _ => {
+                assert!(
+                    runs.last().is_none_or(
+                        |&(first, len, _)| u32::from(first) + u32::from(len) < u32::from(c)
+                    ),
+                    "characters in order"
+                );
+                runs.push((c, 1, u16::try_from(index).unwrap()));
+            }
+        }
+    }
+    runs.iter()
+        .map(|(first, len, index)| {
+            format!("CharRun {{ first: {first:?}, len: {len}, index: {index} }}")
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }

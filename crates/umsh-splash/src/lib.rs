@@ -237,7 +237,7 @@ impl Type<'_> {
                 continue;
             };
             let (width, height) = (usize::from(glyph.width), usize::from(glyph.height));
-            let start = glyph.start as usize;
+            let start = glyph.start() as usize;
             let corner = pen + Point::new(i32::from(glyph.left), i32::from(glyph.top));
             let pixels = (0..width * height)
                 .map(|index| (index, self.level(start + index)))
@@ -379,7 +379,7 @@ mod tests {
     #[test]
     fn characters_beyond_ascii_draw_from_the_face_or_its_fallback() {
         let face = medium(16);
-        assert_eq!(face.glyph('é').map(|glyph| glyph.character), Some('é'));
+        assert!(face.0.has('é'));
         // Not in the face: its replacement glyph stands in, with width.
         assert!(face.advance('\u{4E00}') > 0);
         assert!(face.width("fw-é") > face.width("fw-"));

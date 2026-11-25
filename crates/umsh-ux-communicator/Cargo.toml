@@ -35,7 +35,7 @@ directional = []
 # place, and scroll views that take focus when nothing in them can. Branch
 # `umsh` of
 # darconeous/buoyant.
-buoyant = { git = "https://github.com/darconeous/buoyant", rev = "9341614d0e056ee5579d74744367d790826ad960", default-features = false, features = ["embedded-graphics", "unicode-segmentation"] }
+buoyant = { git = "https://github.com/darconeous/buoyant", rev = "684dfe61340cd559bdc62871245faf6c8b2f8b26", default-features = false, features = ["embedded-graphics", "unicode-segmentation"] }
 embedded-graphics = { version = "0.8", default-features = false }
 # The touches Buoyant takes.
 embedded-touch = "0.3"

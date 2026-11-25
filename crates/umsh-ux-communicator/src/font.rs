@@ -5,7 +5,7 @@
 //! rasterized size is drawn.
 
 use buoyant::font::PrerenderedFont;
-use buoyant::font::prerendered::{Face, GlyphEntry};
+use buoyant::font::prerendered::{CharRun, Face, GlyphEntry};
 
 use crate::typeface::Typeface;
 

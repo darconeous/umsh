@@ -89,7 +89,7 @@ impl Deref for Typeface {
 fn emoji(face: &Face, cluster: &str) -> Option<Shown> {
     let mut chars = cluster.chars();
     if let (Some(c), None) = (chars.next(), chars.next())
-        && (c.is_ascii() || face.glyph(c).is_some_and(|g| g.character == c))
+        && (c.is_ascii() || face.has(c))
     {
         return None;
     }
