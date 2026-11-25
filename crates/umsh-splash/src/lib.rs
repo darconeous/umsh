@@ -212,16 +212,6 @@ impl Type<'_> {
         text.len()
     }
 
-    /// The coverage level of pixel `index`, counted across the whole face.
-    fn level(self, index: usize) -> u8 {
-        let byte = self.0.coverage.get(index / 2).copied().unwrap_or(0);
-        if index.is_multiple_of(2) {
-            byte >> 4
-        } else {
-            byte & 0x0F
-        }
-    }
-
     /// Draws `text` with its line box's top-left corner at `origin`,
     /// returning where the next character would go.
     fn draw<D: DrawTarget<Color = Rgb565>>(
@@ -236,16 +226,15 @@ impl Type<'_> {
             let Some(glyph) = self.glyph(c) else {
                 continue;
             };
-            let (width, height) = (usize::from(glyph.width), usize::from(glyph.height));
-            let start = glyph.start() as usize;
             let corner = pen + Point::new(i32::from(glyph.left), i32::from(glyph.top));
-            let pixels = (0..width * height)
-                .map(|index| (index, self.level(start + index)))
-                .filter(|&(_, level)| level != 0)
-                .map(|(index, level)| {
-                    let (x, y) = ((index % width) as i32, (index / width) as i32);
-                    Pixel(corner + Point::new(x, y), palette[usize::from(level)])
-                });
+            let pixels =
+                self.0
+                    .pixels(&glyph)
+                    .filter(|&(.., level)| level != 0)
+                    .map(|(x, y, level)| {
+                        let at = corner + Point::new(i32::from(x), i32::from(y));
+                        Pixel(at, palette[usize::from(level)])
+                    });
             let _ = target.draw_iter(pixels);
             pen.x += i32::from(glyph.advance);
         }

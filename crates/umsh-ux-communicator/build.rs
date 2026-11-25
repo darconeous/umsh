@@ -134,6 +134,7 @@ fn main() {
         (false, false) => (true, true),
         named => named,
     };
+    let mut families = Vec::new();
     for spec in SPECS {
         println!("cargo:rerun-if-changed={}", spec.file);
         let data = std::fs::read(dir.join(spec.file)).expect("font file");
@@ -147,25 +148,53 @@ fn main() {
         }
         sizes.sort_unstable();
         sizes.dedup();
-        let mut faces = Vec::new();
-        let mut characters = None;
-        for &size in &sizes {
-            let (face, chars) = face(&mut out, &mut context, font, spec, size);
-            faces.push(face);
-            match &characters {
-                None => characters = Some(chars),
-                Some(first) => assert_eq!(first, &chars, "{}: one character set", spec.name),
-            }
+        let rasters: Vec<Raster> = sizes
+            .iter()
+            .map(|&size| face(&mut context, font, spec, size))
+            .collect();
+        for raster in &rasters {
+            assert_eq!(
+                raster.characters, rasters[0].characters,
+                "{}: one character set",
+                spec.name
+            );
         }
-        let characters = characters.expect("a size");
+        families.push((spec, rasters));
+    }
+    // One code for every face this build keeps.
+    let code = Code::train(
+        families
+            .iter()
+            .flat_map(|(_, rasters)| rasters)
+            .flat_map(|raster| &raster.glyphs),
+    );
+    let table = code.table();
+    writeln!(
+        out,
+        "/// Every face's decoding table.\nstatic CODES: [u8; {}] = {table:?};",
+        table.len()
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "const _: () = {{\n    use buoyant::font::prerendered::coding;\n    \
+         assert!(coding::EDGE == {EDGE} && coding::LEVELS == {LEVELS} && coding::PEEK == {PEEK});\n    \
+         let bands = {:?};\n    let mut level = 0;\n    while level <= coding::EDGE {{\n        \
+         assert!(coding::band(level) == bands[level as usize]);\n        level += 1;\n    }}\n}};",
+        (0..=EDGE).map(band).collect::<Vec<_>>()
+    )
+    .unwrap();
+    for (spec, rasters) in &families {
+        let characters = &rasters[0].characters;
         writeln!(
             out,
             "static {}_RUNS: [CharRun; {}] = [{}];",
             spec.name,
-            runs(&characters).matches("CharRun").count(),
-            runs(&characters)
+            runs(characters).matches("CharRun").count(),
+            runs(characters)
         )
         .unwrap();
+        let faces: Vec<String> = rasters.iter().map(|r| emit(&mut out, r, &code)).collect();
         writeln!(
             out,
             "pub static {}: Typeface = Typeface::new(PrerenderedFont {{ faces: &[{}] }});",
@@ -1033,13 +1062,30 @@ fn replacement(
 }
 
 /// Writes one face's tables and returns its `Face` expression.
-fn face(
-    out: &mut String,
-    context: &mut ScaleContext,
-    font: FontRef,
-    spec: &Spec,
+/// One face, rasterized: its line metrics, and each glyph in character
+/// order, the replacement glyph last, which is also the fallback.
+struct Raster {
+    id: String,
+    family: &'static str,
     size: u16,
-) -> (String, Vec<char>) {
+    ascent: i32,
+    descent: i32,
+    line_gap: i32,
+    glyphs: Vec<Glyph>,
+    characters: Vec<char>,
+}
+
+struct Glyph {
+    advance: i32,
+    left: i32,
+    top: i32,
+    width: u32,
+    height: u32,
+    /// 4-bit coverage, row by row.
+    pixels: Vec<u8>,
+}
+
+fn face(context: &mut ScaleContext, font: FontRef, spec: &Spec, size: u16) -> Raster {
     let settings = [Setting {
         tag: swash::tag_from_bytes(b"wght"),
         value: spec.weight,
@@ -1104,51 +1150,81 @@ fn face(
         "the replacement character goes last"
     );
 
-    let mut pixels: Vec<u8> = Vec::new();
-    let mut entries = Vec::new();
+    let mut glyphs = Vec::new();
     let mut characters = Vec::new();
     for (c, advance, image) in images {
-        let start = pixels.len();
-        let (left, top, width, height) = match image {
+        glyphs.push(match image {
             Some(image) => {
                 let p = image.placement;
-                // Round 8-bit alpha to 4 bits.
-                pixels.extend(
-                    image
+                Glyph {
+                    advance,
+                    left: p.left,
+                    top: ascent - p.top,
+                    width: p.width,
+                    height: p.height,
+                    // Round 8-bit alpha to 4 bits.
+                    pixels: image
                         .data
                         .iter()
-                        .map(|&a| ((u16::from(a) * 15 + 127) / 255) as u8),
-                );
-                (p.left, ascent - p.top, p.width, p.height)
+                        .map(|&a| ((u16::from(a) * 15 + 127) / 255) as u8)
+                        .collect(),
+                }
             }
-            None => (0, 0, 0, 0),
-        };
-        entries.push(glyph_entry(advance, left, top, width, height, start));
+            None => Glyph {
+                advance,
+                left: 0,
+                top: 0,
+                width: 0,
+                height: 0,
+                pixels: Vec::new(),
+            },
+        });
         characters.push(c);
     }
-    let fallback = {
-        let (side, rise, coverage) = replacement(context, font, spec, size, cap, ascent, descent);
-        let start = pixels.len();
-        pixels.extend(coverage);
-        let left = (f32::from(size) * 0.06).round() as i32;
-        let entry = glyph_entry(
-            side as i32 + 2 * left,
-            left,
-            ascent - rise,
-            side,
-            side,
-            start,
-        );
-        entries.push(entry.clone());
-        characters.push(REPLACEMENT);
-        entry
-    };
-
-    let id = format!("{}_{}", spec.name, size);
-    let mut packed = Vec::with_capacity(pixels.len().div_ceil(2));
-    for pair in pixels.chunks(2) {
-        packed.push((pair[0] << 4) | pair.get(1).copied().unwrap_or(0));
+    let (side, rise, coverage) = replacement(context, font, spec, size, cap, ascent, descent);
+    let left = (f32::from(size) * 0.06).round() as i32;
+    glyphs.push(Glyph {
+        advance: side as i32 + 2 * left,
+        left,
+        top: ascent - rise,
+        width: side,
+        height: side,
+        pixels: coverage,
+    });
+    characters.push(REPLACEMENT);
+    Raster {
+        id: format!("{}_{}", spec.name, size),
+        family: spec.name,
+        size,
+        ascent,
+        descent,
+        line_gap,
+        glyphs,
+        characters,
     }
+}
+
+/// Writes `raster`'s glyph table and coded coverage, returning the `Face`.
+fn emit(out: &mut String, raster: &Raster, code: &Code) -> String {
+    let mut bits = Bits::default();
+    let entries: Vec<String> = raster
+        .glyphs
+        .iter()
+        .map(|g| {
+            let start = bits.len;
+            code.encode(&mut bits, g);
+            glyph_entry(g.advance, g.left, g.top, g.width, g.height, start)
+        })
+        .collect();
+    let Raster {
+        id,
+        family,
+        size,
+        ascent,
+        descent,
+        line_gap,
+        ..
+    } = raster;
     writeln!(
         out,
         "static {id}_GLYPHS: [GlyphEntry; {}] = [{}];",
@@ -1158,17 +1234,183 @@ fn face(
     .unwrap();
     writeln!(
         out,
-        "static {id}_COVERAGE: [u8; {}] = {packed:?};",
-        packed.len()
+        "static {id}_COVERAGE: [u8; {}] = {:?};",
+        bits.bytes.len(),
+        bits.bytes
     )
     .unwrap();
-    let face = format!(
+    format!(
         "Face {{ size: {size}, ascent: {ascent}, descent: {descent}, line_gap: {line_gap}, \
-         runs: &{}_RUNS, glyphs: &{id}_GLYPHS, coverage: &{id}_COVERAGE, \
-         fallback: Some({fallback}) }}",
-        spec.name
+         runs: &{family}_RUNS, glyphs: &{id}_GLYPHS, coverage: &{id}_COVERAGE, codes: &CODES, \
+         fallback: Some({}) }}",
+        entries.last().expect("the replacement glyph")
+    )
+}
+
+// ─── Coverage coding ────────────────────────────────────────────────────────
+//
+// As `buoyant::font::prerendered::coding` reads it: a prefix code for each
+// pixel's context, its left and upper neighbors' bands, no code longer than
+// PEEK bits. fonts.rs checks these constants against Buoyant's at compile
+// time.
+
+const EDGE: u8 = 16;
+const LEVELS: usize = 6;
+const PEEK: usize = 6;
+const CONTEXTS: usize = LEVELS * LEVELS;
+
+const fn band(level: u8) -> usize {
+    match level {
+        0 => 0,
+        1..=4 => 1,
+        5..=10 => 2,
+        11..=14 => 3,
+        15 => 4,
+        _ => 5,
+    }
+}
+
+/// Each pixel of `glyph` with its context, row by row.
+fn contexts(glyph: &Glyph) -> impl Iterator<Item = (usize, u8)> + '_ {
+    let width = glyph.width as usize;
+    glyph.pixels.iter().enumerate().map(move |(i, &level)| {
+        let left = if i % width == 0 {
+            EDGE
+        } else {
+            glyph.pixels[i - 1]
+        };
+        let above = if i < width {
+            EDGE
+        } else {
+            glyph.pixels[i - width]
+        };
+        (band(left) * LEVELS + band(above), level)
+    })
+}
+
+#[derive(Default)]
+struct Bits {
+    bytes: Vec<u8>,
+    len: usize,
+}
+
+impl Bits {
+    /// Appends the low `len` bits of `code`, the most significant first.
+    fn push(&mut self, code: u32, len: u8) {
+        for i in (0..len).rev() {
+            if self.len.is_multiple_of(8) {
+                self.bytes.push(0);
+            }
+            if code >> i & 1 != 0 {
+                *self.bytes.last_mut().unwrap() |= 0x80 >> (self.len % 8);
+            }
+            self.len += 1;
+        }
+    }
+}
+
+/// A prefix code for each context: each level's code and its length.
+struct Code {
+    codes: Vec<[(u32, u8); 16]>,
+}
+
+impl Code {
+    /// The code that makes `glyphs` shortest, no code over PEEK bits.
+    fn train<'a>(glyphs: impl Iterator<Item = &'a Glyph>) -> Self {
+        let mut counts = vec![[0u64; 16]; CONTEXTS];
+        for glyph in glyphs {
+            for (context, level) in contexts(glyph) {
+                counts[context][usize::from(level)] += 1;
+            }
+        }
+        let codes = counts
+            .iter()
+            .map(|counts| canonical(&limited_lengths(counts, PEEK)))
+            .collect();
+        Self { codes }
+    }
+
+    fn encode(&self, bits: &mut Bits, glyph: &Glyph) {
+        for (context, level) in contexts(glyph) {
+            let (code, len) = self.codes[context][usize::from(level)];
+            assert!(len > 0, "a level the code was trained on");
+            bits.push(code, len);
+        }
+    }
+
+    /// Buoyant's decoding table: for each context, every PEEK-bit window,
+    /// as the level its code begins and the code's length.
+    fn table(&self) -> Vec<u8> {
+        let mut table = vec![0u8; CONTEXTS << PEEK];
+        for (context, codes) in self.codes.iter().enumerate() {
+            for (level, &(code, len)) in codes.iter().enumerate() {
+                if len == 0 {
+                    continue;
+                }
+                let first = (code as usize) << (PEEK - usize::from(len));
+                for window in first..first + (1 << (PEEK - usize::from(len))) {
+                    table[context << PEEK | window] = level as u8 | len << 4;
+                }
+            }
+        }
+        table
+    }
+}
+
+/// Code lengths for symbols seen `counts` times, none over `limit`
+/// (package-merge). A symbol never seen gets none.
+fn limited_lengths(counts: &[u64; 16], limit: usize) -> [u8; 16] {
+    let mut lengths = [0u8; 16];
+    let seen: Vec<usize> = (0..16).filter(|&s| counts[s] > 0).collect();
+    match seen.len() {
+        0 => return lengths,
+        1 => {
+            lengths[seen[0]] = 1;
+            return lengths;
+        }
+        _ => {}
+    }
+    let mut leaves: Vec<(u64, Vec<usize>)> = seen.iter().map(|&s| (counts[s], vec![s])).collect();
+    leaves.sort();
+    let mut packages = leaves.clone();
+    for _ in 1..limit {
+        let mut merged: Vec<(u64, Vec<usize>)> = packages
+            .chunks_exact(2)
+            .map(|pair| {
+                let mut symbols = pair[0].1.clone();
+                symbols.extend(&pair[1].1);
+                (pair[0].0 + pair[1].0, symbols)
+            })
+            .collect();
+        merged.extend(leaves.iter().cloned());
+        merged.sort();
+        packages = merged;
+    }
+    for (_, symbols) in &packages[..2 * seen.len() - 2] {
+        for &s in symbols {
+            lengths[s] += 1;
+        }
+    }
+    lengths
+}
+
+/// Canonical codes for `lengths`: shorter codes first, then lower levels.
+fn canonical(lengths: &[u8; 16]) -> [(u32, u8); 16] {
+    let mut order: Vec<usize> = (0..16).filter(|&s| lengths[s] > 0).collect();
+    order.sort_by_key(|&s| (lengths[s], s));
+    let mut codes = [(0, 0); 16];
+    let (mut code, mut len) = (0u32, 0u8);
+    for s in order {
+        code <<= lengths[s] - len;
+        len = lengths[s];
+        codes[s] = (code, len);
+        code += 1;
+    }
+    assert!(
+        len == 0 || u64::from(code) <= 1 << len,
+        "a prefix code fits its lengths"
     );
-    (face, characters)
+    codes
 }
 
 /// A glyph's table entry. Every field is a byte, and the start three.
@@ -1197,7 +1439,7 @@ fn glyph_entry(
     let start = u32::try_from(start)
         .ok()
         .filter(|&s| s < 1 << 24)
-        .expect("a face's coverage within 2^24 pixels")
+        .expect("a face's coverage within 2^24 bits")
         .to_le_bytes();
     format!(
         "GlyphEntry {{ advance: {advance}, left: {left}, top: {top}, width: {width}, \
