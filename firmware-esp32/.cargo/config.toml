@@ -31,3 +31,12 @@ ESP_LOG = "info"
 
 [unstable]
 build-std = ["core", "alloc"]
+# For `trim-paths` below. Set here rather than in the manifest, which
+# stable Cargo (rustfmt's) must still parse.
+trim-paths = true
+
+# Panic locations name a file relative to its crate or the workspace, not
+# by its absolute path: shorter strings in flash, and more of the persisted
+# panic record left for the message. Debug info keeps absolute paths.
+[profile.release]
+trim-paths = "macro"
