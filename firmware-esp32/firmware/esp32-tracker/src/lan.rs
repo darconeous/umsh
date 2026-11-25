@@ -11,7 +11,9 @@
 //! replaced across a Wi-Fi reconnect—the port stops collecting, the task
 //! leaves both groups, and it starts over. A join reports membership once, so starting over
 //! is also what gets a reconnected station back into a snooping access
-//! point's or switch's forwarding table.
+//! point's or switch's forwarding table. While joined, it reports the
+//! membership again every minute, for networks with no IGMP querier to
+//! ask for it.
 //!
 //! Spec: `docs/protocol-legacy/src/lan-bearer.md`.
 
@@ -23,8 +25,9 @@ use super::ip::{Network, NetworkReceiver};
 use edge_mdns::domain::base::Ttl;
 use edge_mdns::host::{Host, Service, ServiceAnswers};
 use edge_mdns::{HostAnswersMdnsHandler, MdnsHandler, MdnsRequest, MdnsResponse};
-use embassy_futures::join::join;
+use embassy_futures::join::join3;
 use embassy_futures::select::{Either, select, select4};
+use embassy_net::raw::{IpProtocol, IpVersion, PacketMetadata as RawPacketMetadata, RawSocket};
 use embassy_net::udp::{PacketMetadata, RecvError, UdpSocket};
 use embassy_net::{IpAddress, IpEndpoint, Ipv4Address, Stack};
 use embassy_sync::blocking_mutex::{Mutex, raw::CriticalSectionRawMutex};
@@ -53,6 +56,15 @@ const MDNS_TTL_S: u32 = 120;
 const MDNS_QUERY: usize = 1024;
 /// The whole record in one response: names, the TXT keys, and an address.
 const MDNS_REPLY: usize = 512;
+
+/// How often the group membership is reported again, unasked. A host
+/// reports when a querier asks (RFC 2236 §3), but a network may have no
+/// querier, and a snooping access point then stops forwarding the group
+/// to a member it has not heard from in a while (about 20 minutes on one
+/// such network). One small report a minute keeps the membership.
+const MEMBERSHIP_REPORT_INTERVAL: Duration = Duration::from_secs(60);
+/// An IPv4 header without options, then an IGMPv2 report.
+const MEMBERSHIP_REPORT_LEN: usize = 20 + 8;
 
 /// A DNS label's limit, which bounds the instance and host names.
 const LABEL_MAX: usize = 63;
@@ -151,6 +163,12 @@ pub struct Buffers {
     mdns_tx_meta: [PacketMetadata; 1],
     mdns_tx: [u8; MDNS_REPLY],
     reply: [u8; MDNS_REPLY],
+    /// The membership reports' socket. What IGMP it receives is the
+    /// stack's to act on, so its receive side only has to exist.
+    igmp_rx_meta: [RawPacketMetadata; 1],
+    igmp_rx: [u8; MEMBERSHIP_REPORT_LEN],
+    igmp_tx_meta: [RawPacketMetadata; 1],
+    igmp_tx: [u8; MEMBERSHIP_REPORT_LEN],
 }
 
 impl Buffers {
@@ -166,6 +184,10 @@ impl Buffers {
             mdns_tx_meta: [PacketMetadata::EMPTY; 1],
             mdns_tx: [0; MDNS_REPLY],
             reply: [0; MDNS_REPLY],
+            igmp_rx_meta: [RawPacketMetadata::EMPTY; 1],
+            igmp_rx: [0; MEMBERSHIP_REPORT_LEN],
+            igmp_tx_meta: [RawPacketMetadata::EMPTY; 1],
+            igmp_tx: [0; MEMBERSHIP_REPORT_LEN],
         }
     }
 }
@@ -275,6 +297,15 @@ pub async fn run(stack: Stack<'static>) -> ! {
         mdns.set_hop_limit(Some(MDNS_HOP_LIMIT));
         let mdns_ready =
             stack.join_multicast_group(MDNS_GROUP).is_ok() && mdns.bind(MDNS_PORT).is_ok();
+        let igmp = RawSocket::new::<esp_radio::wifi::Interface>(
+            stack,
+            IpVersion::Ipv4,
+            IpProtocol::Igmp,
+            &mut buffers.igmp_rx_meta,
+            &mut buffers.igmp_rx,
+            &mut buffers.igmp_tx_meta,
+            &mut buffers.igmp_tx,
+        );
 
         PORT.configure(true, config.ingress_limit(), now_ms());
         report(&mut published, State::Active).await;
@@ -283,7 +314,7 @@ pub async fn run(stack: Stack<'static>) -> ! {
         select4(
             CONFIG_CHANGED.wait(),
             network_down(&mut network, address),
-            join(
+            join3(
                 receive(
                     &socket,
                     own,
@@ -291,6 +322,7 @@ pub async fn run(stack: Stack<'static>) -> ! {
                     &mut buffers.datagram,
                 ),
                 export(&socket, destination),
+                keep_membership(&igmp, address, multicast.then_some(group)),
             ),
             advertise(&mut mdns, mdns_ready, address, &mut buffers.reply),
         )
@@ -299,6 +331,7 @@ pub async fn run(stack: Stack<'static>) -> ! {
         stop();
         drop(socket);
         drop(mdns);
+        drop(igmp);
         let _ = stack.leave_multicast_group(group);
         let _ = stack.leave_multicast_group(MDNS_GROUP);
     }
@@ -338,6 +371,54 @@ async fn export(socket: &UdpSocket<'_>, destination: IpEndpoint) {
             super::debug_log(format_args!("lan: send failed: {:?}", error));
         }
     }
+}
+
+/// Report membership of `group` from `address` every
+/// [`MEMBERSHIP_REPORT_INTERVAL`], as a host answering a query would. The
+/// join made the first report. With no group, as on a point-to-point
+/// link, there is nothing to keep.
+async fn keep_membership(socket: &RawSocket<'_>, address: Ipv4Address, group: Option<Ipv4Address>) {
+    let Some(group) = group else {
+        return core::future::pending().await;
+    };
+    let report = membership_report(address, group);
+    loop {
+        Timer::after(MEMBERSHIP_REPORT_INTERVAL).await;
+        socket.send(&report).await;
+    }
+}
+
+/// An IGMPv2 Membership Report for `group` (RFC 2236 §2), with the IPv4
+/// header a raw socket sends it under. The stack fills in the header
+/// checksum.
+fn membership_report(source: Ipv4Address, group: Ipv4Address) -> [u8; MEMBERSHIP_REPORT_LEN] {
+    const IGMP_V2_MEMBERSHIP_REPORT: u8 = 0x16;
+    let mut packet = [0u8; MEMBERSHIP_REPORT_LEN];
+    let (header, igmp) = packet.split_at_mut(20);
+    header[0] = 0x45; // Version 4, a five-word header.
+    header[2..4].copy_from_slice(&(MEMBERSHIP_REPORT_LEN as u16).to_be_bytes());
+    header[8] = 1; // TTL: this link only (RFC 2236 §2).
+    header[9] = 2; // IGMP.
+    header[12..16].copy_from_slice(&source.octets());
+    header[16..20].copy_from_slice(&group.octets());
+    igmp[0] = IGMP_V2_MEMBERSHIP_REPORT;
+    igmp[4..8].copy_from_slice(&group.octets());
+    let checksum = internet_checksum(igmp);
+    igmp[2..4].copy_from_slice(&checksum.to_be_bytes());
+    packet
+}
+
+/// The ones' complement of the ones' complement sum of `data`'s 16-bit
+/// words (RFC 1071).
+fn internet_checksum(data: &[u8]) -> u16 {
+    let mut sum: u32 = data
+        .chunks(2)
+        .map(|word| u32::from(word[0]) << 8 | u32::from(*word.get(1).unwrap_or(&0)))
+        .sum();
+    while sum > 0xFFFF {
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    }
+    !(sum as u16)
 }
 
 // ─── DNS-SD ─────────────────────────────────────────────────────────────────

@@ -4184,10 +4184,11 @@ async fn main(spawner: Spawner) {
         allow(unused_variables)
     )]
     let network_stack = {
-        // DHCP; the bridge's TCP and DNS; the LAN bearer's group and mDNS.
+        // DHCP; the bridge's TCP and DNS; the LAN bearer's group, mDNS,
+        // and membership reports.
         const SOCKETS: usize = 1
             + 2 * cfg!(feature = "bridge-client") as usize
-            + 2 * cfg!(feature = "lan-bearer") as usize;
+            + 3 * cfg!(feature = "lan-bearer") as usize;
         static RESOURCES: StaticCell<embassy_net::StackResources<SOCKETS>> = StaticCell::new();
         let interface = wifi::interface();
         let mac = interface.mac_address();
