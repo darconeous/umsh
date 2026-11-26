@@ -27,6 +27,9 @@ fixture = ["dep:umsh-core", "dep:umsh-ulcp"]
 # A trackball, or another directional control, whose directions can be
 # turned off: the Trackball screen under Device.
 directional = []
+# A touchscreen. Without it, touches never reach the interface, and no
+# view's touch handling is built: a board with none saves its flash.
+touch = []
 
 [dependencies]
 # The fork carries a prerendered anti-aliased font backend, line-limited
@@ -53,7 +56,7 @@ umsh-ux-display-tracker = { path = "../umsh-ux-display-tracker" }
 
 [dev-dependencies]
 # The tests drive the fixture's chats.
-umsh-ux-communicator = { path = ".", features = ["fixture"] }
+umsh-ux-communicator = { path = ".", features = ["fixture", "touch"] }
 
 [build-dependencies]
 swash = "0.2.7"

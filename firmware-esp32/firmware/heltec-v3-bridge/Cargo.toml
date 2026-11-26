@@ -133,6 +133,7 @@ board-tdeck = [
     "umsh-ulcp-runtime/directional",
     "umsh-communicator?/directional",
     "umsh-ux-communicator?/tdeck",
+    "umsh-ux-communicator?/touch",
     "umsh-ulcp-runtime/sound",
     "umsh-communicator?/sound",
 ]

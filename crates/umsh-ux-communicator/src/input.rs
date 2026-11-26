@@ -20,16 +20,23 @@
 use buoyant::app::{App, Harness as _};
 use buoyant::event::{EventResult, Key};
 use buoyant::focus::{DefaultFocus, Direction};
+#[cfg(feature = "touch")]
 use buoyant::primitives::Point;
 use buoyant::render::AnimatedJoin;
 use buoyant::view::{EditBuffer, EditText, ViewLayout};
+#[cfg(feature = "touch")]
 use core::time::Duration;
+#[cfg(feature = "touch")]
 use embedded_touch::{Phase, Tool, Touch, TouchPoint};
 
 use crate::keyboard::{Field, Latch, Modifier, Spaced, starts_sentence};
-use crate::model::{HOLD_MS, Press, Reaction, State, TouchHold};
+#[cfg(feature = "touch")]
+use crate::model::TouchHold;
+use crate::model::{HOLD_MS, Press, Reaction, State};
 use crate::nav::keys;
-use crate::picker::{Chosen, Pick, Picker, Spot};
+#[cfg(feature = "touch")]
+use crate::picker::Spot;
+use crate::picker::{Chosen, Pick, Picker};
 
 /// One user input.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,7 +78,10 @@ pub enum Input {
     /// A trackball rolled a step toward this arrow.
     Move(Arrow),
     /// A finger touched the screen, moved on it, or left it, at this point,
-    /// `at` milliseconds on the board's clock.
+    /// `at` milliseconds on the board's clock. Only a board with a
+    /// touchscreen has it (the `touch` feature): without it, no view's touch
+    /// handling is built.
+    #[cfg(feature = "touch")]
     Touch {
         phase: TouchPhase,
         x: i16,
@@ -85,17 +95,24 @@ impl Input {
     /// next move, or the touch's end, replaces.
     #[must_use]
     pub const fn is_touch_move(&self) -> bool {
-        matches!(
+        #[cfg(feature = "touch")]
+        return matches!(
             self,
             Self::Touch {
                 phase: TouchPhase::Moved,
                 ..
             }
-        )
+        );
+        #[cfg(not(feature = "touch"))]
+        {
+            let _ = self;
+            false
+        }
     }
 
     /// Whether this can leave its layout to `next`, queued right behind
     /// it: a touch move followed by another.
+    #[cfg(feature = "touch")]
     const fn lays_out_with(&self, next: &Self) -> bool {
         self.is_touch_move() && next.is_touch_move()
     }
@@ -112,6 +129,7 @@ pub enum TouchPhase {
     Cancelled,
 }
 
+#[cfg(feature = "touch")]
 impl TouchPhase {
     const fn phase(self) -> Phase {
         match self {
@@ -124,6 +142,7 @@ impl TouchPhase {
 }
 
 /// How far a finger moves before a touch is no longer held in place.
+#[cfg(feature = "touch")]
 const TOUCH_SLOP: i32 = 6;
 
 /// Which way a trackball rolled: one of the arrow keys.
@@ -189,6 +208,9 @@ where
     V::Renderables: AnimatedJoin,
     F: Fn(&State) -> V,
 {
+    // Only a touch move leaves its layout to the input behind it.
+    #[cfg(not(feature = "touch"))]
+    let _ = next;
     // The board is turning off.
     if app.state().ending.is_some() {
         return;
@@ -208,6 +230,7 @@ where
         }
         _ => {}
     }
+    #[cfg(feature = "touch")]
     if let Input::Touch { phase, x, y, at } = input {
         // Timed when the panel reported it, not when it is taken in, so a
         // flick keeps its speed through a slow frame.
@@ -334,10 +357,11 @@ where
         | Input::Key { .. }
         | Input::Space
         | Input::Character(_)
-        | Input::Touch { .. }
         | Input::Latches { .. }
         | Input::Mute
         | Input::Picker => {}
+        #[cfg(feature = "touch")]
+        Input::Touch { .. } => {}
     }
 }
 
@@ -347,6 +371,7 @@ where
 ///
 /// Only a touch whose start was taken goes on to the interface, so one that
 /// began on the lock screen does nothing once it is gone.
+#[cfg(feature = "touch")]
 fn touch<V, F>(app: &mut App<V, State, F>, phase: TouchPhase, point: Point, now: u64)
 where
     V: ViewLayout<State>,
@@ -401,6 +426,7 @@ where
 /// it, a tap on a tab shows that tab's picks, a tap on a pick chooses it,
 /// and a finger drawn over the rows scrolls them. None goes on to what
 /// lies under it.
+#[cfg(feature = "touch")]
 fn picker_touch<V, F>(app: &mut App<V, State, F>, phase: TouchPhase, point: Point, now: u64)
 where
     V: ViewLayout<State>,
@@ -467,6 +493,7 @@ where
     V::Renderables: AnimatedJoin,
     F: Fn(&State) -> V,
 {
+    #[cfg(feature = "touch")]
     if let Some(hold) = app.state().touch
         && hold.hold_until.is_some_and(|until| until <= now)
     {
@@ -615,7 +642,9 @@ where
             state.prepare_typing();
             state.open_picker_to_type();
         }
-        Input::Touch { .. } | Input::Latches { .. } | Input::Mute => {}
+        Input::Latches { .. } | Input::Mute => {}
+        #[cfg(feature = "touch")]
+        Input::Touch { .. } => {}
     }
 }
 
@@ -753,7 +782,9 @@ where
                 picker.type_letter(c);
             }
         }
-        Input::Release | Input::Touch { .. } | Input::Latches { .. } | Input::Mute => {}
+        Input::Release | Input::Latches { .. } | Input::Mute => {}
+        #[cfg(feature = "touch")]
+        Input::Touch { .. } => {}
     }
 }
 

@@ -24,7 +24,7 @@ default = ["window"]
 window = ["dep:sdl2", "dep:umsh-ux-display-tracker"]
 
 [dependencies]
-umsh-ux-communicator = { path = "../../crates/umsh-ux-communicator", features = ["fixture"] }
+umsh-ux-communicator = { path = "../../crates/umsh-ux-communicator", features = ["fixture", "touch"] }
 umsh-communicator = { path = "../../crates/umsh-communicator", features = ["software-crypto", "flash", "sound"] }
 embedded-storage-async = "0.4.1"
 umsh-ulcp-admin = { path = "../../crates/umsh-ulcp-admin", features = ["driver"] }
