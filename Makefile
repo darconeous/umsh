@@ -497,8 +497,10 @@ backup-tdeck-keyboard: espflash-check
 
 # The keyboard's logic against a model of the stock firmware, on the host.
 # Stable, since the workspace's `esp` channel builds `core` for the C3 only.
+# Run from here, not from inside the workspace: stable Cargo rejects the
+# workspace's `.cargo/config.toml`, whose release profile uses trim-paths.
 test-tdeck-keyboard:
-	cd $(TKEYBOARD_DIR) && cargo +stable test --lib --target $(HOST_TRIPLE)
+	cargo +stable test --manifest-path $(TKEYBOARD_DIR)/Cargo.toml --lib --target $(HOST_TRIPLE)
 
 # The crates Device › About › Credits lists: committed, and regenerated when
 # a communicator image's dependencies change.

@@ -38,5 +38,7 @@ trim-paths = true
 # Panic locations name a file relative to its crate or the workspace, not
 # by its absolute path: shorter strings in flash, and more of the persisted
 # panic record left for the message. Debug info keeps absolute paths.
+# Stable Cargo rejects this file because of it, so a stable build of a
+# workspace crate (`make test-tdeck-keyboard`) runs from outside the tree.
 [profile.release]
 trim-paths = "macro"
